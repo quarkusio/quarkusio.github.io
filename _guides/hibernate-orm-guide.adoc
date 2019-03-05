@@ -1,0 +1,359 @@
+include::attributes.adoc[]
+= {project-name} - Using Hibernate ORM and JPA
+:config-file: microprofile-config.properties
+
+Hibernate ORM is the de facto JPA implementation and offers you the full breath of an Object Relational Mapper.
+It works beautifully in {project-name}.
+
+== Setting up and configuring Hibernate ORM without `persistence.xml` (recommended)
+
+More often than not, you need one _persistence unit_ with few configuration options.
+In {project-name}, you just need to:
+
+* add your settings in `{config-file}`
+* annotate your entities with `@Entity` and friends
+
+and we make some opinionated choices and educated guesses.
+
+In your `pom.xml`, add the following dependencies:
+
+* the Hibernate ORM extension
+* your JDBC driver extension (`quarkus-jdbc-postgresql-deployment`, `quarkus-jdbc-h2-deployment`, `quarkus-jdbc-mariadb-deployment`, ...)
+
+[source,xml]
+--
+<dependencies>
+    <!-- Hibernate ORM specific dependencies -->
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-hibernate-orm-deployment</artifactId>
+        <scope>provided</scope>
+    </dependency>
+
+    <!-- JDBC driver dependencies -->
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-jdbc-postgresql-deployment</artifactId>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+--
+
+Annotate your persistent objects with `@Entity`,
+then add the relevant configuration properties in `{config-file}`.
+
+[source,properties]
+--
+quarkus.datasource.url: jdbc:postgresql://localhost:5432/mydatabase
+quarkus.datasource.driver: org.postgresql.Driver
+quarkus.datasource.username: sarah
+quarkus.datasource.password: connor
+--
+
+Note that these configuration properties are not the same ones as made available in `{config-file}`: they might differ in names, casing and don't necessarily map 1:1 to each other.
+
+An `EntityManagerFactory` will be created based on {project-name} `datasource` configuration as long as the Hibernate ORM extension is declared in your `pom.xml`.
+The dialect will be selected based on the JDBC driver.
+
+You can then happily inject your `EntityManager`:
+
+[source,java]
+--
+@ApplicationScoped
+public class SantaClausService {
+    @Inject private EntityManager em; <1>
+
+    @Transactional <2>
+    public void createGift(String giftDescription) {
+        Gift gift = new Gift();
+        gift.setName(giftDescription);
+        em.persist(gift);
+    }
+}
+
+//and of course our entity
+@Entity
+public class Gift {
+    private Long id;
+    private String name;
+
+    @Id @GeneratedValue(strategy = GenerationType.SEQUENCE, generator="giftSeq")
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+}
+--
+
+<1> Inject your entity manager and have fun
+<2> Mark your CDI bean method as `@Transactional` and the `EntityManager` will enlist and flush at commit.
+
+To load some SQL statements when Hibernate ORM starts, add a `import.sql` in the root of your resources directory.
+It contains SQL DML statements (one by line).
+This is useful to have a data set ready for your tests or demos.
+
+=== Properties to refine your Hibernate ORM configuration
+
+There are optional properties useful to refine your `EntityManagerFactory` or guide guesses of {project-name}.
+
+==== Dialect
+
+`quarkus.hibernate-orm.dialect`:: (e.g. `org.hibernate.dialect.PostgreSQL95Dialect`).
+Class name of the Hibernate ORM dialect.
+
+`quarkus.hibernate-orm.dialect.storage-engine`:: (e.g. `MyISAM` or `InnoDB`).
+The storage engine to use when the dialect supports multiple storage engines.
+
+==== Miscellaneous
+
+`quarkus.hibernate-orm.sql-load-script`::
+(defaults to `/import.sql`) Name of the file containing the SQL statements to execute when Hibernate ORM starts.
+By default, simply add `import.sql` in the root of your resources directory and it will be picked up without having to set this property.
+
+`quarkus.hibernate-orm.batch-fetch-size`:: (defaults to `-1` i.e. batch fetching is disabled).
+The size of the batches used when loading entities and collections.
+
+==== Query
+
+`quarkus.hibernate-orm.query.query-plan-cache-max-size`::
+The maximum size of the query plan cache.
+
+`quarkus.hibernate-orm.query.default-null-ordering`:: (defaults to `none`).
+Default precedence of null values in `ORDER BY` clauses.
+Options are `none`, `first`, `last`.
+
+==== Database
+
+`quarkus.hibernate-orm.database.generation`::
+(e.g. `drop-and-create` which is awesome in development mode). Select whether the database schema is generated or not.
+Options are `none`, `create`, `drop-and-create`, `drop`
+
+`quarkus.hibernate-orm.database.generation.halt-on-error`:: (defaults to `false`)
+Whether we should stop on the first error when applying the schema.
+
+`quarkus.hibernate-orm.database.default-catalog`::
+The default catalog to use for the database objects.
+
+`quarkus.hibernate-orm.database.default-schema`::
+The default schema to use for the database objects.
+
+`quarkus.hibernate-orm.database.charset`::
+The charset of the database.
+
+==== JDBC
+
+`quarkus.hibernate-orm.jdbc.timezone`::
+The time zone pushed to the JDBC driver.
+
+`quarkus.hibernate-orm.jdbc.statement-fetch-size`::
+How many rows are fetched at a time by the JDBC driver.
+
+`quarkus.hibernate-orm.jdbc.statement-batch-size`::
+The number of updates (inserts, updates and deletes) that are sent by the JDBC driver at one time for execution.
+
+==== Logging
+
+`quarkus.hibernate-orm.log.sql`:: (defaults to `false`).
+Show SQL logs and format them nicely.
+
+`quarkus.hibernate-orm.log.jdbc-warnings`:: (defaults to `false`).
+Whether JDBC warnings should be collected and logged.
+
+==== Statistics
+
+`quarkus.hibernate-orm.statistics`:: (defaults to `false`)
+Whether statistics collection is enabled.
+
+[NOTE]
+--
+Do not mix `persistence.xml` and `quarkus.hibernate-orm.*` properties in `{config-file}`.
+{project-name} will raise an exception.
+Make up your mind on which approach you want to use.
+--
+
+[TIP]
+====
+Want to start a PostgreSQL server on the side with Docker?
+
+[source]
+--
+docker run --ulimit memlock=-1:-1 -it --rm=true --memory-swappiness=0 --name postgres-quarkus-hibernate -e POSTGRES_USER=hibernate -e POSTGRES_PASSWORD=hibernate -e POSTGRES_DB=hibernate_db -p 5432:5432 postgres:10.5
+--
+
+====
+
+== Setting up and configuring Hibernate ORM with a `persistence.xml`
+
+Alternatively, you can set a `META-INF/persistence.xml` to setup Hibernate ORM.
+This is useful for:
+
+* migrating existing code
+* when you have relatively complex settings requiring the full flexibility of the configuration
+* or if you like it the good old way
+
+[NOTE]
+--
+If you have a `persistence.xml`, then you cannot use the `quarkus.hibernate-orm.*` properties
+and only persistence units defined in `persistence.xml` will be taken into account.
+--
+
+Your `pom.xml` dependencies as well as your Java code would be identical to the precedent example. The only
+difference is that you would specify your Hibernate ORM configuration in `META-INF/persistence.xml`:
+
+[source,xml]
+--
+<persistence xmlns="http://xmlns.jcp.org/xml/ns/persistence"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/persistence
+             http://xmlns.jcp.org/xml/ns/persistence/persistence_2_1.xsd"
+             version="2.1">
+
+    <persistence-unit name="CustomerPU" transaction-type="JTA">
+
+        <description>My customer entities</description>
+
+        <properties>
+            <!-- Connection specific -->
+            <property name="hibernate.dialect" value="org.hibernate.dialect.PostgreSQL95Dialect"/>
+
+            <property name="hibernate.show_sql" value="true"/>
+            <property name="hibernate.format_sql" value="true"/>
+
+            <!--
+                Optimistically create the tables;
+                will cause background errors being logged if they already exist,
+                but is practical to retain existing data across runs (or create as needed) -->
+            <property name="javax.persistence.schema-generation.database.action" value="drop-and-create"/>
+
+            <property name="javax.persistence.validation.mode" value="NONE"/>
+        </properties>
+
+    </persistence-unit>
+</persistence>
+--
+
+== Caching
+
+Applications that frequently read the same entities can see their performance improved when the Hibernate ORM second-level cache is enabled.
+
+=== Caching of entities
+
+To enable second-level cache, mark the entities that you want cached with `@javax.persistence.Cacheable`:
+
+[source,java]
+--
+@Entity
+@Cacheable
+public class Country {
+    int dialInCode;
+    // ...
+}
+--
+
+When an entity is annotated with `@Cacheable`, all its field values are cached except for collections and relations to other entities.
+
+This means the entity can be loaded without querying the database, but be careful as it implies the loaded entity might not reflect recent changes in the database.
+
+=== Caching of collections and relations
+
+Collections and relations need to be individually annotated to be cached; in this case the Hibernate specific `@org.hibernate.annotations.Cache` should be used, which requires also to specify the `CacheConcurrencyStrategy`:
+
+[source,java]
+--
+package com.acme;
+
+@Entity
+@Cacheable
+public class Country {
+    // ...
+
+    @OneToMany
+    @Cache(CacheConcurrencyStrategy.READ_ONLY)
+    List<City> cities;
+
+    // ...
+}
+--
+
+=== Caching of queries
+
+Queries can also benefit from second-level caching. Cached query results can be returned immediately to the caller, avoiding to run the query on the database.
+
+Be careful as this implies the results might not reflect recent changes.
+
+To cache a query, mark it as cacheable on the `Query` instance:
+
+[source,java]
+--
+Query query = ...
+query.setHint("org.hibernate.cacheable", Boolean.TRUE);
+--
+
+If you have a NamedQuery then you can enable caching directly on its definition, which will usually be on an entity:
+
+[source,java]
+--
+@Entity
+@NamedQuery(name = "Fruits.findAll",
+      query = "SELECT f FROM Fruit f ORDER BY f.name",
+      hints = @QueryHint(name = "org.hibernate.cacheable", value = "true") )
+public class Fruit {
+   ...
+--
+
+That's all! Caching technology is already integrated and enabled by default in {project-name}, so it's enough to set which ones are safe to be cached.
+
+=== Tuning of Cache Regions
+
+Caches store the data in separate regions to isolate different portions of data; such regions are assigned a name, which is useful for configuring each region independently, or to monitor their statistics.
+
+By default entities are cached in regions named after their fully qualified name, e.g. `com.acme.Country`.
+
+Collections are cached in regions named after the fully qualified name of their owner entity and collection field name, separated by `#` character, e.g. `com.acme.Country#cities`.
+
+All cached queries are by default kept in a single region dedicated to them called `default-query-results-region`.
+
+All regions are bounded by size and time by default. The defaults are `10000` max entries, and `100` seconds as maximum idle time.
+
+The size of each region can be customized via the `hibernate.cache.<region_name>.memory.object.count` property (Replace _<region_name>_ with the actual region name).
+
+To set the maximum idle time, provide the number of seconds via the `hibernate.cache.<region_name>.expiration.max_idle` property (Replace _<region_name>_ with the actual region name).
+
+## Limitations of Caching
+
+The caching technology provided within {project-name} is currently quite rudimentary and limited.
+
+The team thought it was better to have _some_ caching capability to start with, than having nothing; you can expect better caching solution to be integrated in future releases, and any help and feedback in this area is very welcome.
+
+[NOTE]
+--
+These caches are kept locally, so they are not invalidated or updated when changes are made to the persistent store by other applications.
+
+Also, when running multiple copies of the same application (in a cluster, for example on Kubernetes/OpenShift), caches in separate copies of the application aren't synchronized.
+
+For these reasons, enabling caching is only suitable when certain assumptions can be made: we strongly recommend that only entities, collections and queries which never change are cached. Or at most, that when indeed such an entity is mutated and allowed to be read out of date (stale) this has no impact on the expectations of the application.
+
+Following this advice guarantees applications get the best performance out of the second-level cache and yet avoid unexpected behaviour.
+
+On top of immutable data, in certain contexts it might be acceptable to enable caching also on mutable data; this could be a necessary tradeoff on selected
+ entities which are read frequently and for which some degree of staleness is acceptable; this " acceptable degree of staleness" can be tuned by setting eviction properties.
+ This is however not recommended and should be done with extreme care, as it might
+ produce unexpected and unforeseen effects on the data.
+
+Rather than enabling caching on mutable data, ideally a better solution would be to use a clustered cache; however at this time {project-name} doesn't provide any such implementation: feel free to get in touch and let this need known so that the team can take this into account.
+--
+
+Finally, the second-level cache can be disabled globally by setting `hibernate.cache.use_second_level_cache` to `false`; this is a setting that needs to be specified in the `persistence.xml` configuration file.
+
+When second-level cache is disabled, all cache annotations are ignored and all queries are run ignoring caches; this is generally useful only to diagnose issues.
