@@ -43,7 +43,7 @@ This guide covers:
 - Functional tests
 - Packaging of the application
 
-<a href="/guides/getting-started-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/getting-started-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 <div class="guide-item" markdown="1">
@@ -56,7 +56,7 @@ This guide covers:
 This guide requires:
 - Completion of the [Creating Your First Application](/guides/getting-started-guide) guide
 
-<a href="/guides/building-native-image-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/building-native-image-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 <div class="guide-item" markdown="1">
@@ -66,7 +66,7 @@ This guide covers:
 - The deployment of the application to Kubernetes
 - The deployment of the application to OpenShift
 
-<a href="/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 <div class="guide-item" markdown="1">
@@ -75,7 +75,7 @@ This guide covers:
 This guide covers:
 - Scaffolding a new project with Maven
 
-<a href="/guides/ide-configuration" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/ide-configuration" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 </div>
