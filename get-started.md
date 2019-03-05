@@ -8,28 +8,28 @@ permalink: /get-started/
 ## Table of Contents
 ### Getting Started
 
- - [Creating Your First Application](/guides/getting-started-guide)
- - [Building Native Images](/guides/building-native-image-guide)
- - [Deploying Applications on Kubernetes](/guides/kubernetes-guide)
- - [Project Scaffolding and IDE](/guides/ide-configuration)
+ - [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide)
+ - [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
+ - [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
+ - [Project Scaffolding and IDE]({{site.baseurl}}/guides/ide-configuration)
 
 
 ## Additional Resources
 ### Guides & Documentation
 
-- [Configuring Your Application](/guides/application-configuration-guide)
-- [Application Initialization and Termination](/guides/application-lifecycle-events-guide)
-- [Using JSON and Validation](/guides/json-and-validation-guide)
-- [Scheduling Periodic Tasks](/guides/scheduled-guide)
-- [Using Websockets](/guides/websocket-guide)
-- [Using Hibernate ORM](/guides/hibernate-orm-guide)
-- [Using OpenTracing](/guides/opentracing-guide)
+- [Configuring Your Application]({{site.baseurl}}/guides/application-configuration-guide)
+- [Application Initialization and Termination]({{site.baseurl}}/guides/application-lifecycle-events-guide)
+- [Using JSON and Validation]({{site.baseurl}}/guides/json-and-validation-guide)
+- [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
+- [Using Websockets]({{site.baseurl}}/guides/websocket-guide)
+- [Using Hibernate ORM]({{site.baseurl}}/guides/hibernate-orm-guide)
+- [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
 
 ### Advanced Guides
 
-- [Writing Your Own Extension](/guides/extension-authors-guide)
-- [Measuring Performance](/guides/performance-measure)
-- [Contexts and Dependency Injection](/guides/cdi-reference)
+- [Writing Your Own Extension]({{site.baseurl}}/guides/extension-authors-guide)
+- [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
+- [Contexts and Dependency Injection]({{site.baseurl}}/guides/cdi-reference)
 
 </div>
 <div class="grid__item width-8-12 width-12-12-m gs-content">
@@ -54,7 +54,7 @@ This guide covers:
 - The packaging of an application in a Docker container
 
 This guide requires:
-- Completion of the [Creating Your First Application](/guides/getting-started-guide) guide
+- Completion of the [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide) guide
 
 <a href="{{site.baseurl}}/guides/building-native-image-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
