@@ -95,7 +95,7 @@ Infinispan is an in memory data grid that allows running in a server outside of 
 
 While you are encouraged to use CDI annotations for injection, Protean provides a compatibility layer for Spring dependency injection in the form of the spring-di extension.
 
-<a href="{{site.baseurl}}/guides/using-our-spring-dependency-injection-compatibility-layer" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/spring-di-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
