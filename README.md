@@ -22,7 +22,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 5. Use bundler to fetch all required gems in their respective versions
 
-	bundle install
+        bundle install
 
 6. Build the site and make it available on a local server
   
@@ -41,4 +41,4 @@ Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/b
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
+This website is licensed under the [https://creativecommons.org/licenses/by/3.0/](Creative Commons Attribution 3.0).
