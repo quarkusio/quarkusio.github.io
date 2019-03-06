@@ -10,11 +10,11 @@ permalink: /guides/
 
 - [Configuring Your Application]({{site.baseurl}}/guides/application-configuration-guide)
 - [Application Initialization and Termination]({{site.baseurl}}/guides/application-lifecycle-events-guide)
-- [Using JSON and Validation]({{site.baseurl}}/guides/json-and-validation-guide)
+- [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
 - [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
-- [Using Websockets]({{site.baseurl}}/guides/websocket-guide)
-- [Using Hibernate ORM]({{site.baseurl}}/guides/hibernate-orm-guide)
-- [Using Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
+- [Using WebSockets]({{site.baseurl}}/guides/websocket-guide)
+- [Using Hibernate ORM and JPA]({{site.baseurl}}/guides/hibernate-orm-guide)
+- [Simplified Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
 - [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
 
 
@@ -27,9 +27,9 @@ permalink: /guides/
 ## Additional Resources
 ### Getting Started
 
-- [Getting Started]({{site.baseurl}}/guides/getting-started-guide)
-- [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
-- [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
+- [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide)
+- [Building a Native Image]({{site.baseurl}}/guides/building-native-image-guide)
+- [Deploying on Kubernetes and OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
 - [Project Scaffolding and IDE]({{site.baseurl}}/guides/ide-configuration)
 
 </div>
@@ -49,11 +49,11 @@ You often need to execute custom actions when the application starts and clean u
 <a href="{{site.baseurl}}/guides/application-lifecycle-events-guid" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Using JSON and Validation
+## Validation with Hibernate Validator
 
 JSON is now the lingua franca between microservices. In this guide, we see how you can consume and produce JSON payloads. The guide also covers how to validate JSON payloads.
 
-<a href="{{site.baseurl}}/guides/json-and-validation-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/validation-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
 ## Scheduling Periodic Tasks
@@ -63,14 +63,14 @@ Modern applications often need to run specific tasks periodically. In this guide
 <a href="{{site.baseurl}}/guides/scheduled-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Using Websockets
+## Using WebSockets
 
 This guide explains how your Shamrock application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
 
 <a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Using Hibernate ORM
+## Using Hibernate ORM and JPA
 
 Hibernate ORM is the de facto JPA implementation and offers you the full breath of an Object Relational Mapper. It works beautifully in Quarkus.
 
@@ -95,7 +95,7 @@ Infinispan is an in memory data grid that allows running in a server outside of 
 
 While you are encouraged to use CDI annotations for injection, Protean provides a compatibility layer for Spring dependency injection in the form of the spring-di extension.
 
-<a href="{{site.baseurl}}/guides/using-our-spring-dependency-injection-compatibility-layer" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/spring-di-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
