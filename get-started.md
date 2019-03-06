@@ -8,29 +8,16 @@ permalink: /get-started/
 ## Table of Contents
 ### Getting Started
 
- - [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide)
+ - [Getting Started]({{site.baseurl}}/guides/getting-started-guide)
  - [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
  - [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
+ - [Deploying Knative Application to Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
+ - [Testing Your Application]({{site.baseurl}}/guides/getting-started-testing)
  - [Project Scaffolding and IDE]({{site.baseurl}}/guides/ide-configuration)
-
-
-## Additional Resources
-### Guides & Documentation
-
-- [Configuring Your Application]({{site.baseurl}}/guides/application-configuration-guide)
-- [Application Initialization and Termination]({{site.baseurl}}/guides/application-lifecycle-events-guide)
-- [Using JSON and Validation]({{site.baseurl}}/guides/json-and-validation-guide)
-- [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
-- [Using Websockets]({{site.baseurl}}/guides/websocket-guide)
-- [Using Hibernate ORM]({{site.baseurl}}/guides/hibernate-orm-guide)
-- [Using Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
-- [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
-
-### Advanced Guides
-
-- [Writing Your Own Extension]({{site.baseurl}}/guides/extension-authors-guide)
-- [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
-- [Contexts and Dependency Injection]({{site.baseurl}}/guides/cdi-reference)
+ - [Building Applications with Maven]({{site.baseurl}}/guides/maven-tooling)
+ - [Gradle Plugin Repositories]({{site.baseurl}}/guides/gradle-config)
+ - [Building Applications with Gradle]({{site.baseurl}}/guides/gradle-tooling)
+ - [FAQ]({{site.baseurl}}/guides/faq)
 
 </div>
 <div class="grid__item width-8-12 width-12-12-m gs-content">
@@ -71,12 +58,74 @@ This guide covers:
 </div>
 
 <div class="guide-item" markdown="1">
+## Testing Your Application
+
+Learn how to test your Quarkus Application.
+This guide covers:
+
+- Testing in JVM mode
+- Testing in native mode
+- Injection of resources into tests
+
+<a href="{{site.baseurl}}/guides/getting-started-testing" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
+<div class="guide-item" markdown="1">
 ## Project Scaffolding and IDE
 
 This guide covers:
 - Scaffolding a new project with Maven
 
 <a href="{{site.baseurl}}/guides/ide-configuration" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
+<div class="guide-item" markdown="1">
+## Building Applications with Maven
+
+This guide covers:
+- Maven configuration
+- Creating a new project
+- Dealing with extensions
+- Development mode
+- Debugging
+- Import in your IDE
+- Building a native image
+- Build a container friendly executable
+
+<a href="{{site.baseurl}}/guides/maven-tooling" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
+<div class="guide-item" markdown="1">
+## Gradle Plugin Repositories
+
+This guide covers:
+- How to configure Gradle plugin repositories
+
+<a href="{{site.baseurl}}/guides/gradle-config" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
+<div class="guide-item" markdown="1">
+## Building Applications with Gradle
+
+This guide covers:
+- Gradle configuration
+- Creating a new project
+- Dealing with extensions
+- Development mode
+- Debugging
+- Import in your IDE
+- Building a native image
+- Build a container friendly executable
+
+<a href="{{site.baseurl}}/guides/gradle-tooling" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
+<div class="guide-item" markdown="1">
+## FAQ
+
+Frequently Asked Questions
+
+<a href="{{site.baseurl}}/guides/faq" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 </div>
