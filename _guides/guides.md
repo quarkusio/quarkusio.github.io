@@ -1,6 +1,6 @@
 ---
 layout: guides-index
-title: guides
+title: Quarkus - Guides
 permalink: /guides/
 ---
 
