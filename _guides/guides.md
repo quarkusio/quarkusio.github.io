@@ -14,6 +14,7 @@ permalink: /guides/
 - [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
 - [Using Websockets]({{site.baseurl}}/guides/websocket-guide)
 - [Using Hibernate ORM]({{site.baseurl}}/guides/hibernate-orm-guide)
+- [Using Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
 - [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
 
 
