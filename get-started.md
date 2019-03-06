@@ -1,6 +1,6 @@
 ---
 layout: get-started
-title: Get Started With Quarkus
+title: Quarkus - Get Started
 permalink: /get-started/
 ---
 
