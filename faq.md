@@ -13,17 +13,23 @@ Quarkus is an Open Source project licensed under the [Apache License version 2.0
 Quarkus is published in Maven Central, check out [which extensions](/extensions) you need and just import them in your `pom.xml` to get Quarkus.
 We recommend you start your Quarkus experience via our [Getting Started guides)(/get-started).
 
+## Quarkus is beta?
+
+Yes, we consider Quarkus beta.
+However 95% of the features Quarkus apps use are provided by the ecosystem like Hibernate ORM, Eclipse Vert.x, Netty, RESTEasy, etc.
+These libraries are rock solid :)
+
 ## What is a Quarkus extension?
 
-One of the main goals of Quarkus is ease of extensibility. This will allow 3rd party projects to easily
-take advantage of the work we have done to make it easier to target GraalVM. We provide a simple injection
-based API to control how Substrate VM treats your library, including an easy way to register items for reflection
-with no JSON files in sight.
+One of the main goals of Quarkus is ease of extensibility and to build a vibrant ecosystem.
+
+Think of Quarkus extensions as your project dependencies. Extensions configure, boot and integrate a framework or technology into your Quarkus application. They also do all of the heavy lifting of providing the right information to GraalVM for your application to compile natively.
+This will allow 3rd party projects to easily take advantage of the work we have done to make it easier to target GraalVM.
 
 We are also aiming to provide a support for a full [extension ecosystem](/extensions), to make it easy to discover and consume
 3rd party extensions, as well as providing easier version management.
 
-## What is GraalVM
+## What is GraalVM?
 
 [GraalVM](https://www.graalvm.org) is a universal virtual machine for running applications written in
 various different languages, as well as providing the ability to compile JVM bytecode to a native executable (this
