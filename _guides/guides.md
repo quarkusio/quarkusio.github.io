@@ -209,7 +209,7 @@ secured access to the JAX-RS endpoints.
 <div class="guide-item" markdown="1">
 ## Using WebSockets
 
-This guide explains how your Shamrock application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
+This guide explains how your Quarkus application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
 
 <a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
