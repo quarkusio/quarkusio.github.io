@@ -1,5 +1,7 @@
 # Quarkus.io Website Based on Jekyll
 
+**Please note that the content is built from, and thus needs to be changed in, the `docs/src/main/asciidoc` directory of [the main quarkus (code) repository](https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc) instead of here, so please do not raise PRs for any \*.md files in this project (only style).**
+
 ## Getting Started
 
 These instructions will get you a copy of the Quarkus.io website up and running on your local machine for development and testing purposes.
