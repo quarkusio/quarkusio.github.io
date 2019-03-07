@@ -11,12 +11,13 @@ Quarkus is an Open Source project licensed under the [Apache License version 2.0
 ## Where can I get it?
 
 Quarkus is published in Maven Central, check out [which extensions](/extensions) you need and just import them in your `pom.xml` to get Quarkus.
+We recommend you start your Quarkus experience via our [Getting Started guides)(/get-started).
 
 ## What is a Quarkus extension?
 
 One of the main goals of Quarkus is ease of extensibility. This will allow 3rd party projects to easily
 take advantage of the work we have done to make it easier to target GraalVM. We provide a simple injection
-based API to control how Substrate treats your library, including an easy way to register items for reflection
+based API to control how Substrate VM treats your library, including an easy way to register items for reflection
 with no JSON files in sight.
 
 We are also aiming to provide a support for a full [extension ecosystem](/extensions), to make it easy to discover and consume
