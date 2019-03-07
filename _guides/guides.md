@@ -73,6 +73,10 @@ permalink: /guides/
 - [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
+<div markdown="1">
+You have gone through the [Getting Started]({{site.baseurl}}/guides) guides.
+You are now ready to dive into specific topic guides.
+</div>
 <div class="guide-item" markdown="1">
 ## Configuring Your Application
 
