@@ -90,7 +90,7 @@ You often need to execute custom actions when the application starts and clean u
 <div class="guide-item" markdown="1">
 ## Contexts and Dependency Injection
 
-Protean DI solution is based on the [Contexts and Dependency Injection for Java 2.0](https://docs.jboss.org/cdi/spec/2.0/cdi-spec) specification. However, it is not a full CDI implementation verified by the TCK. Only a subset of the CDI features is implemented - see also the list of supported features and the list of limitations.
+Quarkus DI solution is based on the [Contexts and Dependency Injection for Java 2.0](https://docs.jboss.org/cdi/spec/2.0/cdi-spec) specification. However, it is not a full CDI implementation verified by the TCK. Only a subset of the CDI features is implemented - see also the list of supported features and the list of limitations.
 
 <a href="{{site.baseurl}}/guides/cdi-reference" class="button-cta secondary">READ THE GUIDE</a>
 </div>
@@ -145,7 +145,7 @@ Panache focuses on making your entities trivial and fun to write.
 <div class="guide-item" markdown="1">
 ## Using Infinispan Client
 
-Infinispan is an in memory data grid that allows running in a server outside of application processes. This extension provides functionality to allow the client that can connect to said server when running in Protean.
+Infinispan is an in memory data grid that allows running in a server outside of application processes. This extension provides functionality to allow the client that can connect to said server when running in Quarkus.
 
 <a href="{{site.baseurl}}/guides/infinispan-client-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
@@ -265,7 +265,7 @@ This guide covers:
 <div class="guide-item" markdown="1">
 ## Using OpenTracing
 
-This guide explains how your Quarkus application can utilize opentracing to provide distributed tracing for interactive web applications.
+This guide explains how your Quarkus application can utilize OpenTracing to provide distributed tracing for interactive web applications.
 
 <a href="{{site.baseurl}}/guides/opentracing-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
@@ -329,7 +329,7 @@ This guide covers:
 <div class="guide-item" markdown="1">
 ## Using our Spring Dependency Injection compatibility layer
 
-While you are encouraged to use CDI annotations for injection, Protean provides a compatibility layer for Spring dependency injection in the form of the spring-di extension.
+While you are encouraged to use CDI annotations for injection, Quarkus provides a compatibility layer for Spring dependency injection in the form of the spring-di extension.
 
 <a href="{{site.baseurl}}/guides/spring-di-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
@@ -370,7 +370,7 @@ This guide explains how to use Kotlin.
 <div class="guide-item" markdown="1">
 ## Measuring Performance
 
-When measuring the footprint of a Protean application, we measure Resident Set Size (RSS) and not the JVM heap size which is only a small part of the overall problem. The JVM not only allocates native memory for heap (-Xms, -Xmx) but also structures required by the jvm to run your application.
+When measuring the footprint of a Quarkus application, we measure Resident Set Size (RSS) and not the JVM heap size which is only a small part of the overall problem. The JVM not only allocates native memory for heap (-Xms, -Xmx) but also structures required by the jvm to run your application.
 
 <a href="{{site.baseurl}}/guides/performance-measure" class="button-cta secondary">READ THE GUIDE</a>
 </div>
