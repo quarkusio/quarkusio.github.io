@@ -1,6 +1,6 @@
 ---
 layout: get-started
-title: Get Started With Quarkus
+title: Quarkus - Get Started
 permalink: /get-started/
 ---
 
@@ -10,26 +10,11 @@ permalink: /get-started/
 
  - [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide)
  - [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
- - [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
- - [Project Scaffolding and IDE]({{site.baseurl}}/guides/ide-configuration)
+ - [Using our Tooling]({{site.baseurl}}/guides/tooling)
 
+### Guides
 
-## Additional Resources
-### Guides & Documentation
-
-- [Configuring Your Application]({{site.baseurl}}/guides/application-configuration-guide)
-- [Application Initialization and Termination]({{site.baseurl}}/guides/application-lifecycle-events-guide)
-- [Using JSON and Validation]({{site.baseurl}}/guides/json-and-validation-guide)
-- [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
-- [Using Websockets]({{site.baseurl}}/guides/websocket-guide)
-- [Using Hibernate ORM]({{site.baseurl}}/guides/hibernate-orm-guide)
-- [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
-
-### Advanced Guides
-
-- [Writing Your Own Extension]({{site.baseurl}}/guides/extension-authors-guide)
-- [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
-- [Contexts and Dependency Injection]({{site.baseurl}}/guides/cdi-reference)
+ - [Get More Guides]({{site.baseurl}}/guides)
 
 </div>
 <div class="grid__item width-8-12 width-12-12-m gs-content">
@@ -60,22 +45,21 @@ This guide requires:
 </div>
 
 <div class="guide-item" markdown="1">
-## Deploy Your Application on Kubernetes
+## Using our Tooling
 
-This guide covers:
-- The deployment of the application to Kubernetes
-- The deployment of the application to OpenShift
+{project-name} comes with a toolchain enabling developers from live reload all the way down to deploying a Kubernetes application.
+In this guide, we will explore:
 
-<a href="{{site.baseurl}}/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
+* how to use Maven as a build tool
+* how to use Gradle as a build tool
+* how to use the native CLI for your toolchain (coming soon)
+* how to create and scaffold a new project
+* how to deal with extensions
+* how to enable live reload
+* how to develop your application in your IDE
+* how to compile your application natively
 
-<div class="guide-item" markdown="1">
-## Project Scaffolding and IDE
-
-This guide covers:
-- Scaffolding a new project with Maven
-
-<a href="{{site.baseurl}}/guides/ide-configuration" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/tooling" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 </div>

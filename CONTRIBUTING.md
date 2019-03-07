@@ -1,1 +1,3 @@
-# Contributing to the MWES Upstream Community Theme project
+# Contributing to the Quarkus.io website
+
+Contributions are welcome, please submit pull requests for the `develop` branch.

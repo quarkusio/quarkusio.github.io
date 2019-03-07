@@ -1,5 +1,5 @@
 ---
 layout: extensions
-title: Extensions
+title: Quarkus - Extensions
 permalink: /extensions/
 ---
