@@ -34,7 +34,7 @@ permalink: /guides/
 
 ### Security
 
-- [Using Secutiry]({{site.baseurl}}/guides/security-guide)
+- [Using Security]({{site.baseurl}}/guides/security-guide)
 - [Using JWT RBAC]({{site.baseurl}}/guides/jwt-guide)
 
 ### Cloud
