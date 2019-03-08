@@ -39,8 +39,8 @@ permalink: /guides/
 
 ### Cloud
 
-- [Deploying Knative Application to Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
-- [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
+- [Deploying native Applications on Kubernetes or OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
+- [Deploying native Applications on Knative Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
 
 ### Observability
 
