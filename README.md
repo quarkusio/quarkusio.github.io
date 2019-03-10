@@ -16,7 +16,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
   
         git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
 
-4. Change into the projecr directory
+4. Change into the project directory:
   
         cd quarkusio.github.io
 
@@ -41,4 +41,4 @@ Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/b
 
 ## License
 
-This website is licensed under the [https://creativecommons.org/licenses/by/3.0/](Creative Commons Attribution 3.0).
+This website is licensed under the [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).

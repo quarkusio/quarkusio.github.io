@@ -47,7 +47,7 @@ This guide requires:
 <div class="guide-item" markdown="1">
 ## Using our Tooling
 
-{project-name} comes with a toolchain enabling developers from live reload all the way down to deploying a Kubernetes application.
+Quarkus comes with a toolchain enabling developers from live reload all the way down to deploying a Kubernetes application.
 In this guide, we will explore:
 
 * how to use Maven as a build tool
