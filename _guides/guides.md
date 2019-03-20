@@ -24,6 +24,10 @@ permalink: /guides/
 - [Using Transactions]({{site.baseurl}}/guides/transaction-guide)
 - [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
 
+### Messaging
+
+- [Using Kafka]({{site.baseurl}}/guides/kafka-guide)
+
 ### Web
 
 - [Writing REST JSON Services]({{site.baseurl}}/guides/rest-json-guide)
@@ -44,7 +48,9 @@ permalink: /guides/
 
 ### Observability
 
+- [Using Health Check]({{site.baseurl}}/guides/health-guide)
 - [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
+- [Collecting Metrics]({{site.baseurl}}/guides/metrics-guide)
 
 ### Serialization
 
@@ -62,6 +68,7 @@ permalink: /guides/
 ### Writing Extensions
 
 - [Writing Your Own Extension]({{site.baseurl}}/guides/extension-authors-guide)
+- [Writing Native Applications]({{site.baseurl}}/guides/writing-native-applications-tips)
 
 ### Alternative Languages
 
