@@ -11,7 +11,7 @@ Quarkus is an Open Source project licensed under the [Apache License version 2.0
 ## Where can I get it?
 
 Quarkus is published in Maven Central, check out [which extensions](/extensions) you need and just import them in your `pom.xml` to get Quarkus.
-We recommend you start your Quarkus experience via our [Getting Started guides)(/get-started).
+We recommend you start your Quarkus experience via our [Getting Started guides](/get-started).
 
 ## Quarkus is beta?
 
