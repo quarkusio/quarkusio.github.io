@@ -24,11 +24,15 @@ permalink: /guides/
 - [Using Transactions]({{site.baseurl}}/guides/transaction-guide)
 - [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
 
+### Messaging
+
+- [Using Kafka]({{site.baseurl}}/guides/kafka-guide)
+
 ### Web
 
+- [Writing REST JSON Services]({{site.baseurl}}/guides/rest-json-guide)
 - [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
 - [Using the REST Client]({{site.baseurl}}/guides/rest-client-guide)
-- [Writing REST JSON Services]({{site.baseurl}}/guides/rest-json-guide)
 - [Using JWT RBAC]({{site.baseurl}}/guides/jwt-guide)
 - [Using WebSockets]({{site.baseurl}}/guides/websocket-guide)
 
@@ -39,13 +43,15 @@ permalink: /guides/
 
 ### Cloud
 
-- [Deploying Java Applications on OpenShift with S2I]({{site.baseurl}}/guides/openshift-s2i-guide)
-- [Deploying Knative Application to Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
-- [Deploying Applications on Kubernetes]({{site.baseurl}}/guides/kubernetes-guide)
+- [Deploying Native Applications on OpenShift with S2I]({{site.baseurl}}/guides/openshift-s2i-guide)
+- [Deploying Native Applications on Kubernetes or OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
+- [Deploying Native Applications on Knative Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
 
 ### Observability
 
+- [Using Health Check]({{site.baseurl}}/guides/health-guide)
 - [Using OpenTracing]({{site.baseurl}}/guides/opentracing-guide)
+- [Collecting Metrics]({{site.baseurl}}/guides/metrics-guide)
 
 ### Serialization
 
@@ -63,6 +69,7 @@ permalink: /guides/
 ### Writing Extensions
 
 - [Writing Your Own Extension]({{site.baseurl}}/guides/extension-authors-guide)
+- [Writing Native Applications]({{site.baseurl}}/guides/writing-native-applications-tips)
 
 ### Alternative Languages
 
@@ -75,7 +82,7 @@ permalink: /guides/
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div markdown="1">
-You have gone through the [Getting Started]({{site.baseurl}}/guides) guides.
+You have gone through the [Getting Started]({{site.baseurl}}/get-started) guides.
 You are now ready to dive into specific topic guides.
 </div>
 <div class="guide-item" markdown="1">
@@ -178,6 +185,13 @@ This guide covers how to use Hibernate Validator/Bean Validation in your REST se
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div class="guide-item" markdown="1">
+## Writing JSON REST Services
+
+JSON is now the lingua franca between microservices. In this guide, we see how you can get your REST services to consume and produce JSON payloads.
+
+<a href="{{site.baseurl}}/guides/rest-json-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
 ## Validation with Hibernate Validator
 
 This guide covers how to use Hibernate Validator/Bean Validation in your REST services.
@@ -191,13 +205,6 @@ This guide explains how to use the MicroProfile REST Client in order to interact
 with very little effort.
 
 <a href="{{site.baseurl}}/guides/rest-client-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
-## Writing JSON REST Services
-
-JSON is now the lingua franca between microservices. In this guide, we see how you can get your REST services to consume and produce JSON payloads.
-
-<a href="{{site.baseurl}}/guides/rest-json-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
 ## Using JWT RBAC
