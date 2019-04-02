@@ -46,6 +46,7 @@ permalink: /guides/
 
 - [Deploying Native Applications on Kubernetes or OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
 - [Deploying Native Applications on Knative Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
+- [Deploying Native Applications on OpenShift with S2I]({{site.baseurl}}/guides/openshift-s2i-guide)
 
 ### Observability
 
