@@ -27,6 +27,7 @@ permalink: /guides/
 ### Messaging
 
 - [Using Kafka]({{site.baseurl}}/guides/kafka-guide)
+- [Asynchronous Message Passing]({{site.baseurl}}/guides/async-message-passing)
 
 ### Web
 
@@ -78,6 +79,7 @@ permalink: /guides/
 
 - [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
 - [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
+- [Using Vert.x]({{site.baseurl}}/guides/using-vertx)
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div markdown="1">
