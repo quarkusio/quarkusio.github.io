@@ -16,19 +16,6 @@ permalink: /guides/
 - [Configuring Logging]({{site.baseurl}}/guides/logging-guide)
 - [Using SSL With Native Images]({{site.baseurl}}/guides/native-and-ssl-guide)
 
-### Data
-
-- [Using Hibernate ORM and JPA]({{site.baseurl}}/guides/hibernate-orm-guide)
-- [Simplified Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
-- [Using Infinispan Client]({{site.baseurl}}/guides/infinispan-client-guide)
-- [Using Transactions]({{site.baseurl}}/guides/transaction-guide)
-- [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
-
-### Messaging
-
-- [Using Kafka]({{site.baseurl}}/guides/kafka-guide)
-- [Asynchronous Message Passing]({{site.baseurl}}/guides/async-message-passing)
-
 ### Web
 
 - [Writing REST JSON Services]({{site.baseurl}}/guides/rest-json-guide)
@@ -36,6 +23,21 @@ permalink: /guides/
 - [Using the REST Client]({{site.baseurl}}/guides/rest-client-guide)
 - [Using JWT RBAC]({{site.baseurl}}/guides/jwt-guide)
 - [Using WebSockets]({{site.baseurl}}/guides/websocket-guide)
+- [Using OpenAPI and Swagger UI]({{site.baseurl}}/guides/openapi-swaggerui-guide)
+
+### Data
+
+- [Using Hibernate ORM and JPA]({{site.baseurl}}/guides/hibernate-orm-guide)
+- [Simplified Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
+- [Using Infinispan Client]({{site.baseurl}}/guides/infinispan-client-guide)
+- [Using Transactions]({{site.baseurl}}/guides/transaction-guide)
+- [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
+- [Schema Migration with Flyway]({{site.baseurl}}/guides/flyway-guide)
+
+### Messaging
+
+- [Using Kafka]({{site.baseurl}}/guides/kafka-guide)
+- [Asynchronous Message Passing]({{site.baseurl}}/guides/async-message-passing)
 
 ### Security
 
@@ -46,6 +48,8 @@ permalink: /guides/
 
 - [Deploying Native Applications on Kubernetes or OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
 - [Deploying Native Applications on Knative Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
+- [Generating Kubernetes metadata]({{site.baseurl}}/guides/ap4k)
+- [Deploying to OpenShift using S2I]({{site.baseurl}}/guides/openshift-s2i-guide)
 
 ### Observability
 
