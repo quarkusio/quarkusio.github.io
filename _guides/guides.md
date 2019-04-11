@@ -273,6 +273,15 @@ This guide covers:
 
 <a href="{{site.baseurl}}/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+<div class="guide-item" markdown="1">
+## Deploying to OpenShift using S2I
+
+This guide covers:
+
+* The deployment of the application to OpenShift using Source-To-Image
+
+<a href="{{site.baseurl}}/guides/openshift-s2i-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
