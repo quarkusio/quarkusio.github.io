@@ -48,7 +48,7 @@ permalink: /guides/
 
 - [Deploying Native Applications on Kubernetes or OpenShift]({{site.baseurl}}/guides/kubernetes-guide)
 - [Deploying Native Applications on Knative Kubernetes or OpenShift]({{site.baseurl}}/guides/getting-started-knative-guide)
-- [Generating Kubernetes metadata]({{site.baseurl}}/guides/ap4k)
+- [Generating Kubernetes resources]({{site.baseurl}}/guides/ap4k)
 - [Deploying to OpenShift using S2I]({{site.baseurl}}/guides/openshift-s2i-guide)
 
 ### Observability
@@ -140,6 +140,63 @@ as native images don't support it out of the box.
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
+## Web
+</div>
+<div class="grid__item width-8-12 width-12-12-m guides-content">
+<div class="guide-item" markdown="1">
+## Writing JSON REST Services
+
+JSON is now the lingua franca between microservices. In this guide, we see how you can get your REST services to consume and produce JSON payloads.
+
+<a href="{{site.baseurl}}/guides/rest-json-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Validation with Hibernate Validator
+
+This guide covers how to use Hibernate Validator/Bean Validation in your REST services.
+
+<a href="{{site.baseurl}}/guides/validation-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using the REST Client
+
+This guide explains how to use the MicroProfile REST Client in order to interact with REST APIs
+with very little effort.
+
+<a href="{{site.baseurl}}/guides/rest-client-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using JWT RBAC
+
+This guide explains how your application can utilize {mp-jwt} to provide
+secured access to the JAX-RS endpoints.
+
+<a href="{{site.baseurl}}/guides/jwt-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using WebSockets
+
+This guide explains how your Quarkus application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
+
+<a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using WebSockets
+
+This guide explains how your Quarkus application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
+
+<a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using OpenAPI and Swagger UI
+
+This guide explains how to use the OpenAPI extension to generate an OpenAPI descriptor and get a Swagger UI frontend to test your REST endpoints.
+
+<a href="{{site.baseurl}}/guides/openapi-swaggerui-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+</div>
+<div class="grid__item width-12-12"><hr></div>
+<div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
 ## Data
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
@@ -183,48 +240,32 @@ This guide covers how to use Hibernate Validator/Bean Validation in your REST se
 
 <a href="{{site.baseurl}}/guides/validation-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+<div class="guide-item" markdown="1">
+## Schema Migration with Flyway
+
+This guide covers how to use the Flyway extension to manage your schema migrations.
+
+<a href="{{site.baseurl}}/guides/flyway-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
-## Web
+## Messaging
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div class="guide-item" markdown="1">
-## Writing JSON REST Services
+## Using Kafka
 
-JSON is now the lingua franca between microservices. In this guide, we see how you can get your REST services to consume and produce JSON payloads.
+This guide demonstrates how your Quarkus application can utilize MicroProfile Reactive Messaging to interact with Apache Kafka.
 
-<a href="{{site.baseurl}}/guides/rest-json-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/kafka-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Validation with Hibernate Validator
+## Asynchronous Message Passing
 
-This guide covers how to use Hibernate Validator/Bean Validation in your REST services.
+This guide explains how different beans can interact using asynchronous messages.
 
-<a href="{{site.baseurl}}/guides/validation-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
-## Using the REST Client
-
-This guide explains how to use the MicroProfile REST Client in order to interact with REST APIs
-with very little effort.
-
-<a href="{{site.baseurl}}/guides/rest-client-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
-## Using JWT RBAC
-
-This guide explains how your application can utilize {mp-jwt} to provide
-secured access to the JAX-RS endpoints.
-
-<a href="{{site.baseurl}}/guides/jwt-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
-## Using WebSockets
-
-This guide explains how your Quarkus application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
-
-<a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/async-message-passing" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
@@ -255,23 +296,32 @@ secured access to the JAX-RS endpoints.
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div class="guide-item" markdown="1">
-## Deploying Knative Application to Kubernetes or OpenShift
+## Deploying Native Applications on Kubernetes or OpenShift
 
-This guide covers:
+This guide covers how to deploy a native application on Kubernetes or OpenShift.
 
-* The deployment of the application to Kubernetes
+<a href="{{site.baseurl}}/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Deploying Native Applications on Knative Kubernetes or OpenShift
+
+This guide demonstrates how to deploy an application on Knative Kubernetes or OpenShift.
 
 <a href="{{site.baseurl}}/guides/getting-started-knative-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Deploying Applications on Kubernetes
+## Generating Kubernetes resources
 
-This guide covers:
+This guide demonstrates how generate Kubernetes resources using Quarkus Kubernetes extension.
 
-* The deployment of the application to Kubernetes
-* The deployment of the application to OpenShift
+<a href="{{site.baseurl}}/guides/ap4k" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Deploying to OpenShift using S2I
 
-<a href="{{site.baseurl}}/guides/kubernetes-guide" class="button-cta secondary">READ THE GUIDE</a>
+This guide explains how to deploy a Quarkus application to OpenShift using S2I.
+
+<a href="{{site.baseurl}}/guides/openshift-s2i-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
@@ -280,11 +330,25 @@ This guide covers:
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div class="guide-item" markdown="1">
+## Using Health Check
+
+This guide demonstrates how your Quarkus application can utilize the MicroProfile Health specification through the SmallRye Health extension.
+
+<a href="{{site.baseurl}}/guides/health-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
 ## Using OpenTracing
 
 This guide explains how your Quarkus application can utilize OpenTracing to provide distributed tracing for interactive web applications.
 
 <a href="{{site.baseurl}}/guides/opentracing-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Collecting Metrics
+
+This guide demonstrates how your Quarkus application can utilize the MicroProfile Metrics specification through the SmallRye Metrics extension.
+
+<a href="{{site.baseurl}}/guides/metrics-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
@@ -365,6 +429,13 @@ This means that metadata is only processed once at build time, which both saves 
 
 <a href="{{site.baseurl}}/guides/extension-authors-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+<div class="guide-item" markdown="1">
+## Writing Native Applications
+
+This guide is a collection of tips to help you solve the problems you encounter when compiling applications to native executable.
+
+<a href="{{site.baseurl}}/guides/writing-native-applications-tips" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
@@ -397,6 +468,13 @@ When measuring the footprint of a Quarkus application, we measure Resident Set S
 Modern applications often need to run specific tasks periodically. In this guide, you learn how to schedule periodic tasks.
 
 <a href="{{site.baseurl}}/guides/scheduled-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using Vert.x
+
+This guide explains how to use Vert.x in Quarkus to build reactive applications.
+
+<a href="{{site.baseurl}}/guides/using-vertx" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 
