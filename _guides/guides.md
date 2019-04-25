@@ -43,6 +43,7 @@ permalink: /guides/
 
 - [Using Security]({{site.baseurl}}/guides/security-guide)
 - [Using JWT RBAC]({{site.baseurl}}/guides/jwt-guide)
+- [Using Keycloak to Protect JAX-RS Applications]({{site.baseurl}}/guides/keycloak-guide)
 
 ### Cloud
 
@@ -284,10 +285,18 @@ common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST en
 <div class="guide-item" markdown="1">
 ## Using JWT RBAC
 
-This guide explains how your application can utilize {mp-jwt} to provide
+This guide explains how your application can utilize MicroProfile JWT RBAC to provide
 secured access to the JAX-RS endpoints.
 
 <a href="{{site.baseurl}}/guides/jwt-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Using Keycloak to Protect JAX-RS Applications
+
+This guide demonstrates how your Quarkus application can use Keycloak to protect your JAX-RS applications using bearer token
+authorization, where these tokens are issued by a Keycloak Server.
+
+<a href="{{site.baseurl}}/guides/keycloak-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
