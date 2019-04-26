@@ -39,6 +39,9 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/blob/master/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
 
+**Important:** the guides are maintained in the main Quarkus repository and pull requests should be submitted there:
+https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc.
+
 ## License
 
 This website is licensed under the [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).
