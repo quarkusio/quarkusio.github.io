@@ -182,13 +182,6 @@ This guide explains how your Quarkus application can utilize web sockets to crea
 <a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
-## Using WebSockets
-
-This guide explains how your Quarkus application can utilize web sockets to create interactive web applications. Because it’s the canonical web socket application, we are going to create a simple chat application.
-
-<a href="{{site.baseurl}}/guides/websocket-guide" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
 ## Using OpenAPI and Swagger UI
 
 This guide explains how to use the OpenAPI extension to generate an OpenAPI descriptor and get a Swagger UI frontend to test your REST endpoints.
