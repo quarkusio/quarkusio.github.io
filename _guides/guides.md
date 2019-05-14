@@ -27,6 +27,7 @@ permalink: /guides/
 
 ### Data
 
+- [Configuring your datasources]({{site.baseurl}}/guides/datasource-guide)
 - [Using Hibernate ORM and JPA]({{site.baseurl}}/guides/hibernate-orm-guide)
 - [Simplified Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
 - [Using Infinispan Client]({{site.baseurl}}/guides/infinispan-client-guide)
@@ -194,6 +195,13 @@ This guide explains how to use the OpenAPI extension to generate an OpenAPI desc
 ## Data
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
+<div class="guide-item" markdown="1">
+## Configuring your datasources
+
+With Quarkus, you can easily configure a datasource, or several if need be.
+
+<a href="{{site.baseurl}}/guides/datasource-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 <div class="guide-item" markdown="1">
 ## Using Hibernate ORM and JPA
 
