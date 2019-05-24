@@ -1,0 +1,391 @@
+---
+layout: post
+title: Quarkus and Angular UI Development
+date: 2019-05-23 14:00:00.000 -0600
+tags: quarkus ui development
+author: kkhan
+---
+
+== Quarkus and Angular UI Development
+
+In this blog post we will look at how to take advantage of the respective development modes of both Quarkus and Angular CLI and see how we can develop a zero turnaround web application backed by a RESTful API on Quarkus. While I am using Angular, the concepts should be the same for other web application frameworks.
+
+For my current project I found there are three main problems which need dealing with, or things which need setting up, in order to make this work nicely together:
+
+[loweralpha]
+. The angular router exposes different parts of the application under sub-paths (called 'routes'). This is fine if you start off by going to http://localhost:8080 and navigate the app from there, as the angular router bypasses the server. However, if you want to bookmark any of those URLs you are in trouble.
+. Use the Angular proxy to proxy REST calls to the back-end, while handling the 'local' web application routes in the browser. Other modern web application frameworks should have something similar.
+. We need to use the proxy url when we have a servlet on the back-end which needs to redirect back to the client. Also, when linking to servlets on the back-end we need to update the links on the client.
+
+All the code is hosted on GitHub at https://github.com/kabir/blog-quarkus-ui-development. There is a tag called `step-1`, `step-2` etc. for each of the below steps, and each of the tags contains one commit. You can either follow the steps in this post (I will give the important snippets of code, but also refer back to the individual commits for the full code), or you can clone the GitHub repository and check out the tags to save some typing.
+
+Although this post goes into a lot of detail in setting up our sample application, the actual changes needed to make it behave well are quite https://github.com/kabir/blog-quarkus-ui-development/compare/step-3..step-6[trivial].
+
+
+This post will go through the following steps:
+
+1. Bootstrapping the Quarkus and Angular applications
+2. Add Maven plugins to copy the built web application to the right location for bundling into the Quarkus application
+3. Add some classes containing the main demo code. Everything up to and including this step is really just to have something to illustrate the problems, so if you are impatient you can jump ahead to step 4 where we start adding the things mentioned above. But make sure you run `mvn package -Dui.deps -Dui.dev` before trying to run anything!
+4. Add a servlet filter to let Angular deal with the URLs that are meant for it. This addresses a) from above.
+5. Set up the Angular proxy for the dual development mode. This addresses b) from above.
+6. A quick way to redirect back to the proxy from a back-end servlet, and to change the links to servlets. This addresses c) from above.
+
+Let's get started!
+
+==== Prerequisites
+You need to have https://nodejs.org/en/download/package-manager/[Node], https://yarnpkg.com/en/docs/install[Yarn] and https://cli.angular.io[Angular CLI] installed on your system.
+
+Familiarity with Angular and Quarkus is assumed.
+
+==== Step 1 - Bootstrapping the Quarkus and Angular applications
+
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-0..step-1[here].
+
+First off scaffold the project (substitute the '0.15.0' with the latest and greatest Quarkus release version):
+
+```
+$mvn io.quarkus:quarkus-maven-plugin:0.15.0:create \
+    -DprojectGroupId=org.kabir.quarkus \
+    -DprojectArtifactId=blog-quarkus-ui-development \
+    -DprojectVersion=0.1.0 \
+    -DclassName="org.kabir.quarkus.ui.SampleResource" \
+    -Dextensions=io.quarkus:quarkus-resteasy,io.quarkus:quarkus-resteasy-jsonb
+```
+The project will be created in a folder called `blog-quarkus-ui-development`. Enter that folder and use Angular CLI to set up the web application we will use:
+```
+$cd blog-quarkus-ui-development
+$ng new --inline-style=true --inline-template=true --skip-tests=true --routing=true --skip-git --style=sass webapp
+```
+We are setting some options to create angular routes, and also to keep the styles and the html templates inline since we want to be as compact as possible for these examples. The application will be created in the `webapp` sub-folder.
+
+Note that if we were just adding some static pages, we would normally add those to the `src/main/resources/META-INF/resources/` folder of the Quarkus application. However, as the Angular application needs to be built before we can use it, we have put it in a different location.
+
+In the `webapp` folder run:
+[source,bash]
+----
+$ng serve
+----
+and go to http://localhost:4200 in your browser to verify that the Angular application is running. Stop it before going to the next step.
+
+==== Step 2 - Maven plugins to bundle the built web application into the Quarkus application
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-1..step-2[here].
+
+Remove `src/main/resources/META-INF/resources/index.html` so it doesn't interfere with our built Angular application.
+
+Next we update the `pom.xml` to package the application. I won't paste all the code here, as it is boring pom stuff. Instead I will highlight the important points.
+
+The first block of changes sets up the versions for the frontend-maven-plugin (which is a plugin to build web applications from maven) and the maven-resources-plugin.
+
+The second block of changes :
+
+* Configures the frontend-maven-plugin to use the `webapp` directory as the working directory
+* Configures the maven-resources-plugin to copy files from the `webapp/dist/webapp` folder (this is where Angular CLI outputs the built web application) to the `target/classes/META-INF/resources` folder (this is where the contents of `src/resources/META-INF/resources` is written to when building Quarkus)
+
+In the final block of changes we set up a number of profiles to do various things to the Angular web application. I will refer to them by their activation property names below. The reason why these are in profiles, is that some of the Angular commands take rather a long time, are not needed every time we want to do a build and we want to stay as fast as possible. The profiles are:
+
+* `ui.deps` - This must be run the first time you want to do a build, or if you change any of the depenencies in `webapp/package.json`. Apart from that we don't need to run it. Make sure that `nodeVersion` and `yarnVersion` match the versions you have installed on your system. This downloads the tooling to a location that is usable from Maven, and runs a `yarn install` to get all the webapp dependencies.
+* `ui.dev` - A slightly faster way to build the web application. This is good if you are developing and need to package and update your application in Quarkus as part of a Quarkus build.
+* `ui` - Use this when you need to package your application for a production build. It is slower than `ui.dev`.
+* `ui.tests` - This runs the Angular linter and runs the web application unit tests.
+
+Now to set everything up and run the application run:
+
+[source,bash]
+----
+$mvn package quarkus:dev -Dui.deps -Dui.dev
+----
+
+You should now be able to see the Angular application at http://localhost:8080.
+
+We will make the application more useful in the next step. Stop Quarkus before going to the next step.
+
+==== Step 3 - Add main demo code
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-2..step-3[here].
+
+As mentioned, this is all just to have something to illustrate the problems that we will deal with in the following steps. Let's look at the Quarkus parts of the code first. We have updated the path of `SampleResource.java` to be `/api/hello` rather than `/hello`. Having the REST calls in a few standard locations will make our job in Step 4 a lot easier.
+
+Next we have a servlet:
+[source,java]
+----
+@WebServlet(urlPatterns = {"/servlet/*"})
+public class SampleServlet extends HttpServlet {
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        String path = req.getPathInfo();
+
+        if (path.equals("/make-external-call")) {
+            // Fake making an external call without involving the UI
+            // e.g. OAuth Authentication Flow will have a few of these, resulting in
+            // receiving the token eventually
+            resp.sendRedirect("/servlet/callback");
+        } else if (path.equals("/callback")) {
+            // Redirect back to a path controlled by the Angular client
+            String redirectPath = "/clientCallback";
+            resp.sendRedirect(redirectPath);
+        } else {
+            resp.sendError(404);
+        }
+    }
+}
+----
+Again, we have decided to put our servlets under a pre-defined path to make our job in Step 4 easier. Basically you will request `/servlet/make-external-call`, which will then redirect to `/servlet/callback`, which in turn redirects to another UI resource.
+
+In case you are wondering what this is about, it is actually a really trimmed down version of something I needed to do do OAuth in my own application. Briefly, for my OAuth case, the flow is something along the lines of `/servlet/make-external-call` initiating the sign-in with the OAuth provider. This results in a few calls back and forth between the back-end and the OAuth provider, culiminating with the OAuth provider calling `/servlet/callback` with the authentication token. My servlet then caches the token, redirects to a route in the client which then makes a REST call to download the cached token.
+
+Next we populate our Angular application with our routes in `app-routing.module.ts`:
+[source,java]
+----
+const routes: Routes = [
+  {path: '', pathMatch: 'full', component: DefaultComponent},
+  {path: 'other', component: OtherComponent},
+  {path: 'rest', component: RestComponent},
+  {path: 'clientCallback', component: ClientCallbackComponent}
+];
+----
+
+We change `app.component.ts` to set up a simple application with the components listed above. The contents of the file can be found https://github.com/kabir/blog-quarkus-ui-development/blob/step-3/webapp/src/app/app.component.ts[here] (since it is a bit lengthy and not very interesting). Finally we update `app.module.ts` to declare our added components, and import the `HttpClientModule` which is needed by `RestComponent` to do its REST calls.
+
+[source,java]
+----
+@NgModule({
+  declarations: [
+    AppComponent,
+    DefaultComponent,
+    OtherComponent,
+    RestComponent,
+    ClientCallbackComponent
+  ],
+  imports: [
+    BrowserModule,
+    AppRoutingModule,
+    HttpClientModule
+  ],
+  providers: [],
+  bootstrap: [AppComponent]
+})
+export class AppModule { }
+
+----
+
+
+All this does is that when we go to the root of the application, we will go to DefaultComponent. `DefaultComponent` has routerLinks to `OtherComponent` and `RestComponent` (for routerLinks Angular does not hit the back-end), and a normal link to `/servlet/make-external-call`.
+
+If we go to `/other`, we end up in `OtherComponent` which just has a link back to `DefaultComponent`.
+
+If we go to `/rest`, we end up in `RestComponent` which displays data from the `SampleResource` we saw above and also has a link back to `DefaultComponent`.
+
+Finally if we go to `/clientCallback` (which is triggered via `/servlet/callback`  in `/SampleServlet` we end up in `ClientCallbackComponent`.
+
+====== Illustrating the problem
+Now package and start the application by running:
+[source,bash]
+----
+$mvn package quarkus:dev -Dui.dev
+----
+If you go to http://localhost:8080 you will get a page with links to `Other`, `Rest` and `Default`. Click on the `Other` and `Rest` ones, and it should all work.
+
+However while in the `Other` component, so that the address in the browser is http://localhost:8080/other, if you try to refresh the page you will end up with the following error message:
+
+`RESTEASY003210: Could not find resource for full path: http://localhost:8080/other`
+
+Also, if we go back to http://localhost:8080, and click the `External` link, we will see a similar message.
+
+We will fix these in the next step. Stop Quarkus before going to the next step.
+
+==== Step 4 - Servlet filter to forward UI paths to Angular
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-3..step-4[here].
+
+We saw in the previous step that when trying to go directly to a route within the Angular application we end up hitting the server which cannot find a matching REST endpoint, which is not what we would expect.
+
+To deal with this I add a servlet filter:
+
+[source,java]
+----
+@WebFilter(urlPatterns = "/*")
+public class IndexHtmlFilter extends HttpFilter {
+
+    private static final Pattern FILE_NAME_PATTERN = Pattern.compile(".*[.][a-zA-Z\\d]+");
+
+    public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) throws IOException, ServletException {
+        HttpServletRequest request = (HttpServletRequest) req;
+        HttpServletResponse response = (HttpServletResponse) res;
+
+        if (isIndexHtmlRequest(request)) {
+            request.getRequestDispatcher("/").forward(request, response);
+        } else {
+            chain.doFilter(request, response);
+        }
+    }
+
+    private boolean isIndexHtmlRequest(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(
+                request.getContextPath().length()).replaceAll("[/]+$", "");
+        if (path.equals("")) {
+            return true;
+        }
+        if (FILE_NAME_PATTERN.matcher(path).matches()) {
+            return false;
+        }
+        if (path.startsWith("/api/") || path.startsWith("/servlet/")) {
+            return false;
+        }
+
+        return true;
+    }
+}
+----
+
+All this does is to check the path that is used. If it looks like it is a file, or starts with `/api/` or `/servlet/` we don't do anything special. However, if it is something else, we assume it is an Angular route, and use the request dispatcher to forward the request. This is why in Step 3 we decided to put our REST endpoints and servlets under a specific path to make this decision easier. Still, this is fully customisable in your applications, so it is up to you how to handle this yourself.
+
+To try it out, package and start the application by running:
+[source,bash]
+----
+$mvn package quarkus:dev -Dui.dev
+----
+If you go to http://localhost:8080 you will see the initial page again. This time all the links work and we can refresh on any page we want! This is progress, and we now have a fully working application.
+
+However, we still need to restart and repackage our application every time we want to change something in the UI. The next two steps will show how to make this more convenient. Stop Quarkus before going to the next step.
+
+==== Step 5 - Angular proxy for dual development mode
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-4..step-5[here].
+
+Angular CLI ships with a https://angular.io/guide/build#proxying-to-a-backend-server[proxy]. Although I am not familiar with these other frameworks, from a quick search it seems that https://facebook.github.io/create-react-app/docs/proxying-api-requests-in-development[React] and https://cli.vuejs.org/config/#devserver-proxy[Vue] have something similar.
+
+The changes are simple.
+
+First we create a `webapp/proxy.conf.json`:
+[source,json]
+----
+{
+    "/api/*": {
+        "target": "http://localhost:8080",
+        "secure": false
+    }
+}
+----
+This basically tells Angular that when making REST calls where the path starts with `/api/` we should direct to the back-end server running on port `8080`. This is basically the application running in Quarkus. Angular CLI itself runs on port `4200`.
+
+The next thing we need to do is to add another `script` entry to `package.json`:
+[source,json]
+----
+"scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "proxy": "ng serve --proxy-config proxy.conf.json",
+    ...
+----
+
+Now if we start Angular with `yarn proxy` (rather than the standard `ng serve`) it will use the proxy configuration we just set up.
+
+Now let's try it out. You need two terminals.
+
+In the first terminal run:
+[source,bash]
+----
+$mvn clean
+$mvn package quarkus:dev
+----
+to start the Quarkus application. Note how we did not pass in `-Dui.dev` so we will no longer bundle the web application which saves us a significant amount of time. If you go to http://localhost:8080 you will get an error since we have no web application this time.
+
+In the second terminal go into the `webapp` folder and run:
+[source,bash]
+----
+$yarn proxy
+----
+
+Now go to http://localhost:4200 and you will see the familiar application with the links. Click the `Rest` link and view the page. Now change the string in the template of `RestComponent` (in `app.component.ts`) to something like:
+[source,java]
+----
+  template: `
+    In <b>rest</b> component. <a [routerLink]="['/']">Default</a><br>
+    Message was: {{msg$ | async}}
+    <br>SEE THE CHANGE IN ACTION
+  `,
+----
+When you refresh the page you should see the changed string.
+
+Next in `SampleResource`, change the string returned by the `hello()` method. Refresh the page again and you will see the changes reflected.
+
+This is great! It means we can now work on both our back-end and our UI without any recompilation in order to see the changes, and we no longer need to repackage and restart the application. It goes without saying that this has massive productivity benefits.
+
+If we click around a bit in the application we see that it is working. But on closer inspection we notice that when we click on the the `External` link there is no message in the page. And when we look at `ClientCallbackComponent`, there should be a message.
+[source,java]
+----
+@Component({
+  selector: 'app-rest',
+  template: `
+    Received callback from server! <a [routerLink]="['/']">Default</a>
+  `,
+  styles: []
+})
+export class ClientCallbackComponent {
+}
+----
+
+This is because we are not actually accessing the proper servlet, as we are trying to access it on port `4200` which is Angular which does not have this servlet. Let's fix this in the next step.
+
+==== Step 6 - Adjust servlet links and redirect back to the UI running in the proxy from the back-end
+The diff for this step can be found https://github.com/kabir/blog-quarkus-ui-development/compare/step-5..step-6[here].
+
+There are a few different ways that this can be done, but for simplicity for this example I went with a system property called `ui.proxy` that you can set when starting the Quarkus application. The we modify our `SimpleServlet` to prepend `http://localhost:4200` to the redirect path if it is set:
+[source,java]
+----
+    // Redirect back to a path controlled by the Angular client
+    String redirectPath = "/clientCallback";
+
+    boolean proxy = Boolean.getBoolean("ui.proxy");
+    if (proxy) {
+        redirectPath = "http://localhost:4200" + redirectPath;
+    }
+    resp.sendRedirect(redirectPath);
+----
+
+Also, we need to make the front-end point to `http://localhost:8080/servlet/make-external-call` rather than point to the back-end. To do this we make some changes to
+`DefaultComponent`:
+[source,java]
+----
+@Component({
+  selector: 'app-default',
+  template: `
+    In <b>default</b> component.
+    <a [routerLink]="['/other']">Other</a> |
+    <a [routerLink]="['/rest']">Rest</a> |
+    <a href="{{externalUrl}}">External</a>
+  `,
+  styles: []
+})
+export class DefaultComponent {
+  externalUrl = '/servlet/make-external-call';
+
+  constructor() {
+    if (window.location.port === "4200") {
+      this.externalUrl = "http://localhost:8080" + this.externalUrl;
+    }
+  }
+}
+----
+In the real world I would have used an https://angular.io/guide/build#configuring-application-environments[Angular environment] called something like `proxy` and updated the `script` entry we created in `package.json` to use that. But as there are quite a few files involved in doing that, I have taken a simpler approach to demonstrate the same thing. If the `DefaultComponent` finds it is running on port `4200` it will make the servlet URL point to the back-end server. Otherwise it will attempt to go to the servlet on the Angular CLI server, which of course does not have this.
+
+If you have the Quarkus application from the previous step running we need to stop it so that we can restart it with the system property. Once stopped run:
+[source,bash]
+----
+$mvn package quarkus:dev -Dui.proxy
+----
+
+If you don't have the Angular CLI proxy running from the previous step, run `yarn proxy`.
+
+Now go to http://locahost:4200 and see everything working smoothly.
+
+==== Conclusion
+We have seen how to package an Angular and Quarkus application, and tweaks needed to make it behave in a development environment. The tweaks needed are quite small, and offer great developer productivity when working on your application. You basically just fire up Quarkus with the system property we added (`mvn package quarkus:dev -Dui.proxy=true`), and we do the same for Angular to run it in proxy mode (`yarn proxy`). Now we can just forget about it and modify both back-end and front-end code and see changes happen on the next browser refresh. There is no need to repackage and restart the application with every change done in either place.
+
+Finally, to run this in production you need to run:
+[source,bash]
+----
+$mvn package -Dui
+----
+The `ui` system property will build an optimised Angular application and bundle it in the right place in your Quarkus application.
+
+
