@@ -185,6 +185,41 @@ You can override these runtime properties with the following mechanisms (in decr
 
 NOTE: Environment variables names are following the conversion rules of link:https://github.com/eclipse/microprofile-config/blob/master/spec/src/main/asciidoc/configsources.asciidoc#default-configsources[Eclipse MicroProfile]
 
+=== Configuration Profiles
+
+Quarkus supports the notion of configuration profiles. These allow you to have multiple configuration in the same file and
+select between then via a profile name.
+
+The syntax for this is `%{profile}.config.key=value`. For example if I have the following:
+
+----
+quarkus.http.port=9090
+%dev.quarkus.http.port=8181
+----
+
+The Quarkus HTTP port will be 9090, unless the 'dev' profile is active, in which case it will be 8181.
+
+By default Quarkus has three profiles, although it is possible to use as many as you like. The default profiles are:
+
+* *dev* - Activated when in development mode (i.e. `quarkus:dev`)
+* *test* - Activated when running tests
+* *prod* - The default profile when not running in development or test mode
+
+There are two ways to set a custom profile, either via the `quarkus-profile` system property or the `QUARKUS_PROFILE`
+environment variable. If both are set the environment variable takes precedence. Note that it is not necessary to
+define the names of these profiles anywhere, all that is necessary is to create a config property with the profile
+name, and then set the current profile to that name. For example if I want a 'staging' profile with a different HTTP port
+I can add the following to `application.properties`:
+
+----
+quarkus.http.port=9090
+%staging.quarkus.http.port=9999
+----
+
+And then set the `QUARKUS_PROFILE` environment variable to 'staging' to activate my profile.
+
+== Custom Configuration
+
 === Custom configuration sources
 
 You can also introduce custom configuration sources in the standard MicroProfile Config manner.  To
@@ -192,6 +227,116 @@ do this, you must provide a class which implements either `org.eclipse.microprof
 or `org.eclipse.microprofile.config.spi.ConfigSourceProvider`.  Create a
 https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html[service file] for the
 class and it will be detected and installed at application startup.
+
+=== Custom configuration converters
+
+You can also use your custom types as a configuration values. This can be done by implementing `org.eclipse.microprofile.config.spi.Converter<T>`
+and adding its fully qualified class name in file `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
+
+Let us assume you have a custom type like this one:
+
+[source,java]
+----
+package org.acme.config;
+
+public class MicroProfileCustomValue {
+
+    private final int number;
+
+    public MicroProfileCustomValue(int number) {
+        this.number = number;
+    };
+
+    public int getNumber() {
+        return number;
+    }
+}
+----
+
+The corresponding converter will look like the one below. Please note that your custom converter class must be `public` and must have
+a `public` no-argument constructor. It also must not be `abstract`.
+
+
+[source,java]
+----
+package org.acme.config;
+
+import org.eclipse.microprofile.config.spi.Converter;
+
+public class MicroProfileCustomValueConverter implements Converter<MicroProfileCustomValue> {
+
+    @Override
+    public MicroProfileCustomValue convert(String value) {
+        return new MicroProfileCustomValue(Integer.valueOf(value));
+    }
+}
+----
+
+Then you need to include fully qualified class name of converter in a service file `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
+If you have more converters simply add their class names in this file as well. Single fully qualified class name per line, for example:
+
+[source,shell]
+----
+org.acme.config.MicroProfileCustomValueConverter
+org.acme.config.SomeOtherConverter
+org.acme.config.YetAnotherConverter
+----
+
+Please note that `SomeOtherConverter` and `YetAnotherConverter` was added just for a demonstration. If you include in this file classes
+which are not available in runtime, the converters loading will fail.
+
+After this is done you can use your custom type as a configuration value:
+
+[source,java]
+----
+@ConfigProperty(name = "configuration.value.name")
+MicroProfileCustomValue value;
+----
+
+==== Converter priority
+
+In some cases you may want to use a custom converter to convert a type which is already converted
+by a different converter. In such cases, you can use the `javax.annotation.Priority` annotation to
+change converters precedence and make your custom converter of higher priority than the other
+on the list.
+
+By default, if no `@Priority` can be found on a converter, it's registered with a priority of 100
+and all {project-name} core converters are registered with a priority of 200, so depending on which
+converter you would like to replace, you need to set a higher value.
+
+To demonstrate the idea let us implement a custom converter which will take precedence over 
+`MicroProfileCustomValueConverter` implemented in the previous example.
+
+[source,java]
+----
+package org.acme.config;
+
+import javax.annotation.Priority;
+import org.eclipse.microprofile.config.spi.Converter;
+
+@Priority(150)
+public class MyCustomConverter implements Converter<MicroProfileCustomValue> {
+
+    @Override
+    public MicroProfileCustomValue convert(String value) {
+
+        final int secretNumber;
+        if (value.startsFrom("OBF:")) {
+            secretNumber = Integer.valueOf(SecretDecoder.decode(value));
+        } else {
+            secretNumber = Integer.valueOf(value);
+        }
+
+        return new MicroProfileCustomValue(secretNumber);
+    }
+}
+----
+
+Since it converts the same value type (namely `MicroProfileCustomValue`) and has a priority
+of 150, it will be used instead of a `MicroProfileCustomValueConverter` which has a default
+priority of 100.
+
+NOTE: This new converter also needs to be listed in a service file, i.e. `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
 
 == More info on how to configure
 
