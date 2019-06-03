@@ -15,6 +15,7 @@ permalink: /guides/
 - [Testing Your Application]({{site.baseurl}}/guides/getting-started-testing)
 - [Configuring Logging]({{site.baseurl}}/guides/logging-guide)
 - [Using SSL With Native Images]({{site.baseurl}}/guides/native-and-ssl-guide)
+- [Context Propagation]({{site.baseurl}}/guides/context-propagation-guide)
 
 ### Web
 
@@ -24,16 +25,19 @@ permalink: /guides/
 - [Using JWT RBAC]({{site.baseurl}}/guides/jwt-guide)
 - [Using WebSockets]({{site.baseurl}}/guides/websocket-guide)
 - [Using OpenAPI and Swagger UI]({{site.baseurl}}/guides/openapi-swaggerui-guide)
+- [Undertow Reference Documentation]({{site.baseurl}}/guides/undertow-reference)
 
 ### Data
 
 - [Configuring your datasources]({{site.baseurl}}/guides/datasource-guide)
 - [Using Hibernate ORM and JPA]({{site.baseurl}}/guides/hibernate-orm-guide)
 - [Simplified Hibernate ORM with Panache]({{site.baseurl}}/guides/hibernate-orm-panache-guide)
+- [Hibernate Search + Elasticsearch]({{site.baseurl}}/guides/hibernate-search-guide)
 - [Using Infinispan Client]({{site.baseurl}}/guides/infinispan-client-guide)
 - [Using Transactions]({{site.baseurl}}/guides/transaction-guide)
 - [Validation with Hibernate Validator]({{site.baseurl}}/guides/validation-guide)
 - [Schema Migration with Flyway]({{site.baseurl}}/guides/flyway-guide)
+- [Reactive Postgres Client]({{site.baseurl}}/guides/reactive-postgres-client)
 
 ### Messaging
 
@@ -83,9 +87,10 @@ permalink: /guides/
 
 ### Miscellaneous
 
-- [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
 - [Scheduling Periodic Tasks]({{site.baseurl}}/guides/scheduled-guide)
+- [Sending Emails]({{site.baseurl}}/guides/sending-emails)
 - [Using Vert.x]({{site.baseurl}}/guides/using-vertx)
+- [Measuring Performance]({{site.baseurl}}/guides/performance-measure)
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div markdown="1">
@@ -139,6 +144,13 @@ as native images don't support it out of the box.
 
 <a href="{{site.baseurl}}/guides/native-and-ssl-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+<div class="guide-item" markdown="1">
+## Context Propagation
+
+Learn more about how you can pass contextual information with our implementation of MicroProfile Context Propagation.
+
+<a href="{{site.baseurl}}/guides/context-propagation-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
@@ -189,6 +201,13 @@ This guide explains how to use the OpenAPI extension to generate an OpenAPI desc
 
 <a href="{{site.baseurl}}/guides/openapi-swaggerui-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+<div class="guide-item" markdown="1">
+## Undertow Reference Documentation
+
+Undertow is the webserver used by Quarkus. Learn more about configuring it.
+
+<a href="{{site.baseurl}}/guides/undertow-reference" class="button-cta secondary">READ THE GUIDE</a>
+</div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
 <div class="grid__item width-4-12 width-12-12-m toc" markdown="1">
@@ -217,6 +236,14 @@ It makes complex mappings possible, but it does not make simple and common mappi
 Panache focuses on making your entities trivial and fun to write.
 
 <a href="{{site.baseurl}}/guides/hibernate-orm-panache-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Hibernate Search + Elasticsearch
+
+Hibernate Search allows you to index your entities in an Elasticsearch cluster and easily offer full text
+search in all your Hibernate ORM-based applications.
+
+<a href="{{site.baseurl}}/guides/hibernate-search-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
 ## Using Infinispan Client
@@ -248,6 +275,13 @@ This guide covers how to use Hibernate Validator/Bean Validation in your REST se
 This guide covers how to use the Flyway extension to manage your schema migrations.
 
 <a href="{{site.baseurl}}/guides/flyway-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Reactive Postgres Client
+
+This guide covers how to use the Reactive Postgres Client in Quarkus. 
+
+<a href="{{site.baseurl}}/guides/reactive-postgres-client" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 <div class="grid__item width-12-12"><hr></div>
@@ -466,13 +500,6 @@ This guide explains how to use Kotlin.
 </div>
 <div class="grid__item width-8-12 width-12-12-m guides-content">
 <div class="guide-item" markdown="1">
-## Measuring Performance
-
-When measuring the footprint of a Quarkus application, we measure Resident Set Size (RSS) and not the JVM heap size which is only a small part of the overall problem. The JVM not only allocates native memory for heap (-Xms, -Xmx) but also structures required by the jvm to run your application.
-
-<a href="{{site.baseurl}}/guides/performance-measure" class="button-cta secondary">READ THE GUIDE</a>
-</div>
-<div class="guide-item" markdown="1">
 ## Scheduling Periodic Tasks
 
 Modern applications often need to run specific tasks periodically. In this guide, you learn how to schedule periodic tasks.
@@ -480,11 +507,25 @@ Modern applications often need to run specific tasks periodically. In this guide
 <a href="{{site.baseurl}}/guides/scheduled-guide" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
+## Sending emails
+
+Learn more about how you can send email from a Quarkus application with our reactive email client.
+
+<a href="{{site.baseurl}}/guides/sending-emails" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
 ## Using Vert.x
 
 This guide explains how to use Vert.x in Quarkus to build reactive applications.
 
 <a href="{{site.baseurl}}/guides/using-vertx" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Measuring Performance
+
+When measuring the footprint of a Quarkus application, we measure Resident Set Size (RSS) and not the JVM heap size which is only a small part of the overall problem. The JVM not only allocates native memory for heap (-Xms, -Xmx) but also structures required by the jvm to run your application.
+
+<a href="{{site.baseurl}}/guides/performance-measure" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 </div>
 
