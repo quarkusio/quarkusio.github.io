@@ -10,7 +10,7 @@ author: kkhan
 
 In this blog post we will take advantage of the respective development modes of both Quarkus and Angular CLI and see how we can develop a zero turnaround web application backed by a RESTful API on Quarkus. While I am using Angular, *the concepts are the same for other modern web application frameworks.*
 
-The source code for this blog can be found at https://github.com/kabir/blog-quarkus-ui-development. It also contains a README which explains in detail how the application was set up and how we implemented each step, addressing problems we uncovered along our way.
+The source code for this blog can be found at https://github.com/kabir/blog-quarkus-ui-development. It contains a README which explains in detail how the application was set up and how we implemented each step, addressing problems we uncovered along our way.
 
 You need to have https://nodejs.org/en/download/package-manager/[Node], https://yarnpkg.com/en/docs/install[Yarn] and https://cli.angular.io[Angular CLI] installed on your system, and familiarity with Angular and Quarkus is assumed.
 
@@ -24,30 +24,30 @@ $mvn package -Dui.dev -Dui.proxy quarkus:dev
 ----
 The `-Dui` system property enables a Maven profile to build the web application. The output directory for the web application `webapp/dist/webapp` gets bundled into the Quarkus application. We will talk about `-Dui.proxy` later on.
 
-Now in a browser go to http://localhost:8080 and you will see our application running. It contains a few different pages. Go to the one called `Rest` which makes a REST call. We can change the return value of the https://github.com/kabir/blog-quarkus-ui-development/blob/master/src/main/java/org/kabir/quarkus/ui/SampleResource.java[`SampleServlet.hello()`] method. If you refresh the page you will see the changes made reflected automatically!
+Go to http://localhost:8080 in your browser and take a look at our sample application. It contains a few different pages. Go to the one called `Rest` which makes a REST call. We can change the return value of the https://github.com/kabir/blog-quarkus-ui-development/blob/master/src/main/java/org/kabir/quarkus/ui/SampleResource.java[`SampleServlet.hello()`] method. If you refresh the page you will see the changes made reflected automatically!
 
-With what we have so far if we were to make changes to the user interface in our web application, we would need to stop Quarkus and run the above command to build the web application again and restart quarkus. This is not what we want, so we take advantage of Angular's https://angular.io/guide/build#proxying-to-a-backend-server[proxy]. https://facebook.github.io/create-react-app/docs/proxying-api-requests-in-development[React] and https://cli.vuejs.org/config/#devserver-proxy[Vue] have something similar.
+With what we have so far, if we were to make changes to the user interface in our web application, we would need to stop Quarkus and run the above command to build the web application again and restart quarkus. This is not what we want, so we take advantage of Angular's https://angular.io/guide/build#proxying-to-a-backend-server[proxy]. https://facebook.github.io/create-react-app/docs/proxying-api-requests-in-development[React] and https://cli.vuejs.org/config/#devserver-proxy[Vue] have something similar.
 
 In another terminal window go into the `webapp/` folder of the cloned project, and run:
 ----
 $yarn proxy
 ----
-This will start the Angular development server in proxy mode on port 4200. Now if you go to http://localhost:4200 you should see the same application as you saw on port 8080, but served by the Angular development server. If you make any changes to any of the Angular components set up in https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/src/app/app.component.ts[`app.component.ts`] you will see your changes reflected.
+This will start the Angular development server in proxy mode on port 4200. Go to http://localhost:4200 and you will see the same application as you saw earlier on port 8080, but served by the Angular development server while accessing the REST endpoints from the running Quarkus application. If you make any changes to any of the Angular components set up in https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/src/app/app.component.ts[`app.component.ts`] you will see your changes reflected.
 
-This is great!!! We can now be super-productive and make changes in both our front-end and our back-end, and see the changes reflected immediately without needing to rebuild, repackage and restart our application!
+This is great!!! We can now be super-productive and make changes in both our front-end and our back-end, and see the changes immediately without needing to rebuild, repackage and restart our application!
 
 ==== Adjustments Summary
 
-The example project has already been set up with the needed adjustments to do this. These are the main things which need doing:
+The example project has already been set up with the needed adjustments to work properly both as a bundled application and in development mode. These are the main tweaks:
 
-. Make sure we handle the Angular routes in the UI rather than on the back-end. This is important for the bundled version (running on port 8080).
-. Enable the Angular proxy
-.. Signal to the back-end that the front-end is running in a proxy, i.e. not served by us. This is important for when the back-end needs to redirect to a page in the front-end.
+. Handle the Angular routes in the UI rather than on the back-end. This is important for the bundled version (running on port 8080).
+. Enable the Angular proxy to allow for the UI to call REST endpoints served by Quarkus.
+.. Signal to the back-end that the front-end is running in a proxy, i.e. not served by us. This is important if the back-end needs to redirect to a page in the front-end.
 
-We will not go into details of how the application is set up, but will instead focus on the changes needed to make this work well.
+We will focus on the changes needed to make this work well, and not go into the details of how the application is set up.
 
 ==== Handle Angular Routes
-We need to add a filter, https://github.com/kabir/blog-quarkus-ui-development/blob/master/src/main/java/org/kabir/quarkus/ui/AngularRouteFilter.java[AngularRouteFilter]. The essence of its `doFilter()` method is:
+Add a filter, https://github.com/kabir/blog-quarkus-ui-development/blob/master/src/main/java/org/kabir/quarkus/ui/AngularRouteFilter.java[AngularRouteFilter]. The essence of its `doFilter()` method is:
 [source,java]
 ----
 chain.doFilter(request, response);
@@ -63,11 +63,25 @@ if (response.getStatus() == 404) {
 }
 
 ----
-Without this filter, if you try to go to one of the Angular routes directly (e.g if you try to refresh when on http://localhost:8080/rest which is the `Rest` page we saw earlier) Quarkus will think it is a file, a REST endpoint or a servlet. Since it has no knowledge of anything called `/rest` you end up with a 404 (Not Found) status. `AngularRouteFilter` checks the status code, and if it is 404 and does not seem to be a file, we attempt to handle it in Angular.
+This filter is only needed when running the application bundled in Quarkus (port 8080). It is not needed when connecting to the application running in Angular (port 4200). It's purpose is to allow us to **bookmark pages** in the application. All the server knows about are things like:
+
+* the REST endpoints
+* deployed servlets
+* the resources in the `META-INF/resources/` folder of the application
+
+The `META-INF/resources/` in our case contains the application's index.html and the transpiled resources.
+
+Without this filter, if you go to one of the Angular routes directly (e.g if you try to refresh when on http://localhost:8080/rest which is the `Rest` page we saw earlier) Quarkus will think it is a file, a REST endpoint or a servlet. Since Quarkus has no knowledge of anything called `/rest` you end up with a 404 (Not Found) status. The filter checks the status code of the request after calling `chain.doFilter()`. If the status is 404 and does not seem to be a file, we forward this request to `/`, which in turn serves up the `index.html` file. By doing a forward the path and parameters of the request are preserved. Angular then figures out that `/rest` is one of its known routes and displays the appropriate page of the application. Once the web application is loaded in the browser, Angular takes over and handles all the internal links to other routes in the web application (as an example, if you are on http://localhost:8080 and click on the link taking you to http://localhost:8080/other there is no round-trip to the server).
+
+There are other ways you can handle this too, e.g. by checking the path against a set of hard-coded known paths that are to be handled by the back-end, but for my purposes the above has worked very well. The key is to invoke:
+----
+request.getRequestDispatcher("/").forward(request, response);
+----
+if it is something that should be handled by Angular.
 
 
 ==== Set up the Angular proxy
-We configure the proxy in https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/proxy.conf.json[proxy.conf.json]. All REST calls to anything under `/api` will be passed to the back-end running on port 8080. To run the Angular development server with this configuration, we have added a `proxy` configuration to the `scripts` section of https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/package.json[`package.json`].
+The proxy is configured in https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/proxy.conf.json[proxy.conf.json]. All REST calls to anything under `/api` will be passed to the back-end running on port 8080. To run the Angular development server with this configuration, we have added a `proxy` configuration to the `scripts` section of https://github.com/kabir/blog-quarkus-ui-development/blob/master/webapp/package.json[`package.json`].
 
 In our case, we have a servlet which needs to redirect back to the front-end (something I found I needed to implement OAuth in my main project). That has a check for the `-Dui.proxy` system property we saw earlier when handling the `/callback` path in https://github.com/kabir/blog-quarkus-ui-development/blob/master/src/main/java/org/kabir/quarkus/ui/SampleServlet.java[`SampleServlet`]. If this property is set, we prepend `https://localhost:4200` (the address of the Angular proxy) to the redirect URL if we find the proxy is running on port 4200.
 
