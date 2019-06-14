@@ -35,6 +35,17 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 **For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
 
+## Writing a blog
+
+To write a blog:
+
+- create an author ent ry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
+    - `emailhash` is used to fetch your picture form the Gravatar service
+- create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_posts)
+    -the file name is `yyyy-mm-dd-slug.adoc`
+- it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
+- send a pull request against the develop branch and voilà
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/blob/master/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
