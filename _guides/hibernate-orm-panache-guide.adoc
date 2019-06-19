@@ -3,9 +3,9 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
 ////
+= Quarkus - Simplified Hibernate ORM with Panache
 
 include::./attributes.adoc[]
-= {project-name} - Simplified Hibernate ORM with Panache
 :config-file: application.properties
 
 Hibernate ORM is the de facto JPA implementation and offers you the full breadth of an Object Relational Mapper.
@@ -285,6 +285,15 @@ If your query does not start with `from`, we support the following additional fo
 - `<singleColumnName>` (and single parameter) which will expand to `from EntityName where <singleColumnName> = ?`
 - `<query>` will expand to `from EntityName where <query>`
 
+NOTE: You can also write your queries in plain 
+link:https://docs.jboss.org/hibernate/orm/5.4/userguide/html_single/Hibernate_User_Guide.html#hql[HQL]:
+
+[source,java]
+--
+Order.find("select distinct o from Order o left join fetch o.lineItems");
+--
+
+
 == Query parameters
 
 You can pass query parameters by index (1-based):
@@ -366,6 +375,43 @@ So if Repositories are your thing, you can keep doing them. Even with repositori
 subclasses of `PanacheEntity` in order to get the ID and public fields working, but you can even skip that and
 go back to specifying your ID and using getters and setters if that's your thing. We're not judging.
 
+== Transactions
+
+Make sure to wrap methods modifying your database (e.g. `entity.persist()`) within a transaction. Marking a 
+CDI bean method `@Transactional` will do that for you and make that method a transaction boundary. We recommend doing 
+so at your application entry point boundaries like your REST endpoint controllers.
+
+== Lock management
+
+Panache does not provide direct support for database locking, but you can do it by injecting the `EntityManager` in your entity (or `PanacheRepository`) and creating a specific method that will use the entity manager to lock the entity after retrieval. The entity manager can also be retrieved via `Panache.getEntityManager()`.
+
+The following example contains a `findByIdForUpdate` method that finds the entity by primary key then locks it. The lock will generate a `SELECT ... FOR UPDATE` query (the same principle can be used for other kinds of `find*` methods):
+
+[source,java]
+--
+@Entity
+public class Person extends PanacheEntity {
+    public String name;
+    public LocalDate birth;
+    public Status status;
+
+    // inject the EntityManager inside the entity
+    @Inject
+    EntityManager entityManager;
+    
+    public static Person findByIfForUpdate(Long id){
+      Person person = findById(id);
+      //lock with the PESSIMISTIC_WRITE mode type : this will generate a SELECT ... FOR UPDATE query
+      entityManager.lock(person, LockModeType.PESSIMISTIC_WRITE);
+      return person;
+    }
+}
+--
+
+This will generate two select queries: one to retrieve the entity and the second to lock it. Be careful that locks are released when the transaction ends, so the method that invokes the lock query must be annotated with the `@Transactional` annotation.
+
+We are currently evaluating adding support for lock management inside Panache. If you are interested, please visit our github issue link:https://github.com/quarkusio/quarkus/issues/2744[#2744] and contribute to the discussion.
+
 == Custom IDs
 
 IDs are often a touchy subject, and not everyone's up for letting them handled by the framework, once again we
@@ -440,3 +486,11 @@ your entity `Person` by typing `Person.` and getting completion for all the oper
 `Person.find("name", "stef")`.
 
 That's all there is to it: with Panache, Hibernate ORM has never looked so trim and neat. 
+
+== Defining entities in external projects or jars
+
+Hibernate ORM in Quarkus relies on compile-time bytecode enhancements to your entities. If you define your entities in the
+same project where you build your Quarkus application, everything will work fine. If the entities come from external projects
+or jars, you can make sure that your jar is treated like a Quarkus application library by adding an empty `META-INF/beans.xml` file.
+This will allow Quarkus to index and enhance your entities as if they were inside the current project.
+
