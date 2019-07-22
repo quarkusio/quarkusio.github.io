@@ -27,7 +27,7 @@ Think of Quarkus extensions as your project dependencies. Extensions configure, 
 This will allow 3rd party projects to easily take advantage of the work we have done to make it easier to target GraalVM.
 
 ## Can I write an extension?
-## Will Quarkus accept my extension?
+## Will the Quarkus team accept my extension?
 
 Oh yeah!
 We had quite a few extensions written outside the Quarkus "initial" team.
