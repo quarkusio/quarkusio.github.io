@@ -26,8 +26,24 @@ One of the main goals of Quarkus is ease of extensibility and to build a vibrant
 Think of Quarkus extensions as your project dependencies. Extensions configure, boot and integrate a framework or technology into your Quarkus application. They also do all of the heavy lifting of providing the right information to GraalVM for your application to compile natively.
 This will allow 3rd party projects to easily take advantage of the work we have done to make it easier to target GraalVM.
 
-We are also aiming to provide a support for a full [extension ecosystem](/extensions), to make it easy to discover and consume
-3rd party extensions, as well as providing easier version management.
+## Can I write an extension?
+## Will Quarkus accept my extension?
+
+Oh yeah!
+We had quite a few extensions written outside the Quarkus "initial" team.
+
+Quarkus is an open ecosystem and we hope to see all the extensions people need to write their apps.
+We are working as we speak to allow an extension to be published in separate repos and separate GAVs and thus published in Maven repos independently of Quarkus core.
+This will greatly simply the publication process.
+Expect news soon.
+
+The one current restriction is that extensions should work in both OpenJDK and Substrate VM.
+That is the guarantee we give Quarkus users (a cross compilation for their app).
+We have a maturity model to improve an extension to be fully "Quarked" and benefit from Quarkus, all done in incremental steps.
+Just hop on our [mailing list](https://quarkus.io/community/#discussions) to discuss your ideas and get help.
+And you can start reading our [extension writing guide](https://quarkus.io/guides/extension-authors-guide) as well
+or more simply get inspiration from the [existing ones](https://github.com/quarkusio/quarkus/tree/master/extensions).
+
 
 ## What is GraalVM?
 
