@@ -34,10 +34,10 @@ We had quite a few extensions written outside the Quarkus "initial" team.
 
 Quarkus is an open ecosystem and we hope to see all the extensions people need to write their apps.
 We are working as we speak to allow an extension to be published in separate repos and separate GAVs and thus published in Maven repos independently of Quarkus core.
-This will greatly simply the publication process.
+This will greatly simplify the publication process.
 Expect news soon.
 
-The one current restriction is that extensions should work in both OpenJDK and Substrate VM.
+The one current restriction is that extensions should work in both OpenJDK and GraalVM native executables.
 That is the guarantee we give Quarkus users (a cross compilation for their app).
 We have a maturity model to improve an extension to be fully "Quarked" and benefit from Quarkus, all done in incremental steps.
 Just hop on our [mailing list](https://quarkus.io/community/#discussions) to discuss your ideas and get help.
