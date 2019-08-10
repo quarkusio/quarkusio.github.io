@@ -1,0 +1,140 @@
+////
+This guide is maintained in the main Quarkus repository
+and pull requests should be submitted there:
+https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
+////
+= Quarkus - Kubernetes Client
+
+include::./attributes.adoc[]
+
+
+Quarkus includes the `kubernetes-client` extension which enables the use of the https://github.com/fabric8io/kubernetes-client[Fabric8 Kubernetes Client]
+in native mode while also making it easier to work with.
+
+Having a Kubernetes Client extension in Quarkus is very useful in order to unlock the power of Kubernetes Operators.
+Kubernetes Operators are quickly emerging as a new class of Cloud Native applications.
+These applications essentially watch the Kubernetes API and react to changes on various resources and can be used to manage the lifecycle of all kinds of complex systems like databases, messaging systems and much much more.
+Being able to write such operators in Java with a the very low footprint that native images provide is a great match.
+
+== Configuration
+
+Once you have your Quarkus project configured you can add the `kubernetes-client` extension
+to your project by running the following command in your project base directory.
+
+[source]
+mvn quarkus:add-extension -Dextensions="kubernetes-client"
+
+This will add the following to your pom.xml:
+
+[source,xml]
+----
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-kubernetes-client</artifactId>
+    </dependency>
+----
+
+== Usage
+
+Quarkus configures a Bean of type `KubernetesClient` which can be injected into application code using the well known CDI methods.
+This client can be configured using various properties as can be seen in the following example:
+
+[source]
+----
+quarkus.kubernetes-client.trust-certs=false
+quarkus.kubernetes-client.namespace=default
+----
+
+Note that the full list of properties is available in the [KubernetesClientBuildConfig](https://github.com/quarkusio/quarkus/blob/master/extensions/kubernetes-client/runtime/src/main/java/io/quarkus/kubernetes/client/runtime/KubernetesClientBuildConfig.java) class.
+
+=== Overriding
+
+The extension also allows application code to override either of  `io.fabric8.kubernetes.client.Config` or `io.fabric8.kubernetes.client.KubernetesClient` which are
+normally provided by the extension by simply declaring custom versions of those beans.
+
+An example of this can be seen in the following snippet:
+
+[source,java]
+----
+@ApplicationScoped
+public class KubernetesClientProducer {
+
+    @Produces
+    public KubernetesClient kubernetesClient() {
+        // here you would create a custom client
+        return new DefaultKubernetesClient();
+    }
+}
+----
+
+== Testing
+
+To make testing against a mock Kubernetes API extremely simple, Quarkus provides the `KubernetesMockServerTestResource` which automatically launches
+a mock of the Kubernetes API server and sets the proper environment variables needed so that the Kubernetes Client configures itself to use said mock.
+Tests can inject the mock and set it up in any way necessary for the particular testing using the `@MockServer` annotation.
+
+Let's assume we have a REST endpoint defined like so:
+
+[source%nowrap,java]
+----
+
+@Path("/pod")
+public class Pods {
+
+    private final KubernetesClient kubernetesClient;
+
+    public Pods(KubernetesClient kubernetesClient) {
+        this.kubernetesClient = kubernetesClient;
+    }
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/{namespace}")
+    public List<Pod> pods(@PathParam("namespace") String namespace) {
+        return kubernetesClient.pods().inNamespace(namespace).list().getItems();
+    }
+}
+----
+
+We could write a test for this endpoint very easily like so:
+
+[source%nowrap,java]
+----
+@QuarkusTestResource(KubernetesMockServerTestResource.class)
+@QuarkusTest
+public class KubernetesClientTest {
+
+    @MockServer
+    KubernetesMockServer mockServer;
+
+    @BeforeEach
+    public void before() {
+        final Pod pod1 = new PodBuilder().withNewMetadata().withName("pod1").withNamespace("test").and().build();
+        final Pod pod2 = new PodBuilder().withNewMetadata().withName("pod2").withNamespace("test").and().build();
+
+        mockServer.expect().get().withPath("/api/v1/namespaces/test/pods")
+                .andReturn(200,
+                        new PodListBuilder().withNewMetadata().withResourceVersion("1").endMetadata().withItems(pod1, pod2)
+                                .build())
+                .always();
+    }
+
+    @Test
+    public void testInteractionWithAPIServer() {
+        RestAssured.when().get("/pod/test").then()
+                .body("size()", is(2));
+    }
+
+}
+----
+
+Note that to take advantage of these features, the `quarkus-test-kubernetes-client` dependency needs to be added, for example like so:
+
+[source,xml]
+----
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-test-kubernetes-client</artifactId>
+        <scope>test</scope>
+    </dependency>
+----

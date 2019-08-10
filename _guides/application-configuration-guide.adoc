@@ -3,10 +3,9 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
 ////
+= Quarkus - Configuring Your Application
 
 include::./attributes.adoc[]
-
-= {project-name} - Configuring Your Application
 
 Hardcoded values in your code is a _no go_ (even if we all did it at some point ;-)).
 In this guide, we learn how to configure your application.
@@ -59,29 +58,28 @@ The injection uses the `@ConfigProperty` annotation.
 [source,java]
 ----
 @ConfigProperty(name = "greeting.message")
-private String message;
+String message;
 ----
 
-Edit the `org.acme.config.GreetingResource`, and introduce the 3 following configuration properties:
+NOTE: When injecting a configured value, you can use `@Inject @ConfigProperty` or just `@ConfigProperty`.
+The `@Inject` annotation is not necessary for members annotated with `@ConfigProperty`, a behavior which differs from https://microprofile.io/project/eclipse/microprofile-config[MicroProfile Config]
+
+Edit the `org.acme.config.GreetingResource`, and introduce the following configuration properties:
 
 [source,java]
 ----
-@ConfigProperty(name = "greeting.message")
-private String message;
+@ConfigProperty(name = "greeting.message") <1>
+String message;
 
-@ConfigProperty(name = "greeting.suffix", defaultValue="!")
-private String suffix;
+@ConfigProperty(name = "greeting.suffix", defaultValue="!") <2>
+String suffix;
 
 @ConfigProperty(name = "greeting.name")
-private Optional<String> name;
+Optional<String> name; <3>
 ----
-
-NOTE: When injecting a configured value, you can use `@Inject @ConfigProperty(...)` or just `@ConfigProperty(...)`.
-The `@Inject` annotation is not necessary for members annotated with `@ConfigProperty`, a behavior which differs from https://microprofile.io/project/eclipse/microprofile-config[MicroProfile Config]
-
-If you do not provide a value for the first property, it will have a `null` value.
-The second property injects the given default value if the configuration file does not provide a value.
-The third property is optional. The injected `Optional` is empty as the configuration file does not provide a value.
+<1> If you do not provide a value for this property, the application startup fails with `javax.enterprise.inject.spi.DeploymentException: No config value of type [class java.lang.String] exists for: greeting.message`.
+<2> The default value is injected if the configuration does not provide a value for `greeting.suffix`.
+<3> This property is optional - an empty `Optional` is injected if the configuration does not provide a value for `greeting.name`.
 
 Now, modify the `hello` method to use the injected properties:
 
@@ -160,9 +158,47 @@ You can add the `greeting.suffix`, remove the other properties, change the value
 As usual, the application can be packaged using `./mvnw clean package` and executed using the `-runner.jar` file.
 You can also generate the native executable with `./mvnw clean package -Pnative`.
 
+== Configuring Quarkus
+
+Quarkus itself is configured via the same mechanism as your application. Quarkus reserves the `quarkus.` namespace
+for its own configuration. For example to configure the HTTP server port you can set `quarkus.http.port` in
+`application.properties`.
+
+It is also possible to generate an example `application.properties` with all known configuration properties, to make
+it easy to see what Quarkus configuration options are available. To do this run
+
+[source,shell]
+--
+./mvnw quarkus:generate-config
+--
+
+This will create a `src/main/resources/application.properties.example` file that contains all the config options
+exposed via the extensions you currently have installed. These options are commented out, and have their default value
+when applicable. For example this HTTP port config entry will appear as:
+
+
+[source,properties]
+--
+#
+# The HTTP port
+#
+#quarkus.http.port=8080
+--
+
+Rather than generating an example config file you can also add these to you actual config file by setting the `-Dfile`
+parameter:
+
+[source,shell]
+--
+./mvnw quarkus:generate-config -Dfile=application.properties
+--
+
+If a config option is already present (commented or uncommented) it will not be added, so it is safe to run this after
+adding an additional extension to see what additional options have been added.
+
 == Overriding properties at runtime
 
-{project-name} does much of its configuration and bootstrap at build time.
+Quarkus does much of its configuration and bootstrap at build time.
 Most properties will then be read and set during the build time step.
 To change them, make sure to repackage your application.
 
@@ -186,6 +222,53 @@ You can override these runtime properties with the following mechanisms (in decr
 
 NOTE: Environment variables names are following the conversion rules of link:https://github.com/eclipse/microprofile-config/blob/master/spec/src/main/asciidoc/configsources.asciidoc#default-configsources[Eclipse MicroProfile]
 
+=== Configuration Profiles
+
+Quarkus supports the notion of configuration profiles. These allow you to have multiple configuration in the same file and
+select between then via a profile name.
+
+The syntax for this is `%{profile}.config.key=value`. For example if I have the following:
+
+[source,properties]
+----
+quarkus.http.port=9090
+%dev.quarkus.http.port=8181
+----
+
+The Quarkus HTTP port will be 9090, unless the 'dev' profile is active, in which case it will be 8181.
+
+By default Quarkus has three profiles, although it is possible to use as many as you like. The default profiles are:
+
+* *dev* - Activated when in development mode (i.e. `quarkus:dev`)
+* *test* - Activated when running tests
+* *prod* - The default profile when not running in development or test mode
+
+There are two ways to set a custom profile, either via the `quarkus.profile` system property or the `QUARKUS_PROFILE`
+environment variable. If both are set the system property takes precedence. Note that it is not necessary to
+define the names of these profiles anywhere, all that is necessary is to create a config property with the profile
+name, and then set the current profile to that name. For example if I want a 'staging' profile with a different HTTP port
+I can add the following to `application.properties`:
+
+[source,properties]
+----
+quarkus.http.port=9090
+%staging.quarkus.http.port=9999
+----
+
+And then set the `QUARKUS_PROFILE` environment variable to 'staging' to activate my profile.
+
+==== Miscellaneous
+The default Quarkus application runtime profile is set to the profile used to build the application.
+For example:
+[source,shell]
+----
+./mvnw package -Pnative -Dquarkus.profile=prod-aws`
+./target/my-app-1.0-runner // <1>
+----
+<1> The command will run with the `prod-aws` profile. This can be overridden using the `quarkus.profile` system property.
+
+== Custom Configuration
+
 === Custom configuration sources
 
 You can also introduce custom configuration sources in the standard MicroProfile Config manner.  To
@@ -194,9 +277,119 @@ or `org.eclipse.microprofile.config.spi.ConfigSourceProvider`.  Create a
 https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html[service file] for the
 class and it will be detected and installed at application startup.
 
+=== Custom configuration converters
+
+You can also use your custom types as a configuration values. This can be done by implementing `org.eclipse.microprofile.config.spi.Converter<T>`
+and adding its fully qualified class name in file `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
+
+Let us assume you have a custom type like this one:
+
+[source,java]
+----
+package org.acme.config;
+
+public class MicroProfileCustomValue {
+
+    private final int number;
+
+    public MicroProfileCustomValue(int number) {
+        this.number = number;
+    };
+
+    public int getNumber() {
+        return number;
+    }
+}
+----
+
+The corresponding converter will look like the one below. Please note that your custom converter class must be `public` and must have
+a `public` no-argument constructor. It also must not be `abstract`.
+
+
+[source,java]
+----
+package org.acme.config;
+
+import org.eclipse.microprofile.config.spi.Converter;
+
+public class MicroProfileCustomValueConverter implements Converter<MicroProfileCustomValue> {
+
+    @Override
+    public MicroProfileCustomValue convert(String value) {
+        return new MicroProfileCustomValue(Integer.valueOf(value));
+    }
+}
+----
+
+Then you need to include fully qualified class name of converter in a service file `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
+If you have more converters simply add their class names in this file as well. Single fully qualified class name per line, for example:
+
+[source]
+----
+org.acme.config.MicroProfileCustomValueConverter
+org.acme.config.SomeOtherConverter
+org.acme.config.YetAnotherConverter
+----
+
+Please note that `SomeOtherConverter` and `YetAnotherConverter` was added just for a demonstration. If you include in this file classes
+which are not available in runtime, the converters loading will fail.
+
+After this is done you can use your custom type as a configuration value:
+
+[source,java]
+----
+@ConfigProperty(name = "configuration.value.name")
+MicroProfileCustomValue value;
+----
+
+==== Converter priority
+
+In some cases you may want to use a custom converter to convert a type which is already converted
+by a different converter. In such cases, you can use the `javax.annotation.Priority` annotation to
+change converters precedence and make your custom converter of higher priority than the other
+on the list.
+
+By default, if no `@Priority` can be found on a converter, it's registered with a priority of 100
+and all Quarkus core converters are registered with a priority of 200, so depending on which
+converter you would like to replace, you need to set a higher value.
+
+To demonstrate the idea let us implement a custom converter which will take precedence over
+`MicroProfileCustomValueConverter` implemented in the previous example.
+
+[source,java]
+----
+package org.acme.config;
+
+import javax.annotation.Priority;
+import org.eclipse.microprofile.config.spi.Converter;
+
+@Priority(150)
+public class MyCustomConverter implements Converter<MicroProfileCustomValue> {
+
+    @Override
+    public MicroProfileCustomValue convert(String value) {
+
+        final int secretNumber;
+        if (value.startsFrom("OBF:")) {
+            secretNumber = Integer.valueOf(SecretDecoder.decode(value));
+        } else {
+            secretNumber = Integer.valueOf(value);
+        }
+
+        return new MicroProfileCustomValue(secretNumber);
+    }
+}
+----
+
+Since it converts the same value type (namely `MicroProfileCustomValue`) and has a priority
+of 150, it will be used instead of a `MicroProfileCustomValueConverter` which has a default
+priority of 100.
+
+NOTE: This new converter also needs to be listed in a service file, i.e. `META-INF/services/org.eclipse.microprofile.config.spi.Converter`.
+
 == More info on how to configure
 
-{project-name} relies on Eclipse MicroProfile and inherit its features.
+Quarkus relies on Eclipse MicroProfile and inherit its features.
 
 There are converters that convert your property file content from `String` to typed Java types. See the list link:https://github.com/eclipse/microprofile-config/blob/master/spec/src/main/asciidoc/converters.asciidoc[in the specification].
 
