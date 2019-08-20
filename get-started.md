@@ -34,7 +34,7 @@ This guide covers:
 <div class="guide-item" markdown="1">
 ## Quickly Bootstrap Your Application
 
-With <a href="https://code.quarkus.io">code.quarkus.io</a>, in a few click, you can bootstrap your Quarkus application and discover its extension ecosystem.
+With <a href="https://code.quarkus.io">code.quarkus.io</a>, in a few clicks, you can bootstrap your Quarkus application and discover its extension ecosystem.
 
 Explore the wide breadth of technologies Quarkus applications can be made with.
 
