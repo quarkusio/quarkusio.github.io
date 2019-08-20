@@ -8,7 +8,8 @@ permalink: /get-started/
 ## Table of Contents
 ### Getting Started
 
- - [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide)
+ - [Be Guided Through First Application]({{site.baseurl}}/guides/getting-started-guide)
+ - [Quickly Bootstrap Your Application](https://code.quarkus.io)
  - [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
  - [Using our Tooling]({{site.baseurl}}/guides/tooling)
 
@@ -19,7 +20,7 @@ permalink: /get-started/
 </div>
 <div class="grid__item width-8-12 width-12-12-m gs-content">
 <div class="guide-item" markdown="1">
-## Create Your First Application
+## Be Guided Through Your First Application
 
 This guide covers:
 - Bootstrapping an application
@@ -29,6 +30,15 @@ This guide covers:
 - Packaging of the application
 
 <a href="{{site.baseurl}}/guides/getting-started-guide" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+<div class="guide-item" markdown="1">
+## Quickly Bootstrap Your Application
+
+With <a href="https://code.quarkus.io">code.quarkus.io</a>, in a few click, you can bootstrap your Quarkus application and discover its extension ecosystem.
+
+Explore the wide breadth of technologies Quarkus applications can be made with.
+
+<a href="https://code.quarkus.io" class="button-cta secondary">START CODING</a>
 </div>
 
 <div class="guide-item" markdown="1">
