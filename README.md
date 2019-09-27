@@ -8,9 +8,9 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 [Jekyll static site generator docs](https://jekyllrb.com/docs/).
 
 1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/)
-2. Install Jekyll and [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems) 
+2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems) 
   
-        gem install jekyll bundler
+        gem install bundler
 
 3. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
   
