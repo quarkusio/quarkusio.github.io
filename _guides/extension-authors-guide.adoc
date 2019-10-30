@@ -1233,6 +1233,131 @@ HealthBuildItem addHealthCheck(AgroalBuildTimeConfig agroalBuildTimeConfig) {
 }
 ----
 
+=== Customizing JSON handling from an extension
+Extensions often need to register serializers and/or deserializers for types the extension provides.
+
+For this, both JSON-B and Jackson extension provide a way to register serializer/deserializer from within an
+extension deployment module.
+
+Keep in mind that not everybody will need JSON, so you need to make it optional.
+
+If an extension intends to provide JSON related customization,
+it is strongly advised to provide customization for both JSON-B and Jackson.
+
+==== Customizing JSON-B
+First, add an *optional* dependency to `quarkus-jsonb` on your extension's runtime module.
+
+[source%nowrap,xml]
+----
+<dependency>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-jsonb</artifactId>
+  <optional>true</optional>
+</dependency>
+----
+
+Then create a serializer and/or a deserializer for JSON-B, an example of which can be seen in the `mongodb-panache` extension.
+
+[source%nowrap,java]
+----
+public class ObjectIdSerializer implements JsonbSerializer<ObjectId> {
+    @Override
+    public void serialize(ObjectId obj, JsonGenerator generator, SerializationContext ctx) {
+        if (obj != null) {
+            generator.write(obj.toString());
+        }
+    }
+}
+----
+
+Add a dependency to `quarkus-jsonb-spi` on your extension's deployment module.
+
+[source%nowrap,xml]
+----
+<dependency>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-jsonb-spi</artifactId>
+</dependency>
+----
+
+Add a build step to your processor to register the serializer via the `JsonbSerializerBuildItem`.
+
+[source%nowrap,java]
+----
+@BuildStep
+JsonbSerializerBuildItem registerJsonbSerializer() {
+    return new JsonbSerializerBuildItem(io.quarkus.mongodb.panache.jsonb.ObjectIdSerializer.class.getName()));
+}
+----
+
+The JSON-B extension will then use the produced build item to register your serializer/deserializer automatically.
+
+If you need more customization capabilities than registering a serializer or a deserializer,
+you can produce a CDI bean that implements `io.quarkus.jsonb.JsonbConfigCustomizer` via an `AdditionalBeanBuildItem`.
+More info about customizing JSON-B can be found on the JSON guide link:rest-json-guide.html#configuring-json-support[Configuring JSON support]
+
+==== Customizing Jackson
+
+First, add an *optional* dependency to `quarkus-jackson` on your extension's runtime module.
+
+[source%nowrap,xml]
+----
+<dependency>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-jackson</artifactId>
+  <optional>true</optional>
+</dependency>
+----
+
+Then create a serializer or a deserializer (or both) for Jackson, an example of which can be seen in the `mongodb-panache` extension.
+
+[source%nowrap,java]
+----
+public class ObjectIdSerializer extends StdSerializer<ObjectId> {
+    public ObjectIdSerializer() {
+        super(ObjectId.class);
+    }
+    @Override
+    public void serialize(ObjectId objectId, JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
+            throws IOException {
+        if (objectId != null) {
+            jsonGenerator.writeString(objectId.toString());
+        }
+    }
+}
+----
+
+Add a dependency to `quarkus-jackson-spi` on your extension's deployment module.
+
+[source%nowrap,xml]
+----
+<dependency>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-jackson-spi</artifactId>
+</dependency>
+----
+
+Add a build step to your processor to register a Jackson module via the `JacksonModuleBuildItem`.
+You need to name your module in a unique way across all Jackson modules.
+
+[source%nowrap,java]
+----
+@BuildStep
+JacksonModuleBuildItem registerJacksonSerDeser() {
+    return new JacksonModuleBuildItem.Builder("ObjectIdModule")
+                    .add(io.quarkus.mongodb.panache.jackson.ObjectIdSerializer.class.getName(),
+                            io.quarkus.mongodb.panache.jackson.ObjectIdDeserializer.class.getName(),
+                            ObjectId.class.getName())
+                    .build();
+}
+----
+
+The Jackson extension will then use the produced build item to register a module within Jackson automatically.
+
+If you need more customization capabilities than registering a module,
+you can produce a CDI bean that implements `io.quarkus.jackson.ObjectMapperCustomizer` via an `AdditionalBeanBuildItem`.
+More info about customizing Jackson can be found on the JSON guide link:rest-json-guide.html#configuring-json-support[Configuring JSON support]
+
 === Testing Extensions
 
 Testing of extensions should be done with the `io.quarkus.test.QuarkusUnitTest` runner. This runner allows
@@ -1457,25 +1582,25 @@ There Quarkus provides a lot of build items that control aspects of the native e
 to programmatically perform tasks such as registering classes for reflection or adding static resources to the native
 executable. Some of these build items are listed below:
 
-`io.quarkus.deployment.builditem.substrate.SubstrateResourceBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem`::
  Includes static resources into the native executable.
 
-`io.quarkus.deployment.builditem.substrate.RuntimeReinitializedClassBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.RuntimeReinitializedClassBuildItem`::
 A class that will be reinitialized at runtime by Substrate. This will result in the static initializer running twice.
 
-`io.quarkus.deployment.builditem.substrate.SubstrateSystemPropertyBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.NativeImageSystemPropertyBuildItem`::
 A system property that will be set at native executable build time.
 
-`io.quarkus.deployment.builditem.substrate.SubstrateResourceBundleBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBundleBuildItem`::
 Includes a resource bundle in the native executable.
 
-`io.quarkus.deployment.builditem.substrate.ReflectiveClassBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem`::
 Registers a class for reflection in Substrate. Constructors are always registered, while methods and fields are optional.
 
-`io.quarkus.deployment.builditem.substrate.RuntimeInitializedClassBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.RuntimeInitializedClassBuildItem`::
 A class that will be initialized at runtime rather than build time. This will cause the build to fail if the class is initialized as part of the native executable build process, so care must be taken.
 
-`io.quarkus.deployment.builditem.substrate.SubstrateConfigBuildItem`::
+`io.quarkus.deployment.builditem.nativeimage.NativeImageConfigBuildItem`::
 A convenience feature that allows you to control most of the above features from a single build item.
 
 `io.quarkus.deployment.builditem.NativeEnableAllCharsetsBuildItem`::
@@ -1502,12 +1627,21 @@ The only particular aspect of writing Quarkus extensions in Eclipse is that APT 
 
 The class augmentation step of Quarkus generates classes for various purposes. Sometimes you need to view these
 classes/bytecode to debug or understand an issue. Classes that are related to application augmentation are currently held in
-memory in a runtime class loader. To have these classes written out to disk for inspection, specify the
+memory in a runtime class loader.
+
+When using the dev mode (running `mvn clean compile quarkus:dev) you can have these classes written out to disk for inspection, for this, you need to specify the
 `quarkus.debug.generated-classes-dir` system property, for example:
 
 [source,shell]
 ----
-mvn clean install -Dquarkus.debug.generated-classes-dir=./target/app-generated-classes
+./mvnw clean compile quarkus:dev -Dquarkus.debug.generated-classes-dir=app-generated-classes
+----
+
+You will see a line of log for each class outputed to the directory:
+
+[source,shell]
+----
+2019-10-25 18:12:34,262 INFO  [io.qua.run.RuntimeClassLoader] (main) Wrote /path/to/my/app/target/generated-devmode/io.quarkus.runner.GeneratedMain.class
 ----
 
 ==== Multi-module Maven Projects and the Development Mode
@@ -1869,25 +2003,25 @@ we saw the production of a `ServiceStartBuildItem` in the previous section, and 
 <1> Produce a `ServiceStartBuildItem` to indicate that this is a service starting step that needs to run before the `StartupEvent` is sent.
 
 ==== Register Resources for Use in Native Image
-Not all configuration or resources can be consumed at build time. If you have classpath resources that the runtime needs to access, you need to inform the build phase that these resources need to be copied into the native image. This is done by producing one or more `SubstrateResourceBuildItem` or `SubstrateResourceBundleBuildItem` in the case of resource bundles. Examples of this are shown in this sample `registerNativeImageReources` build step:
+Not all configuration or resources can be consumed at build time. If you have classpath resources that the runtime needs to access, you need to inform the build phase that these resources need to be copied into the native image. This is done by producing one or more `NativeImageResourceBuildItem` or `NativeImageResourceBundleBuildItem` in the case of resource bundles. Examples of this are shown in this sample `registerNativeImageReources` build step:
 
 .Registering Resources and ResourceBundles
 [source,java]
 ----
 public final class MyExtProcessor {
     @Inject
-    BuildProducer<SubstrateResourceBuildItem> resource;
+    BuildProducer<NativeImageResourceBuildItem> resource;
     @Inject
-    BuildProducer<SubstrateResourceBundleBuildItem> resourceBundle;
+    BuildProducer<NativeImageResourceBundleBuildItem> resourceBundle;
 
     @BuildStep
     void registerNativeImageReources() {
-        resource.produce(new SubstrateResourceBuildItem("/security/runtime.keys")); //<1>
+        resource.produce(new NativeImageResourceBuildItem("/security/runtime.keys")); //<1>
 
-        resource.produce(new SubstrateResourceBuildItem(
+        resource.produce(new NativeImageResourceBuildItem(
                 "META-INF/services/" + io.quarkus.SomeService.class.getName())); //<2>
 
-        resourceBundle.produce(new SubstrateResourceBuildItem("javax.xml.bind.Messages")); //<3>
+        resourceBundle.produce(new NativeImageResourceBuildItem("javax.xml.bind.Messages")); //<3>
     }
 }
 ----
@@ -2212,7 +2346,7 @@ You can also use the `@asciidoclet` tag as shown above.
 
 Generating the documentation is easy:
 
- * Running `mvn clean install -DskipTests -DskipITs` will do.
+ * Running `./mvnw clean install -DskipTests -DskipITs` will do.
  * You  can either do it globally or in a specific extension directory (e.g. `extensions/mailer`).
 
 The documentation is generated in the global `target/asciidoc/generated/config/` located at the root of the project.
