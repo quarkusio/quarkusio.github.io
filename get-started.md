@@ -8,9 +8,9 @@ permalink: /get-started/
 ## Table of Contents
 ### Getting Started
 
- - [Be Guided Through First Application]({{site.baseurl}}/guides/getting-started-guide)
+ - [Be Guided Through First Application]({{site.baseurl}}/guides/getting-started)
  - [Quickly Bootstrap Your Application](https://code.quarkus.io)
- - [Building Native Images]({{site.baseurl}}/guides/building-native-image-guide)
+ - [Building Native Images]({{site.baseurl}}/guides/building-native-image)
  - [Using our Tooling]({{site.baseurl}}/guides/tooling)
 
 ### Guides
@@ -29,7 +29,7 @@ This guide covers:
 - Functional tests
 - Packaging of the application
 
-<a href="{{site.baseurl}}/guides/getting-started-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/getting-started" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 <div class="guide-item" markdown="1">
 ## Quickly Bootstrap Your Application
@@ -49,9 +49,9 @@ This guide covers:
 - The packaging of an application in a Docker container
 
 This guide requires:
-- Completion of the [Creating Your First Application]({{site.baseurl}}/guides/getting-started-guide) guide
+- Completion of the [Creating Your First Application]({{site.baseurl}}/guides/getting-started) guide
 
-<a href="{{site.baseurl}}/guides/building-native-image-guide" class="button-cta secondary">READ THE GUIDE</a>
+<a href="{{site.baseurl}}/guides/building-native-image" class="button-cta secondary">READ THE GUIDE</a>
 </div>
 
 <div class="guide-item" markdown="1">
