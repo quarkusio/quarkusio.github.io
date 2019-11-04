@@ -41,7 +41,7 @@ The one current restriction is that extensions should work in both OpenJDK and G
 That is the guarantee we give Quarkus users (a cross compilation for their app).
 We have a maturity model to improve an extension to be fully "Quarked" and benefit from Quarkus, all done in incremental steps.
 Just hop on our [mailing list](https://quarkus.io/community/#discussions) to discuss your ideas and get help.
-And you can start reading our [extension writing guide](https://quarkus.io/guides/writing-extensions) as well
+And you can start reading our [Writing extensions guide](https://quarkus.io/guides/writing-extensions) as well
 or more simply get inspiration from the [existing ones](https://github.com/quarkusio/quarkus/tree/master/extensions).
 
 
