@@ -1,6 +1,6 @@
 function scrollDown() {
   $('.scroll-down').click (function() {
-    $('html, body').animate({scrollTop: $('.video-band').offset().top }, 'slow');
+    $('html, body').animate({scrollTop: $('.homepage-content-band').offset().top }, 'slow');
     return false;
   });
 }
