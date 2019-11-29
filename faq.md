@@ -13,11 +13,13 @@ Quarkus is an Open Source project licensed under the [Apache License version 2.0
 Quarkus is published in Maven Central, check out [which extensions](/extensions) you need and just import them in your `pom.xml` to get Quarkus.
 We recommend you start your Quarkus experience via our [Getting Started guides](/get-started).
 
-## Quarkus is beta?
+## Quarkus is stable?
 
-Yes, we consider Quarkus beta.
-However 95% of the features Quarkus apps use are provided by the ecosystem like Hibernate ORM, Eclipse Vert.x, Netty, RESTEasy, etc.
+Yes, we consider Quarkus stable.
+Remember 95% of the features Quarkus apps use are provided by the ecosystem like Hibernate ORM, Eclipse Vert.x, Netty, RESTEasy, etc.
 These libraries are rock solid :)
+
+You can go to [code.quarkus.io](https://code.quarkus.io/) to see if a particular extension is _stable_ (default) or _preview_.
 
 ## What is a Quarkus extension?
 
