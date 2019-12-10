@@ -28,6 +28,25 @@ One of the main goals of Quarkus is ease of extensibility and to build a vibrant
 Think of Quarkus extensions as your project dependencies. Extensions configure, boot and integrate a framework or technology into your Quarkus application. They also do all of the heavy lifting of providing the right information to GraalVM for your application to compile natively.
 This will allow 3rd party projects to easily take advantage of the work we have done to make it easier to target GraalVM.
 
+<div id="extension-status"></div>
+## What are the extension statuses?
+
+Extensions have a various degree of maturity when they enter the Quarkus ecosystem.
+A status offers the expectations you can rely on.
+
+**Stable**: backward compatibility and presence in the ecosystem are taken very seriously. An application can safely rely on these extensions. Extensions not marked as preview or experimental (the majority) are stable.
+
+**Preview**: backward compatibility and presence in the ecosystem is not guaranteed.
+Specific improvements might require to change configuration or APIs and plans to become _stable_ are under way.
+Such extensions are in the middle of their maturation process.
+
+**Experimental**: early feedback is requested to mature the idea.
+There is no guarantee of stability nor long term presence in the platform until the solution matures.
+Such extensions are at the beginning of their maturation process.
+
+You can find the extension status on [code.quarkus.io](https://code.quarkus.io) or in the extension [guides](/guides/).
+
+
 ## Can I write an extension?
 ## Will the Quarkus team accept my extension?
 
