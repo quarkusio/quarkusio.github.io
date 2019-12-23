@@ -52,38 +52,33 @@ import io.vertx.ext.web.RoutingContext;
 
 import javax.enterprise.context.ApplicationScoped;
 
-@ApplicationScoped
+@ApplicationScoped <1>
 public class MyDeclarativeRoutes {
 
-
-    @Route(path = "/", methods = HttpMethod.GET)
-    public void handle(RoutingContext rc) {
+    // neither path nor regex is set - match a path derived from the method name
+    @Route(methods = HttpMethod.GET) <2> 
+    void hello(RoutingContext rc) { <3>
         rc.response().end("hello");
     }
 
-    @Route(path = "/hello", methods = HttpMethod.GET)
-    public void greetings(RoutingContext rc) {
-        String name = rc.request().getParam("name");
-        if (name == null) {
-            name = "world";
-        }
-        rc.response().end("hello " + name);
+    @Route(path = "/greetings", methods = HttpMethod.GET)
+    void greetings(RoutingExchange ex) { <4>
+        ex.ok("hello " + ex.getParam("name").orElse("world"));
     }
 }
 ----
 
-The `@Route` annotation indicates that the method is a reactive route.
-Again, by default, the code contained in the method must not block.
-The method gets a https://vertx.io/docs/apidocs/io/vertx/ext/web/RoutingContext.html[`RoutingContext`] as a parameter.
-From the `RoutingContext` you can retrieve the HTTP request (using `request()`) and write the response using `response().end(...)`.
+<1> If there is a reactive route found on a class with no scope annotation then `@javax.inject.Singleton` is added automatically.
+<2> The `@Route` annotation indicates that the method is a reactive route. Again, by default, the code contained in the method must not block.
+<3> The method gets a https://vertx.io/docs/apidocs/io/vertx/ext/web/RoutingContext.html[`RoutingContext`] as a parameter. From the `RoutingContext` you can retrieve the HTTP request (using `request()`) and write the response using `response().end(...)`.
+<4> `RoutingExchange` is a convenient wrapper of `RoutingContext` which provides some useful methods.
 
 More details about using the `RoutingContext` is available in the https://vertx.io/docs/vertx-web/java/[Vert.x Web documentation].
 
 The `@Route` annotation allows to configure:
 
-* The `path` - using the https://vertx.io/docs/vertx-web/java/#_capturing_path_parameters[Vert.x Web format]
-* The `regex` - when `path` is not used.
-See https://vertx.io/docs/vertx-web/java/#_routing_with_regular_expressions[for more details]
+* The `path` - for routing by path, using the https://vertx.io/docs/vertx-web/java/#_capturing_path_parameters[Vert.x Web format]
+* The `regex` - for routing with regular expressions, see https://vertx.io/docs/vertx-web/java/#_routing_with_regular_expressions[for more details]
 * The `methods` - the HTTP verb triggering the route such as `GET`, `POST`...
 * The `type` - it can be _normal_ (non-blocking), _blocking_ (method dispatched on a worker thread), or _failure_ to indicate that this route is called on failures
 * The `order` - the order of the route when several routes are involved in handling the incoming request.
@@ -104,16 +99,32 @@ You can also declare several routes for a single method using `@Routes`:
 
 [source,java]
 ----
-@Route.Routes({
-    @Route(path = "/first"),
-    @Route(path = "/second")
-})
+@Route(path = "/first")
+@Route(path = "/second")
 public void route(RoutingContext rc) {
     // ...
 }
 ----
 
 Each route can use different paths, methods...
+
+=== `@RouteBase`
+
+This annotation can be used to configure some defaults for reactive routes declared on a class.
+
+[source,java]
+----
+@RouteBase(path = "simple", produces = "text/plain") <1>
+public class SimpleRoutes {
+
+    @Route(path = "ping") // the final path is /simple/ping
+    void ping(RoutingContext rc) {
+        rc.response().end("pong");
+    }
+}
+----
+<1> The `path` value is used as a prefix for any route method declared on the class where `Route#path()` is used. The `produces` value is used for content-based routing for all routes where `Route#produces()` is empty.
+
 
 == Using the Vert.x Web Router
 
@@ -147,27 +158,20 @@ For example, the following code snippet registers a filter adding an HTTP header
 ----
 package org.acme.quarkus.sample;
 
-import io.quarkus.vertx.http.runtime.filters.Filters;
+import io.vertx.ext.web.RoutingContext;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.event.Observes;
+public class MyFilters {
 
-@ApplicationScoped
-public class MyFilter {
-
-    public void registerMyFilter(@Observes Filters filters) {
-        filters.register(rc -> {
-            rc.response().putHeader("X-Header", "intercepting the request");
-            rc.next();
-        }, 100);
+    @RouteFilter(100) <1>
+    void myFilter(RoutingContext rc) {
+       rc.response().putHeader("X-Header", "intercepting the request");
+       rc.next(); <2>
     }
 }
 ----
 
-The registration is done using `Filters.register`.
-The first parameter is the handler receiving the `RoutingContext`.
-The handler is likely required to call the `next()` method to continue to chain.
-The second parameter is the priority used to sort the filters Highest priority are called first.
+<1> The `RouteFilter#value()` defines the priority used to sort the filters - filters with higher priority are called first.
+<2> The filter is likely required to call the `next()` method to continue the chain.
 
 == Conclusion
 

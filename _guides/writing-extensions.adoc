@@ -220,7 +220,7 @@ Static Init::
     This means that if a framework can boot in this phase then it will have its booted state directly written to the
     image, and so the boot code does not need to be executed when the image is started.
 +
-There are some restrictions on what can be done in this stage as the Substrate VM disallows some objects in the native executable. For example you should not attempt to listen on a port or start threads in this phase.
+There are some restrictions on what can be done in this stage as the Substrate VM disallows some objects in the native executable. For example you should not attempt to listen on a port or start threads in this phase. In addition, it is disallowed to read run time configuration during static initialization.
 +
 In non-native pure JVM mode, there is no real difference between Static and Runtime Init, except that Static Init is always executed first. This mode benefits from the same build phase augmentation as native mode as the descriptor parsing and annotation scanning are done
 at build time and any associated class/framework dependencies can be removed from the build output jar. In servers like
@@ -633,7 +633,7 @@ conceptual goal that does not have a concrete representation.
  * causing this step to be run.
  */
 @BuildStep
-@Produces(NativeImageBuildItem.class)
+@Produce(NativeImageBuildItem.class)
 void produceNativeImage() {
     // ...
     // (produce the native image)
@@ -649,7 +649,7 @@ void produceNativeImage() {
  * an instance of {@code SomeOtherBuildItem}.
  */
 @BuildStep
-@Consumes(NativeImageBuildItem.class)
+@Consume(NativeImageBuildItem.class)
 SomeOtherBuildItem secondBuildStep() {
     return new SomeOtherBuildItem("foobar");
 }
@@ -691,7 +691,7 @@ A build step may produce values for subsequent steps in several possible ways:
 - By returning a <<simple-build-items,simple build item>> or <<multi-build-items,multi build item>> instance
 - By returning a `List` of a multi build item class
 - By injecting a `BuildProducer` of a simple or multi build item class
-- By annotating the method with `@io.quarkus.deployment.annotations.Produces`, giving the class name of a
+- By annotating the method with `@io.quarkus.deployment.annotations.Produce`, giving the class name of a
 <<empty-build-items,empty build item>>
 
 If a simple build item is declared on a build step, it _must_ be produced during that build step, otherwise an error
@@ -711,7 +711,7 @@ A build step may consume values from previous steps in the following ways:
 - By injecting a <<simple-build-items,simple build item>>
 - By injecting an `Optional` of a simple build item class
 - By injecting a `List` of a <<multi-build-items,multi build item>> class
-- By annotating the method with `@io.quarkus.deployment.annotations.Consumes`, giving the class name of a
+- By annotating the method with `@io.quarkus.deployment.annotations.Consume`, giving the class name of a
 <<empty-build-items,empty build item>>
 
 Normally it is an error for a step which is included to consume a simple build item that is not produced by any other
@@ -808,6 +808,15 @@ to be 'Application Archives', and will therefore get indexed. This is done via t
 example the ArC extension registers `META-INF/beans.xml`, which means that all archives on the class path with a `beans.xml`
 file will be indexed.
 
+NOTE: `BuildStep.applicationArchiveMarkers()` is deprecated and will be removed at some point post Quarkus 1.1. Extensions are encouraged to use `io.quarkus.deployment.builditem.AdditionalApplicationArchiveMarkerBuildItem` instead.
+
+==== Using Thread's Context Class Loader
+
+If `@BuildStep.loadsApplicationClasses()` is set to `true` the build step will be run with a TCCL that can load user classes from the deployment in a transformer-safe way.
+This class loader only lasts for the life of the augmentation, and is discarded afterwards.
+The classes will be loaded again in a different class loader at runtime.
+This means that loading a class during augmentation does not stop it from being transformed when running in the development/test mode.
+
 === Configuration
 
 Configuration in Quarkus is based on SmallRye Config, an implementation of the MicroProfile Config specification.
@@ -860,10 +869,36 @@ In addition, custom converters may be registered by adding their fully qualified
 
 Though these implicit converters use reflection, Quarkus will automatically ensure that they are loaded at the appropriate time.
 
+===== Optional Values
+
+If the configuration type is one of the optional types, then empty values are allowed for the configuration key; otherwise,
+specification of an empty value will result in a configuration error which prevents the application from starting.  This
+is especially relevant to configuration properties of inherently emptiable values such as `List`, `Set`, and `String`.  Such
+value types will never be empty; in the event of an empty value, an empty `Optional` is always used.
+
+==== Configuration Default Values
+
+A configuration item can be marked to have a default value.  The default value is used when no matching configuration key
+is specified in the configuration.
+
+Configuration items with a primitive type (such as `int` or `boolean`) implicitly use a default value of `0` or `false`.  The
+sole exception to this rule is the `char` type which does not have an implicit default value.
+
+A property with a default value is not implicitly optional.  If a non-optional configuration item with a default value
+is explicitly specified to have an empty value, the application will report a configuration error and will not start.  If
+it is desired for a property to have a default value and also be optional, it must have an `Optional` type as described above.
+
 ==== Configuration Groups
 
 Configuration values are always collected into grouping classes which are marked with the `@io.quarkus.runtime.annotations.ConfigGroup`
 annotation.  These classes contain a field for each key within its group.  In addition, configuration groups can be nested.
+
+===== Optional Configuration Groups
+
+A nested configuration group may be wrapped with an `Optional` type.  In this case, the group is not populated unless one
+or more properties within that group are specified in the configuration.  If the group is populated, then any required
+properties in the group must also be specified otherwise a configuration error will be reported and the application will
+not start.
 
 ==== Configuration Maps
 
@@ -894,6 +929,7 @@ this change is complete.
 
 ===== Configuration Root Phases
 
+Configuration roots are strictly bound by configuration phase, and attempting to access a configuration root from outside of its corresponding phase will result in an error.
 A configuration root dictates when its contained keys are read from configuration, and when they are available to applications.  The phases defined by `io.quarkus.runtime.annotations.ConfigPhase` are as follows:
 
 [cols="<3m,^1,^1,^1,^1,<8",options="header"]
@@ -959,7 +995,6 @@ public class FileConfig {
     /**
      * The level of logs to be written into the file.
      */
-    @DefaultConverter
     @ConfigItem(defaultValue = "ALL")
     Level level;
 
@@ -1607,6 +1642,9 @@ executable. Some of these build items are listed below:
 `io.quarkus.deployment.builditem.nativeimage.NativeImageResourceBuildItem`::
  Includes static resources into the native executable.
 
+`io.quarkus.deployment.builditem.nativeimage.NativeImageResourceDirectoryBuildItem`::
+ Includes directory's static resources into the native executable.
+
 `io.quarkus.deployment.builditem.nativeimage.RuntimeReinitializedClassBuildItem`::
 A class that will be reinitialized at runtime by Substrate. This will result in the static initializer running twice.
 
@@ -1625,8 +1663,11 @@ A class that will be initialized at runtime rather than build time. This will ca
 `io.quarkus.deployment.builditem.nativeimage.NativeImageConfigBuildItem`::
 A convenience feature that allows you to control most of the above features from a single build item.
 
-`io.quarkus.deployment.builditem.NativeEnableAllCharsetsBuildItem`::
+`io.quarkus.deployment.builditem.NativeImageEnableAllCharsetsBuildItem`::
 Indicates that all charsets should be enabled in native image.
+
+`io.quarkus.deployment.builditem.NativeImageEnableAllTimeZonesBuildItem`::
+Indicates that all timezones should be enabled in native image.
 
 `io.quarkus.deployment.builditem.ExtensionSslNativeSupportBuildItem`::
 A convenient way to tell Quarkus that the extension requires SSL and it should be enabled during native image build.
@@ -2064,16 +2105,16 @@ public final class MyExtProcessor {
     @BuildStep
     void registerNativeImageReources(BuildProducer<ServiceProviderBuildItem> services) {
         String service = "META-INF/services/" + io.quarkus.SomeService.class.getName();
-        
+
         // find out all the implementation classes listed in the service files
-        Set<String> implementations = 
+        Set<String> implementations =
             ServiceUtil.classNamesNamedIn(Thread.currentThread().getContextClassLoader(),
                                           service);
 
-        // register every listed implementation class so they can be instantiated 
+        // register every listed implementation class so they can be instantiated
         // in native-image at run-time
         services.produce(
-            new ServiceProviderBuildItem(io.quarkus.SomeService.class.getName(), 
+            new ServiceProviderBuildItem(io.quarkus.SomeService.class.getName(),
                                          implementations.toArray(new String[0])));
     }
 }
@@ -2095,13 +2136,13 @@ public final class MyExtProcessor {
     void registerNativeImageReources(BuildProducer<NativeImageResourceBuildItem> resource,
                                      BuildProducer<ReflectiveClassBuildItem> reflectionClasses) {
         String service = "META-INF/services/" + io.quarkus.SomeService.class.getName();
-        
+
         // register the service file so it is visible in native-image
         resource.produce(new NativeImageResourceBuildItem(service));
-        
-        // register every listed implementation class so they can be inspected/instantiated 
+
+        // register every listed implementation class so they can be inspected/instantiated
         // in native-image at run-time
-        Set<String> implementations = 
+        Set<String> implementations =
             ServiceUtil.classNamesNamedIn(Thread.currentThread().getContextClassLoader(),
                                           service);
         reflectionClasses.produce(
@@ -2113,7 +2154,7 @@ public final class MyExtProcessor {
 While this is the easiest way to get your services running natively, it's less efficient than scanning the implementation
 classes at build time and generating code that registers them at static-init time instead of relying on reflection.
 
-You can achieve that by adapting the previous build step to use a static-init recorder instead of registering 
+You can achieve that by adapting the previous build step to use a static-init recorder instead of registering
 classes for reflection:
 
 [source,java]
@@ -2122,19 +2163,19 @@ public final class MyExtProcessor {
 
     @BuildStep
     @Record(ExecutionTime.STATIC_INIT)
-    void registerNativeImageReources(RecorderContext recorderContext, 
+    void registerNativeImageReources(RecorderContext recorderContext,
                                      SomeServiceRecorder recorder) {
         String service = "META-INF/services/" + io.quarkus.SomeService.class.getName();
-        
+
         // read the implementation classes
         Collection<Class<? extends io.quarkus.SomeService>> implementationClasses = new LinkedHashSet<>();
         Set<String> implementations = ServiceUtil.classNamesNamedIn(Thread.currentThread().getContextClassLoader(),
                                                                     service);
         for(String implementation : implementations) {
-            implementationClasses.add((Class<? extends io.quarkus.SomeService>) 
+            implementationClasses.add((Class<? extends io.quarkus.SomeService>)
                 recorderContext.classProxy(implementation));
         }
-        
+
         // produce a static-initializer with those classes
         recorder.configure(implementationClasses);
     }
