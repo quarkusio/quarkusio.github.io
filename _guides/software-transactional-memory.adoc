@@ -26,12 +26,35 @@ to STM that I don't get from JTA?" Let's try to answer those or similar question
 a particular focus on why we think they're great for Quarkus, microservices and Kubernetes
 native applications. So in no specific order ...
 
+* The goal of STM is to simplify object reads and writes from multiple threads/protect
+state from concurrent updates. The Quarkus STM implementation will safely manage any conflicts between
+these threads using whatever isolation model has been chosen to protect that specific state
+instance (object in the case of Quarkus). In Quarkus STM, there are two isolation implementations,
+pessimistic (the default), which would cause conflicting threads to be blocked until the original
+has completed its updates (committed or aborted the transaction); then there's the optimistic
+approach which allows all of the threads to proceed and checks for conflicts at commit time, where
+one or more of the threads may be forced to abort if there have been conflicting updates.
+
 * STM objects have state but it doesn't need to be persistent (durable). In fact the
 default behaviour is for objects managed within transactional memory to be volatile, such that
 if the service or microservice within which they are being used crashes or is spawned elsewhere, e.g.,
-by a scheduler, all state in memory is lost and the objects start from scratch.
+by a scheduler, all state in memory is lost and the objects start from scratch. But surely you get more
+with JTA (and a suitable transactional datastore)? Not quite. There's a trade-off here; we're doing away
+with persistent state and the overhead of writing (and sync-ing) to the datastore. So updates to (volatile)
+state are fast and you still get the benefits of atomic updates across multiple STM objects, consistency
+and isolation in the presence of concurrent threads/users (common in distributed microservices architectures).
+Not all stateful applications need to be durable, after all. And as you'll see later, because applications can
+optionally start and control transactions, it's possible to build microservices which can undo state changes
+and try alternative paths.
 
-* The main benefits of STM are composability and modularity. That is, using STM you can write concurrent abstractions that can be easily composed with any other abstraction built using STM, without exposing the details of how your abstraction ensures safety. 
+* Another benefit of STM is composability and modularity. You can write concurrent Quarkus objects/services that
+can be easily composed with any other services built using STM, without exposing the details of how the objects/services
+are implemented.
+
+* Although the default for STM object state is volatile, it is possible to configure the STM implementation
+such that an object's state is durable. Although it's possible to configure Narayana such that different
+backend datastores can be used, including relational databases, the default is the local operating system
+file system, which means you don't need to configure anything else with Quarkus such as a database.
 
 == Building STM applications
 
@@ -151,19 +174,9 @@ aa.begin(); <2>
     provides a number of features for managing conflicting behaviour and these are covered in the Narayana STM manual).
 <6> Programmatically decide to abort the transaction which means that the changes made by the flight and taxi services are discarded.
 
-== Concurrency behaviour
+== Distributed transactions
 
-The goal of STM is to simplify object reads and writes from multiple threads.
-Threads are responsible for starting their own transactions before accessing
-a transactional object. The STM library will safely manage any conflicts between
-these threads. For example, if the access mode is pessimistic (the default),
-and a thread enters a transactional method then other threads may be blocked
-until the first thread leaves the method. This blocking behaviour may be modified
-using suitable STM annotations. Optimistic concurrency is also supported: in
-this mode conflicts are checked only at commit time and a thread may be forced
-to abort if another thread has made conflicting updates.
-
-Remark: sharing a transaction between multiple threads is possible but is currently
+Remark: sharing a transaction between multiple services is possible but is currently
 an advanced use case only and the Narayana documentation should be consulted
 if this behaviour is required. In particular, STM does not yet support the features
 described in the link:context-propagation[Context Propagation guide].
