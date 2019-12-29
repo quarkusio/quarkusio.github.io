@@ -100,7 +100,7 @@ To use the extension include it as a dependency in your application pom:
 </dependencies>
 --
 
-== Defining STM-aware Classes
+== Defining STM-aware classes
 
 In order for the STM subsytem to have knowledge about which classes are to be managed within the context
 of transactional memory it is necessary to provide a minimal level of instrumentation. This occurs by
@@ -121,15 +121,48 @@ public interface FlightService {
 }
 --
 
-Unless specified using other annotations, all public methods of implementations of this object will be assumed to modify the state of the object.
-Please refer to the Narayana guide for details of how to exert finer grained control over the transactional behaviour of objects that implement
-interfaces marked with the `@Transactional` annotation.
+Classes which implement this interface are able to use additional annotations from Narayana to tell the STM
+subsystem about things such as whether a method will modify the state of the object, or what state variables
+within the class should be managed transactionally, e.g., some instance variables may not need to be rolled back
+if a transaction aborts.. As mentioned earlier, if those annotations are not present then defaults are chosen to
+guarantee safety, such as assuming all methods will modify state.
+
+[source,java]
+--
+public class FlightServiceImpl implements FlightService {
+    @ReadLock
+    public int getNumberOfBookings() { ... }
+    public void makeBooking(String details) {...}
+    
+    @NotState
+    private int timesCalled;
+}
+--
+
+For example, by using the ReadLock annotation on the `getNumberOfBookings` method, we are able to tell the
+STM subsystem that no state modifications will occur in this object when it is used in the transactional
+memory. Also, the NotState annotation tells the system to ignore `timesCalled` when transactions commit or
+abort, so this value only changes due to application code.
+
+Please refer to the Narayana guide for details of how to exert finer grained control over the transactional
+behaviour of objects that implement interfaces marked with the `@Transactional` annotation.
 
 == Creating STM objects
 
-The STM library needs to be told which objects it should be managing by providing a container for the transactional memory.
-The default container (`org.jboss.stm.Container`) provides support for volatile objects that cannot be shared between JVMs
-(although other constructors do allow for other models):
+The STM subsystem needs to be told about which objects it should be managing. The Quarkus (aka Narayana) STM implementation
+does this by providing containers of transactional memory within which these object instances reside. Until an object
+is placed within one of these STM containers it cannot be managed within transactions and any state changes will
+not possess the A, C, I (or even D) properties.
+
+Note, the term "container" was defined within the STM implementation years before Linux containers came along. It may
+be confusing to use especially in a Kuberenetes native environment such as Quarkus, but hopefully
+the reader can do the mental mapping.
+
+The default STM container (`org.jboss.stm.Container`) provides support for volatile objects that can only be shared between
+threads in the same microservice/JVM instance. When a STM-aware object is placed into the container it returns a handle
+through which that object should then be used in the future. It is important to use this handle as continuing to access
+the object through the original reference will not allow the STM subsystem to track access and manage state and
+concurrency control.
 
 [source,java]
 --
@@ -144,25 +177,30 @@ The default container (`org.jboss.stm.Container`) provides support for volatile 
 
 <1> You need to tell each Container about the type of objects for which it will be responsible. In this example
     it will be instances that implement the FlightService interface.
-<2> Then you create an instance that implements FlightService. You cannot use it directly at this stage because
-    its operations aren't being monitored by the Container.
-<3> To obtain a managed instance, pass the instance to the `container` to obtain a reference through which you
-    will be able perform transactional operations. This reference can be used safely from multiple threads
-    (provided that each thread uses it in a transaction context - see the next section.
+<2> Then you create an instance that implements FlightService. You should not use it directly at this stage because
+    access to it is not being managed by the STM subsystem.
+<3> To obtain a managed instance, pass the original object to the STM `container` which then returns a reference
+    through which you will be able perform transactional operations. This reference can be used safely from multiple threads.
 
 == Defining transaction boundaries
 
-STM objects must be accessed within a transaction (otherwise they will behave just like any other java object).
-You can define the transaction boundary in two ways:
+Once an object is placed within an STM container the application developer can manage the scope of transactions
+within which it is used. There are some annotations which can be applied to the STM-aware class to have the
+container automatically create a transaction whenever a specific method is invoked.
 
 === Declarative approach
 
-The easiest, but less flexible, way to define your transaction boundaries is to place an `@NestedTopLevel` or `@Nested` annotation on the interface.
-Then when a method of your transactional object is invoked a new transaction will be created for the duration of the method call.
+If the `@NestedTopLevel` or `@Nested` annotation is placed on a method signature then the STM container will
+start a new transaction when that method is invoked and attempt to commit it when the method returns. If there is
+a transaction already associated with the caling thread then each of these annotations behaves slightly differently:
+the former annotation will always create a new top-level transaction within which the method will execute, so the enclosing
+transaction does not behave as a parent, i.e., the nested top-level transaction will commit or abort independently; the
+latter annotation will create a transaction with is properly nested within the calling transaction, i.e., that
+transaction acts as the parent of this newly created transaction.
 
-=== API approach
+=== Programmative approach
 
-The more flexible approach is to manually start a transaction before accessing methods of transactional objects:
+The application can programmatically start a transaction before accessing the methods of STM objects:
 
 [source,java]
 --
@@ -197,7 +235,7 @@ aa.begin(); <2>
 
 == Distributed transactions
 
-Remark: sharing a transaction between multiple services is possible but is currently
+Sharing a transaction between multiple services is possible but is currently
 an advanced use case only and the Narayana documentation should be consulted
 if this behaviour is required. In particular, STM does not yet support the features
 described in the link:context-propagation[Context Propagation guide].
