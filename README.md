@@ -39,10 +39,17 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 To write a blog:
 
-- create an author ent ry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
+- create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
     - `emailhash` is used to fetch your picture form the Gravatar service
 - create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_posts)
     -the file name is `yyyy-mm-dd-slug.adoc`
+- `tags` should be used with some care as an archive page is created for of them. Below are some basic rules to try follow:
+  - `quarkus-release` used for Quarkus release blogs
+  - `announcement` used for general announcement with some impact.
+  - `extension` used for blogs related to a specific extension.
+  - `user-story` used for stories from users/companies adopting Quarkus.
+  - `development-tips` used for blogs with tips to develop using Quarkus or Quarkus itself. 
+  - add a tech specific, like `kafka`, if your post has a signficant mention/relevance to that technology.
 - it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
 - send a pull request against the develop branch and voilà
 
