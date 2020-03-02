@@ -1,0 +1,153 @@
+---
+layout: post
+date:   2020-03-10 00:00 +0100
+author: mkouba
+synopsis: In this article, we're going to describe the notable limitations of Quarkus ArC and explain the reasonings behind our decisions to leave out those features.
+---
+
+== Quarkus ArC - CDI Limitations Explained
+
+In the previous blogpost about https://quarkus.io/blog/quarkus-dependency-injection/[Quarkus Dependency Injection] we explained the relationship to the CDI specification.
+We also mentioned some of the benefits and drawbacks of the build-time oriented design.
+
+In this article, we're going to describe the https://quarkus.io/guides/cdi-reference#limitations[notable limitations] and explain the reasonings behind our decisions to leave out some features.
+
+[NOTE]
+====
+Red Hat has been involved in CDI for many years. 
+It's been responsible for leading the http://cdi-spec.org/[specification], implementing and maintaining the https://github.com/eclipse-ee4j/cdi-tck[TCK] and http://weld.cdi-spec.org/[reference implementation].
+====
+
+=== On The Way To CDI Lite
+
+The primary goal was to provide a DI solution that would be aligned with the Quarkus mindset:
+
+* based on well known standard,
+* build-time oriented,
+* fast and lightweight.
+
+Speaking of standards, the choice was clear: CDI, a technology we have extensive experience at all levels with.
+However, we realized that we need a lighter alternative and the feature set must slim down considerably!
+
+First, we tried to identify the _dispensable features_ (`D`), i.e. the features we'd like to leave out.
+A _dispensable feature_ is not crucial from user perspective and:
+
+* is rarely used, or,
+* can cause troubles to users and/or implementors, or,
+* makes the implementation overly complex and harder to maintain.
+
+[NOTE]
+====
+We should emphasize that the set was built from users point of view.
+For the integration part the Quarkus extension framework should have been leveraged.
+====
+
+Then we idenfitied `F`, the resulting set of features, as ``F = C \ D``footnote:[https://en.wikipedia.org/wiki/Set_(mathematics)#Complements] where `C` is the set of all CDI features. 
+Finally, we implemented `F` and the result runs under the hood of every Quarkus application!
+
+Let's go through some of the features that ended in the set of "known limitations".
+
+=== Conversation Context
+
+The concept of conversations is simple - a scope that survives multiple requests but does not last forever.
+In CDI 1.0, a conversation scope was a "trimmed version" of https://docs.jboss.org/seam/2.3.1.Final/reference/html/tutorial.html#d0e1951[Seam conversations] grafted on the CDI API.
+Therefore, it was tied to the https://javaee.github.io/javaserverfaces-spec/[JSF technology].
+However, the specification version was not so powerful and with the decline in the popularity of statefull web frameworks, its importance dropped significantly.
+Since CDI 1.1, the conversation context is available in any Servlet request and the conversations may be propagated via request parameter.
+
+.Reasons to skip:
+* Requires Servlets - Quarkus web is built on top of Vert.x and Servlets are optional.
+* Tied to HTTP session which:
+** Is considered a bad practice in the microservices world,
+** Requires synchronization and locking.
+* There are quite some corner cases which make it really tricky to implement the specification correctly. To name a few: 
+** Conversation lifecycle is not fully aligned with the lifecycle of HTTP Session, i.e. when a HTTP session is invalidated within a request.
+** In JSF a long-running conversation is https://issues.redhat.com/browse/WELD-2081[not propagated if started through an AJAX Faces request]. 
+** The container provides a `Conversation` built-in bean named `javax.enterprise.context.conversation`.
+But according to https://issues.redhat.com/browse/CDI-498[some experts] this name is not a valid EL identifier. 
+** Transient conversations are https://issues.redhat.com/browse/WELD-1520[not propagated accross Servlet dispatch]. 
+ 
+NOTE: In Weld, we keep records of https://issues.redhat.com/issues/?jql=project%20%3D%20WELD%20and%20type%20%3D%20bug%20AND%20(component%20%3D%20Conversations%20or%20summary%20~%20%22conversation%22)%20ORDER%20BY%20key%20DESC[65 bugs] (90 issues in total) related to conversations.
+
+=== Decorators
+
+Decorators are less known companions of interceptors.
+While interceptors are used to implement the cross-cutting concerns, ie. to solve some technical problems like logging or security, decorators intercept invocations of a specific Java interface and so they often implement some business logic.
+
+.Reasons to skip:
+* Low adoption.
+* Complex and hard to understand https://docs.jboss.org/cdi/spec/2.0/cdi-spec.html#decorator_resolution[resolution rules].
+* Technical demands, especially when used together with interceptors.
+
+NOTE: In Weld, we keep records of https://issues.redhat.com/issues/?jql=project%20%3D%20WELD%20and%20type%20%3D%20bug%20AND%20(component%20%3D%20Decorators%20%20or%20summary%20~%20%22decorator%22)%20ORDER%20BY%20key%20DESC[67 bugs] (93 issues in total) related to decorators.
+
+=== Portable Extensions
+
+Portable extensions represent a powerful integration tool.
+On the other hand, the API is quite complex and implementations must provide non-trivial abstraction layers for container lifecycle events (such as `AnnotatedType`).
+
+A portable extension is inherently a _runtime component_ that is notified when relevant container lifecycle events are fired during container initialization.
+It is very often stateful but it's not required to be serializable.
+It's also possible to inject the extension into a regular bean.
+And it's even legal to create bean instances in certain phases of bootstrap.
+None of these matches our build-time oriented philosophy.
+In theory, it should be possible to execute some of the _stateless_ portable extensions in the build phase.
+However, only a tiny set of existing extensions would be eligible for this approach.
+
+.Reasons to skip:
+* It wouldn't be possible to run all of the existing portable extensions in the build phase.
+* Noticable boostrap performance overhead.
++
+[NOTE]
+====
+It's not uncommon that portable extensions intentionally observe `ProcessAnnotatedType<?>`.
+In that case an instance of `ProcessAnnotatedType` must be created for _most of the classes_ from the deployment and delivered to the relevant observer methods. 
+====
+
+=== Specialization
+
+Specialization is similar to alternatives.
+The main difference is that a specialized/overriden bean is never instantiated or called by the container, even if it defines a producer or observer method.
+Unfortunately, the definition is not that simple and caused ambiguities among CDI implementations, especially in modular environments.
+
+.Reasons to skip:
+* Low adoption, caused by problematic definition and portability issues.
+
+NOTE: In Weld, we keep records of https://issues.redhat.com/issues/?jql=project%20%3D%20weld%20and%20type%20%3D%20bug%20AND%20summary%20~%20%22specialize%22%20ORDER%20BY%20key%20DESC[23 bugs] (28 issues in total and 6 open specification issues) related to specialization.
+
+=== Explicit Bean Archives
+
+https://docs.jboss.org/cdi/spec/2.0/cdi-spec.html#bean_archive[Explicit Bean Archive] is an old-style CDI 1.0 way of packaging beans.
+The main disadvantages are noticeable bootstrap performance overhead and increased memory consumption.
+For an explicit bean archive the container needs to analyze _every class_ and those that meet https://docs.jboss.org/cdi/spec/2.0/cdi-spec.html#what_classes_are_beans[certain conditions] are considered beans.  
+This is very often suboptimal.
+
+We've seen many deployments where hundreds of classes were recognized as beans but never used at runtime and the related metadata was hold in memory for the lifetime of the application.
+Moreover, each class results in many container lifecycle events (`ProcessAnnotatedType`, `ProcessManagedBean`, etc.) consumed by portable extensions during bootstrap.  
+
+The CDI Expert Group attempted to solve this problem with the https://docs.jboss.org/cdi/spec/2.0/cdi-spec.html#default_bean_discovery[new discovery mode] (which is the default since 1.1) and https://docs.jboss.org/cdi/spec/2.0/cdi-spec.html#trimmed_bean_archive[trimmed bean archives] (since CDI 2.0). 
+Weld contains a lot of optimizations to speed-up the bootstrap process.
+Needless to say, that these optimizations make the code much more complicated.
+
+.Reasons to skip:
+* Noticable bootstrap performance overhead.
+* Increased memory used to store the metadata.
+
+=== Passivation and Passivating Scopes
+
+NOTE: In Weld, we keep records of https://issues.redhat.com/issues/?jql=project%20%3D%20weld%20and%20type%20%3D%20bug%20AND%20summary%20~%20%22passivation%22%20ORDER%20BY%20key%20DESC[17 bugs] related to passivation.
+
+Passivation is mostly related to HTTP sessions.
+In theory, any normal scope may be a passivating scope.
+But in reality, the only passivating scopes used in the wild are `@SessionScoped` and `@ConversationScoped`. 
+
+.Reasons to skip:
+* Quarkus only supports in-memory HTTP sessions
+* `@SessionScoped` is considered a bad practice in the microservices world
+* Passivation requires quite a lot of non-trivial yet ubiquitous code modifications, e.g. to handle passivation capable dependencies correctly 
+
+== Conclusion
+
+In order to make our DI leaner we made important decisions to leave out some of the features required by the CDI specification.
+The result is a more lightweight but still very powerful and convenient component model.
+In the next article, we're going to describe the https://quarkus.io/guides/cdi-reference#non-standard-features[non-standard features] that make the life of our users even more easier.
