@@ -96,12 +96,12 @@ This command generates a Maven project, importing the Reactive Messaging and Kaf
 
 === The Temperature Value Producer
 
-Create the `producer/src/main/java/org/acme/quarkus/sample/generator/ValuesGenerator.java` file,
+Create the `producer/src/main/java/org/acme/kafka/streams/producer/generator/ValuesGenerator.java` file,
 with the following content:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.generator;
+package org.acme.kafka.streams.producer.generator;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -119,7 +119,7 @@ import org.eclipse.microprofile.reactive.messaging.Outgoing;
 import org.jboss.logging.Logger;
 
 import io.reactivex.Flowable;
-import io.smallrye.reactive.messaging.kafka.KafkaMessage;
+import io.smallrye.reactive.messaging.kafka.KafkaRecord;
 
 /**
  * A bean producing random temperature data every second.
@@ -149,26 +149,24 @@ public class ValuesGenerator {
 
 
     @Outgoing("temperature-values")                             // <1>
-    public Flowable<KafkaMessage<Integer, String>> generate() {
+    public Flowable<KafkaRecord<Integer, String>> generate() {
 
         return Flowable.interval(500, TimeUnit.MILLISECONDS)    // <2>
                 .onBackpressureDrop()
                 .map(tick -> {
                     WeatherStation station = stations.get(random.nextInt(stations.size()));
-                    double temperature = new BigDecimal(
-                                random.nextGaussian() * 15 + station.averageTemperature
-                            )
+                    double temperature = BigDecimal.valueOf(random.nextGaussian() * 15 + station.averageTemperature)
                             .setScale(1, RoundingMode.HALF_UP)
                             .doubleValue();
 
                     LOG.info("station: {}, temperature: {}", station.name, temperature);
-                    return KafkaMessage.of(station.id, Instant.now() + ";" + temperature);
+                    return KafkaRecord.of(station.id, Instant.now() + ";" + temperature);
                 });
     }
 
     @Outgoing("weather-stations")                               // <3>
-    public Flowable<KafkaMessage<Integer, String>> weatherStations() {
-        List<KafkaMessage<Integer, String>> stationsAsJson = stations.stream()
+    public Flowable<KafkaRecord<Integer, String>> weatherStations() {
+        List<KafkaRecord<Integer, String>> stationsAsJson = stations.stream()
             .map(s -> KafkaMessage.of(
                     s.id,
                     "{ \"id\" : " + s.id +
@@ -243,12 +241,12 @@ This creates the `aggregator` project with the Quarkus extension for Kafka Strea
 Let's begin the implementation of the stream processing application by creating
 a few value objects for representing temperature measurements, weather stations and for keeping track of aggregated values.
 
-First, create the file `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/model/WeatherStation.java`,
+First, create the file `aggregator/src/main/java/org/acme/kafka/streams/aggregator/model/WeatherStation.java`,
 representing a weather station, with the following content:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.model;
+package org.acme.kafka.streams.aggregator.model;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -261,12 +259,12 @@ public class WeatherStation {
 ----
 <1> By adding the `@RegisterForReflection` annotation, it is ensured that this type can be instantiated reflectively when running the application in native mode.
 
-Then the file `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/model/TemperatureMeasurement.java`,
+Then the file `aggregator/src/main/java/org/acme/kafka/streams/aggregator/model/TemperatureMeasurement.java`,
 representing temperature measurements for a given station:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.model;
+package org.acme.kafka.streams.aggregator.model;
 
 import java.time.Instant;
 
@@ -287,12 +285,12 @@ public class TemperatureMeasurement {
 }
 ----
 
-And finally `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/model/Aggregation.java`,
+And finally `aggregator/src/main/java/org/acme/kafka/streams/aggregator/model/Aggregation.java`,
 which will be used to keep track of the aggregated values while the events are processed in the streaming pipeline:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.model;
+package org.acme.kafka.streams.aggregator.model;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -326,22 +324,22 @@ public class Aggregation {
 }
 ----
 
-Next, let's create the actual streaming query implementation itself in the `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/streams/TopologyProducer.java` file.
+Next, let's create the actual streaming query implementation itself in the `aggregator/src/main/java/org/acme/kafka/streams/aggregator/streams/TopologyProducer.java` file.
 All we need to do for that is to declare a CDI producer method which returns the Kafka Streams `Topology`;
 the Quarkus extension will take care of configuring, starting and stopping the actual Kafka Streams engine.
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.streams;
+package org.acme.kafka.streams.aggregator.streams;
 
 import java.time.Instant;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.inject.Produces;
 
-import org.acme.quarkus.sample.kafkastreams.model.Aggregation;
-import org.acme.quarkus.sample.kafkastreams.model.TemperatureMeasurement;
-import org.acme.quarkus.sample.kafkastreams.model.WeatherStation;
+import org.acme.kafka.streams.aggregator.model.Aggregation;
+import org.acme.kafka.streams.aggregator.model.TemperatureMeasurement;
+import org.acme.kafka.streams.aggregator.model.WeatherStation;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.Topology;
@@ -449,8 +447,8 @@ We now can build the `producer` and `aggregator` applications:
 
 [source, subs=attributes+]
 ----
-mvn clean package -f producer/pom.xml
-mvn clean package -f aggregator/pom.xml
+./mvnw clean package -f producer/pom.xml
+./mvnw clean package -f aggregator/pom.xml
 ----
 
 Instead of running them directly on the host machine using the Quarkus dev mode,
@@ -560,19 +558,19 @@ they let you directly query the underlying state store of the pipeline for the v
 By exposing a simple REST endpoint which queries the state store,
 the latest aggregation result can be retrieved without having to subscribe to any Kafka topic.
 
-Let's begin by creating a new class `InteractiveQueries` in the file `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/streams/InteractiveQueries.java`:
+Let's begin by creating a new class `InteractiveQueries` in the file `aggregator/src/main/java/org/acme/kafka/streams/aggregator/streams/InteractiveQueries.java`:
 
 one more method to the `KafkaStreamsPipeline` class which obtains the current state for a given key:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.streams;
+package org.acme.kafka.streams.aggregator.streams;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
 
-import org.acme.quarkus.sample.kafkastreams.model.Aggregation;
-import org.acme.quarkus.sample.kafkastreams.model.WeatherStationData;
+import org.acme.kafka.streams.aggregator.model.Aggregation;
+import org.acme.kafka.streams.aggregator.model.WeatherStationData;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.errors.InvalidStateStoreException;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
@@ -609,16 +607,16 @@ public class InteractiveQueries {
 <1> A value for the given station id was found, so that value will be returned
 <2> No value was found, either because a non-existing station was queried or no measurement exists yet for the given station
 
-Also create the method's return type in the file `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/streams/GetWeatherStationDataResult.java`:
+Also create the method's return type in the file `aggregator/src/main/java/org/acme/kafka/streams/aggregator/streams/GetWeatherStationDataResult.java`:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.streams;
+package org.acme.kafka.streams.aggregator.streams;
 
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import org.acme.quarkus.sample.kafkastreams.model.WeatherStationData;
+import org.acme.kafka.streams.aggregator.model.WeatherStationData;
 
 public class GetWeatherStationDataResult {
 
@@ -645,12 +643,12 @@ public class GetWeatherStationDataResult {
 }
 ----
 
-Also create `aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/model/WeatherStationData.java`,
+Also create `aggregator/src/main/java/org/acme/kafka/streams/aggregator/model/WeatherStationData.java`,
 which represents the actual aggregation result for a weather station:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.model;
+package org.acme.kafka.streams.aggregator.model;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -686,12 +684,12 @@ public class WeatherStationData {
 }
 ----
 
-We now can add a simple REST endpoint (`aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/rest/WeatherStationEndpoint.java`),
+We now can add a simple REST endpoint (`aggregator/src/main/java/org/acme/kafka/streams/aggregator/rest/WeatherStationEndpoint.java`),
 which invokes `getWeatherStationData()` and returns the data to the client:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.rest;
+package org.acme.kafka.streams.aggregator.rest;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -708,8 +706,8 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
-import org.acme.quarkus.sample.kafkastreams.streams.GetWeatherStationDataResult;
-import org.acme.quarkus.sample.kafkastreams.streams.KafkaStreamsPipeline;
+import org.acme.kafka.streams.aggregator.streams.GetWeatherStationDataResult;
+import org.acme.kafka.streams.aggregator.streams.KafkaStreamsPipeline;
 
 @ApplicationScoped
 @Path("/weather-stations")
@@ -741,7 +739,7 @@ With this code in place, it's time to rebuild the application and the `aggregato
 
 [source, subs=attributes+]
 ----
-mvn clean package -f aggregator/pom.xml
+./mvnw clean package -f aggregator/pom.xml
 docker-compose stop aggregator
 docker-compose up --build -d
 ----
@@ -841,12 +839,12 @@ The `GetWeatherStationDataResult` type must be adjusted accordingly:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.streams;
+package org.acme.kafka.streams.aggregator.streams;
 
 import java.util.Optional;
 import java.util.OptionalInt;
 
-import org.acme.quarkus.sample.kafkastreams.model.WeatherStationData;
+import org.acme.kafka.streams.aggregator.model.WeatherStationData;
 
 public class GetWeatherStationDataResult {
 
@@ -891,11 +889,11 @@ public class GetWeatherStationDataResult {
 ----
 
 Also the return type for `getMetaData()` must be defined
-(`aggregator/src/main/java/org/acme/quarkus/sample/kafkastreams/streams/PipelineMetadata.java`):
+(`aggregator/src/main/java/org/acme/kafka/streams/aggregator/streams/PipelineMetadata.java`):
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.streams;
+package org.acme.kafka.streams.aggregator.streams;
 
 import java.util.Set;
 
@@ -915,7 +913,7 @@ Lastly, the REST endpoint class must be updated:
 
 [source, java]
 ----
-package org.acme.quarkus.sample.kafkastreams.rest;
+package org.acme.kafka.streams.aggregator.rest;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -932,9 +930,9 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
-import org.acme.quarkus.sample.kafkastreams.streams.GetWeatherStationDataResult;
-import org.acme.quarkus.sample.kafkastreams.streams.KafkaStreamsPipeline;
-import org.acme.quarkus.sample.kafkastreams.streams.PipelineMetadata;
+import org.acme.kafka.streams.aggregator.streams.GetWeatherStationDataResult;
+import org.acme.kafka.streams.aggregator.streams.KafkaStreamsPipeline;
+import org.acme.kafka.streams.aggregator.streams.PipelineMetadata;
 
 @ApplicationScoped
 @Path("/weather-stations")
@@ -991,7 +989,7 @@ Then let's spin up three instances of it:
 
 [source, subs=attributes+]
 ----
-mvn clean package -f aggregator/pom.xml
+./mvnw clean package -f aggregator/pom.xml
 docker-compose stop aggregator
 docker-compose up --build -d --scale aggregator=3
 ----
@@ -1089,8 +1087,8 @@ the Maven builds can be executed using the `native` profile:
 
 [source, shell]
 ----
-mvn clean package -f producer/pom.xml -Pnative -Dnative-image.container-runtime=docker
-mvn clean package -f aggregator/pom.xml -Pnative -Dnative-image.container-runtime=docker
+./mvnw clean package -f producer/pom.xml -Pnative -Dnative-image.container-runtime=docker
+./mvnw clean package -f aggregator/pom.xml -Pnative -Dnative-image.container-runtime=docker
 ----
 
 Now create an environment variable named `QUARKUS_MODE` and with value set to "native":

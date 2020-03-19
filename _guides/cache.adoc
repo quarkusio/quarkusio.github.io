@@ -47,7 +47,7 @@ First, we need to create a new Quarkus project using Maven with the following co
 mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=cache-quickstart \
-    -DclassName="org.acme.caching.WeatherForecastResource" \
+    -DclassName="org.acme.cache.WeatherForecastResource" \
     -Dpath="/weather" \
     -Dextensions="cache,resteasy-jsonb"
 ----
@@ -57,11 +57,11 @@ This command generates the Maven project with a REST endpoint and imports the `c
 == Creating the REST API
 
 Let's start by creating a service that will simulate an extremely slow call to the external meteorological service.
-Create `src/main/java/org/acme/caching/WeatherForecastService.java` with the following content:
+Create `src/main/java/org/acme/cache/WeatherForecastService.java` with the following content:
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import java.time.LocalDate;
 
@@ -98,11 +98,11 @@ public class WeatherForecastService {
 <1> This is where the slowness comes from.
 
 We also need a class that will contain the response sent to the users when they ask for the next three days weather forecast.
-Create `src/main/java/org/acme/caching/WeatherForecast.java` this way:
+Create `src/main/java/org/acme/cache/WeatherForecast.java` this way:
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import java.util.List;
 
@@ -131,7 +131,7 @@ Now, we just need to update the generated `WeatherForecastResource` class to use
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import java.time.LocalDate;
 import java.util.Arrays;
@@ -194,7 +194,7 @@ Update the `WeatherForecastService` class like this:
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import java.time.LocalDate;
 
@@ -277,8 +277,6 @@ See the parameter Javadoc for more details.
 
 This annotation cannot be used on a method returning `void`.
 
-You can only use one of the cache operations (and this annotation) on a given method: `@CacheResult`, `@CacheInvalidate` or `@CacheInvalidateAll`.
-
 === @CacheInvalidate
 
 Removes an entry from the cache.
@@ -288,8 +286,6 @@ If the method has one or more arguments, the key computation is done from all th
 This annotation can also be used on a method with no arguments, a default key derived from the cache name is generated in that case.
 If the key does not identify any cache entry, nothing will happen.
 
-You can only use one of the cache operations (and this annotation) on a given method: `@CacheResult`, `@CacheInvalidate` or `@CacheInvalidateAll`.
-
 [TIP]
 ====
 If the `@CacheResult` or `@CacheInvalidate` annotations are used on a method with no parameters, a unique default cache key derived from the cache name will be generated and used.
@@ -298,8 +294,6 @@ If the `@CacheResult` or `@CacheInvalidate` annotations are used on a method wit
 === @CacheInvalidateAll
 
 When a method annotated with `@CacheInvalidateAll` is invoked, Quarkus will remove all entries from the cache.
-
-You can only use one of the cache operations (and this annotation) on a given method: `@CacheResult`, `@CacheInvalidate` or `@CacheInvalidateAll`.
 
 === @CacheKey
 
@@ -330,8 +324,8 @@ Here's what your cache configuration could look like:
 [source,properties]
 ----
 quarkus.cache.caffeine."foo".initial-capacity=10 <1>
-quarkus.cache.caffeine."foo".maximum-size=20 <1>
-quarkus.cache.caffeine."foo".expire-after-write <1>
+quarkus.cache.caffeine."foo".maximum-size=20
+quarkus.cache.caffeine."foo".expire-after-write=60S
 quarkus.cache.caffeine."bar".maximum-size=1000 <2>
 ----
 <1> The `foo` cache is being configured.
@@ -343,7 +337,7 @@ quarkus.cache.caffeine."bar".maximum-size=1000 <2>
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import javax.enterprise.context.ApplicationScoped;
 
@@ -352,7 +346,7 @@ import io.quarkus.cache.CacheInvalidateAll;
 import io.quarkus.cache.CacheResult;
 
 @ApplicationScoped
-public class CachedBean {
+public class CachedService {
 
     @CacheResult(cacheName = "foo")
     public Object load(Object key) { <1>
@@ -374,7 +368,7 @@ public class CachedBean {
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import javax.enterprise.context.Dependent;
 
@@ -406,7 +400,7 @@ public class CachedService {
 
 [source,java]
 ----
-package org.acme.caching;
+package org.acme.cache;
 
 import javax.enterprise.context.Dependent;
 
@@ -432,3 +426,34 @@ public class CachedService {
 }
 ----
 <1> A unique default cache key derived from the cache name is generated and used.
+
+=== Multiple annotations on a single method
+
+[source,java]
+----
+package org.acme.cache;
+
+import javax.inject.Singleton;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheInvalidateAll;
+import io.quarkus.cache.CacheResult;
+
+@Singleton
+public class CachedService {
+
+    @CacheInvalidate(cacheName = "foo")
+    @CacheResult(cacheName = "foo")
+    public String forceCacheEntryRefresh(Object key) { <1>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidateAll(cacheName = "foo")
+    @CacheInvalidateAll(cacheName = "bar")
+    public void multipleInvalidateAll(Object key) { <2>
+    }
+}
+----
+<1> This method can be used to force a refresh of the cache entry corresponding to the given key. 
+<2> This method will invalidate all entries from the `foo` and `bar` caches with a single call.
+

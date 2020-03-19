@@ -8,8 +8,9 @@ https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
 include::./attributes.adoc[]
 :config-file: application.properties
 :extension-status: preview
+:mongodb-doc-root-url: https://mongodb.github.io/mongo-java-driver/3.11
 
-MongoDB is a well known NoSQL Database that is widely used, but using its raw API can be cumbersome as you need to express your entities and your queries as a MongoDB link:https://mongodb.github.io/mongo-java-driver/3.11/bson/documents/#document[`Document`].
+MongoDB is a well known NoSQL Database that is widely used, but using its raw API can be cumbersome as you need to express your entities and your queries as a MongoDB link:{mongodb-doc-root-url}/bson/documents/#document[`Document`].
 
 MongoDB with Panache provides active record style entities (and repositories) like you have in link:hibernate-orm-panache[Hibernate ORM with Panache] and focuses on making your entities trivial and fun to write in Quarkus.
 
@@ -49,6 +50,9 @@ NOTE: the `list()` method might be surprising at first. It takes fragments of Pa
 That makes for very concise but yet readable code.
 MongoDB native queries are also supported.
 
+NOTE: what was described above is essentially the link:https://www.martinfowler.com/eaaCatalog/activeRecord.html[active record pattern], sometimes just called the entity pattern.
+MongoDB with Panache also allows for the use of the more classical link:https://martinfowler.com/eaaCatalog/repository.html[repository pattern] via `PanacheMongoRepository`.
+
 == Solution
 
 We recommend that you follow the instructions in the next sections and create the application step by step.
@@ -67,8 +71,8 @@ First, we need a new project. Create a new project with the following command:
 mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=mongodb-panache-quickstart \
-    -DclassName="org.acme.mongodb.panache.FruitResource" \
-    -Dpath="/fruits" \
+    -DclassName="org.acme.mongodb.panache.PersonResource" \
+    -Dpath="/persons" \
     -Dextensions="resteasy-jsonb,mongodb-panache"
 cd mongodb-panache-quickstart
 ----
@@ -93,8 +97,8 @@ If you don't want to generate a new project you can add the dependency in your `
 To get started:
 
 * add your settings in `{config-file}`
-* Make your entities extend `PanacheMongoEntity`, you can use the `@MongoEntity` annotation to specify the name of the database and the name of the collection (it will default to the name of your entity).
-* place your entity logic in static methods in your entities
+* Make your entities extend `PanacheMongoEntity` (optional if you are using the repository pattern)
+* Use the `@MongoEntity` annotation to specify the name of the database and the name of the collection (it will default to the name of your entity).
 
 Then add the relevant configuration properties in `{config-file}`.
 
@@ -110,7 +114,9 @@ The `quarkus.mongodb.database` property will be used by MongoDB with Panache to 
 
 For advanced configuration of the MongoDB client, you can follow the link:mongodb#configuring-the-mongodb-database[Configuring the MongoDB database guide].
 
-== Defining your entity
+== Solution 1: using the active record pattern
+
+=== Defining your entity
 
 To define a Panache entity, simply extend `PanacheMongoEntity` and add your columns as public fields.
 You can add the `@MongoEntity` annotation to your entity if you need to customize the name of the collection and/or the database.
@@ -129,9 +135,10 @@ public class Person extends PanacheMongoEntity {
 }
 ----
 
-NOTE: annotating with `@MongoEntity` is optional, it allows you to configure the name of the collection and the name of the database. Here the entity will be stored in the `ThePerson` collection instead of the default `Person` collection.
+NOTE: annotating with `@MongoEntity` is optional, it allows you to configure the name of the collection and the name of the database.
+Here the entity will be stored in the `ThePerson` collection instead of the default `Person` collection.
 
-MongoDB with Panache uses the link:https://mongodb.github.io/mongo-java-driver/3.10/bson/pojos/[PojoCodecProvider] to map your entities to a MongoDB `Document`.
+MongoDB with Panache uses the link:{mongodb-doc-root-url}/bson/pojos/[PojoCodecProvider] to map your entities to a MongoDB `Document`.
 
 You will be allowed to use the following annotations to customize this mapping:
 
@@ -163,9 +170,9 @@ public class Person extends PanacheMongoEntity {
 And thanks to our field access rewrite, when your users read `person.name` they will actually call your `getName()` accessor, and similarly for field writes and the setter.
 This allows for proper encapsulation at runtime as all fields calls will be replaced by the corresponding getter/setter calls.
 
-== Most useful operations
+=== Most useful operations
 
-Once you have written your entity, here are the most common operations you will be able to do:
+Once you have written your entity, here are the most common operations you will be able to perform:
 
 [source,java]
 ----
@@ -225,7 +232,175 @@ List<String> namesButEmmanuels = persons
 
 NOTE: A `persistOrUpdate()` method exist that persist or update an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
 
-== Paging
+== Adding entity methods
+
+Add custom queries on your entities inside the entities themselves.
+That way, you and your co-workers can find them easily, and queries are co-located with the object they operate on.
+Adding them as static methods in your entity class is the Panache Active Record way.
+
+[source,java]
+----
+public class Person extends PanacheMongoEntity {
+    public String name;
+    public LocalDate birth;
+    public Status status;
+
+    public static Person findByName(String name){
+        return find("name", name).firstResult();
+    }
+
+    public static List<Person> findAlive(){
+        return list("status", Status.Alive);
+    }
+
+    public static void deleteLoics(){
+        delete("name", "Loïc");
+    }
+}
+----
+
+== Solution 2: using the repository pattern
+
+=== Defining your entity
+
+You can define your entity as regular POJO.
+You can add the `@MongoEntity` annotation to your entity if you need to customize the name of the collection and/or the database.
+
+[source,java]
+----
+@MongoEntity(collection="ThePerson")
+public class Person  {
+    public ObjectId id; // used by MongoDB for the _id field
+    public String name;
+    public LocalDate birth;
+    public Status status;
+}
+----
+
+NOTE: annotating with `@MongoEntity` is optional, it allows you to configure the name of the collection and the name of the database.
+Here the entity will be stored in the `ThePerson` collection instead of the default `Person` collection.
+
+MongoDB with Panache uses the link:{mongodb-doc-root-url}/bson/pojos/[PojoCodecProvider] to map your entities to a MongoDB `Document`.
+
+You will be allowed to use the following annotations to customize this mapping:
+
+- `@BsonId`: allows you to customize the ID field, see <<custom-ids,Custom IDs>>.
+- `@BsonProperty`: customize the serialized name of the field.
+- `@BsonIgnore`: ignore a field during the serialization.
+
+TIP: You can use public fields or private fields with getters/setters.
+If you don't want to manage the ID by yourself, you can make your entity extends `PanacheMongoEntity`.
+
+=== Defining your repository
+
+When using Repositories, you can get the exact same convenient methods as wit the active record pattern, injected in your Repository,
+by making them implements `PanacheMongoRepository`:
+
+[source,java]
+----
+@ApplicationScoped
+public class PersonRepository implements PanacheMongoRepository<Person> {
+
+   // put your custom logic here as instance methods
+
+   public Person findByName(String name){
+       return find("name", name).firstResult();
+   }
+
+   public List<Person> findAlive(){
+       return list("status", Status.Alive);
+   }
+
+   public void deleteLoics(){
+       delete("name", "Loïc");
+  }
+}
+----
+
+All the operations that are defined on `PanacheMongoEntityBase` are available on your repository, so using it
+is exactly the same as using the active record pattern, except you need to inject it:
+
+[source,java]
+----
+@Inject
+PersonRepository personRepository;
+
+@GET
+public long count(){
+    return personRepository.count();
+}
+----
+
+=== Most useful operations
+
+Once you have written your repository, here are the most common operations you will be able to perform:
+
+[source,java]
+----
+// creating a person
+Person person = new Person();
+person.name = "Loïc";
+person.birth = LocalDate.of(1910, Month.FEBRUARY, 1);
+person.status = Status.Alive;
+
+// persist it
+personRepository.persist(person);
+
+person.status = Status.Dead;
+
+// Your must call update() in order to send your entity modifications to MongoDB
+personRepository.update(person);
+
+// delete it
+personRepository.delete(person);
+
+// getting a list of all Person entities
+List<Person> allPersons = personRepository.listAll();
+
+// finding a specific person by ID
+person = personRepository.findById(personId);
+
+// finding a specific person by ID via an Optional
+Optional<Person> optional = personRepository.findByIdOptional(personId);
+person = optional.orElseThrow(() -> new NotFoundException());
+
+// finding all living persons
+List<Person> livingPersons = personRepository.list("status", Status.Alive);
+
+// counting all persons
+long countAll = personRepository.count();
+
+// counting all living persons
+long countAlive = personRepository.count("status", Status.Alive);
+
+// delete all living persons
+personRepository.delete("status", Status.Alive);
+
+// delete all persons
+personRepository.deleteAll();
+----
+
+All `list` methods have equivalent `stream` versions.
+
+[source,java]
+----
+Stream<Person> persons = personRepository.streamAll();
+List<String> namesButEmmanuels = persons
+    .map(p -> p.name.toLowerCase() )
+    .filter( n -> ! "emmanuel".equals(n) )
+    .collect(Collectors.toList());
+----
+
+NOTE: A `persistOrUpdate()` method exist that persist or update an entity in the database, it uses the __upsert__ capability of MongoDB to do it in a single query.
+
+NOTE: The rest of the documentation show usages based on the active record pattern only,
+but keep in mind that they can be performed with the repository pattern as well.
+The repository pattern examples have been omitted for brevity.
+
+
+== Advanced Query
+
+=== Paging
 
 You should only use `list` and `stream` methods if your collection contains small enough data sets. For larger data
 sets you can use the `find` method equivalents, which return a `PanacheQuery` on which you can do paging:
@@ -262,7 +437,7 @@ return Person.find("status", Status.Alive)
 
 The `PanacheQuery` type has many other methods to deal with paging and returning streams.
 
-== Sorting
+=== Sorting
 
 All methods accepting a query string also accept an optional `Sort` parameter, which allows you to abstract your sorting:
 
@@ -276,34 +451,7 @@ List<Person> persons = Person.list("status", Sort.by("name").and("birth"), Statu
 
 The `Sort` class has plenty of methods for adding columns and specifying sort direction.
 
-== Adding entity methods
-
-In general, we recommend not adding custom queries for your entities outside of the entities themselves,
-to keep all model queries close to the models they operate on. So we recommend adding them as static methods
-in your entity class:
-
-[source,java]
-----
-public class Person extends PanacheMongoEntity {
-    public String name;
-    public LocalDate birth;
-    public Status status;
-
-    public static Person findByName(String name){
-        return find("name", name).firstResult();
-    }
-
-    public static List<Person> findAlive(){
-        return list("status", Status.Alive);
-    }
-
-    public static void deleteLoics(){
-        delete("name", "Loïc");
-    }
-}
-----
-
-== Simplified queries
+=== Simplified queries
 
 Normally, MongoDB queries are of this form: `{'firstname': 'John', 'lastname':'Doe'}`, this is what we call MongoDB native queries.
 
@@ -319,14 +467,16 @@ Here are some query examples:
 
 - `firstname = ?1 and status = ?2` will be mapped to `{'firstname': ?1, 'status': ?2}`
 - `amount > ?1 and firstname != ?2` will be mapped to `{'amount': {'$gt': ?1}, 'firstname': {'$ne': ?2}}`
-- `lastname like ?1` will be mapped to `{'lastname': {'$regex': ?1}}`. Be careful that this will be link:https://docs.mongodb.com/manual/reference/operator/query/regex/#op._S_regex[MongoDB regex] support and not SQL like pattern. 
+- `lastname like ?1` will be mapped to `{'lastname': {'$regex': ?1}}`. Be careful that this will be link:https://docs.mongodb.com/manual/reference/operator/query/regex/#op._S_regex[MongoDB regex] support and not SQL like pattern.
 - `lastname is not null` will be mapped to `{'lastname':{'$exists': true}}`
 
-We also handle some basic date type transformations: all fields of type `Date`, `LocalDate` or `LocalDateTime` will be mapped to the link:https://docs.mongodb.com/manual/reference/bson-types/#document-bson-type-date[BSON Date] using the `ISODate` type (UTC datetime).
+We also handle some basic date type transformations: all fields of type `Date`, `LocalDate`, `LocalDateTime` or `Instant` will be mapped to the
+link:https://docs.mongodb.com/manual/reference/bson-types/#document-bson-type-date[BSON Date] using the `ISODate` type (UTC datetime).
+The MongoDB POJO codec doesn't support `ZonedDateTime` and `OffsetDateTime` so you should convert them prior usage.
 
 MongoDB with Panache also supports extended MongoDB queries by providing a `Document` query, this is supported by the find/list/stream/count/delete methods.
 
-== Query parameters
+=== Query parameters
 
 You can pass query parameters, for both native and PanacheQL queries, by index (1-based) as shown below:
 
@@ -387,16 +537,16 @@ public class Person extends PanacheMongoEntity {
 Both `findByNameWithPanacheQLQuery()` and `findByNameWithNativeQuery()` methods will return the same result but query written in PanacheQL
 will use the entity field name: `name`, and native query will use the MongoDB field name: `lastname`.
 
-== Query projection
+=== Query projection
 
 Query projection can be done with the `project(Class)` method on the `PanacheQuery` object that is returned by the `find()` methods.
 
 You can use it to restrict which fields will be returned by the database,
-the ID field will always be returned but it's not mandatory to include it inside the projection class.
+the ID field will always be returned, but it's not mandatory to include it inside the projection class.
 
-For this, you need to create a class (a Pojo) that will only contain the projected fields.
-This pojo needs to be annotated with `@ProjectionFor(Entity.class)` where `Entity` is the name of your entity class.
-The field names, or  getters, of the projection class will be used to restrict which properties will be loaded from the database.
+For this, you need to create a class (a POJO) that will only contain the projected fields.
+This POJO needs to be annotated with `@ProjectionFor(Entity.class)` where `Entity` is the name of your entity class.
+The field names, or getters, of the projection class will be used to restrict which properties will be loaded from the database.
 
 Projection can be done for both PanacheQL and native queries.
 
@@ -431,59 +581,9 @@ PanacheQuery<PersonName> query = Person.find("'status': ?1", Status.Alive).proje
 PanacheQuery<PersonName> nativeQuery = Person.find("{'status': 'ALIVE'}", Status.Alive).project(PersonName.class);
 ----
 
-TIP: Using @BsonProperty is not needed to define custom column mappings, as the mappings from the entity class will be used.
+TIP: Using `@BsonProperty` is not needed to define custom column mappings, as the mappings from the entity class will be used.
 
 TIP: You can have your projection class extends from another class. In this case, the parent class also needs to have use `@ProjectionFor` annotation.
-
-== The DAO/Repository option
-
-Repository is a very popular pattern and can be very accurate for some use case, depending on
-the complexity of your needs.
-
-Whether you want to use the Entity based approach presented above or a more traditional Repository approach, it is up to you,
-Panache and Quarkus have you covered either way.
-
-If you lean towards using Repositories, you can get the exact same convenient methods injected in your Repository by making it
-implement `PanacheMongoRepository`:
-
-[source,java]
-----
-@ApplicationScoped
-public class PersonRepository implements PanacheMongoRepository<Person> {
-
-   // put your custom logic here as instance methods
-
-   public Person findByName(String name){
-       return find("name", name).firstResult();
-   }
-
-   public List<Person> findAlive(){
-       return list("status", Status.Alive);
-   }
-
-   public void deleteLoics(){
-       delete("name", "Loïc");
-  }
-}
-----
-
-Absolutely all the operations that are defined on `PanacheMongoEntityBase` are available on your DAO, so using it
-is exactly the same except you need to inject it:
-
-[source,java]
-----
-@Inject
-PersonRepository personRepository;
-
-@GET
-public long count(){
-    return personRepository.count();
-}
-----
-
-So if Repositories are your thing, you can keep doing them. Even with repositories, you can keep your entities as
-subclasses of `PanacheMongoEntity` in order to get the ID and public fields working, but you can even skip that and
-go back to specifying your ID and using getters and setters if that's your thing. Use what works for you.
 
 == Transactions
 
@@ -528,7 +628,51 @@ you need to provide the value by yourself.
 ====
 
 `ObjectId` can be difficult to use if you want to expose its value in your REST service.
-So we created JSON-B and Jackson providers to serialize/deserialize them as a `String` which are are automatically registered if your project depends on one of the RESTEasy with JSON-B or RESTEasy with Jackson extensions.
+So we created JSON-B and Jackson providers to serialize/deserialize them as a `String` which are automatically registered if your project depends on either the RESTEasy JSON-B extension or the RESTEasy Jackson extension.
+
+== Working with Kotlin Data classes
+
+Kotlin data classes are a very convenient way of defining data carrier classes, making them a great match to define an entity class.
+
+But this type of class comes with some limitations: all fields needs to be initialized at construction time or be marked as nullable,
+and the generated constructor needs to have as parameters all the fields of the data class.
+
+MongoDB with Panache uses the `PojoCodec`, a MongoDB codec which mandates the presence of a parameterless constructor.
+
+Therefore, if you want to use a data class as an entity class, you need a way to make Kotlin generate an empty constructor.
+To do so, you need to provide default values for all the fields of your classes.
+The following sentence from the Kotlin documentation explains it:
+
+__On the JVM, if the generated class needs to have a parameterless constructor, default values for all properties have to be specified (see Constructors).__
+
+If for whatever reason, the aforementioned solution is deemed unacceptable, there are alternatives.
+
+First, you can create a BSON Codec which will be automatically registered by Quarkus and will be used instead of the `PojoCodec`.
+See this part of the documentation: link:mongodb#simplifying-mongodb-client-usage-using-bson-codec[Using BSON codec].
+
+Another option is to use the `@BsonCreator` annotation to tell the `PojoCodec` to use the Kotlin data class default constructor,
+in this case all constructor parameters have to be annotated with `@BsonProperty`: see link:{mongodb-doc-root-url}/bson/pojos/#supporting-pojos-without-no-args-constructors[Supporting pojos without no args constructor].
+
+This will only work when the entity extends `PanacheMongoEntityBase` and not `PanacheMongoEntity`, as the ID field also needs to be included in the constructor.
+
+An example of a `Person` class defined as a Kotlin data class would look like:
+
+[source,kotlin]
+----
+data class Person @BsonCreator constructor (
+    @BsonId var id: ObjectId,
+    @BsonProperty("name") var name: String,
+    @BsonProperty("birth") var birth: LocalDate,
+    @BsonProperty("status") var status: Status
+): PanacheMongoEntityBase()
+----
+
+[TIP]
+====
+Here we use `var` but note that `val` can also be used.
+
+The `@BsonId` annotation is used instead of `@BsonProperty("_id")` for brevity's sake, but use of either is valid.
+====
 
 The last option is to the use the link:https://kotlinlang.org/docs/reference/compiler-plugins.html#no-arg-compiler-plugin[no-arg] compiler plugin.
 This plugin is configured with a list of annotations, and the end result is the generation of no-args constructor for each class annotated with them.
@@ -544,6 +688,116 @@ data class Person (
     var status: Status
 ): PanacheMongoEntity()
 ----
+
+[[reactive]]]]
+== Reactive Entities and Repositories
+
+MongoDB with Panache allows using reactive style implementation for both entities and repositories.
+For this, you need to use the Reactive variants when defining your entities : `ReactivePanacheMongoEntity` or `ReactivePanacheMongoEntityBase`,
+and when defining your repositories: `ReactivePanacheMongoRepository` or `ReactivePanacheMongoRepositoryBase`.
+
+[TIP]
+.Mutiny
+====
+The reactive API of the MongoDB with Panache uses Mutiny reactive types, if you're not familiar with them, read the link:getting-started-reactive#mutiny[Getting Started with Reactive guide] first.
+====
+
+The reactive variant of the `Person` class will be:
+
+[source,java]
+----
+public class ReactivePerson extends ReactivePanacheMongoEntity {
+    public String name;
+    public LocalDate birth;
+    public Status status;
+
+    // return name as uppercase in the model
+    public String getName(){
+        return name.toUpperCase();
+    }
+
+    // store all names in lowercase in the DB
+    public void setName(String name){
+        this.name = name.toLowerCase();
+    }
+}
+----
+
+You will have access to the same functionalities of the _imperative_ variant inside the reactive one: bson annotations, custom ID, PanacheQL, ...
+But the methods on your entities or repositories will all return reactive types.
+
+See the equivalent methods from the imperative example with the reactive variant:
+
+[source,java]
+----
+// creating a person
+ReactivePerson person = new ReactivePerson();
+person.name = "Loïc";
+person.birth = LocalDate.of(1910, Month.FEBRUARY, 1);
+person.status = Status.Alive;
+
+// persist it
+Uni<Void> cs1 = person.persist();
+
+person.status = Status.Dead;
+
+// Your must call update() in order to send your entity modifications to MongoDB
+Uni<Void> cs2 = person.update();
+
+// delete it
+Uni<Void> cs3 = person.delete();
+
+// getting a list of all persons
+Uni<List<ReactivePerson>> allPersons = ReactivePerson.listAll();
+
+// finding a specific person by ID
+Uni<ReactivePerson> personById = ReactivePerson.findById(personId);
+
+// finding a specific person by ID via an Optional
+Uni<Optional<ReactivePerson>> optional = ReactivePerson.findByIdOptional(personId);
+personById = optional.map(o -> o.orElseThrow(() -> new NotFoundException()));
+
+// finding all living persons
+Uni<List<ReactivePerson>> livingPersons = ReactivePerson.list("status", Status.Alive);
+
+// counting all persons
+Uni<Long> countAll = ReactivePerson.count();
+
+// counting all living persons
+Uni<Long> countAlive = ReactivePerson.count("status", Status.Alive);
+
+// delete all living persons
+Uni<Long>  deleteCount = ReactivePerson.delete("status", Status.Alive);
+
+// delete all persons
+deleteCount = ReactivePerson.deleteAll();
+----
+
+TIP: If you use MongoDB with Panache in conjunction with RESTEasy, you can directly return a reactive type inside your JAX-RS resource endpoint as long as you include the `quarkus-resteasy-mutiny` extension.
+
+The same query facility exists for the reactive types, but the `stream()` methods act differently: they return a `Multi` (which implement  a reactive stream `Publisher`) instead of a `Stream`.
+
+It allows more advanced reactive use cases, for example, you can use it to send server-sent events (SSE) via RESTEasy:
+
+[source,java]
+----
+import org.jboss.resteasy.annotations.SseElementType;
+import org.reactivestreams.Publisher;
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+
+@GET
+@Path("/stream")
+@Produces(MediaType.SERVER_SENT_EVENTS)
+@SseElementType(MediaType.APPLICATION_JSON)
+public Multi<ReactivePerson> streamPersons() {
+    return ReactivePerson.streamAll();
+}
+----
+
+TIP: `@SseElementType(MediaType.APPLICATION_JSON)` tells RESTEasy to serialize the object in JSON.
+
 
 == How and why we simplify MongoDB API
 
@@ -569,7 +823,9 @@ a custom ID strategy, you can extend `PanacheMongoEntityBase` instead and handle
 - Use public fields. Get rid of dumb getter and setters. Under the hood, we will generate all getters and setters
 that are missing, and rewrite every access to these fields to use the accessor methods. This way you can still
 write _useful_ accessors when you need them, which will be used even though your entity users still use field accesses.
-- Don't use DAOs or Repositories: put all your entity logic in static methods in your entity class. Your entity superclass comes with lots of super useful static methods and you can add your own in your entity class. Users can just start using your entity `Person` by typing `Person.` and getting completion for all the operations in a single place.
+- With the active record pattern: put all your entity logic in static methods in your entity class and don't create DAOs.
+Your entity superclass comes with lots of super useful static methods, and you can add your own in your entity class.
+Users can just start using your entity `Person` by typing `Person.` and getting completion for all the operations in a single place.
 - Don't write parts of the query that you don't need: write `Person.find("order by name")` or
 `Person.find("name = ?1 and status = ?2", "Loïc", Status.Alive)` or even better `Person.find("name", "Loïc")`.
 
@@ -578,7 +834,7 @@ That's all there is to it: with Panache, MongoDB has never looked so trim and ne
 == Defining entities in external projects or jars
 
 MongoDB with Panache relies on compile-time bytecode enhancements to your entities.
-If you define your entities in the same project where you build your Quarkus application, everything will work fine. 
+If you define your entities in the same project where you build your Quarkus application, everything will work fine.
 If the entities come from external projects or jars, you can make sure that your jar is treated like a Quarkus application library
 by indexing it via Jandex, see link:cdi-reference#how-to-generate-a-jandex-index[How to Generate a Jandex Index] in the CDI guide.
 This will allow Quarkus to index and enhance your entities as if they were inside the current project.
