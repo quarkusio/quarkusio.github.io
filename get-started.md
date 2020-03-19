@@ -9,6 +9,7 @@ permalink: /get-started/
 ### Getting Started
 
  - [Be Guided Through First Application]({{site.baseurl}}/guides/getting-started)
+ - [Getting Started with Reactive]({{site.baseurl}}/guides/getting-started-reactive)
  - [Quickly Bootstrap Your Application](https://code.quarkus.io)
  - [Building Native Images]({{site.baseurl}}/guides/building-native-image)
  - [Using our Tooling]({{site.baseurl}}/guides/tooling)
@@ -31,6 +32,23 @@ This guide covers:
 
 <a href="{{site.baseurl}}/guides/getting-started" class="button-cta secondary">READ THE GUIDE</a>
 </div>
+
+<div class="guide-item" markdown="1">
+## Getting Started with Reactive
+
+Learn how to create a reactive application with Quarkus and explore the different reactive features offered by Quarkus.
+This guide covers:
+
+* A quick glance at the Quarkus engine and how it enables reactive
+* A brief introduction to Mutiny - the reactive programming library used by Quarkus
+* Bootstrapping a reactive application
+* Creating a reactive JAX-RS endpoint (asynchronous, streams...)
+* Using reactive database access
+* Interacting with other reactive APIs
+
+<a href="{{site.baseurl}}/guides/getting-started-reactive" class="button-cta secondary">READ THE GUIDE</a>
+</div>
+
 <div class="guide-item" markdown="1">
 ## Quickly Bootstrap Your Application
 
