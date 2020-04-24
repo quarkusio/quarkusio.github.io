@@ -6,8 +6,10 @@ author: mmascia
 synopsis: Let's learn how to enable mutual TLS in a Quarkus app.
 ---
 
-In this entry, we will explore how to manually set mutual TLS encryption between two Quarkus applications.
-Both on bare metal and on Kubernetes.
+:imagesdir: /assets/images/posts/quarkus-mutual-tls
+
+In this entry, we explore how to set mutual TLS encryption between two Quarkus applications manually.
+Both on bare metal and Kubernetes.
 
 == What is Mutual TLS Authentication?
 
@@ -19,9 +21,11 @@ It is an additional security layer which verifies not only the server identity b
 
 == How implement it?
 
-The best approach to implement Mutual TLS between two services is to delegate it to the infrastructure, for instance, a Service Mesh. This achieves a standard and secure way of communication and avoids that each application implements their own solution. However, you are not always working on cutting edge environment.
+The best approach to implement Mutual TLS between two services is to delegate it to the infrastructure, for instance, a Service Mesh. This achieves a standard and secure way of communication and avoids that each application implements its solution. However, you are not always working on cutting edge environment.
 
 Let's have a look at how to implement mTLS with Quarkus if you don't have a service mesh environment like Istio.
+
+image::mutual_tls.png[alt="MutualTLS Diagram"]
  
 == Bootstrapping
 
@@ -29,28 +33,25 @@ Let's create both the server and client applications we will secure.
 
 [source]
 ----
-mvn io.quarkus:quarkus-maven-plugin:1.4.0.CR1:create \
+mvn io.quarkus:quarkus-maven-plugin:1.4.0.Final:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=quarkus-server-mtls \
     -DclassName="org.acme.server.mtls.GreetingResource" \
-    -Dpath="/hello-server" \
-    -DplatformArtifactId=quarkus-bom \
-    -DplatformVersion=1.4.0.CR1
+    -Dextensions="rest-client, resteasy-jsonb, kubernetes-client" \
+    -Dpath="/hello-server"
 ----
 
 [source]
 ----
-mvn io.quarkus:quarkus-maven-plugin:1.4.0.CR1:create \
+mvn io.quarkus:quarkus-maven-plugin:1.4.0.Final:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=quarkus-client-mtls \
     -DclassName="org.acme.client.mtls.GreetingResource" \
-    -Dextensions="rest-client, resteasy-jsonb" \
-    -Dpath="/hello-client" \
-    -DplatformArtifactId=quarkus-bom \
-    -DplatformVersion=1.4.0.CR1
+    -Dextensions="rest-client, resteasy-jsonb, kubernetes-client" \
+    -Dpath="/hello-client"
 ----
 
-== Certificate and Truststore generation.
+== Certificate and Truststore generation
 
 Of course, you need a server, client certificates and a truststore :)
 
@@ -73,11 +74,11 @@ cp quarkus-server-mtls/src/main/resources/META-INF/resources/server.keystore qua
 cp quarkus-client-mtls/src/main/resources/META-INF/resources/client.keystore quarkus-server-mtls/src/main/resources/META-INF/resources/server.truststore
 ----
 
-== Hello Server Application.
+== Hello Server Application
 
 Let's open and configure the server `quarkus-server-mtls`
 
-=== Enable SSL on the Hello Server Application.
+=== Enable SSL on the Hello Server Application
 
 Add the following properties to enable SSL in your application `src/main/resources/application.properties`
 
@@ -96,7 +97,7 @@ quarkus.http.test-port=0
 
 NOTE: See the guide https://quarkus.io/guides/native-and-ssl[Using SSL with Native] to explore in details how SSL works in Quarkus.
 
-=== Activate client authentication.
+=== Activate client authentication
 
 .application.properties
 [source]
@@ -146,7 +147,7 @@ public class GreetingResourceTest {
 ----
 <1> Change the matcher in _"hello from server"_
 
-=== Run it.
+=== Run it
 
 [source]
 ----
@@ -163,12 +164,13 @@ curl: (35) error:1401E412:SSL routines:CONNECT_CR_FINISHED:sslv3 alert bad certi
 
 This means that your client (curl) did not provide a trusted certificate when it connected to the server.
 
-== Hello Client Application.
+== Hello Client Application
 
 At this point, the server application is ready to accomplish Mutual TLS. Let's open and configure the client `quarkus-client-mtls`
 
 === Add Rest client for the server application
 
+.org.acme.client.mtls.GreetingService
 [source,java]
 ----
 @Path("/")
@@ -250,7 +252,7 @@ public class GreetingResourceTest {
 
 NOTE: See the guide https://quarkus.io/guides/getting-started-testing[Testing] to explore in details.
 
-=== Configure MicroProfile rest client for Mutual TLS.
+=== Configure MicroProfile rest client for Mutual TLS
 
 Add the following properties to enable SSL in your application `src/main/resources/application.properties`
 
@@ -266,7 +268,7 @@ org.acme.client.mtls.GreetingService/mp-rest/keyStorePassword=password
 quarkus.ssl.native=true
 ----
 
-=== Run it.
+=== Run it
 
 [source]
 ----
@@ -284,16 +286,35 @@ hello from server
 == External Configuration
 
 You do not want to have a certificate inside your application and Quarkus allows you to use external configuration and override the runtime application properties.
-Using the external `config` directory under the current working directory, for instance `config/application.properties`
 
 Let's check how we can do in Kubernetes / OpenShift.
 
+During the application boostrapping you added the `kubernetes-config` extensions. The extension works by reading ConfigMaps directly from the Kubernetes API.
+
 [NOTE]
 ====
-Working directory:
+In case you are in a restricted environment which not allow the role to view ConfigMap to your service account, you need to mount the external `config` directory under the current working directory, for instance `<working-dir>/config/application.properties`
 
-* `redhat-openjdk-18/openjdk18-openshift` image is `/deployments`
-* `ubi-quarkus-native-s2i:19.3.1-java11` image is `/home/quarkus`
+The _working directory_ for:
+
+* jvm `redhat-openjdk-18/openjdk18-openshift` image is `/deployments`
+* native `ubi-quarkus-native-s2i:19.3.1-java11` image is `/home/quarkus`
+
+.volumeMounts sample
+[source:yaml]
+----
+# ...
+
+      volumes:
+        - name: config
+          configMap:
+              name: client
+
+# ...
+          volumeMounts:
+            - name: config
+              mountPath: /deployments
+----
 ====
 
 === Secret
@@ -341,9 +362,36 @@ data:
     org.acme.client.mtls.GreetingService/mp-rest/keyStorePassword=password
 ----
 
-=== Mount Everything
+=== Enable `kubernetes-config` extension on the server and client application
 
-Mount everything in your Deployment Application. 
+Add the following properties for the server application:
+
+.application.properties
+[source]
+----
+quarkus.kubernetes-config.enabled=true
+quarkus.kubernetes-config.config-maps=server
+
+# it is for disabling the `kubernetes-config` at test phase.
+%test.quarkus.kubernetes-config.enabled=false
+----
+
+and the client application:
+
+.application.properties
+[source]
+----
+quarkus.kubernetes-config.enabled=true
+quarkus.kubernetes-config.config-maps=client
+
+# it is for disabling the `kubernetes-config` at test phase.
+%test.quarkus.kubernetes-config.enabled=false
+----
+
+NOTE: See the guide https://quarkus.io/guides/kubernetes-config[Kubernetes Config] to explore in details.
+
+=== Deploy Everything
+
 Here an example for the client application:
 
 [source,yaml]
@@ -370,9 +418,6 @@ spec:
         - name: truststore
           secret:
             secretName: truststore
-        - name: config
-          configMap:
-              name: client
       containers:
         - name: client
           image: 'image-registry.openshift-image-registry.svc:5000/mtls/client:latest'
@@ -387,8 +432,6 @@ spec:
             - name: truststore
               readOnly: true
               mountPath: /deployments/tls/ca
-            - name: config
-              mountPath: /deployments/config
 ----
 
 NOTE: See this instruction https://github.com/openlab-red/quarkus-mtls-quickstart/tree/master/deploy to explore in details.
@@ -400,4 +443,4 @@ The full Quarkus Mutual TLS example is available in the github repository mentio
 
 == Links
 
-- GitHub repository: https://github.com/openlab-red/quarkus-mtls-quickstart 
+- GitHub repository: https://github.com/openlab-red/quarkus-mtls-quickstart
