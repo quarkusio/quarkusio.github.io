@@ -1,5 +1,5 @@
 ---
 layout: community
-title: Quarkus - Community
+title: Community
 permalink: /community/
 ---
