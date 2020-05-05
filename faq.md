@@ -70,8 +70,8 @@ or more simply get inspiration from the [existing ones](https://github.com/quark
 
 [GraalVM](https://www.graalvm.org) is a universal virtual machine for running applications written in
 various different languages, as well as providing the ability to compile JVM bytecode to a native executable (this
-native executable runs a special virtual machine called SubstrateVM). These native executable's start much faster
-and can use a lot less memory that a traditional JVM, however not every JVM feature is supported, and some are more
+native executable runs a special virtual machine called SubstrateVM). These native executables start much faster
+and can use a lot less memory than a traditional JVM, however not every JVM feature is supported, and some are more
 limited than normal.
 
 For example by default reflection in GraalVM will not work, unless a class/member has been explicitly registered for
