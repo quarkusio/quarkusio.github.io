@@ -7,8 +7,10 @@ https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
 
 include::./attributes.adoc[]
 
-This guide covers generating and deploying Kubernetes resources based on sane defaults and user supplied configuration.
-In detail, it supports generating resources for <<#kubernetes,Kubernetes>>, <<#openshift,OpenShift>> and <<#knative,Knative>>. Also it supports automatic deployment of these resources to the target platform.
+Quarkus offers the ability to automatically generate Kubernetes resources based on sane defaults and user-supplied configuration using https://github.com/dekorateio/dekorate/[dekorate].
+It currently supports generating resources for vanilla <<#kubernetes,Kubernetes>>, <<#openshift,OpenShift>> and <<#knative,Knative>>.
+Furthermore, Quarkus can deploy the application to a target Kubernetes cluster by applying the generated manifests to the target cluster's API Server.
+Finally, when either one of container image extensions is present (see the link:container-image[container image guide] for more details), Quarkus has the ability to create a container image and push it to a registry *before* deploying the application to the target platform.
 
 == Prerequisites
 
@@ -18,13 +20,14 @@ To complete this guide, you need:
 * an IDE
 * JDK 1.8+ installed with `JAVA_HOME` configured appropriately
 * Apache Maven {maven-version}
-* access to a Kubernetes or cluster (Minikube is a viable options)
+* access to a Kubernetes cluster (Minikube is a viable option)
 
-== Creating the Maven project
+[#kubernetes]
+== Kubernetes
 
-First, we need a new project that contains the Kubernetes extension and the Jib extension. This can be done using the following command:
+Let's create a new project that contains both the Kubernetes and Jib extensions:
 
-[source, subs=attributes+]
+[source,subs=attributes+]
 ----
 mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
     -DprojectGroupId=org.acme \
@@ -35,16 +38,7 @@ mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
 cd kubernetes-quickstart
 ----
 
-[#kubernetes]
-== Kubernetes
-
-Quarkus offers the ability to automatically generate Kubernetes resources based on sane defaults and user supplied configuration. The implementation that takes care
-of generating the actual Kubernetes resources is provided by https://github.com/dekorateio/dekorate/[dekorate]. Currently it supports the generation of resources for
-vanilla Kubernetes and OpenShift. Furthermore, Quarkus can deploy the application to a target Kubernetes cluster by applying the generated manifests to the target cluster's API Server.
-Finally, when either the `quarkus-container-image-jib` or `quarkus-container-image-docker` extensions are present (see the link:container-image[container image guide] for more details),
-Quarkus has the ability to create a container image and push it to a registry *before* deploying the application to the Kubernetes cluster.
-
-When we executed the previous command, the following dependencies were added to the `pom.xml`
+This added the following dependencies to the `pom.xml`
 
 [source,xml]
 ----
@@ -58,8 +52,8 @@ When we executed the previous command, the following dependencies were added to 
     </dependency>
 ----
 
-By adding these dependencies, we enable the generation of Kubernetes manifests each time we perform a build while also enabling the build of a container image.
-For example, following the execution of `./mvnw package` you will notice amongst the other files that are created, two files named
+By adding these dependencies, we enable the generation of Kubernetes manifests each time we perform a build while also enabling the build of a container image using Jib.
+For example, following the execution of `./mvnw package`, you will notice amongst the other files that are created, two files named
 `kubernetes.json` and `kubernetes.yml` in the `target/kubernetes/` directory.
 
 If you look at either file you will see that it contains both a Kubernetes `Deployment` and a `Service`.
@@ -109,7 +103,7 @@ The full source of the `kubernetes.json` file looks something like this:
               }
             } ],
             "image" : "yourDockerUsername/test-quarkus-app:1.0-SNAPSHOT",
-            "imagePullPolicy" : "IfNotPresent",
+            "imagePullPolicy" : "Always",
             "name" : "test-quarkus-app"
           } ]
         }
@@ -144,6 +138,13 @@ The full source of the `kubernetes.json` file looks something like this:
   }
  }
 }
+----
+
+The generated manifest can be applied to the cluster from the project root using `kubectl`:
+
+[source]
+----
+kubectl apply -f target/kubernetes/kubernetes.json
 ----
 
 An important thing to note about the `Deployment` is that is uses `yourDockerUsername/test-quarkus-app:1.0-SNAPSHOT` as the container image of the `Pod`.
@@ -209,7 +210,7 @@ quarkus.kubernetes.labels.foo=bar
 
 NOTE: When using the `quarkus-container-image-jib` extension to build a container image, then any label added via the aforementioned property will also be added to the generated container image.
 
-====  Annotations
+==== Annotations
 
 Out of the box, the generated resources will be annotated with version control related information that can be used either by tooling, or by the user for troubleshooting purposes.
 
@@ -223,12 +224,13 @@ Out of the box, the generated resources will be annotated with version control r
 
 ==== Custom Annotations
 
-Custom annotations can be added in a way similar to labels. For example to add the annotation `foo=bar` just apply the following configuration:
+Custom annotations can be added in a way similar to labels. For example to add the annotation `foo=bar` and `app.quarkus/id=42` just apply the following configuration:
 
 
 [source]
 ----
 quarkus.kubernetes.annotations.foo=bar
+quarkus."app.quarkus/id"=42
 ----
 
 ==== Environment variables
@@ -240,37 +242,75 @@ Kubernetes provides multiple ways of defining environment variables:
 - from a ConfigMap
 - from fields
 
+===== Environment variables from key/value pairs
+
 To add a key/value pair as an environment variable in the generated resources:
 
 [source]
 ----
-quarkus.kubernetes.env-vars.my-env-var.value=foobar
+quarkus.kubernetes.env.vars.my-env-var=foobar
 ----
 
 The command above will add `MY_ENV_VAR=foobar` as an environment variable.
 Please note that the key `my-env-var` will be converted to uppercase and dashes will be replaced by underscores resulting in `MY_ENV_VAR`.
 
-You may also have noticed that in contrast to labels and annotations for environment variables you don't just use a `key=value` approach.
-That is because for environment variables there are additional options rather than just setting a value.
-
 ===== Environment variables from Secret
 
-To add all key/value pairs of a `Secret` as environment variables just apply the following configuration:
+To add all key/value pairs of `Secret` as environment variables just apply the following configuration, separating each `Secret`
+to be used as source by a comma (`,`):
 
 [source]
 ----
-quarkus.kubernetes.env-vars.my-env-var.secret=my-secret
+quarkus.kubernetes.env.secrets=my-secret,my-other-secret
 ----
 
 ===== Environment variables from ConfigMap
 
-To add all key/value pairs of a `ConfigMap` as environment variables just apply the following configuration:
+To add all key/value pairs from `ConfigMap` as environment variables just apply the following configuration, separating each
+`ConfigMap` to be used as source by a comma (`,`):
 
 [source]
 ----
-quarkus.kubernetes.env-vars.my-env-var.configmap=my-secret
+quarkus.kubernetes.env.configmaps=my-config-map,another-config-map
 ----
 
+===== Environment variables from fields
+
+It's also possible to use the value from another field to add a new environment variable by specifying the path of the field to
+be used as a source, as follows:
+
+[source]
+----
+quarkus.kubernetes.env.fields.foo=metadata.name
+----
+
+===== Validation
+
+A conflict between two definitions, e.g. mistakenly assigning both a value and specifying that a variable is derived
+from a field, will result in an error being thrown at build time so that you get the opportunity to fix the issue before you
+deploy your application to your cluster where it might be more difficult to diagnose the source of the issue.
+
+Similarly, two redundant definitions, e.g. defining an injection from the same secret twice, will not cause an issue but will
+indeed report a warning to let you know that you might not have intended to duplicate that definition.
+
+===== Backwards compatibility
+
+Previous versions of the Kubernetes extension supported a different syntax to add environment variables. The older syntax is
+still supported but is deprecated and it's advised that you migrate to the new syntax.
+
+.Old vs. new syntax
+|====
+|                       |Old                                                    | New                                                 |
+| Plain variable        |`quarkus.kubernetes.env-vars.my-env-var.value=foobar`  | `quarkus.kubernetes.env.vars.my-env-var=foobar`     |
+| From field            |`quarkus.kubernetes.env-vars.my-env-var.field=foobar`  | `quarkus.kubernetes.env.fields.my-env-var=foobar`   |
+| All from `ConfigMap`  |`quarkus.kubernetes.env-vars.xxx.configmap=foobar`     | `quarkus.kubernetes.env.configmaps=foobar`          |
+| All from `Secret`     |`quarkus.kubernetes.env-vars.xxx.secret=foobar`        | `quarkus.kubernetes.env.secrets=foobar`             |
+|====
+
+NOTE: If you redefine the same variable using the new syntax while keeping the old syntax, **ONLY** the new version will be kept
+and a warning will be issued to alert you of the problem. For example, if you define both
+`quarkus.kubernetes.env-vars.my-env-var.value=foobar` and `quarkus.kubernetes.env.vars.my-env-var=newValue`, the extension will
+only generate an environment variable `MY_ENV_VAR=newValue` and issue a warning.
 
 ==== Mounting volumes
 
@@ -310,7 +350,7 @@ quarkus.kubernetes.replicas=3
 
 === Add readiness and liveness probes
 
-By default the Kubernetes resources do not contain readiness and liveness probes in the generated `Deployment`. Adding them however is just a matter of adding the SmallRye Health extension like so:
+By default, the Kubernetes resources do not contain readiness and liveness probes in the generated `Deployment`. Adding them however is just a matter of adding the SmallRye Health extension like so:
 
 [source,xml]
 ----
@@ -348,12 +388,53 @@ To access the API server from within a Kubernetes cluster, some RBAC related res
 So, when the `kubernetes-client` extension is present, the `kubernetes` extension is going to create those resources automatically, so that application will be granted the `view` role.
 If more roles are required, they will have to be added manually.
 
+=== Deploying to Minikube
+
+https://github.com/kubernetes/minikube[Minikube] is quite popular when a Kubernetes cluster is needed for development purposes. To make the deployment to Minikube
+experience as frictionless as possible, Quarkus provides the `quarkus-minikube` extension. This extension can be added to a project like so:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-minikube</artifactId>
+</dependency>
+----
+
+The purpose of this extension is to generate Kubernetes manifests (`minikube.yaml` and `minikube.json`) that are tailored to Minikube.
+This extension assumes a couple things:
+
+* Users won't be using an image registry and will instead make their container image accessible to the Kubernetes cluster by building it directly
+into Minikube's Docker daemon. To use Minikube's Docker daemon you must first execute:
++
+[source]
+----
+eval $(minikube -p minikube docker-env)
+----
+
+* Applications deployed to Kubernetes won't be accessed via a Kubernetes `Ingress`, but rather as a `NodePort` `Service`.
+The advantage of doing this is that the URL of an application can be retrieved trivially by executing:
++
+[source]
+----
+minikube service list
+----
+
+To control the https://kubernetes.io/docs/concepts/services-networking/service/#nodeport[nodePort] that is used in this case, users can set `quarkus.kubernetes.node-port`.
+Note however that this configuration is entirely optional because Quarkus will automatically use a proper (and non-changing) value if none is set.
+
+WARNING: It is highly discouraged to use the manifests generated by the Minikube extension when deploying to production as these manifests are intended for development purposes
+only. When deploying to production, consider using the vanilla Kubernetes manifests (or the OpenShift ones when targeting OpenShift).
+
+NOTE: If the assumptions the Minikube extension makes don't fit your workflow, nothing prevents you from using the regular Kubernetes extension to generate Kubernetes manifests
+and apply those to your Minikube cluster.
+
 == Tuning the generated resources using application.properties
 
 The Kubernetes extension allows tuning the generated manifest, using the `application.properties` file.
 Here are some examples:
 
-== Configuration options
+=== Configuration options
 
 The table below describe all the available configuration options.
 
@@ -383,7 +464,7 @@ The table below describe all the available configuration options.
 | quarkus.kubernetes.azure-disk-volumes              | Map<String, AzureDiskVolume>              |             |
 | quarkus.kubernetes.azure-file-volumes              | Map<String, AzureFileVolume>              |             |
 | quarkus.kubernetes.mounts                          | Map<String, Mount>                        |             |
-| quarkus.kubernetes.image-pull-policy               | ImagePullPolicy                           |             | IfNotPresent
+| quarkus.kubernetes.image-pull-policy               | ImagePullPolicy                           |             | Always
 | quarkus.kubernetes.image-pull-secrets              | String[]                                  |             |
 | quarkus.kubernetes.liveness-probe                  | Probe                                     |             | ( see Probe )
 | quarkus.kubernetes.readiness-probe                 | Probe                                     |             | ( see Probe )
@@ -392,7 +473,7 @@ The table below describe all the available configuration options.
 | quarkus.kubernetes.headless                        | boolean                                   |             | false
 |====
 
-Properties that use non standard types, can be referenced by expanding the property.
+Properties that use non-standard types, can be referenced by expanding the property.
 For example to define a `kubernetes-readiness-probe` which is of type `Probe`:
 
 [source]
@@ -405,7 +486,10 @@ In this example `initial-delay` and `period` are fields of the type `Probe`.
 Below you will find tables describing all available types.
 
 
-=== Basic Types
+==== Basic Types
+
+.ServiceType
+Allowed values: `cluster-ip`, `node-port`, `load-balancer`, `external-name`
 
 .Env
 |====
@@ -446,13 +530,13 @@ Below you will find tables describing all available types.
 | arguments         | String[]                                |             |
 | ports             | Port[]                                  |             |
 | mounts            | Mount[]                                 |             |
-| image-pull-policy | ImagePullPolicy                         |             | IfNotPresent                             
+| image-pull-policy | ImagePullPolicy                         |             | Always                             
 | liveness-probe    | Probe                                   |             |                                          
 | readiness-probe   | Probe                                   |             |                                          
 |====
 
 
-=== Mounts and Volumes
+==== Mounts and Volumes
 
 .Mount
 |====
@@ -523,7 +607,7 @@ Below you will find tables describing all available types.
 |====
 
 [#openshift]
-== OpenShift
+=== OpenShift
 
 To enable the generation of OpenShift resources, you need to include OpenShift in the target platforms:
 
@@ -536,8 +620,26 @@ If you need to generate resources for both platforms (vanilla Kubernetes and Ope
 
 [source]
 ----
-quarkus.kubernetes.deployment-target=kubernetes, openshift
+quarkus.kubernetes.deployment-target=kubernetes,openshift
 ----
+
+Following the execution of `./mvnw package` you will notice amongst the other files that are created, two files named
+`openshift.json` and `openshift.yml` in the `target/kubernetes/` directory.
+
+These manifests can be deployed as is to a running cluster, using `kubectl`:
+
+[source]
+----
+kubectl apply -f target/kubernetes/openshift.json
+----
+
+Openshift users might want to use `oc` instead of `kubectl`:
+
+[source]
+----
+oc apply -f target/kubernetes/openshift.json
+----
+
 
 NOTE: Quarkus also provides the link:deploying-to-openshift[OpenShift] extension. This extension is basically a wrapper around the Kubernetes extension and
 relieves OpenShift users of the necessity of setting the `deployment-target` property to `openshift`
@@ -570,7 +672,7 @@ The OpenShift resources can be customized in a similar approach with Kubernetes.
 | quarkus.openshift.azure-disk-volumes              | Map<String, AzureDiskVolume>              |             |
 | quarkus.openshift.azure-file-volumes              | Map<String, AzureFileVolume>              |             |
 | quarkus.openshift.mounts                          | Map<String, Mount>                        |             |
-| quarkus.openshift.image-pull-policy               | ImagePullPolicy                           |             | IfNotPresent
+| quarkus.openshift.image-pull-policy               | ImagePullPolicy                           |             | Always
 | quarkus.openshift.image-pull-secrets              | String[]                                  |             |
 | quarkus.openshift.liveness-probe                  | Probe                                     |             | ( see Probe )
 | quarkus.openshift.readiness-probe                 | Probe                                     |             | ( see Probe )
@@ -580,9 +682,9 @@ The OpenShift resources can be customized in a similar approach with Kubernetes.
 |====
 
 [#knative]
-== Knative
+=== Knative
     
-To enable the generation of Quarkus.Knative.resources, you need to include Knative in the target platforms:
+To enable the generation of Knative resources, you need to include Knative in the target platforms:
 
 [source]
 ----
@@ -590,11 +692,11 @@ quarkus.kubernetes.deployment-target=knative
 ----
 
 Following the execution of `./mvnw package` you will notice amongst the other files that are created, two files named
-`quarkus.knative.json` and `knative.yml` in the `target/kubernetes/` directory.
+`knative.json` and `knative.yml` in the `target/kubernetes/` directory.
 
-If you look at either file you will see that it contains a Quarkus.Knative.`Service`.
+If you look at either file you will see that it contains a Knative `Service`.
 
-The full source of the `quarkus.knative.json` file looks something like this:
+The full source of the `knative.json` file looks something like this:
 
 [source,json]
 ----
@@ -611,7 +713,7 @@ The full source of the `quarkus.knative.json` file looks something like this:
         "app.kubernetes.io/name" : "test-quarkus-app",
         "app.kubernetes.io/version" : "1.0-SNAPSHOT"
       },
-      "name" : "quarkus.knative.
+      "name" : "knative.
     },
     "spec" : {
       "runLatest" : {
@@ -620,7 +722,7 @@ The full source of the `quarkus.knative.json` file looks something like this:
             "spec" : {
               "container" : {
                 "image" : "dev.local/yourDockerUsername/test-quarkus-app:1.0-SNAPSHOT",
-                "imagePullPolicy" : "IfNotPresent"
+                "imagePullPolicy" : "Always"
               }
             }
           }
@@ -629,6 +731,13 @@ The full source of the `quarkus.knative.json` file looks something like this:
     }
   }
 }
+----
+
+The generated manifest can be deployed as is to a running cluster, using `kubectl`:
+
+[source]
+----
+kubectl apply -f target/kubernetes/knative.json
 ----
 
 The generated service can be customized using the following properties:
@@ -659,13 +768,26 @@ The generated service can be customized using the following properties:
 | quarkus.knative.azure-disk-volumes              | Map<String, AzureDiskVolume>              |             |
 | quarkus.knative.azure-file-volumes              | Map<String, AzureFileVolume>              |             |
 | quarkus.knative.mounts                          | Map<String, Mount>                        |             |
-| quarkus.knative.image-pull-policy               | ImagePullPolicy                           |             | IfNotPresent
+| quarkus.knative.image-pull-policy               | ImagePullPolicy                           |             | Always
 | quarkus.knative.image-pull-secrets              | String[]                                  |             |
 | quarkus.knative.liveness-probe                  | Probe                                     |             | ( see Probe )
 | quarkus.knative.readiness-probe                 | Probe                                     |             | ( see Probe )
 | quarkus.knative.sidecars                        | Map<String, Container>                    |             |
 |====
 
+=== Deployment targets
+
+Mentioned in the previous sections was the concept of `deployment-target`. This concept allows users to control which Kubernetes manifests will be generated
+and deployed to a cluster (if `quarkus.kubernetes.deploy` has been set to `true`).
+
+By default, when no `deployment-target` is set, then only vanilla Kubernetes resources are generated and deployed. When multiple values are set (for example
+`quarkus.kubernetes.deployment-target=kubernetes,openshift`) then the resources for all targets are generated, but only the resources
+that correspond to the *first* target are applied to the cluster (if deployment is enabled).
+
+In the case of wrapper extensions like OpenShift and Minikube, when these extensions have been explicitly added to the project, the default `deployment-target`
+is set by those extensions. For example if `quarkus-minikube` has been added to a project, then `minikube` becomes the default deployment target and its
+resources will be applied to the Kubernetes cluster when deployment via `quarkus.kubernetes.deploy` has been set.
+Users can still override the deployment-targets manually using `quarkus.kubernetes.deployment-target`.
 
 === Deprecated configuration
 
@@ -708,6 +830,7 @@ quarkus.kubernetes.env-vars.foo.configmap=myconfigmap
 ----
 
 
+
 == Deployment
 
 To trigger building and deploying a container image you need to enable the `quarkus.kubernetes.deploy` flag (the flag is disabled by default - furthermore it has no effect during test runs or dev mode).
@@ -718,9 +841,9 @@ This can be easily done with the command line:
 ./mvnw clean package -Dquarkus.kubernetes.deploy=true
 ----
 
-=== Building
+=== Building a container image
 
-Building is possible, using any of the 3 available `container-image` extensions:
+Building a container image is possible, using any of the 3 available `container-image` extensions:
 
 - link:container-image#docker[Docker]
 - link:container-image#jib[Jib]
@@ -735,3 +858,90 @@ This assumes that a `.kube/config` is available in your user directory that poin
 In other words the extension will use whatever cluster `kubectl` uses. The same applies to credentials.
 
 At the moment no additional options are provided for further customization.
+
+== Using existing resources
+
+Sometimes it's desirable to either provide additional resources (e.g. a ConfigMap, a Secret, a Deployment for a database etc) or provide custom ones that will be used as a `base` for the generation process.
+Those resources can be added under `src/main/kubernetes` directory and can be named after the target environment (e.g. kubernetes.json, openshift.json, knative.json, or the yml equivalents). Each of these files may contain one or more Kubernetes resources.
+
+Any resource found will be added in the generated manifests. Global modifications (e.g. labels, annotations etc) will also be applied to those resources.
+If one of the provided resources has the same name as one of the generated ones, then the generated resource will be created on top of the provided resource, respecting existing content when possible (e.g. existing labels, annotations, environment variables, mounts, replicas etc).
+
+The name of the resource is determined by the application name and may be overridden by `quarkus.kubernetes.name`, `quarkus.openshift.name` and `quarkus.knative.name`.
+
+For example, in the `kubernetes-quickstart` application, we can add a `kubernetes.yml` file in the `src/main/kubernetes` that looks like:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubernetes-quickstart
+  labels:
+    app: quickstart
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: quickstart
+  template:
+    metadata:
+      labels:
+        app: quickstart
+    spec:
+      containers:
+      - name: kubernetes-quickstart
+        image: someimage:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: FOO
+          value: BAR
+----
+
+The generated `kubernetes.yml` will look like:
+
+[source,yaml]
+----
+apiVersion: "apps/v1"
+kind: "Deployment"
+metadata:
+  annotations:
+    app.quarkus.io/build-timestamp: "2020-04-10 - 12:54:37 +0000"
+  labels:
+    app: "quickstart"
+  name: "kubernetes-quickstart"
+spec:
+  replicas: 3 <1>
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: "kubernetes-quickstart"
+      app.kubernetes.io/version: "1.0-SNAPSHOT"
+  template:
+    metadata:
+      annotations:
+        app.quarkus.io/build-timestamp: "2020-04-10 - 12:54:37 +0000"
+      labels:
+        app: "quickstart" <2>
+    spec:
+      containers:
+      - env:
+        - name: "FOO" <3>
+          value: "BAR"
+        image: "<<yourDockerUsernmae>>/kubernetes-quickstart:1.0-SNAPSHOT" <4>
+        imagePullPolicy: "Always"
+        name: "kubernetes-quickstart"
+        ports:
+        - containerPort: 8080 <5>
+          name: "http"
+          protocol: "TCP"
+      serviceAccount: "kubernetes-quickstart"
+----
+
+The provided replicas <1>, labels <2> and environment variables <3>  were retained. However, the image <4> and container port <5> were modified. Moreover, the default annotations have been added.
+
+[NOTE]
+====
+If the resource name does not match the application name (or the overridden name) instead of reusing the resource a new one will be added. Same goes for the container.
+If the name of the container does not match the application name (or the overridden name), container specific configuration will be ignored.
+====
