@@ -9,6 +9,7 @@ import static java.util.Arrays.*;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.kohsuke.github.*;
@@ -62,7 +63,9 @@ class fetchpub implements Callable<Integer> {
         var included = new ArrayList<GHIssue>();
         for(GHIssue issue:list) {
             String snippet = issue.getBody().replace("```", "");
+            try {
             Publication p = mapper.readValue(snippet, Publication[].class)[0];
+            
             if(urls.contains(p.url)) {
                 out.println("#" + issue.getNumber() + " already included");
             } else {
@@ -70,6 +73,11 @@ class fetchpub implements Callable<Integer> {
                 out.println(issue.getBody().replace("```", ""));
                 included.add(issue);
             }
+        } catch (JsonMappingException me) {
+            System.err.println("error reading " + issue.getHtmlUrl());
+            me.printStackTrace();
+            System.exit(-1);
+        }
         }
 
         out.println();
