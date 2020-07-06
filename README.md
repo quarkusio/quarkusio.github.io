@@ -50,6 +50,7 @@ To write a blog:
   - `user-story` used for stories from users/companies adopting Quarkus.
   - `development-tips` used for blogs with tips to develop using Quarkus or Quarkus itself. 
   - add a tech specific, like `kafka`, if your post has a significant mention/relevance to that technology.
+  - tags is space separated list `tags:extension grpc`
 - it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
 - send a pull request against the develop branch and voilà
 
