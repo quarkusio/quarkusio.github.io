@@ -76,10 +76,39 @@ quarkus.index-dependency.<name>.classifier=(this one is optional)
 
 For example, the following entries ensure that the `org.acme:acme-api` dependency is indexed:
 
+=== How To Exclude Types and Dependencies from Discovery
+
+It may happen that some beans from third-party libraries do not work correctly in Quarkus.
+A typical example is a bean injecting a portable extension.
+In such case, it's possible to exclude types and dependencies from the bean discovery.
+The `quarkus.arc.exclude-types` property accepts a list of string values that are used to match classes that should be excluded.
+
+.Value Examples
+|===
+|Value|Description
+|`org.acme.Foo`| Match the fully qualified name of the class
+|`org.acme.*`| Match classes with package `org.acme`
+|`org.acme.**`| Match classes where the package starts with `org.acme` 
+|`Bar`| Match the simple name of the class
+|===
+
+.Example application.properties
 [source,properties]
 ----
-quarkus.index-dependency.acme.group-id=org.acme <1>
-quarkus.index-dependency.acme.artifact-id=acme-api <2>
+quarkus.arc.exclude-types=org.acme.Foo,org.acme.*,Bar <1><2><3>
+----
+<1> Exclude the type `org.acme.Foo`.
+<2> Exclude all types from the `org.acme` package.
+<3> Exclude all types whose simple name is `Bar`
+
+It is also possible to exclude a dependency artifact that would be otherwise scanned for beans.
+For example, because it contains a `beans.xml` descriptor.  
+
+.Example application.properties
+[source,properties]
+----
+quarkus.arc.exclude-dependency.acme.group-id=org.acme <1>
+quarkus.arc.exclude-dependency.acme.artifact-id=acme-services <2>
 ----
 <1> Value is a group id for a dependency identified by name `acme`.
 <2> Value is an artifact id for a dependency identified by name `acme`.
@@ -362,6 +391,24 @@ This optimization applies to all forms of bean declarations: bean class, produce
 Users can instruct the container to not remove any of their specific beans (even if they satisfy all the rules specified above) by annotating them with `io.quarkus.arc.Unremovable`.
 This annotation can be placed on the types, producer methods, and producer fields.
 
+Since this is not always possible, there is an option to achieve the same via `application.properties`.
+The `quarkus.arc.unremovable-types` property accepts a list of string values that are used to match beans based on their name or package.
+
+.Value Examples
+|===
+|Value|Description
+|`org.acme.Foo`| Match the fully qualified name of the bean class
+|`org.acme.*`| Match beans where the package of the bean class is `org.acme`
+|`org.acme.**`| Match beans where the package of the bean class starts with `org.acme`
+|`Bar`| Match the simple name of the bean class
+|===
+
+.Example application.properties
+[source,properties]
+----
+quarkus.arc.unremovable-types=org.acme.Foo,org.acme.*,Bar
+----
+
 Furthermore, extensions can eliminate possible false positives by producing `UnremovableBeanBuildItem`.
 
 Finally, Quarkus provides a middle ground for the bean removal optimization where application beans are never removed whether or not they are unused,
@@ -571,6 +618,36 @@ class Producers {
   }
 }
 ----
+
+=== Interception of Static Methods 
+
+The Interceptors specification is clear that _around-invoke_ methods must not be declared static.
+However, this restriction was driven mostly by technical limitations.
+And since Quarkus is a build-time oriented stack that allows for additional class transformations, those limitations don't apply anymore. 
+It's possible to annotate a non-private static method with an interceptor binding:
+
+[source,java]
+----
+class Services {
+
+  @Logged <1>
+  static BigDecimal computePrice(long amout) { <2>
+    BigDecimal price;
+    // Perform computations...
+    return price;
+  }
+}
+----
+<1> `Logged` is an interceptor binding.
+<2> Each method invocation is intercepted if there is an interceptor associated with `Logged`. 
+
+==== Limitations
+
+* Only *method-level bindings* are considered for backward compatibility reasons (otherwise static methods of bean classes that declare class-level bindings would be suddenly intercepted)
+* Private static methods are never intercepted
+* `InvocationContext#getTarget()` returns `null` for obvious reasons; therefore not all existing interceptors may behave correctly when intercepting static methods
++
+NOTE: Interceptors can use `InvocationContext.getMethod()` to detect static methods and adjust the behavior accordingly. 
 
 == Build Time Extension Points
 
@@ -892,6 +969,21 @@ Here is a summary of which extensions can access which metadata:
 ** Has access to `ANNOTATION_STORE`, `QUALIFIERS`, `INTERCEPTOR_BINDINGS`, `STEREOTYPES`, `BEANS`
 * `BeanDeploymentValidator`
 ** Has access to all build metadata
+
+[[dev-mode]]
+== Development Mode
+
+In the development mode, two special endpoints are registered automatically to provide some basic debug info in the JSON format:
+
+* HTTP GET `/quarkus/arc/beans` - returns the list of all beans
+** You can use query params to filter the output:
+*** `scope` - include beans with scope that ends with the given value, i.e. `http://localhost:8080/quarkus/arc/beans?scope=ApplicationScoped`
+*** `beanClass` - include beans with bean class that starts with the given value, i.e. `http://localhost:8080/quarkus/arc/beans?beanClass=org.acme.Foo`
+*** `kind` - include beans of the specified kind (`CLASS`, `PRODUCER_FIELD`, `PRODUCER_METHOD`, `INTERCEPTOR` or `SYNTHETIC`), i.e. `http://localhost:8080/quarkus/arc/beans?kind=PRODUCER_METHOD`
+* HTTP GET `/quarkus/arc/observers` - returns the list of all observer methods
+
+NOTE: These endpoints are only available in the development mode, i.e. when you run your application via `mvn quarkus:dev` (or `./gradlew quarkusDev`).
+
 
 [[arc-configuration-reference]]
 == ArC Configuration Reference
