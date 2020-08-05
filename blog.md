@@ -1,6 +1,6 @@
 ---
 layout: blog
-title: "Blog"
+title: "Quarkus - Blog"
 permalink: /blog/
 pagination: 
   enabled: true
