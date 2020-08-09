@@ -1,6 +1,6 @@
 //usr/bin/env jbang "$0" "$@" ; exit $?
 //DEPS info.picocli:picocli:4.2.0
-//DEPS org.kohsuke:github-api:1.101
+//DEPS org.kohsuke:github-api:1.115
 //DEPS com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.9.9
 //DEPS com.fasterxml.jackson.core:jackson-databind:2.9.9
 
@@ -25,6 +25,12 @@ import java.util.concurrent.Callable;
 @Command(name = "fetchpub", mixinStandardHelpOptions = true, version = "fetchpub 0.1",
         description = "fetchpub made with jbang")
 class fetchpub implements Callable<Integer> {
+
+    @CommandLine.Option(names="--close-existing", defaultValue = "false")
+    boolean closeExisting;
+
+    @CommandLine.Option(names="--token")
+    String token;
 
     @Parameters(index = "0", description = "Location of publications", defaultValue = "_data/publications.yaml")
     private File pubfile;
@@ -52,12 +58,20 @@ class fetchpub implements Callable<Integer> {
         }
 
         
-        GitHub github = GitHub.connectAnonymously();
+        GitHub github;
+
+        if(token == null) {
+            github = GitHub.connectAnonymously();
+        } else {
+            out.println("Logging in using token...");
+            github = GitHub.connectUsingOAuth(token);
+        }
 
         var ghRepo = github.getRepository("quarkusio/quarkus");
 
         var list = github.searchIssues().isOpen().q("repo:quarkusio/quarkusio.github.io").q("label:publication").list().asList();
 
+        list = new ArrayList(list);
         list.sort((GHIssue issue1, GHIssue issue2) -> Integer.compare(issue1.getNumber(), issue2.getNumber()));
 
         var included = new ArrayList<GHIssue>();
@@ -67,7 +81,12 @@ class fetchpub implements Callable<Integer> {
             Publication p = mapper.readValue(snippet, Publication[].class)[0];
             
             if(urls.contains(p.url)) {
-                out.println("#" + issue.getNumber() + " already included");
+                if(closeExisting) {
+                    out.println("Closing issue #" + issue.getNumber() + " as already included.");
+                    issue.comment("Closed by fetchpub as detected to already be included.");
+                } else {
+                    out.println("#" + issue.getNumber() + " already included. Use --close-existing if should be closed.");
+                }
             } else {
                 out.println("#" + issue.getNumber()    );
                 out.println(issue.getBody().replace("```", ""));
