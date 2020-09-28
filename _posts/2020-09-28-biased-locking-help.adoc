@@ -1,0 +1,84 @@
+---
+layout: post
+title: Biased locking removed from Java - does it affect you ?
+date: 2020-09-28
+tags: help
+synopsis: In Java 15 *biased locking* is removed from the Java Virtual Machine as per JEP 374. We need your help seeing if it affects Quarkus performance in your usecase.
+author: maxandersen
+---
+
+Last week we became aware that the OpenJDK team in Java 15 have disabled so called *biased locking* in the Java virtual machine. This is change from previous years and could *potentially* have a negative impact on Java applications performance.
+
+Red Hat's own performance teams are currently running performance tests to see how it affects our Java middleware, but no amount of generic testing can reveal how this change affects real world usage.
+
+That is where you come in.
+
+We would like to get info from you on wether your application performance is affected by biased locking or not.
+
+To do so please try the following in your application performance tests:
+
+Run your Qukarus application tests/performance as you normally would with the following command line flags on Java 11 (jdk11u) and if feasible Java 15 (jdk15):
+
+*enabled*: -XX:+UseBiasedLocking -XX:BiasedLockingStartupDelay=0
+
+*disabled*: -XX:-UseBiasedLocking
+
+We would like to know the result of this no matter if you see a regression or not on the same Java Virtual Machine.
+
+If you are able then running it with the following scenarios would be of great help too:
+
+ . single-threaded
+ . thread count ~= hardware core count
+ . thread count ~= N * hardware core count where 8 < N < 16
+
+=== Reporting the result
+
+Please open a bug on with `[jep374]` in the title + your project. i.e. `[jep374] results for acme project crazy panda` containing the following information per run in the description:
+
+```
+jvm used: jdk11 or jdk15
+biased locking: enabled or disabled
+thread-count: 1..N
+hardward-cores: N
+```
+
+This will help us immensly. Thank you!
+
+== Background
+
+Below are some background context on biased locking - all optional reading - you don't need to understand the details to help us by running your performance tests and let us know if anything changes.
+
+=== What is biased locking?
+
+Biased locking lowers the cost of /uncontended/ synchronization.
+
+*Without biased locking*: a thread needs to set and clear a lock bit
+when it performs repeated synchronizations on the same object. It also needs to wait for those set/clear writes to be drained to local cache before proceeding to execute further memory operations.
+
+*With biased locking*: the first time a thread synchronizes on an object it does a bit more work to acquire ownership of the synchronizated object ('bias' it to the thread). Subsequent syncrhonizations proceed via a simple read test with no need to  drain to cache.
+
+Where's the trade off? Well, if a biased lock is contended then
+there is more work to do to bias and unbias the lock. However, it is known that many synchronized operations are uncontended.
+
+Additionally, so called 'lock-free' code (i.e. code that uses atomics or `cmpxchg` instead of 'synchronized' operations) bypasses these concerns.
+
+Biasing can be big win when a potentially concurrent data structure is actually used sequentially. The case where it helps most is exemplified in the problem we already found in class `DataOutputStream`. Normally only
+one thread writes a `DataOutputStream` and it is often not read until the stream has been filled. All the same, every `putInt()` or `putLong()`` call invokes a syncrhonized method to increment the byte count by 4 or 8.
+That's needed just in case some other thread might want to reliably
+locate the end of the valid buffer data but that rarely happens. So, the unbiased case suffers lock write and cache drain delays at every basic put operation.
+
+== Why is biased locking being removed?
+
+The implementation of biased locking adds a great deal of complexity to the JVM and is understood by only a small subset of the most experienced engineers. The cost of maintaining it and designing around it is significantly slowing down progress on new features. It has been a long term goal to remove it if at all possible. Some OpenJDK contributors wanted to remove it
+right away in jdk15 others argues for a slower deprecation toute in order to check that we could really dispense with it.
+
+== What happens next?
+
+We are collecting our own internal performance tests across multiple teams in Red Hat and will gather data from community reported tests too and see what the data indicates. At this stage we don't know what we don't know.
+
+Once processed we might reach out to those reporting scenarios with unexpected results and get more details.
+
+Then we'll work with the larger OpenJDK community to aid in deciding if biased locking can be turned off completely or a longer
+graceful deprecation period is needed.
+
+In any case - Thank you for your help and interest in making Java better!
