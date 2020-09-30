@@ -11,7 +11,7 @@ permalink: /get-started/
  - [Be Guided Through First Application]({{site.baseurl}}/guides/getting-started)
  - [Getting Started with Reactive]({{site.baseurl}}/guides/getting-started-reactive)
  - [Quickly Bootstrap Your Application](https://code.quarkus.io)
- - [Building Native Images]({{site.baseurl}}/guides/building-native-image)
+ - [Building Native Executables]({{site.baseurl}}/guides/building-native-image)
  - [Using our Tooling]({{site.baseurl}}/guides/tooling)
 
 ### Guides
@@ -60,7 +60,7 @@ Explore the wide breadth of technologies Quarkus applications can be made with.
 </div>
 
 <div class="guide-item" markdown="1">
-## Building Native Images
+## Building Native Executables
 
 This guide covers:
 - Compiling the application to a native executable
