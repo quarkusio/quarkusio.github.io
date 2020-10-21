@@ -317,10 +317,12 @@ Note that `AccessTokenCredential` will have to be used if the Access Token issue
 
 Injection of the `JsonWebToken` and `AccessTokenCredential` is supported in both `@RequestScoped` and `@ApplicationScoped` contexts.
 
+[[user-info]]
 == User Info
 
 Set `quarkus.oidc.user-info-required=true` if a UserInfo JSON object from the OIDC userinfo endpoint has to be requested.
-This will make an `io.quarkus.oidc.UserInfo` (which is a simple `javax.json.JsonObject` wrapper) object accessible as a SecurityIdentity `userinfo` attribute.
+A request will be sent to the OpenId Provider UserInfo endpont and  an `io.quarkus.oidc.UserInfo` (a simple `javax.json.JsonObject` wrapper) object will be created.
+`io.quarkus.oidc.UserInfo` can be either injected or accessed as a SecurityIdentity `userinfo` attribute.
 
 == Token Claims And SecurityIdentity Roles
 
@@ -330,20 +332,47 @@ Note if you use Keycloak then you should set a Microprofile JWT client scope for
 
 If only the access token contains the roles and this access token is not meant to be propagated to the downstream endpoints then set `quarkus.oidc.roles.source=accesstoken`.
 
-If UserInfo is the source of the roles then set `quarkus.oidc.user-info-required=true` and `quarkus.oidc.roles.source=userinfo`, and if needed, `quarkus.oidc.roles.role-claim-path`.
+If UserInfo is the source of the roles then set `quarkus.oidc.authentication.user-info-required=true` and `quarkus.oidc.roles.source=userinfo`, and if needed, `quarkus.oidc.roles.role-claim-path`.
+
+Additionally a custom `SecurityIdentityAugmentor` can also be used to add the roles as documented link:security#security-identity-customization[here].
+
+== Listening to important authentication events
+
+One can register `@ApplicationScoped` bean which will observe important OIDC authentication events. The listener will be updated when a user has logged in for the first time or re-authenticated, as well as when the session has been refreshed. More events may be reported in the future. For example:
+
+[source, java]
+----
+import javax.enterprise.context.ApplicationScoped;
+import javax.enterprise.event.Observes;
+
+import io.quarkus.oidc.IdTokenCredential;
+import io.quarkus.oidc.SecurityEvent;
+import io.quarkus.security.identity.AuthenticationRequestContext;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class SecurityEventListener {
+
+    public void event(@Observes SecurityEvent event) {
+        String tenantId = event.getSecurityIdentity().getAttribute("tenant-id");
+        RoutingContext vertxContext = event.getSecurityIdentity().getCredential(IdTokenCredential.class).getRoutingContext();
+        vertxContext.put("listener-message", String.format("event:%s,tenantId:%s", event.getEventType().name(), tenantId));
+    }
+}
+----
 
 == Single Page Applications
 
 Please check if implementing SPAs the way it is suggested in the link:security-openid-connect#single-page-applications[Single Page Applications for Service Applications] section can meet your requirements.
 
-If you prefer to use SPA and `XMLHttpRequest`(XHR) with Quarkus web applications, please be aware that OpenID Connect Providers may not support CORS for Authorization endpoints where the users are authenticated after a redirect from Quarkus. This will lead to authentication failures if the Quarkus application and the OpenID Connect Provider are hosted on the different HTTP domains/ports.
+If you prefer to use SPA and JavaScript API such as `Fetch` or `XMLHttpRequest`(XHR) with Quarkus web applications, please be aware that OpenID Connect Providers may not support CORS for Authorization endpoints where the users are authenticated after a redirect from Quarkus. This will lead to authentication failures if the Quarkus application and the OpenID Connect Provider are hosted on the different HTTP domains/ports.
 
-In such cases, set the `quarkus.oidc.authentication.xhr-auto-redirect` property to `false` which will instruct Quarkus to return a `499` status code and `WWW-Authenticate` header with the `OIDC` value. The browser script also needs to be updated to set `X-Requested-With` header with the `XMLHttpRequest` value and reload the last requested page in case of `499`, for example:
+In such cases, set the `quarkus.oidc.authentication.java-script-auto-redirect` property to `false` which will instruct Quarkus to return a `499` status code and `WWW-Authenticate` header with the `OIDC` value. The browser script also needs to be updated to set `X-Requested-With` header with the `JavaScript` value and reload the last requested page in case of `499`, for example:
 
 [source,javascript]
 ----
 Future<void> callQuarkusService() async {
-    Map<String, String> headers = Map.fromEntries([MapEntry("X-Requested-With", "XMLHttpRequest")]);
+    Map<String, String> headers = Map.fromEntries([MapEntry("X-Requested-With", "JavaScript")]);
 
     await http
         .get("https://localhost:443/serviceCall")

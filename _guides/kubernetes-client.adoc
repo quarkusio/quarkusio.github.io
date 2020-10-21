@@ -58,7 +58,7 @@ An example of this can be seen in the following snippet:
 
 [source,java]
 ----
-@ApplicationScoped
+@Singleton
 public class KubernetesClientProducer {
 
     @Produces
@@ -140,9 +140,40 @@ Note that to take advantage of these features, the `quarkus-test-kubernetes-clie
 </dependency>
 ----
 
+You can create a `CustomKubernetesMockServerTestResource.java` to ensure all your `@QuarkusTest` enabled test classes share the same mock server setup:
+
+[source%nowrap,java]
+----
+public class CustomKubernetesMockServerTestResource extends KubernetesMockServerTestResource {
+
+    @Override
+    public void configureMockServer(KubernetesMockServer mockServer) {
+        mockServer.expect().get().withPath("/api/v1/namespaces/test/pods")
+                .andReturn(200, new PodList())
+                .always();
+    }
+}
+----
+
+and use this in your other test classes as follows:
+[source%nowrap,java]
+----
+@QuarkusTestResource(KubernetesMockServerTestResource.class)
+@QuarkusTest
+public class KubernetesClientTest {
+
+    //tests will now use the configured server...
+}
+----
+
+Furthermore, to get a mock server that replies with empty lists by default (instead of getting 404 responses from the Kubernetes API),
+you can use the `EmptyDefaultKubernetesMockServerTestResource.class` instead of
+`KubernetesMockServerTestResource.class`.
+
+
 == Note on implementing the Watcher interface
 
-Due to the restrictions imposed by GraalVM, extra care needs to be taken when implementing a `io.fabric8.kubernetes.client.Watcher` if the application is intended to work in native mode.
+Due to the restrictions imposed by GraalVM, extra care needs to be taken when implementing an `io.fabric8.kubernetes.client.Watcher` if the application is intended to work in native mode.
 Essentially every `Watcher` implementation needs to specify the Kubernetes model class that it handles via the ``Watcher``'s generic type at class definition time.
 To better understand this, suppose we want to watch for changes to Kubernetes `Pod` resources. There are a couple ways to write such a `Watcher` that are guaranteed to work in native:
 
@@ -263,6 +294,71 @@ subjects:
 
 Replace `<applicationName>` and `<namespace>` with your values.
 Have a look at https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/[Configure Service Accounts for Pods] to get further information.
+
+== OpenShift Client
+
+If the targeted Kubernetes cluster is an OpenShift cluster, it is possible to access it through
+the `openshift-client` extension, in a similar way. This leverages the dedicated fabric8
+openshift client, and provides access to `OpenShift` proprietary objects (e.g. `Route`, `ProjectRequest`, `BuildConfig` ...)
+
+Note that the configuration properties are shared with the `kubernetes-client` extension. In
+particular they have the same `quarkus.kubernetes-client` prefix.
+
+Add the extension with:
+
+[source]
+----
+./mvnw quarkus:add-extension -Dextensions="openshift-client"
+----
+
+Note that `openshift-client` extension has a dependency on the `kubernetes-client` extension.
+
+To use the client, inject an `OpenShiftClient` instead of the `KubernetesClient`:
+
+[source, java]
+----
+@Inject
+private OpenShiftClient openshiftClient;
+----
+
+If you need to override the default `OpenShiftClient`, provide a producer such as:
+
+[source, java]
+----
+@Singleton
+public class OpenShiftClientProducer {
+
+    @Produces
+    public OpenShiftClient openshiftClient() {
+        // here you would create a custom client
+        return new DefaultOpenShiftClient();
+    }
+}
+----
+
+Mock support is also provided in a similar fashion:
+
+[source, java]
+----
+@QuarkusTestResource(OpenShiftMockServerTestResource.class)
+@QuarkusTest
+public class OpenShiftClientTest {
+
+    @MockServer
+    private OpenShiftMockServer mockServer;
+...
+----
+
+To use this feature, you have to add a dependency on `quarkus-test-openshift-client`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-test-openshift-client</artifactId>
+    <scope>test</scope>
+</dependency>
+----
 
 == Configuration Reference
 
