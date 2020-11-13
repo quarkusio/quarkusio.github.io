@@ -32,8 +32,15 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 > If you encounter any unexpected errors during the above, please refer to the [troubleshooting](https://jekyllrb.com/docs/troubleshooting/#configuration-problems) page or the [requirements](https://jekyllrb.com/docs/installation/#requirements) page, as you might be missing development headers or other prerequisites.
 
-
 **For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
+
+### Deploying to Github Pages
+The website deployment is automatically performed by GitHub Actions (when commits are pushed to the `develop` branch). 
+If for some reason you need to deploy from your local machine, follow these instructions: 
+
+1. Install the [act](https://github.com/nektos/act#installation) executable to run GitHub Actions locally
+2. Run `act -s GITHUB_TOKEN=<GITHUB_TOKEN>`, where *<GITHUB_TOKEN>* needs to be replaced with a token that allows you to push to the https://github.com/quarkusio/quarkusio.github.io repository.
+
 
 ## Writing a blog
 
