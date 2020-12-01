@@ -43,7 +43,7 @@ The solution is located in the `kafka-quickstart` {quickstarts-tree-url}/kafka-q
 
 First, we need a new project. Create a new project with the following command:
 
-[source, subs=attributes+]
+[source,bash,subs=attributes+]
 ----
 mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
     -DprojectGroupId=org.acme \
@@ -249,7 +249,7 @@ The `channel-name` segment must match the value set in the `@Incoming` and `@Out
 * `generated-price` -> sink in which we write the prices
 * `prices` -> source in which we read the prices
 
-[source]
+[source,properties]
 ----
 # Configure the SmallRye Kafka connector
 kafka.bootstrap.servers=localhost:9092
@@ -313,7 +313,7 @@ Nothing spectacular here. On each received price, it updates the page.
 If you followed the instructions, you should have Kafka running.
 Then, you just need to run the application using:
 
-[source, shell]
+[source,bash]
 ----
 ./mvnw quarkus:dev
 ----
@@ -326,7 +326,7 @@ NOTE: If you started the Kafka broker with docker compose, stop it using `CTRL+C
 
 You can build the native executable with:
 
-[source, shell]
+[source,bash]
 ----
 ./mvnw package -Pnative
 ----
@@ -433,7 +433,7 @@ public class FruitProcessor {
     @Incoming("fruit-in")
     @Outgoing("fruit-out")
     @Broadcast
-    public double process(Fruit fruit) {
+    public Fruit process(Fruit fruit) {
         fruit.price = fruit.price * CONVERSION_RATE;
         return fruit;
     }
@@ -441,9 +441,57 @@ public class FruitProcessor {
 }
 ----
 
-To do this, we will need to setup JSON serialization with JSON-B or Jackson.
+To do this, we will need to setup JSON serialization with Jackson or JSON-B.
 
 NOTE: With JSON serialization correctly configured, you can also use `Publisher<Fruit>` and `Emitter<Fruit>`.
+
+=== Serializing via Jackson
+
+First, you need to include the `quarkus-jackson` extension (if you already use the `quarkus-resteasy-jackson` extension, this is not needed).
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-jackson</artifactId>
+</dependency>
+----
+
+There is an existing `ObjectMapperSerializer` that can be used to serialize all pojos via Jackson,
+but the corresponding deserializer is generic, so it needs to be subclassed.
+
+So, let's create a `FruitDeserializer` that extends the `ObjectMapperDeserializer`.
+
+[source,java]
+----
+package com.acme.fruit.jackson;
+
+import io.quarkus.kafka.client.serialization.ObjectMapperDeserializer;
+
+public class FruitDeserializer extends ObjectMapperDeserializer<Fruit> {
+    public FruitDeserializer(){
+        // pass the class to the parent.
+        super(Fruit.class);
+    }
+}
+----
+
+Finally, configure your streams to use the Jackson serializer and deserializer.
+
+[source,properties]
+----
+# Configure the Kafka source (we read from it)
+mp.messaging.incoming.fruit-in.connector=smallrye-kafka
+mp.messaging.incoming.fruit-in.topic=fruit-in
+mp.messaging.incoming.fruit-in.value.deserializer=com.acme.fruit.jackson.FruitDeserializer
+
+# Configure the Kafka sink (we write to it)
+mp.messaging.outgoing.fruit-out.connector=smallrye-kafka
+mp.messaging.outgoing.fruit-out.topic=fruit-out
+mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+----
+
+Now, your Kafka messages will contain a Jackson serialized representation of your Fruit pojo.
 
 === Serializing via JSON-B
 
@@ -496,54 +544,6 @@ mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.seriali
 
 Now, your Kafka messages will contain a JSON-B serialized representation of your Fruit pojo.
 
-=== Serializing via Jackson
-
-First, you need to include the `quarkus-jackson` extension (if you already use the `quarkus-resteasy-jackson` extension, this is not needed).
-
-[source, xml]
-----
-<dependency>
-    <groupId>io.quarkus</groupId>
-    <artifactId>quarkus-jackson</artifactId>
-</dependency>
-----
-
-There is an existing `ObjectMapperSerializer` that can be used to serialize all pojos via Jackson,
-but the corresponding deserializer is generic, so it needs to be subclassed.
-
-So, let's create a `FruitDeserializer` that extends the `ObjectMapperDeserializer`.
-
-[source,java]
-----
-package com.acme.fruit.jackson;
-
-import io.quarkus.kafka.client.serialization.ObjectMapperDeserializer;
-
-public class FruitDeserializer extends ObjectMapperDeserializer<Fruit> {
-    public FruitDeserializer(){
-        // pass the class to the parent.
-        super(Fruit.class);
-    }
-}
-----
-
-Finally, configure your streams to use the Jackson serializer and deserializer.
-
-[source,properties]
-----
-# Configure the Kafka source (we read from it)
-mp.messaging.incoming.fruit-in.connector=smallrye-kafka
-mp.messaging.incoming.fruit-in.topic=fruit-in
-mp.messaging.incoming.fruit-in.value.deserializer=com.acme.fruit.jackson.FruitDeserializer
-
-# Configure the Kafka sink (we write to it)
-mp.messaging.outgoing.fruit-out.connector=smallrye-kafka
-mp.messaging.outgoing.fruit-out.topic=fruit-out
-mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.serialization.ObjectMapperSerializer
-----
-
-Now, your Kafka messages will contain a Jackson serialized representation of your Fruit pojo.
-
 === Sending JSON Server-Sent Events (SSE)
 
 If you want RESTEasy to send JSON Server-Sent Events, you need to use the `@SseElementType` annotation to define the content type of the events,
@@ -564,7 +564,7 @@ import javax.ws.rs.core.MediaType;
 import org.jboss.resteasy.annotations.SseElementType;
 
 @Path("/fruits")
-public class PriceResource {
+public class FruitResource {
 
     @Inject
     @Channel("fruit-out") Publisher<Fruit> fruits;
@@ -612,6 +612,19 @@ public class PriceStorage {
 ----
 
 The complete example is available in the `kafka-panache-quickstart` {quickstarts-tree-url}/kafka-panache-quickstart[directory].
+
+[NOTE]
+====
+There are 2 `@Blocking` annotations:
+
+ 1. `io.smallrye.reactive.messaging.annotations.Blocking`
+ 2. `io.smallrye.common.annotation.Blocking`
+
+They have the same effect.
+Thus, you can use both.
+The first one provides more fine-grain tuning such as the worker pool to use and whether it preserves the order.
+The second one, used in also with other reactive features of Quarkus, uses the default worker pool and preserves the order.
+====
 
 == Going further
 
