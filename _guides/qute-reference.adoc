@@ -66,9 +66,10 @@ Finally, we will create a *template instance*, set the data and render the outpu
 [source,java]
 ----
 // Renders <html><p>Hello Jim!</p></html>
-helloTemplate.data("name", "Jim").render(); <1> 
+helloTemplate.data("name", "Jim").render(); <1> <2>
 ----
 <1> `Template.data(String, Object)` is a convenient method that creates a template instance and sets the data in one step.
+<2> `TemplateInstance.render()` triggers a synchronous rendering, i.e. the current thread is blocked until the rendering is finished. However, there are also asynchronous ways to trigger the rendering and consume the results. For example there is the `TemplateInstance.renderAsync()` method that returns `CompletionStage<String>` or `TemplateInstance.createMulti()` that returns Mutiny's `Multi<String>`.
 
 So the workflow is simple: 
 
@@ -439,6 +440,13 @@ Virtual method parameters can be "nested" virtual method invocations.
 ----
 <1> `item.calculateDiscount(10)` is evaluated first and then passed as an argument to `item.subtractPrice()`.
 
+==== Evaluation of `CompletionStage` and `Uni` Objects
+
+Objects that implement `java.util.concurrent.CompletionStage` and `io.smallrye.mutiny.Uni` are evaluated in a special way.
+If a part of an expression resolves to a `CompletionStage`, the resolution continues once this stage is completed and the next part of the expression (if any) is evaluated against the result of the completed stage.
+For example, if there is an expression `{foo.size}` and `foo` resolves to `CompletionStage<List<String>>` then `size` is resolved against the completed result, i.e. `List<String>`.
+If a part of an expression resolves to a `Uni`, a `CompletionStage` is first created from `Uni` using `Uni#subscribeAsCompletionStage()` and then evaluated as described above.
+
 [[sections]]
 === Sections
 
@@ -619,6 +627,97 @@ You can also add any number of `else` blocks:
 {/if}
 ----
 
+[[when_section]]
+==== When/Switch Section
+
+This section is similar to Java's `switch` or Kotlin's `when` constructs.
+It matches a _tested value_ against all blocks sequentially until a condition is satisfied.
+The first matching block is executed.
+All other blocks are ignored (this behavior differs to the Java `switch` where a `break` statement is necessary).
+
+.Example using the `when`/`is` name aliases
+[source]
+----
+{#when items.size}
+  {#is 1} <1>
+    There is exactly one item!
+  {#is > 10} <2>
+    There are more than 10 items!
+  {#else} <3>
+    There are 2 -10 items!
+{/when}
+----
+<1> If there is exactly one parameter it's tested for equality.
+<2> It's possible to use <<when_operators,an operator>> to specify the matching logic. Unlike in the <<if_section>> nested operators are not supported.
+<3> `else` is block is executed if no other block matches the value.
+
+.Example using the `switch`/`case` name aliases
+[source]
+----
+{#switch person.name}
+  {#case 'John'} <1>
+    Hey John!
+  {#case 'Mary'}
+    Hey Mary!
+{/switch}
+----
+<1> `case` is an alias for `is`.
+
+A tested value that resolves to an enum is handled specifically.
+The parameters of an `is`/`case` block are not evaluated as expressions but compared with the result of `toString()` invocation upon the tested value.
+
+[source]
+----
+{#when machine.status}
+  {#is ON} 
+    It's running. <1>
+  {#is in OFF BROKEN}
+    It's broken or OFF. <2>
+{/when}
+----
+<1> This block is executed if `machine.status.toString().equals("ON")`.
+<2> This block is executed if  `machine.status.toString().equals("OFF")` or `machine.status.toString().equals("BROKEN")`.
+
+NOTE: An enum constant is validated if the tested value has a type information available and resolves to an enum type.
+
+The following operators are supported in `is`/`case` block conditions:
+
+[[when_operators]]
+
+|===
+|Operator |Aliases |Example
+
+|not equal 
+|`!=`, `not`, `ne` 
+|`{#is not 10}`,`{#case != 10}`
+
+|greater than 
+|`gt`, `>`
+|`{#case le 10}`
+
+|greater than or equal to
+|`ge`, `>=`
+|`{#is >= 10}`
+
+|less than 
+|`lt`, `<`
+|`{#is < 10}`
+
+|less than or equal to
+|`le`, `\<=`
+|`{#case le 10}`
+
+|in
+|`in`
+|`{#is in 'foo' 'bar' 'baz'}`
+
+|not in
+|`ni`,`!in`
+|`{#is !in 1 2 3}`
+
+|===
+
+
 [[with_section]]
 ==== With Section
 
@@ -770,6 +869,50 @@ We can include the tag like this:
 ----
 <1> `item` is resolved to an iteration element and can be referenced using the `it` key in the tag template.
 <2> Tag content injected using the `nested-content` key in the tag template.
+
+=== Rendering Output
+
+`TemplateInstance` provides several ways to trigger the rendering and consume the result.
+The most straightforward approach is represented by `TemplateInstance.render()`.
+This method triggers a synchronous rendering, i.e. the current thread is blocked until the rendering is finished, and returns the output.
+By contrast, `TemplateInstance.renderAsync()` returns a `CompletionStage<String>` which is completed when the rendering is finished.
+
+.`TemplateInstance.renderAsync()` Example
+[source,java]
+----
+template.data(foo).renderAsync().whenComplete((result, failure) -> { <1>
+   if (failure == null) {
+      // consume the output...
+   } else {
+      // process failure...
+   }
+};
+----
+<1> Register a callback that is executed once the rendering is finished. 
+
+There are also two methods that return https://smallrye.io/smallrye-mutiny/[Mutiny] types.
+`TemplateInstance.createUni()` returns a new `Uni<String>` object.
+If you call `createUni()` the template is not rendered right away. 
+Instead, every time `Uni.subscribe()` is called a new rendering of the template is triggered.
+
+.`TemplateInstance.createUni()` Example
+[source,java]
+----
+template.data(foo).createUni().subscribe().with(System.out::println);
+----
+
+`TemplateInstance.createMulti()` returns a new `Multi<String>` object.
+Each item represents a part/chunk of the rendered template.
+Again, `createMulti()` does not trigger rendering. 
+Instead, every time a computation is triggered by a subscriber the template is rendered again.
+
+.`TemplateInstance.createMulti()` Example
+[source,java]
+----
+template.data(foo).createMulti().subscribe().with(buffer:append,buffer::flush);
+----
+
+NOTE: The template rendering is divided in two phases. During the first phase, which is asynchronous, all expressions in the template are resolved and a _result tree_ is built. In the second phase, which is synchronous, the result tree is _materialized_, i.e. one by one the result nodes emit chunks that are consumed/buffered by the specific consumer.
 
 === Engine Configuration
 

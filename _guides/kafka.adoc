@@ -165,6 +165,7 @@ Create the `src/main/java/org/acme/kafka/PriceConverter.java` file with the foll
 package org.acme.kafka;
 
 import io.smallrye.reactive.messaging.annotations.Broadcast;
+import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Outgoing;
 
@@ -179,9 +180,10 @@ public class PriceConverter {
 
     private static final double CONVERSION_RATE = 0.88;
 
-    @Incoming("prices")                                 // <1>
-    @Outgoing("my-data-stream")                         // <2>
-    @Broadcast                                          // <3>
+    @Incoming("prices")                                     // <1>
+    @Outgoing("my-data-stream")                             // <2>
+    @Broadcast                                              // <3>
+    @Acknowledgment(Acknowledgment.Strategy.PRE_PROCESSING) // <4>
     public double process(int priceInUsd) {
         return priceInUsd * CONVERSION_RATE;
     }
@@ -191,6 +193,7 @@ public class PriceConverter {
 <1> Indicates that the method consumes the items from the `prices` topic
 <2> Indicates that the objects returned by the method are sent to the `my-data-stream` stream
 <3> Indicates that the item are dispatched to all _subscribers_
+<4> Make sure to acknowledge the incoming message
 
 The `process` method is called for every Kafka _record_ from the `prices` topic (configured in the application configuration).
 Every result is sent to the `my-data-stream` in-memory stream.
@@ -384,7 +387,7 @@ The new `Emitter.send` method returns a `CompletionStage` completed when the pro
 If you are using the `quarkus-smallrye-health` extension, `quarkus-kafka` can add a readiness health check
 to validate the connection to the broker. This is disabled by default.
 
-If enabled, when you access the `/health/ready` endpoint of your application you will have information about the connection validation status.
+If enabled, when you access the `/q/health/ready` endpoint of your application you will have information about the connection validation status.
 
 This behavior can be enabled by setting the `quarkus.kafka.health.enabled` property to `true` in your `application.properties`.
 
@@ -625,6 +628,149 @@ Thus, you can use both.
 The first one provides more fine-grain tuning such as the worker pool to use and whether it preserves the order.
 The second one, used in also with other reactive features of Quarkus, uses the default worker pool and preserves the order.
 ====
+
+== Testing a Kafka application
+
+=== Testing without a broker
+
+It can be useful to test the application without having to start a Kafka broker.
+To achieve this, you can _switch_ the channels managed by the Kafka connector to _in-memory_.
+
+IMPORTANT: This approach only works for JVM tests. It cannot be used for native tests (because they do not support injection).
+
+First, add the following dependency to your application:
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.smallrye.reactive</groupId>
+    <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
+    <scope>test</scope>
+</dependency>
+----
+
+Then, create a Quarkus Test Resource as follows:
+
+[source, java]
+----
+public class KafkaTestResourceLifecycleManager implements QuarkusTestResourceLifecycleManager {
+
+    @Override
+    public Map<String, String> start() {
+        Map<String, String> env = new HashMap<>();
+        Map<String, String> props1 = InMemoryConnector.switchIncomingChannelsToInMemory("orders");  // <1>
+        Map<String, String> props2 = InMemoryConnector.switchOutgoingChannelsToInMemory("queue");   // <2>
+        env.putAll(props1);
+        env.putAll(props2);
+        return env;  // <3>
+    }
+
+    @Override
+    public void stop() {
+        InMemoryConnector.clear();  // <4>
+    }
+}
+----
+1. Switch the incoming channel "orders" (expecting messages from Kafka) to in-memory.
+2. Switch the outgoing channel "queue" (writing messages to Kafka) to in-memory.
+3. Builds and returns a `Map` containing all the properties required to configure the application to use in-memory channels.
+4. When the test stops, clear the `InMemoryConnector` (discard all the received and sent messages)
+
+Create a Quarkus Test using the test resource created above:
+
+[source, java]
+----
+@QuarkusTest
+@QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
+class BaristaTest {
+
+    @Inject @Any
+    InMemoryConnector connector; // <1>
+
+    @Test
+    void testProcessOrder() {
+        InMemorySource<Order> orders = connector.source("orders"); // <2>
+        InMemorySink<Beverage> queue = connector.sink("queue");    // <3>
+
+        Order order = new Order();
+        order.setProduct("coffee");
+        order.setName("Coffee lover");
+        order.setOrderId("1234");
+
+        orders.send(order);  // <4>
+
+        await().<List<? extends Message<Beverage>>>until(queue::received, t -> t.size() == 1); // <5>
+
+        Beverage queuedBeverage = queue.received().get(0).getPayload();
+        Assertions.assertEquals(Beverage.State.READY, queuedBeverage.getPreparationState());
+        Assertions.assertEquals("coffee", queuedBeverage.getBeverage());
+        Assertions.assertEquals("Coffee lover", queuedBeverage.getCustomer());
+        Assertions.assertEquals("1234", queuedBeverage.getOrderId());
+    }
+
+}
+----
+1. Inject the in-memory connector in your test class.
+2. Retrieve the incoming channel (`orders`) - the channel must have been switched to in-memory in the test resource.
+3. Retrieve the outgoing channel (`queue`) - the channel must have been switched to in-memory in the test resource.
+4. Use the `send` method to send a message to the `orders` channel. So, the application will process this message.
+5. Use the `received` method to check the messages produced by the application.
+
+=== Starting Kafka in a test resource
+
+Alternatively, you can start a Kafka broker in a test resource.
+The following snippet shows a test resource starting a Kafka broker using https://www.testcontainers.org/modules/kafka/[Testcontainers]:
+
+[source, java]
+----
+public class KafkaResource implements QuarkusTestResourceLifecycleManager {
+
+    private final KafkaContainer kafka = new KafkaContainer();
+
+    @Override
+    public Map<String, String> start() {
+        kafka.start();
+        return Collections.singletonMap("kafka.bootstrap.servers", kafka.getBootstrapServers());  // <1>
+    }
+
+    @Override
+    public void stop() {
+        kafka.close();
+    }
+}
+----
+1. Configure the Kafka bootstrap location, so the application connects to this broker.
+
+== Authenticating with OAuth
+
+If your Kafka broker uses OAuth as authentication mechanism, you need to configure the Kafka consumer to enable this authentication process.
+First, add the following dependency to your application:
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.strimzi</groupId>
+    <artifactId>kafka-oauth-client</artifactId>
+</dependency>
+----
+
+This dependency provides the callback handler required to handle the OAuth workflow.
+Then, in the `application.properties`, add:
+
+[source, properties]
+----
+mp.messaging.connector.smallrye-kafka.security.protocol=SASL_PLAINTEXT
+mp.messaging.connector.smallrye-kafka.sasl.mechanism=OAUTHBEARER
+mp.messaging.connector.smallrye-kafka.sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required \
+  oauth.client.id="team-a-client" \
+  oauth.client.secret="team-a-client-secret" \
+  oauth.token.endpoint.uri="http://keycloak:8080/auth/realms/kafka-authz/protocol/openid-connect/token" ;
+mp.messaging.connector.smallrye-kafka.sasl.login.callback.handler.class=io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler
+----
+
+Update the `oauth.client.id`, `oauth.client.secret` and `oauth.token.endpoint.uri` values.
+
+OAuth authentication works for both JVM and native modes.
 
 == Going further
 
