@@ -133,7 +133,7 @@ For any application to succeed in the era of cloud computing, big data or IoT, g
 
 Today’s users embrace applications that have milliseconds of response time, 100% uptime, lower latency, push data instead of pull, higher throughput and elasticity.
 However, these features are nearly impossible to achieve by using _yesterday’s software architecture_ without a huge investment in resources, infrastructure and tooling.
-The world changed and having dozen of servers, long response time (> 500 ms), downtime due to maintenance or waterfalls of failures does not meet the expected user experience.
+The world changed and having dozens of servers, long response time (> 500 ms), downtime due to maintenance or waterfalls of failures does not meet the expected user experience.
 
 Quarkus stands with you on your path to reactive.
 First, you can implement asynchronous HTTP endpoint as follows:
@@ -142,13 +142,15 @@ First, you can implement asynchronous HTTP endpoint as follows:
 ----
 @GET
 @Path("/greeting/{name}")
-public CompletionStage<String> greetings(@PathParam("name") String name) {
+public Uni<String> greetings(@PathParam("name") String name) {
     return reactiveService.getAsyncGreetings(name);
 }
 ----
 
 Method actions can compose asynchronous operations and complete the result when everything is done without blocking threads.
 This greatly improves resource consumption and elasticity.
+
+Thanks to a reactive core, an intuitive event-driven development model and a "reactive-first" strategy for all the Quarkus internals, Quarkus applications handles high concurrency, and uses resources efficiently.
 
 // TODO Async rest client, but does not seem to be working.
 
@@ -160,23 +162,21 @@ Generating a _server-sent event_ response with Quarkus is just as simple:
 @Produces(MediaType.SERVER_SENT_EVENTS)
 @GET
 @Path("/neo")
-public Publisher<String> stream() {
+public Multi<String> stream() {
     return service.getStream();
 }
 ----
 
-This method returns a Reactive Streams `Publisher`.
-To provide this stream, you can either use https://github.com/ReactiveX/RxJava[Rx Java 2] or https://www.smallrye.io/smallrye-reactive-streams-operators/[MicroProfile Reactive Streams Operators]:
+This method returns a `Multi`, but you can use any Reactive Streams `Publisher` implementation.
 
 [source, java]
 ----
 @Produces(MediaType.SERVER_SENT_EVENTS)
 @GET
 @Path("/neo")
-public Publisher<String> stream() {
-    return ReactiveStreams.of("a", "b", "c")
-           .map(String::toUpperCase)
-           .buildRs();
+public Multi<String> stream() {
+    return Multi.createFrom().items("a", "b", "c")
+           .onItem().transform(String::toUpperCase);
 }
 ----
 
@@ -211,17 +211,26 @@ You can also express your message processing logic using reactive programming as
 ----
 @Incoming("health")
 @Outgoing("output")
-public Publisher<KafkaMessage<String, JsonObject>> filterState(Flowable<MqttMessage> input) {
+public Multi<Record<String, JsonObject>> filterState(Multi<JsonObject> input) {
     return input
-      .map(message -> Buffer.buffer(message.getPayload()).toJsonObject())
-      .map(json -> json.getJsonObject("state"))
-      .distinctUntilChanged(json -> json.getString("state")) // Filter on the "State" key of the json object.
-      .doOnNext(json -> LOGGER.info("Forwarding new state '{}' to Kafka", json.encode()))
-      .map(json -> KafkaMessage.of("state", "neo", json));
+      .onItem().transform(json -> json.getJsonObject("state"))
+      .drop().repetitions()
+      .onItem().invoke(json -> LOGGER.info("Forwarding new state '{}' to Kafka", json.encode()))
+      .onItem().transform(json -> Record.of("neo", json));
 }
 ----
 
-Stream-based manipulation can either use Rx Java 2 (as in the previous snippet) or MicroProfile Reactive Streams Operators.
+You can also use _imperative_ logic with Reactive Messaging:
+
+[source, java]
+----
+@Incoming("orders")
+@Outgoing("queue")
+@Blocking
+public Beverage process(Order order) {
+    return prepare(order); // Block the caller thread.
+}
+----
 
 == Functions as a Service and Serverless
 
