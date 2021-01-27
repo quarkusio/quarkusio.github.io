@@ -39,6 +39,9 @@ class fetchpub implements Callable<Integer> {
     @CommandLine.Option(names = "--token")
     String token;
 
+    @CommandLine.Option(names = "--verbose")
+    boolean verbose;
+
     @Parameters(index = "0", description = "Location of publications", defaultValue = "_data/publications.yaml")
     private File pubfile;
 
@@ -128,9 +131,12 @@ class fetchpub implements Callable<Integer> {
                     publications.add(p);
                 }
             } catch (JsonMappingException me) {
-                System.err.println("error reading " + issue.getHtmlUrl());
-                me.printStackTrace();
-                System.exit(-1);
+                System.err.println("Skipping " + issue.getNumber() + " as error reading " + issue.getHtmlUrl());
+                System.err.println(me.getMessage());
+                if(verbose) {
+                    me.printStackTrace();
+                }
+                //System.exit(-1);
             }
         }
 
