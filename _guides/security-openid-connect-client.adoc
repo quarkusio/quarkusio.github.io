@@ -3,12 +3,16 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
 ////
-= Quarkus - Using OpenID Connect and OAuth2 Client and Filters to acquire, refresh and propagate access tokens
+= Quarkus - Using OpenID Connect and OAuth2 Client and Filters to manage access tokens
 
 include::./attributes.adoc[]
 :toc:
 
-This guide explains how to use Quarkus `quarkus-oidc-client`, `quarkus-oidc-client-filter` and `quarkus-oidc-token-propagation` extensions to acquire and refresh access tokens from OpenId Connect and OAuth 2.0 compliant Authorization Servers such as https://www.keycloak.org/about.html[Keycloak] and use these tokens as HTTP Authorization Bearer tokens to access the remote services.
+This guide explains how to use:
+ * `quarkus-oidc-client` and `quarkus-oidc-client-filter` extensions to acquire and refresh access tokens from OpenId Connect and OAuth 2.0 compliant Authorization Servers such as https://www.keycloak.org/about.html[Keycloak]
+ * `quarkus-oidc-token-propagation` extension to propagate the current bearer or authorization code flow access tokens
+
+The access tokens managed by these extensions can be used as HTTP Authorization Bearer tokens to access the remote services.
 
 == OidcClient
 
@@ -19,9 +23,9 @@ This guide explains how to use Quarkus `quarkus-oidc-client`, `quarkus-oidc-clie
 Here is how `OidcClient` can be configured to use the `client_credentials` grant:
 
 ```
-quarkus.oidc.client.auth-server-url=${keycloak.url}/realms/quarkus2/
-quarkus.oidc.client.client-id=quarkus-app
-quarkus.oidc.client.credentials.secret=secret
+quarkus.oidc-client.auth-server-url=${keycloak.url}/realms/quarkus2/
+quarkus.oidc-client.client-id=quarkus-app
+quarkus.oidc-client.credentials.secret=secret
 ```
 
 Here is how `OidcClient` can be configured to use the `password` grant:
@@ -65,8 +69,8 @@ public class OidcClientResource {
     public String getResponse() {
         
         Tokens tokens = currentTokens;
-        if (tokens.isAccessTokenExpired) {
-            tokens = client.refreshTokens(tokens.getRefreshToken().await.indefinitely();
+        if (tokens.isAccessTokenExpired()) {
+            tokens = client.refreshTokens(tokens.getRefreshToken()).await().indefinitely();
             currentTokens = tokens;
         } 
         // use tokens.getAccessToken() to configure MP RestClient Authorization header/etc
@@ -113,7 +117,7 @@ public interface ProtectedResourceService {
 }
 ```
 
-Alternatively, `OidcClientRequestFilter` can be registered automatically with all MP Rest or JAX-RS clients if `quarkus.oidc.client.filter.register-filter=true` property is set.
+Alternatively, `OidcClientRequestFilter` can be registered automatically with all MP Rest or JAX-RS clients if `quarkus.oidc-client-filter.register-filter=true` property is set.
 
 === Use injected Tokens
 
@@ -141,7 +145,7 @@ See also the previous section about delaying the token acquisition in some cases
 
 === OidcClients
 
-`io.quarkus.oidc.client.OidcClient` is a container of `OidcClient`s - it includes a default `OidcClient` (which can also be injected directly as described above) and named clients which can be configured like this:
+`io.quarkus.oidc.client.OidcClients` is a container of `OidcClient`s - it includes a default `OidcClient` (which can also be injected directly as described above) and named clients which can be configured like this:
 
 ```
 quarkus.oidc-client.client-enabled=false
@@ -209,17 +213,7 @@ public class OidcClientResource {
 ----
 ====
 
-If you need you can also create new `OidcClient` without having to configure it in the `application.properties`:
-
-```
-quarkus.oidc-client.client-enabled=false
-
-quarkus.oidc-client.jwt-secret.auth-server-url=${keycloak.url}/realms/quarkus2/
-quarkus.oidc-client.jwt-secret.client-id=quarkus-app
-quarkus.oidc-client.jwt-secret.credentials.jwt.secret=AyM1SysPpbyDfgZld3umj1qzKObwVMkoqQ-EstJQLr_T-1qS0gZH75aKtMN3Yj0iPS4hcgUuTwjAzZr1Z9CAow
-```
-
-Note in this case the default client is disabled with a `client-enabled=false` property. The `jwt-secret` client can be accessed like this:
+If you need you can also create new `OidcClient` programmatically like this:
 
 [source,java]
 ----
@@ -271,8 +265,8 @@ quarkus.oidc-client.credentials.secret=mysecret
 ```
 quarkus.oidc-client.auth-server-url=${keycloak.url}/realms/quarkus/
 quarkus.oidc-client.client-id=quarkus-app
-quarkus.oidc.tenant-1.credentials.client-secret.value=mysecret
-quarkus.oidc.tenant-1.credentials.client-secret.method=post
+quarkus.oidc-client.credentials.client-secret.value=mysecret
+quarkus.oidc-client.credentials.client-secret.method=post
 ```
 
 `client_secret_jwt`:
@@ -324,6 +318,25 @@ public interface ProtectedResourceService {
     String getUserName();
 }
 ```
+
+or
+
+```
+import org.eclipse.microprofile.rest.client.annotation.RegisterProvider;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import io.quarkus.oidc.token.propagation.AccessTokenRequestFilter;
+
+@RegisterRestClient
+@RegisterProvider(AccessTokenRequestFilter.class)
+@Path("/")
+public interface ProtectedResourceService {
+
+    @GET
+    String getUserName();
+}
+```
+
+Alternatively, `AccessTokenRequestFilter` can be registered automatically with all MP Rest or JAX-RS clients if `quarkus.oidc-token-propagation.register-filter=true` property is set.
 
 This filter will be enhanced in the future to support re-signing and/or exchanging the access tokens before propagating them.
 
