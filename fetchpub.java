@@ -81,9 +81,11 @@ class fetchpub implements Callable<Integer> {
         });
 
         Set<String> urls = new HashSet<>();
+        Set<String> sources = new HashSet<>();
 
         for (var pub : publications) {
             urls.add(pub.url);
+            sources.add((String)pub.otherFields().get("source"));
         }
 
         GitHub github;
@@ -101,6 +103,8 @@ class fetchpub implements Callable<Integer> {
                 .asList();
 
         System.out.println("Found " + list.size() + " issues with label 'publication'");
+
+        Set<String> duplicateSources = new HashSet<>();
 
         list = new ArrayList(list);
         list.sort((GHIssue issue1, GHIssue issue2) -> Integer.compare(issue1.getNumber(), issue2.getNumber()));
@@ -124,11 +128,14 @@ class fetchpub implements Callable<Integer> {
                                 + " already included. Use --close-existing if should be closed.");
 
                     }
-                } else {
+                } else if(!sources.contains(issue.getHtmlUrl().toString())) {
                     out.println("#" + issue.getNumber());
                     out.println(issue.getBody().replace("```", ""));
                     included.add(issue);
                     publications.add(p);
+                } else {
+                    out.println("Issue #" + issue.getNumber() + " already sourced - ignoring.");
+                    duplicateSources.add(issue.getHtmlUrl().toString());
                 }
             } catch (JsonMappingException me) {
                 System.err.println("Skipping " + issue.getNumber() + " as error reading " + issue.getHtmlUrl());
@@ -160,6 +167,10 @@ class fetchpub implements Callable<Integer> {
 
         System.out.println("Duplicate urls:" + duplicates.size());
         duplicates.forEach(p -> out.println("Duplicate: " + p.url));
+ 
+        System.out.println("Already sourced:" + duplicateSources.size());
+        duplicateSources.forEach(p -> out.println("Duplicate Sourced: " + p));
+ 
         return 0;
     }
 }
