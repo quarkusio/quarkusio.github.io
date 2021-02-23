@@ -538,6 +538,103 @@ Now we have defined our profile we need to include it on our test class. We do t
 All the test profile config is stored in a single class, which makes it easy to tell if the previous test ran with the
 same configuration.
 
+=== Running specific tests
+
+Quarkus provides the ability to limit test execution to tests with specific  `@TestProfile` annotations.
+This works by leveraging the `tags` method of `QuarkusTestProfile` in conjunction with the `quarkus.test.profile.tags` system property.
+
+Essentially, any `QuarkusTestProfile` with at least one matching tag matching the value of `quarkus.test.profile.tags` will be considered active
+and all the tests annotated with `@TestProfile` of active profiles, will be run while the rest will be skipped.
+This is best shown in the following example.
+
+First let's define a few `QuarkusTestProfile` implementations like so:
+[source,java]
+----
+public class Profiles {
+
+    public static class NoTags implements QuarkusTestProfile {
+
+    }
+
+    public static class SingleTag implements QuarkusTestProfile {
+        @Override
+        public Set<String> tags() {
+            return Collections.singleton("test1");
+        }
+    }
+
+    public static class MultipleTags implements QuarkusTestProfile {
+        @Override
+        public Set<String> tags() {
+            return new HashSet<>(Arrays.asList("test1", "test2"));
+        }
+    }
+}
+----
+
+Now let's assume that we have the following tests:
+
+[source,java]
+----
+@QuarkusTest
+public class NoQuarkusProfileTest {
+
+    @Test
+    public void test() {
+        // test something
+    }
+}
+----
+
+[source,java]
+----
+@QuarkusTest
+@TestProfile(Profiles.NoTags.class)
+public class NoTagsTest {
+
+    @Test
+    public void test() {
+        // test something
+    }
+}
+----
+
+[source,java]
+----
+@QuarkusTest
+@TestProfile(Profiles.SingleTag.class)
+public class SingleTagTest {
+
+    @Test
+    public void test() {
+        // test something
+    }
+}
+----
+
+[source,java]
+----
+@QuarkusTest
+@TestProfile(Profiles.MultipleTags.class)
+public class MultipleTagsTest {
+
+    @Test
+    public void test() {
+        // test something
+    }
+}
+----
+
+Let's consider the following scenarios:
+
+* `quarkus.test.profile.tags` is not set: All tests will be executed.
+* `quarkus.test.profile.tags=foo`: In this case none of tests will be executed because none of the tags defined on the `QuarkusTestProfile` implementations match the value of `quarkus.test.profile.tags`.
+Note that `NoQuarkusProfileTest` is not executed either because it is not annotated with `@TestProfile`.
+* `quarkus.test.profile.tags=test1`: In this case `SingleTagTest` and `MultipleTagsTest` will be run because the tags on their respective `QuarkusTestProfile` implementations
+match the value of `quarkus.test.profile.tags`.
+* `quarkus.test.profile.tags=test1,test3`: This case results in the same tests being executed as the previous case.
+* `quarkus.test.profile.tags=test2,test3`: In this case only `MultipleTagsTest` will be run because `MultipleTagsTest` is the only `QuarkusTestProfile` implementation whose `tags` method
+matches the value of `quarkus.test.profile.tags`.
 
 == Mock Support
 
@@ -888,12 +985,23 @@ If you are using Quarkus Security, check out the link:security-testing[Testing S
 A very common need is to start some services on which your Quarkus application depends, before the Quarkus application starts for testing. To address this need, Quarkus provides `@io.quarkus.test.common.QuarkusTestResource` and `io.quarkus.test.common.QuarkusTestResourceLifecycleManager`.
 
 By simply annotating any test in the test suite with `@QuarkusTestResource`, Quarkus will run the corresponding `QuarkusTestResourceLifecycleManager` before any tests are run.
-A test suite is also free to utilize multiple `@QuarkusTestResource` annotations, in which case all the corresponding `QuarkusTestResourceLifecycleManager` objects will be run before the tests.
+A test suite is also free to utilize multiple `@QuarkusTestResource` annotations, in which case all the corresponding `QuarkusTestResourceLifecycleManager` objects will be run before the tests. When using multiple test resources they can be started concurrently. For that you need to set `@QuarkusTestResource(parallel = true)`.
 
 Quarkus provides a few implementations of `QuarkusTestResourceLifecycleManager` out of the box (see `io.quarkus.test.h2.H2DatabaseTestResource` which starts an H2 database, or `io.quarkus.test.kubernetes.client.KubernetesMockServerTestResource` which starts a mock Kubernetes API server),
 but it is common to create custom implementations to address specific application needs.
 Common cases include starting docker containers using https://www.testcontainers.org/[Testcontainers] (an example of which can be found https://github.com/quarkusio/quarkus-quickstarts/blob/master/kafka-quickstart/src/test/java/org/acme/kafka/KafkaResource.java[here]),
 or starting a mock HTTP server using http://wiremock.org/[Wiremock] (an example of which can be found https://github.com/geoand/quarkus-test-demo/blob/master/src/test/java/org/acme/getting/started/country/WiremockCountries.java[here]).
+
+== Hang Detection
+
+`@QuarkusTest` has support for hang detection to help diagnose any unexpected hangs. If no progress is made for a specified
+time (i.e. no JUnit callbacks are invoked) then Quarkus will print a stack trace to the console to help diagnose the hang.
+The default value for this timeout is 10 minutes.
+
+No further action will be taken, and the tests will continue as normal (generally until CI times out), however the printed
+stack traces should help diagnose why the build has failed. You can control this timeout with the
+`quarkus.test.hang-detection-timeout` system property (you can also set this in application.properties, but this won't
+be read until Quarkus has started, so the timeout for Quarkus start will be the default of 10 minutes).
 
 == Native Executable Testing
 
