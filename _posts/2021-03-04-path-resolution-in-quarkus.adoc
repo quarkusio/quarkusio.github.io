@@ -1,0 +1,183 @@
+---
+layout: post
+title: Path resolution in Quarkus
+date: 2021-03-04
+tags: help web metrics
+synopsis: Navigating recent changes in Quarkus URI path resolution
+author: ebullient
+---
+
+= Path resolution in Quarkus
+
+We have had an unusually bumpy ride the last few weeks. Path resolution can be sneakily complicated, and in trying to make things better, we accidentally made them worse! We've fixed it all now, but you might notice some changes. Hopefully, this post will make clear what those changes are, what they mean, and what you can do to put everything back the way you want it.
+
+**TL;DR:** As of `1.11.5.Final` and `1.12.1.Final`, leading slashes matter in config. So if you use `/endpoint`, that endpoint will be served from the absolute root. If you want it relative to some containing bucket, omit that leading slash. For example, `quarkus.http.non-application-root-path` is now `q` by default, which nests it under `quarkus.http.root-path`, matching the original behavior. You can use an absolute path, e.g. `/q`, to serve non-application endpoints from the absolute root (as a sibling of the http root, if that is set). To remove the non-application endpoint behavior entirely, set `quarkus.http.non-application-root-path` to the same value as `quarkus.http.root-path`. The most foolproof way to do this is using a variable: `quarkus.http.non-application-root-path=${quarkus.http.root-path}`.
+
+== The long story
+
+Once upon a time, Quarkus defined additional endpoints for things like health checks and metrics. They were served from the `quarkus.http.root-path` alongside any endpoints the application defined. This isn't always obvious, as `quarkus.http.root-path` is `/` by default, making it effectively invisible.
+
+As these proliferated, we started worrying about link:https://groups.google.com/g/quarkus-dev/c/FMnmlDIcGRY[polluting the application endpoint namespace], and thinking about how we could group these non-application endpoints together to avoid colliding with application endpoints and make it easier to deal with security and access policies. Some users further asked if we could serve these non-application endpoints from link:https://github.com/quarkusio/quarkus/issues/13602[another port entirely] (we haven't gotten there yet). 
+
+The first step was to group all of these extension-defined endpoints together. This was the genesis of the link:https://github.com/quarkusio/quarkus/pull/13601[non-application endpoint path]. The default location of this new path was `/q`, and it was nested under the HTTP root path, just as the other endpoints had been. The effect was to move `/health` to `/q/health`, as an example. 
+
+We knew that moving some of these endpoints, like metrics and health, would be problematic for already deployed applications and human muscle memory. To ease the transition, we added redirects for some of these endpoints, so that if you visited `/metrics` you would be redirected to `/q/metrics`. 
+
+Non-application endpoint support shipped in `1.11.0.Final`.
+
+And then things started to link:https://github.com/quarkusio/quarkus/pull/14179[go] link:https://github.com/quarkusio/quarkus/issues/15030[sideways]. Some cloud hosting providers only accept `200` as a definition of health, for example, so the redirect (a `301`) didn't have the intended effect. There was also some confusion about how to turn the non-application endpoint off to return to previous behavior, and further questions about how to move specific endpoints out of this non-application endpoint collection. 
+
+As an aside, how we got into this situation is not helped by differences in how libraries behave. Vert.x always wants segments beginning with leading slashes when creating routes, for example, while JAX-RS effectively ignores leading slashes in `@Path` annotations. Anyone used to Vert.x always adds leading slashes, and anyone using JAX-RS just does whatever and it magically works. 
+
+In Quarkus, an implementation detail was exposed by accident: non-application endpoints defined by extensions are based on Vert.x routes. Default path configuration values started with slashes to enable quick route creation and allow simple append behavior. There wasn't anything in the early days of Quarkus to suggest this was a bad idea, and developers with experience in JAX-RS didn't have any warnings one way or the other, because JAX-RS handles it.
+
+Now, however, we were in the situation where paths weren't being resolved as people expected, and the configuration changes required to resolve that situation either weren't intuitive or lead to other problems. We ended up putting all of the possible configuration permutations into a spreadsheet so we could see side by side what happened when you combined different configuration values. The results were not awesome. However, the exercise allowed us to step back and look at the big picture to evaluate what needed to change to allow application and non-application endpoints to behave as you need them to.
+
+While the set of configuration attributes used to configure paths in Quarkus remains unchanged, how configured values are interpreted is different:
+
+* **Endpoint path configuration defaults are now relative values.** `/q` is now `q`, `/metrics` is now `metrics`, etc. This means that, out of the box, these endpoints will resolve relative to the containing root, which is what JAX-RS does per spec, and is what we believe most users intuitively expect.
+* **Leading slashes in explicitly configured values matter.** We know some of you want to move endpoints to specific places, and the most consistent way to express that intent is to allow you to specify the exact uri you want an endpoint to use. If you specify `/metrics`, that is where you will find the metrics endpoint.
+
+These updates have been made available and the dust should all have settled with `1.11.5.Final` and `1.12.1.Final`.
+
+Note that convenience redirects for non-application endpoints are still present, but they can be disabled by setting `quarkus.http.redirect-to-non-application-root-path` to `false`. That hasn't changed at all.
+
+== Resolution of configured paths
+
+Let's go through some examples of how paths resolve using our new rules. We'll start with the following assumptions:
+
+* We have a Hello World application that defines `@ApplicationPath("/hello")`
+* The application specifies two endpoints using `@Path("world")` and `@Path("/aliens")`
+
+The configuration attributes we care most about are:
+
+* `quarkus.http.root-path` - The HTTP root path. All web content is served relative to this root path.
+* `quarkus.http.non-application-root-path` - The non-application endpoint root path.
+
+We'll also highlight some configurable non-application endpoints of interest: 
+
+* `quarkus.micrometer.export.prometheus.path` - The location of the micrometer metrics endpoint. 
+* `quarkus.smallrye-health.root-path` - The location of the all-encompassing health endpoint.
+* `quarkus.smallrye-health.liveness-path` - The location of the liveness endpoint.
+
+Let's look at what happens when we start pulling levers. In the examples below, pay attention to punctuation in config, as that will be the key to why things behave the way they do.
+
+=== Defaults
+
+Here are the default configuration values:
+
+* `quarkus.http.root-path=/`
+* `quarkus.http.non-application-root-path=q`
+* `quarkus.micrometer.export.prometheus.path=metrics`
+* `quarkus.smallrye-health.root-path=health`
+* `quarkus.smallrye-health.liveness-path=liveness`
+
+That configuration (combined with the declared application endpoints) leads to the following valid URLs if our Quarkus application is running in dev mode:
+
+* http://localhost:8080/hello
+* http://localhost:8080/hello/world
+* http://localhost:8080/hello/aliens
+* http://localhost:8080/q/metrics
+* http://localhost:8080/q/health
+* http://localhost:8080/q/health/liveness
+
+Note that the `quarkus.http.root-path` is hiding in this example, because its value is `/`.
+
+There are convenience redirects in this case as `quarkus.http.non-application-root-path` is not the same as `quarkus.http.root-path`. In this configuration, `/metrics` will be redirected to `/q/metrics`.
+
+=== Change the Http Root path
+
+Let's change the HTTP root path to `/root` so the impact it has on resource resolution is visible:
+
+* `quarkus.http.root-path=/root`
+* `quarkus.http.non-application-root-path=q`
+* `quarkus.micrometer.export.prometheus.path=metrics`
+* `quarkus.smallrye-health.root-path=health`
+* `quarkus.smallrye-health.liveness-path=liveness`
+
+This results in the following dev mode URLs: 
+
+* http://localhost:8080/root/hello
+* http://localhost:8080/root/hello/world
+* http://localhost:8080/root/hello/aliens
+* http://localhost:8080/root/q/metrics
+* http://localhost:8080/root/q/health
+* http://localhost:8080/root/q/health/liveness
+
+There are convenience redirects in this case, too, as `quarkus.http.non-application-root-path` is not the same as `quarkus.http.root-path`. In this configuration, `/root/metrics` will be redirected to `/root/q/metrics`. This is consistent with previous behavior, where non-application endpoints were implicitly relative to the HTTP root path.
+
+=== Move the non-application root path (/q)
+
+Let's try something we couldn't do before. We'll move the non-application endpoint outside of the HTTP root path by specifying an absolute path, `/q`:
+
+* `quarkus.http.root-path=/root`
+* `quarkus.http.non-application-root-path=/q`
+* `quarkus.micrometer.export.prometheus.path=metrics`
+* `quarkus.smallrye-health.root-path=health`
+* `quarkus.smallrye-health.liveness-path=liveness`
+
+This results in the following dev mode URLs:
+
+* http://localhost:8080/root/hello
+* http://localhost:8080/root/hello/world
+* http://localhost:8080/root/hello/aliens
+* http://localhost:8080/q/metrics
+* http://localhost:8080/q/health
+* http://localhost:8080/q/health/liveness
+
+There are still convenience redirects in this case, as `quarkus.http.non-application-root-path` is not the same as `quarkus.http.root-path`. Redirected URLs are still relative to HTTP root, so `/root/metrics` will be redirected to `/q/metrics`.
+
+=== Move individual non-application endpoints (/metrics and /liveness)
+
+This is is another configuration that was not previously possible. We can individually move configurable non-application endpoints to a specified absolute path, specifically `/metrics` and `/liveness` in this example:
+
+* `quarkus.http.root-path=/root`
+* `quarkus.http.non-application-root-path=/q`
+* `quarkus.micrometer.export.prometheus.path=/metrics`
+* `quarkus.smallrye-health.root-path=health`
+* `quarkus.smallrye-health.liveness-path=/liveness`
+
+This results in the following dev mode URLs:
+
+* http://localhost:8080/root/hello
+* http://localhost:8080/root/hello/world
+* http://localhost:8080/root/hello/aliens
+* http://localhost:8080/metrics
+* http://localhost:8080/q/health
+* http://localhost:8080/liveness
+
+There are still convenience redirects in this case, as `quarkus.http.non-application-root-path` is not the same as `quarkus.http.root-path`. However, these redirects only apply to non-application endpoints controlled by the non-application endpoint root. We've essentially removed the metrics and liveness endpoints from that root, so they won't be redirected. In this configuration, if you request `/root/health`, it will be redirected to `/q/health`. A redirect will not be provided for `/root/health/liveness` or `/root/metrics`.
+
+=== Remove the non-application endpoint root
+
+Some of you have asked how to turn this non-application endpoint root stuff off entirely. A clear expression of your intent is best. To disable the non-application endpoint, make it identical to the HTTP root path. In essence, you are telling the runtime to "serve all non-application endpoints from the HTTP root". This example uses a variable to ensure the values remain the same:
+
+* `quarkus.http.root-path=/root`
+* `quarkus.http.non-application-root-path=${quarkus.http.root-path}`
+* `quarkus.micrometer.export.prometheus.path=metrics`
+* `quarkus.smallrye-health.root-path=health`
+* `quarkus.smallrye-health.liveness-path=liveness`
+
+This results in the following dev mode URLs:
+
+* http://localhost:8080/root/hello
+* http://localhost:8080/root/hello/world
+* http://localhost:8080/root/hello/aliens
+* http://localhost:8080/root/metrics
+* http://localhost:8080/root/health
+* http://localhost:8080/root/health/liveness
+
+There are no convenience redirects in this scenario, as the non-application endpoint behavior has been disabled entirely.
+
+== Knock-on effects
+
+For the most part, we hope this will be transparent. We discovered some very inconsistent path handling along the way, which lead us to believe that many (or even most) of these values are never customized. 
+
+You are most likely to see a behavior change if you have customized the HTTP root path. In that case, we hope the new rules and examples above will help you understand how to tweak your configuration to get everything to behave the way you want it to.
+
+Extension writers will see the biggest change. The link:https://quarkus.io/guides/writing-extensions#extension-defined-endpoints[Writing extensions guide] has been updated to describe changes to the build items used to create non-application endpoints. The general rule, however, is to avoid constructing your own endpoint paths, and rely on `NonApplicationRootPathBuildItem` and `HttpRootPathBuildItem` to construct them for you.
+
+== Parting thoughts
+
+While we know it is impossible to make everyone happy, we hope we have at least managed to acheive a pattern for configuration that leads to more predictable and consistent results. And we apologize (again), for any behavior changes you may have observed as we sorted this out.
+
