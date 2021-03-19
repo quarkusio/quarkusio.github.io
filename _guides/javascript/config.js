@@ -249,17 +249,19 @@ function getAncestor(element, name){
  */
 function makeCollapsible(input, descDiv){
     var descHeightLong = descDiv.offsetHeight;
-    var td = getAncestor(descDiv, "td");
-    var row = td.parentNode;
-
+    
     // this causes a relayout and is expensive, so only do that if we're not sure it won't require collapsing
     var descHeightShort = descHeightLong;
+    var maybeCollapsed = false;
     if(descHeightLong > 25){
         descDiv.classList.add('description-collapsed');
         descHeightShort = descDiv.offsetHeight;
+        maybeCollapsed = true;
     }
 
     if (descHeightLong - descHeightShort > 16) {
+        var td = getAncestor(descDiv, "td");
+        var row = td.parentNode;
         var iconDecoration = document.createElement("i");
         iconDecoration.classList.add('fa', 'fa-chevron-down');
 
@@ -280,8 +282,8 @@ function makeCollapsible(input, descDiv){
         parent.appendChild(descDecoration);
         row.classList.add("row-collapsible", "row-collapsed");
         row.addEventListener("click", collapsibleHandler);
-    }
-    else {
+    } else if (maybeCollapsed) {
+        // only remove the class if we a test was made
         descDiv.classList.remove('description-collapsed');
     }
 
