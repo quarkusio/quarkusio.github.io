@@ -18,13 +18,23 @@ if(tables){
           caption.children.item(0).appendChild(input);
           input.addEventListener("keyup", initiateSearch);
           input.addEventListener("input", initiateSearch);
-          inputs[input.id] = {"table": table};
           var descriptions = table.querySelectorAll(".description");
           if(descriptions){
+            var heights = new Array(descriptions.length);
+            var h = 0;
             for (description of descriptions){
-              makeCollapsible(input, description);
+              heights[h++] = description.offsetHeight;
             }
+            var shadowTable = table.cloneNode(true);
+            var shadowDescriptions = shadowTable.querySelectorAll(".description");
+            h = 0;
+            for (shadowDescription of shadowDescriptions){
+              makeCollapsible(shadowDescription, heights[h++]);
+            }
+            table.parentNode.replaceChild(shadowTable, table);
+            table = shadowTable;
           }
+          inputs[input.id] = {"table": table};
         }
 
         var rowIdx = 0;
@@ -139,12 +149,12 @@ function acceptTextForSearch(n){
 function getShadowTable(input){
     if(!inputs[input.id].shadowTable){
         inputs[input.id].shadowTable = inputs[input.id].table.cloneNode(true);
-        reinstallClickHandlers(input, inputs[input.id].shadowTable);
+        reinstallClickHandlers(inputs[input.id].shadowTable);
     }
     return inputs[input.id].shadowTable;
 }
 
-function reinstallClickHandlers(input, table){
+function reinstallClickHandlers(table){
     var descriptions = table.querySelectorAll(".description");
     if(descriptions){
         for (descDiv of descriptions){
@@ -156,7 +166,7 @@ function reinstallClickHandlers(input, table){
             var decoration = content.lastElementChild;
             var iconDecoration = decoration.children.item(0);
             var collapsibleSpan = decoration.children.item(1);
-            var collapsibleHandler = makeCollapsibleHandler(input, descDiv, td, row,
+            var collapsibleHandler = makeCollapsibleHandler(descDiv, td, row,
                                                             collapsibleSpan,
                                                             iconDecoration);
 
@@ -247,22 +257,12 @@ function getAncestor(element, name){
 /*
  * COLLAPSIBLE DESCRIPTION
  */
-function makeCollapsible(input, descDiv){
-    var descHeightLong = descDiv.offsetHeight;
-    
-    // this causes a relayout and is expensive, so only do that if we're not sure it won't require collapsing
-    var descHeightShort = descHeightLong;
-    var maybeCollapsed = false;
-    if(descHeightLong > 25){
-        descDiv.classList.add('description-collapsed');
-        descHeightShort = descDiv.offsetHeight;
-        maybeCollapsed = true;
-    }
-
-    if (descHeightLong - descHeightShort > 16) {
+function makeCollapsible(descDiv, descHeightLong){
+    if (descHeightLong > 25) {
         var td = getAncestor(descDiv, "td");
         var row = td.parentNode;
         var iconDecoration = document.createElement("i");
+        descDiv.classList.add('description-collapsed');
         iconDecoration.classList.add('fa', 'fa-chevron-down');
 
         var descDecoration = document.createElement("div");
@@ -273,7 +273,7 @@ function makeCollapsible(input, descDiv){
         collapsibleSpan.appendChild(document.createTextNode("Show more"));
         descDecoration.appendChild(collapsibleSpan);
 
-        var collapsibleHandler = makeCollapsibleHandler(input, descDiv, td, row,
+        var collapsibleHandler = makeCollapsibleHandler(descDiv, td, row,
                                                         collapsibleSpan,
                                                         iconDecoration);
 
@@ -282,14 +282,11 @@ function makeCollapsible(input, descDiv){
         parent.appendChild(descDecoration);
         row.classList.add("row-collapsible", "row-collapsed");
         row.addEventListener("click", collapsibleHandler);
-    } else if (maybeCollapsed) {
-        // only remove the class if we a test was made
-        descDiv.classList.remove('description-collapsed');
     }
 
 };
 
-function makeCollapsibleHandler(input, descDiv, td, row,
+function makeCollapsibleHandler(descDiv, td, row,
     collapsibleSpan,
     iconDecoration) {
 
@@ -313,6 +310,5 @@ function makeCollapsibleHandler(input, descDiv, td, row,
         row.classList.toggle('row-collapsed');
     };
 }
-
 
 });
