@@ -1,7 +1,7 @@
 ////
 This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
-https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc
+https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc
 ////
 = Quarkus - Using OpenID Connect to Protect Web Applications using Authorization Code Flow.
 
@@ -273,15 +273,13 @@ If `quarkus.oidc.authentication.redirect-path` is set but the original request U
 
 The OIDC adapter uses cookies to keep the session, code flow and post logout state.
 
-If you access the protected resources with overlapping or different roots, for example: 
+`quarkus.oidc.authentication.cookie-path` property is used to ensure the cookies are visible especially when you access the protected resources with overlapping or different roots, for example: 
 
 * `/index.html` and `/web-app/service`
 * `/web-app/service1` and `/web-app/service2`
 * `/web-app1/service` and `/web-app2/service` 
 
-then most likely you also need to set a `quarkus.oidc.authentication.cookie-path` property to a path value that is common to all of them, such as `/` or `/web-app`, etc.
-
-Otherwise the browser cache manager may keep request path specific cookies which in turn may lead to some difficult to diagnoze errors. For example, an authorization code flow may fail due to a missing state cookie if a user has initially accessed `/index.html` but configured a callback URI to `/web-app/callback`.
+`quarkus.oidc.authentication.cookie-path` is set to `/` by default but can be narrowed to the more specific root path such as `/web-app`.
 
 You can also set a `quarkus.oidc.authentication.cookie-path-header` property if the cookie path needs to be set dynamically.
 For example, setting `quarkus.oidc.authentication.cookie-path-header=X-Forwarded-Prefix` means that the value of HTTP `X-Forwarded-Prefix` header will be used to set a cookie path.
@@ -412,6 +410,11 @@ If IdToken does not provide enough information about the currently authenticated
 
 A request will be sent to the OpenId Provider UserInfo endpoint using the access token returned with the authorization code grant response and an `io.quarkus.oidc.UserInfo` (a simple `javax.json.JsonObject` wrapper) object will be created. `io.quarkus.oidc.UserInfo` can be either injected or accessed as a SecurityIdentity `userinfo` attribute.
 
+[[config-metadata]]
+== Configuration Metadata
+
+The discovered link:https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata[OpenId Connect Configuration Metadata] is represented by `io.quarkus.oidc.OidcConfigurationMetadata` and can be either injected or accessed as a `SecurityIdentity` `configuration-metadata` attribute.
+
 == Token Claims And SecurityIdentity Roles
 
 The way the roles are mapped to the SecurityIdentity roles from the verified tokens is identical to how it is done for the link:security-openid-connect#token-claims-and-securityidentity-roles[bearer tokens] with the only difference being is that https://openid.net/specs/openid-connect-core-1_0.html#IDToken[ID Token] is used as a source of the roles by default.
@@ -439,7 +442,7 @@ If the `quarkus.oidc.token.refresh-expired` then the expired ID token (as well a
 
 Note, `quarkus.oidc.authentication.session-age-extension` can be important when dealing with expired ID tokens, when the user is not very active. In such cases, if the ID token expires, then the session cookie may not be returned back to the Quarkus endpoint during the next user request and Quarkus will assume it is the first authentication request. Therefore using `quarkus.oidc.authentication.session-age-extension` is important if you need to have even the expired ID tokens refreshed.
 
-You can also complement refreshing the expired ID tokens by proactively refreshing the valid ID tokens which are about to be expired within the `quarkus.oidc.token.auto-refresh-interval` value. If, during the current user request, it is calculated that the current ID token will expire within this `quarkus.oidc.token.auto-refresh-interval` then it will be refreshed and the new session cookie will be created. This property should be set to a value which is less than the ID token lifespan; the closer it is to this lifespan value the more often the ID token will be refreshed.
+You can also complement refreshing the expired ID tokens by proactively refreshing the valid ID tokens which are about to be expired within the `quarkus.oidc.token.refresh-token-time-skew` value. If, during the current user request, it is calculated that the current ID token will expire within this `quarkus.oidc.token.refresh-token-time-skew` then it will be refreshed and the new session cookie will be created. This property should be set to a value which is less than the ID token lifespan; the closer it is to this lifespan value the more often the ID token will be refreshed.
 
 You can have this process further optimized by having a simple JavaScript function periodically emulating the user activity by pinging your Quarkus endpoint thus minimizing the window during which the user may have to be re-authenticated.
 
@@ -543,6 +546,103 @@ quarkus.oidc.token.issuer=https://accounts.google.com
 
 == Token Propagation
 Please see link:security-openid-connect-client#token-propagation[Token Propagation] section about the Authorization Code Flow access token propagation to the downstream services.
+
+[[integration-testing]]
+== Testing
+
+Add the following dependencies to your test project:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-test-oidc-server</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>net.sourceforge.htmlunit</groupId>
+    <artifactId>htmlunit</artifactId>
+    <exclusions>
+        <exclusion>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>*</artifactId>
+       </exclusion>
+    </exclusions>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-junit5</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+   <groupId>io.rest-assured</groupId>
+   <artifactId>rest-assured</artifactId>
+   <scope>test</scope>
+</dependency>
+----
+
+Prepare the REST test endpoints, set `application.properties`, for example:
+
+[source, properties]
+----
+# keycloak.url is set by OidcWiremockTestResource
+quarkus.oidc.auth-server-url=${keycloak.url}/realms/quarkus/
+quarkus.oidc.client-id=quarkus-web-app
+quarkus.oidc.credentials.secret=secret
+quarkus.oidc.application-type=web-app
+----
+
+and finally write the test code, for example:
+
+[source, java]
+----
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import org.junit.jupiter.api.Test;
+
+import com.gargoylesoftware.htmlunit.SilentCssErrorHandler;
+import com.gargoylesoftware.htmlunit.WebClient;
+import com.gargoylesoftware.htmlunit.html.HtmlForm;
+import com.gargoylesoftware.htmlunit.html.HtmlPage;
+
+import io.quarkus.test.common.QuarkusTestResource;
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.oidc.server.OidcWiremockTestResource;
+
+@QuarkusTest
+@QuarkusTestResource(OidcWiremockTestResource.class)
+public class CodeFlowAuthorizationTest {
+
+    @Test
+    public void testCodeFlow() throws Exception {
+        try (final WebClient webClient = createWebClient()) {
+            // the test REST endpoint listens on '/code-flow'
+            HtmlPage page = webClient.getPage("http://localhost:8081/code-flow");
+
+            HtmlForm form = page.getFormByName("form");
+            // user 'alice' has the 'user' role
+            form.getInputByName("username").type("alice");
+            form.getInputByName("password").type("alice");
+
+            page = form.getInputByValue("login").click();
+
+            assertEquals("alice", page.getBody().asText());
+        }
+    }
+
+    private WebClient createWebClient() {
+        WebClient webClient = new WebClient();
+        webClient.setCssErrorHandler(new SilentCssErrorHandler());
+        return webClient;
+    }
+}
+----
+
+`OidcWiremockTestResource` recognizes `alice` and `admin` users. The user `alice` has the `user` role only by default - it can be customized with a `quarkus.test.oidc.token.user-roles` system property. The user `admin` has the `user` and `admin` roles by default - it can be customized with a `quarkus.test.oidc.token.admin-roles` system property.
+Additionally, `OidcWiremockTestResource` set token issuer and audience to `https://service.example.com` which can be customized with `quarkus.test.oidc.token.issuer` and `quarkus.test.oidc.token.audience` system properties.
+
+`OidcWiremockTestResource` will be enhanced going forward to support more complex authorization code flow test scenarios.
 
 == Configuration Reference
 
