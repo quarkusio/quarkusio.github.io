@@ -5,7 +5,7 @@ on:
     - cron: '0 1 * * *'
   workflow_dispatch:
 jobs:
-  deploy:
+  sync:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -20,9 +20,21 @@ jobs:
         uses: joschi/setup-jdk@e87a7cec853d2dd7066adf837fe12bf0f3d45e52
         with:
           java-version: 11
+      - name: Get Date
+        id: get-date
+        run: |
+          echo "::set-output name=date::$(/bin/date -u "+%Y-%m")"
+        shell: bash
+      - name: Cache Maven Repository
+        id: cache-maven
+        uses: actions/cache@v2
+        with:
+          path: ~/.m2/repository
+          # refresh cache every month to avoid unlimited growth
+          key: maven-repo-pr-${{ runner.os }}-${{ steps.get-date.outputs.date }}
       - name: Build generated documentation
         working-directory: .quarkus-main-repository
-        run: ./mvnw -DskipTests -DskipITs -DskipExtensionValidation -Dskip.gradle.tests clean install
+        run: ./mvnw -B -DskipTests -DskipITs -DskipExtensionValidation -Dskip.gradle.tests clean install
 
       - name: Sync guides
         run: |
@@ -38,9 +50,13 @@ jobs:
           rsync -vr --delete \
             .quarkus-main-repository/target/asciidoc/generated/ \
             _generated-config/main
+
+      - name: Configure Git author
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
       - name: Commit changes
         run: git commit -am "Sync documentation of main branch"
-
       - name: Push changes to ${{github.base_ref}}
         uses: ad-m/github-push-action@v0.6.0
         with:
