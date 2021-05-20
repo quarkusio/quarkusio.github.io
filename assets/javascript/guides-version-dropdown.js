@@ -1,5 +1,5 @@
 $(document).ready(function() {
-  $('#guides-version-dropdown').on('change', function() {
+  $('#guidesindex-version-dropdown').on('change', function() {
     var guideUrl = window.location.href.substring(window.location.href.indexOf("/guides/"));
 
     if (this.value == 'latest') {
