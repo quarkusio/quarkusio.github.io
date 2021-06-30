@@ -407,6 +407,80 @@ NOTE: The rest of the documentation show usages based on the active record patte
 but keep in mind that they can be performed with the repository pattern as well.
 The repository pattern examples have been omitted for brevity.
 
+== Writing a JAX-RS resource
+
+First, include one of the RESTEasy extensions to enable JAX-RS endpoints, for example, add the `io.quarkus:quarkus-resteasy-jackson` dependency for JAX-RS and JSON support.
+
+Then, you can create the following resource to create/read/update/delete your Person entity:
+
+[source,java]
+----
+@Path("/persons")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class PersonResource {
+
+    @GET
+    public List<Person> list() {
+        return Person.listAll();
+    }
+
+    @GET
+    @Path("/{id}")
+    public Person get(@PathParam("id") Long id) {
+        return Person.findById(id);
+    }
+
+    @POST
+    @Transactional
+    public Response create(Person person) {
+        person.persist();
+        return Response.created(URI.create("/persons/" + person.id)).build();
+    }
+
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Person update(@PathParam("id") Long id, Person person) {
+        Person entity = Person.findById(id);
+        if(entity == null) {
+            throw new NotFoundException();
+        }
+
+        // map all fields from the person parameter to the existing entity
+        entity.name = person.name;
+
+        return entity;
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public void delete(@PathParam("id") Long id) {
+        Person entity = Person.findById(id);
+        if(entity == null) {
+            throw new NotFoundException();
+        }
+        entity.delete();
+    }
+
+    @GET
+    @Path("/search/{name}")
+    public Person search(@PathParam("name") String name) {
+        return Person.findByName(name);
+    }
+
+    @GET
+    @Path("/count")
+    public Long count() {
+        return Person.count();
+    }
+}
+----
+
+NOTE: Be careful to use the `@Transactional` annotation on the operations that modify the database,
+you can add the annotation at the class level for simplicity purpose.
+
 == Advanced Query
 
 === Paging
@@ -607,9 +681,10 @@ public class PersonName {
 PanacheQuery<PersonName> query = Person.find("status", Status.Alive).project(PersonName.class);
 ----
 
-1. If you plan to deploy your application as a native executable, you must register manually the projection class for reflection.
+1. The `@RegisterForReflection` annotation instructs Quarkus to keep the class and its members during the native compilation. More details about the `@RegisterForReflection` annotation can be found on  the xref:writing-native-applications-tips.adoc#registerForReflection[native application tips] page.
 2. We use public fields here, but you can use private fields and getters/setters if you prefer.
 3. This constructor will be used by Hibernate, it must be the only constructor in your class and have all the class attributes as parameters.
+
 
 [WARNING]
 ====
@@ -876,12 +951,44 @@ public class PanacheFunctionalityTest {
 <1> Be sure to call your `verify` and `do*` methods on `PanacheMock` rather than `Mockito`, otherwise you won't know
 what mock object to pass.
 
+==== Mocking `EntityManager`, `Session` and entity instance methods
+
+If you need to mock entity instance methods, such as `persist()` you can do it by mocking the Hibernate ORM `Session` object:
+
+[source,java]
+----
+@QuarkusTest
+public class PanacheMockingTest {
+
+    @InjectMock
+    Session session;
+
+    @BeforeEach
+    public void setup() {
+        Query mockQuery = Mockito.mock(Query.class);
+        Mockito.doNothing().when(session).persist(Mockito.any());
+        Mockito.when(session.createQuery(Mockito.anyString())).thenReturn(mockQuery);
+        Mockito.when(mockQuery.getSingleResult()).thenReturn(0l);
+    }
+
+    @Test
+    public void testPanacheMocking() {
+        Person p = new Person();
+        // mocked via EntityManager mocking
+        p.persist();
+        Assertions.assertNull(p.id);
+
+        Mockito.verify(session, Mockito.times(1)).persist(Mockito.any());
+    }
+}
+----
+
 === Using the repository pattern
 
 If you are using the repository pattern you can use Mockito directly, using the `quarkus-junit5-mockito` module,
 which makes mocking beans much easier:
 
-[source,java]
+[source,xml]
 ----
 <dependency>
     <groupId>io.quarkus</groupId>
