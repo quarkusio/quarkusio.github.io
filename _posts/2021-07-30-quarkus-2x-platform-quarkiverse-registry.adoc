@@ -1,0 +1,181 @@
+---
+layout: post
+title: 'Platforms and Streams: a new way to discover Quarkus extensions'
+date: 2021-07-30
+tags: release
+synopsis: 'The platform model and supporting tools available in Quarkus 2.1.0.Final make it easy to discover and work with the Quarkus extension ecosystem.'
+author: alexeyloubyansky
+---
+
+Co-authored by Erin Schnabel
+
+As you may have seen from recent Quarkus Insights episodes (#48, #55 and #57, specifically), we've made a number of changes to our tools in the 2.x stream to improve the developer experience.  When 2.0 was released, a few sharp-eyed Quarkus CLI users spotted some new options and we're excited to explain what those are all about with the release of Quarkus 2.1.
+
+**TL;DR:** We have a whole new set of more granular BOMs that you can use instead of the big `quarkus-universe-bom`. We have deployed a registry service that aligns and manages platform compatibility across these more granular BOMs and our tools (maven, gradle and CLI) know how to work with this registry to simplify the discovery of extensions that work with your project.
+
+As of the 2.1.0.Final release, the Quarkus CLI uses this registry to resolve the Quarkus platform used by your project.
+
+[source, bash]
+----
+# The client will create a project with the latest/recommended quarkus release
+$ quarkus create
+# You can use the --stream parameter to narrow to a specific release 
+$ quarkus create -S 2.0
+$ quarkus create -S 2.1
+----
+
+== The Evolution of the Platform Model
+
+The Quarkus 1.x platform was based on a single BOM - `io.quarkus:quarkus-universe-bom`, that would be imported by Quarkus applications. The universe BOM would include all the Quarkus
+platform extensions plus their dependencies. BOMs are meant to make it easy to align common dependencies on versions that work for all the libraries and frameworks used in an application.
+However, badly composed BOMs may actually make it very difficult or practically impossible to achieve that. Generally speaking, the wider the scope of the dependencies a BOM manages,
+the higher the risk of running into incompatiblity issues when users include libraries that aren't managed by the BOM into their applications.
+
+The `io.quarkus:quarkus-universe-bom`, as its artifactId implies, is certainly a large and diverse BOM, including dependencies of Camel, Google Cloud Services, Kogito, OptaPlanner
+and other Quarkus platform members. Importing `io.quarkus:quarkus-universe-bom` will enforce ~3600 dependency version constraints on an application. 
+
+Besides the fact that it's practically
+always way more than necessary, it may actually cause a serious compatibility issue that could have been avoided if the Quarkus platform BOM was not trying to manage the "universe".
+For example, including a library that depends on a different version of the `commons-beanutils:commons-beanutils` than Camel Quarkus into an application that actually does not include any
+Camel Quarkus extension may become problematic, because the `io.quarkus:quarkus-universe-bom` will enforce the version required by Camel Quarkus.
+
+As of Quarkus 2.0.0.Final, in addition to the monolithic `io.quarkus:quarkus-universe-bom`, we also define a number of platform-member-specific BOMs, e.g.
+
+* `io.quarkus.platform:quarkus-bom:2.1.0.Final` - an equivalent of the `io.quarkus:quarkus-bom`;
+* `io.quarkus.platform:quarkus-camel-bom:2.1.0.Final` - manages only the Camel Quarkus-related extensions and their required dependencies;
+* `io.quarkus.platform:quarkus-kogito-bom:2.1.0.Final` - manages only the Kogito Quarkus-related extensions and their required dependencies;
+* etc
+
+Now applications need to import only the relevant BOMs, which avoids enforcing dependency constraints from the rest of the "universe".
+
+TIP: Given that every member-specific BOM is actually a fragment of the `io.quarkus:quarkus-universe-bom`, member BOMs can be imported in any order w/o creating a conflict.
+
+== Dev Tools Support
+
+The dev tools, such as the Quarkus CLI, Maven or Gradle plugins, can be used to create and manage a Quarkus application project using the new platform model.
+
+NOTE: The `io.quarkus:quarkus-universe-bom` was still the default BOM in Quarkus 2.0.0.Final. As of Quarkus 2.1.0.Final, we recommend using the more granular, 
+member-specific BOMs instead.
+
+The easiest way to explore this new platform resolution capability is using the new https://quarkus.io/guides/cli-tooling[Quarkus CLI], which can be installed using e.g.
+
+```shell
+curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force quarkus@quarkusio
+```
+
+Once installed you can create a project by executing
+
+```shell
+quarkus create app
+```
+
+NOTE: For earlier versions of the CLI (pre-2.1.0.Final), you need to specify the `--registry-client` option, or the created project will use the `io.quarkus:quarkus-universe-bom` associated with the client's version.
+
+The generated `pom.xml` will be importing the following BOM:
+```xml
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.version>2.1.0.Final</quarkus.platform.version>
+    <surefire-plugin.version>3.0.0-M5</surefire-plugin.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+```
+
+which is an equivalent of the `io.quarkus:quarkus-bom` that does not include any of the other platform members, such as Camel, Kogito, OptaPlanner, etc.
+
+Let's create another project that does include a Kogito extension:
+
+```shell
+quarkus create -x kogito-quarkus-rules kogito-app
+```
+
+The new project imports two BOMs (i.e. two fragments of the `io.quarkus:quarkus-universe-bom` that are relevant to the project):
+
+```xml
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.version>2.1.0.Final</quarkus.platform.version>
+    <surefire-plugin.version>3.0.0-M5</surefire-plugin.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>quarkus-kogito-bom</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.kie.kogito</groupId>
+      <artifactId>kogito-quarkus-rules</artifactId>
+    </dependency>
+```
+
+== Wider Quarkus Ecosystem Support in the Dev Tools
+
+The https://quarkus.io/guides/platform[Quarkus platform] does not represent the whole Quarkus extension ecosystem, aka Quarkiverse, but rather a set of extensions that target
+the primary use-cases of Quarkus as a development stack. Which means that there are still plenty of Quarkus extensions that aren't present in a Quarkus platform (BOM),
+e.g. most of the extensions hosted on the https://github.com/quarkiverse[Quarkiverse Hub]. These non-platform extensions could still be added
+to Quarkus applications as usual application dependencies. The Quarkus 2.1.0.Final dev tools make it very easy, e.g.
+
+```shell
+quarkus create -x prettytime test-time-app
+```
+
+will create a new Quarkus project with a non-platform https://github.com/quarkiverse/quarkus-prettytime[Quarkus Pretty Time extension].
+
+```xml
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.version>2.1.0.Final</quarkus.platform.version>
+    <surefire-plugin.version>3.0.0-M5</surefire-plugin.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.quarkiverse.prettytime</groupId>
+      <artifactId>quarkus-prettytime</artifactId>
+      <version>0.1.0</version>
+    </dependency>
+```
+
+== Registry Client Support in the Maven and Gradle Plugins
+
+The Quarkus Maven and Gradle plugins can still be used to manage Quarkus projects.
+
+```shell
+mvn io.quarkus:quarkus-maven-plugin:2.1.0.Final:create \
+    -Dextensions=kogito-quarkus-rules,prettytime \
+    -DprojectGroupId=org.acme -DprojectArtifactId=quarkus-app -DprojectVersion=1.0 \
+```
