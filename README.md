@@ -47,7 +47,7 @@ If for some reason you need to deploy from your local machine, follow these inst
 To write a blog:
 
 - create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
-    - `emailhash` is used to fetch your picture form the Gravatar service
+    - `emailhash` you can get by running `echo your@email.org | md5` using an email you have registered from the [Gravatar service](https://gravatar.com),
 - create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_posts)
     -the file name is `yyyy-mm-dd-slug.adoc`
 - `tags` should be used with some care as an archive page is created for of them. Below are some basic rules to try follow:
