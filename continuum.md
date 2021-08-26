@@ -1,0 +1,181 @@
+---
+layout: base-fullwidthcontent
+title: Continuum
+subtitle:
+permalink: /continuum/
+---
+
+For years, the client-server architecture has been the de-facto standard to build applications. But a significant shift happened. The _one model rules them all_ age is over. A new range of applications and architectural styles have emerged and transformed how code is written and how applications are deployed and executed. HTTP microservices, reactive applications, event-driven architecture, and serverless are now central players in modern systems.
+
+Quarkus has been designed with this new world in mind and provides first-class support for these different paradigms. That does not mean you cannot build monoliths with Quarkus; you can do it smoothly. On the contrary, it means that the Quarkus development model morphs to adapt itself to the type of application you are developing, monolith, microservice, reactive, event-driven, functions…​
+
+## [](#http-microservices)HTTP microservices
+
+Let’s start with the basics: HTTP microservices. In this context, you need to develop an HTTP endpoint, often called REST or CRUD. You process incoming HTTP requests, and to do so you often need to rely on other services, such as databases, or another HTTP service.
+
+For this type of application, Quarkus relies on well-known standards such as JAX-RS, JPA and MicroProfile Rest Client, but also Hibernate with Panache to simplify interactions with databases.
+
+Let’s take a very simple application handling _elements_ from the periodic table. The code would be something like:
+
+    @Path("/elements")
+    public class ElementResource {
+
+        @GET
+        public List<Element> getAll() {
+            return Element.listAll();
+        }
+
+        @GET
+        @Path("/{position}")
+        public Element getOne(@PathParam("position") int position) {
+            Element element = Element.find("position", position).firstResult();
+            if (element == null) {
+                throw new WebApplicationException("Element with position " + position + " does not exist.", 404);
+            }
+            return element;
+        }
+
+        @POST
+        @Transactional
+        public Response create(Element element) {
+            element.persist();
+            return Response.ok(element).status(201).build();
+        }
+
+        //...
+    }
+
+If you are a Java EE or Spring user, this development model should look familiar. You expose a resource containing methods annotated with `@GET`, `@POST`…​​ to handle the different requests. The path is specified using the `@Path` annotation. Quarkus also supports [Spring controller](https://quarkus.io/guides/spring-web) annotations such as `@GetMapping` or `@RestController`.
+
+You can use the JPA entity manager directly. Panache proposes an alternative removing boilerplate and exposing an active record and repository models.
+
+With Panache, the `Element` class would be as simple as:
+
+    @Entity
+    public class Element extends PanacheEntity {
+
+        public String name;
+        public String symbol;
+        @Column(unique = true)
+        public int position;
+    }
+
+Microservices tend to come in systems. Let’s now imagine you need to access another HTTP endpoint. You can use an HTTP client directly; this is nothing more than repeating boilerplate code. Quarkus provides a way to call HTTP endpoints easily using the [MicroProfile Rest Client API](https://quarkus.io/guides/rest-client).
+
+First declare your service as follows:
+
+    @Path("/elements")
+    @RegisterRestClient(configKey="element-service")
+    public interface ElementService {
+
+        @GET
+        @Path("/{position}")
+        Element getElement(@PathParam("position") int position);
+    }
+
+For each call you are intending to do, add a method and use annotations to describe the behavior. You can combine the REST Client with the [fault tolerance extension](https://quarkus.io/guides/smallrye-fault-tolerance) to handle failure gracefully. Then, in your resource, just use the `ElementService` interface:
+
+    @Path("/elem")
+    public class ElementResource {
+
+        @RestClient
+        ElementService elements;
+
+        @GET
+        @Path("/{position}")
+        public Element name(@PathParam("position") int position) {
+            return elements.getElement(position);
+        }
+    }
+
+But you may be wondering where the URL is configured as it’s not in the code. Remember, it must not be hard-coded because the URL likely depends on the environment. The URL is configured in the application configuration:
+
+    element-service/mp-rest/url=http://localhost:9001
+
+The URL can now be updated during the deployment or at launch time using system properties or environment variables.
+
+Quarkus is not limited to HTTP. You can use [gRPC](https://quarkus.io/guides/grpc-getting-started) or [GraphQL](https://quarkus.io/guides/smallrye-graphql), two prominent alternatives in the microservice space.
+
+## [](#being-reactive)Being reactive
+
+Application requirements have changed drastically over the last few years. For any application to succeed in the era of cloud computing, Big Data, or IoT, going reactive is increasingly becoming the architecture style to follow.
+
+Today’s users embrace applications with milliseconds of response time, 100% uptime, lower latency, push data instead of pull, higher throughput, and elasticity. However, these features are nearly impossible to achieve using yesterday’s software architecture without a considerable investment in resources, infrastructure, and tooling. The world changed, and having dozens of servers, long response times (> 500 ms), downtime due to maintenance or waterfalls of failures does not meet the expected user experience.
+
+Quarkus aids you on your journey to reactive. Quarkus is based on a [reactive core](https://quarkus.io/version/main/guides/quarkus-reactive-architecture) allowing your application to mix reactive and imperative components. As an example, you can implement reactive HTTP endpoint using the [RESTEasy Reactive extension](https://quarkus.io/guides/resteasy-reactive) as follows:
+
+    @GET
+    @Path("/elements/{position}")
+    public Uni<Element> getElement(@PathParam("position") int position) {
+        return elements.getElement(position)
+            .onFailure().recoverWithItem(FALLBACK);
+    }
+
+Thanks to the [Mutiny Reactive API](https://quarkus.io/version/main/guides/mutiny-primer) , you can compose asynchronous operations and complete the result when everything is done without blocking the I/O threads. This greatly improves resource consumption and elasticity. Most Quarkus APIs are available in both imperative and reactive. As example, you can use the reactive version of the REST Client:
+
+    @Path("/elements")
+    @RegisterRestClient(configKey="element-service")
+    public interface ElementService {
+
+        @GET
+        @Path("/{position}")
+        Uni<Element> getElement(@PathParam("position") int position);
+    }
+
+But, what about streams? Generating a _server-sent event_ response with Quarkus is just as simple:
+
+    @Produces(MediaType.SERVER_SENT_EVENTS)
+    @GET
+    @Path("/events")
+    public Multi<String> stream() {
+        return kafka.toMulti();
+    }
+
+## [](#event-driven-architectures)Event-driven Architectures
+
+However, HTTP characteristics prohibit implementing [reactive systems](https://www.reactivemanifesto.org/), where all the components interact using asynchronous messages passing.
+
+First, you can consume messages from various brokers such as AMQP or Apache Kafka, and process these messages smoothly:
+
+    @ApplicationScoped
+    public class MyEventProcessor {
+
+      @Incoming("health")
+      @Outgoing("heartbeat")
+      public double extractHeartbeat(Health health) {
+        return health.getHeartbeat();
+      }
+    }
+
+The `@Incoming` and `@Outgoing` annotations are part of [Reactive Messaging](https://www.smallrye.io/smallrye-reactive-messaging). They are used to express from which _channel_ you are consuming and to which _channel_ you are sending. Thanks to Reactive Messaging you can consume and send messages from and to different brokers and transports such as HTTP, Kafka, or [Apache Camel](http://camel.apache.org).
+
+Sometimes you need more than just handling messages one by one. You can also express your message processing logic using reactive programming as illustrated in the following snippet:
+
+    @Incoming("health")
+    @Outgoing("output")
+    public Multi<Record<String, Measure> filterState(Multi<Capture> input) {
+        return input
+            .drop().repetitions()
+            .select().where(capture -> capture.value > 0)
+            .onItem().transform(capture -> new Measure(capture.sensor, capture.value, capture.unit))
+            .onItem().transform(measure -> Record.of(measure.sensor, measure));
+    }
+
+As for the reactive APIs exposed by Quarkus, stream manipulation uses the Mutiny API.
+
+## [](#functions-as-a-service-and-serverless)Functions as a Service and Serverless
+
+Thanks to their stellar startup time and low memory usage, you can implement functions using Quarkus to be used in serverless environments. Quarkus provides Funqy, an approach to writing functions that are deployable to various FaaS environments like AWS Lambda, Azure Functions, Knative, and Knative Events (Cloud Events). It is also usable as a standalone service.
+
+With Funqy, a function is just:
+
+    import io.quarkus.funqy.Funq;
+
+    public class GreetingFunction {
+        @Funq
+        public String greet(String name) {
+           return "Hello " + name;
+        }
+    }
+
+You can use any of the Quarkus features in your function and benefit from the fast startup and low memory utilization. With Quarkus, you can embrace this new world without having to change your programming language.
