@@ -3,4 +3,4 @@
 Contributions are welcome, please submit pull requests for the `develop` branch.
 
 **Important:** the guides are maintained in the main Quarkus repository and pull requests should be submitted there:
-https://github.com/quarkusio/quarkus/tree/master/docs/src/main/asciidoc.
+https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc.
