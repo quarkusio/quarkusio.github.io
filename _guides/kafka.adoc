@@ -1119,6 +1119,10 @@ First, you need to include the `quarkus-jackson` extension.
 There is an existing `ObjectMapperSerializer` that can be used to serialize all data objects via Jackson.
 You may create an empty subclass if you want to use <<serialization-autodetection>>.
 
+NOTE: By default, the `ObjectMapperSerializer` serializes null as the `"null"` String, this can be customized by setting the Kafka configuration
+property `json.serialize.null-as-null=true` which will serialize null as `null`.
+This is handy when using a compacted topic, as `null` is used as a tombstone to know which messages delete during compaction phase.
+
 The corresponding deserializer class needs to be subclassed.
 So, let's create a `FruitDeserializer` that extends the `ObjectMapperDeserializer`.
 
@@ -1153,6 +1157,25 @@ mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.seriali
 Now, your Kafka messages will contain a Jackson serialized representation of your `Fruit` data object.
 In this case, the `deserializer` configuration is not necessary as the <<serialization-autodetection>> is enabled by default.
 
+If you want to deserialize a list of fruits, you need to create a deserializer with a Jackson `TypeReference` denoted the generic collection used.
+
+[source,java]
+----
+package com.acme.fruit.jackson;
+
+import java.util.List;
+import com.fasterxml.jackson.core.type.TypeReference;
+import io.quarkus.kafka.client.serialization.ObjectMapperDeserializer;
+
+public class ListOfFruitDeserializer extends ObjectMapperDeserializer<List<Fruit>> {
+    public ListOfFruitDeserializer() {
+        TypeReference<List<Fruit>> listType = new TypeReference<>() {
+        };
+        super(listType);
+    }
+}
+----
+
 [[jsonb-serialization]]
 === Serializing via JSON-B
 
@@ -1168,6 +1191,10 @@ First, you need to include the `quarkus-jsonb` extension.
 
 There is an existing `JsonbSerializer` that can be used to serialize all data objects via JSON-B.
 You may create an empty subclass if you want to use <<serialization-autodetection>>.
+
+NOTE: By default, the `JsonbSerializer` serializes null as the `"null"` String, this can be customized by setting the Kafka configuration
+property `json.serialize.null-as-null=true` which will serialize null as `null`.
+This is handy when using a compacted topic, as `null` is used as a tombstone to know which messages delete during compaction phase.
 
 The corresponding deserializer class needs to be subclassed.
 So, let's create a `FruitDeserializer` that extends the generic `JsonbDeserializer`.
@@ -1201,6 +1228,24 @@ mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.seriali
 ----
 
 Now, your Kafka messages will contain a JSON-B serialized representation of your `Fruit` data object.
+
+If you want to deserialize a list of fruits, you need to create a deserializer with a `Type` denoted the generic collection used.
+
+[source,java]
+----
+package com.acme.fruit.jsonb;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.List;
+import io.quarkus.kafka.client.serialization.JsonbDeserializer;
+
+public class ListOfFruitDeserializer extends JsonbDeserializer<List<Fruit>> {
+    public ListOfFruitDeserializer() {
+        Type listType = new ArrayList<MyEntity>() {}.getClass().getGenericSuperclass();
+        super(listType);
+    }
+}
+----
 
 NOTE: If you don't want to create a deserializer for each data object, you can use the generic `io.vertx.kafka.client.serialization.JsonObjectDeserializer`
 that will deserialize to a `io.vertx.core.json.JsonObject`. The corresponding serializer can also be used: `io.vertx.kafka.client.serialization.JsonObjectSerializer`.
@@ -1394,7 +1439,29 @@ To achieve this, you can _switch_ the channels managed by the Kafka connector to
 
 IMPORTANT: This approach only works for JVM tests. It cannot be used for native tests (because they do not support injection).
 
-First, add the following dependency to your application:
+Let's say we want to test the following processor application:
+
+[source, java]
+----
+@ApplicationScoped
+public class BeverageProcessor {
+
+    @Incoming("orders")
+    @Outgoing("beverages")
+    Beverage process(Order order) {
+        System.out.println("Order received " + order.getProduct());
+        Beverage beverage = new Beverage();
+        beverage.setBeverage(order.getProduct());
+        beverage.setCustomer(order.getCustomer());
+        beverage.setOrderId(order.getOrderId());
+        beverage.setPreparationState("RECEIVED");
+        return beverage;
+    }
+
+}
+----
+
+First, add the following test dependency to your application:
 
 [source, xml]
 ----
@@ -1414,8 +1481,8 @@ public class KafkaTestResourceLifecycleManager implements QuarkusTestResourceLif
     @Override
     public Map<String, String> start() {
         Map<String, String> env = new HashMap<>();
-        Map<String, String> props1 = InMemoryConnector.switchIncomingChannelsToInMemory("orders");  // <1>
-        Map<String, String> props2 = InMemoryConnector.switchOutgoingChannelsToInMemory("queue");   // <2>
+        Map<String, String> props1 = InMemoryConnector.switchIncomingChannelsToInMemory("orders");     // <1>
+        Map<String, String> props2 = InMemoryConnector.switchOutgoingChannelsToInMemory("beverages");  // <2>
         env.putAll(props1);
         env.putAll(props2);
         return env;  // <3>
@@ -1427,8 +1494,8 @@ public class KafkaTestResourceLifecycleManager implements QuarkusTestResourceLif
     }
 }
 ----
-<1> Switch the incoming channel "orders" (expecting messages from Kafka) to in-memory.
-<2> Switch the outgoing channel "queue" (writing messages to Kafka) to in-memory.
+<1> Switch the incoming channel `orders` (expecting messages from Kafka) to in-memory.
+<2> Switch the outgoing channel `beverages` (writing messages to Kafka) to in-memory.
 <3> Builds and returns a `Map` containing all the properties required to configure the application to use in-memory channels.
 <4> When the test stops, clear the `InMemoryConnector` (discard all the received and sent messages)
 
@@ -1445,19 +1512,19 @@ class BaristaTest {
 
     @Test
     void testProcessOrder() {
-        InMemorySource<Order> orders = connector.source("orders"); // <2>
-        InMemorySink<Beverage> queue = connector.sink("queue");    // <3>
+        InMemorySource<Order> ordersIn = connector.source("orders");     // <2>
+        InMemorySink<Beverage> beveragesOut = connector.sink("beverages");  // <3>
 
         Order order = new Order();
         order.setProduct("coffee");
         order.setName("Coffee lover");
         order.setOrderId("1234");
 
-        orders.send(order);  // <4>
+        ordersIn.send(order);  // <4>
 
-        await().<List<? extends Message<Beverage>>>until(queue::received, t -> t.size() == 1); // <5>
+        await().<List<? extends Message<Beverage>>>until(beveragesOut::received, t -> t.size() == 1); // <5>
 
-        Beverage queuedBeverage = queue.received().get(0).getPayload();
+        Beverage queuedBeverage = beveragesOut.received().get(0).getPayload();
         Assertions.assertEquals(Beverage.State.READY, queuedBeverage.getPreparationState());
         Assertions.assertEquals("coffee", queuedBeverage.getBeverage());
         Assertions.assertEquals("Coffee lover", queuedBeverage.getCustomer());
@@ -1468,9 +1535,16 @@ class BaristaTest {
 ----
 <1> Inject the in-memory connector in your test class.
 <2> Retrieve the incoming channel (`orders`) - the channel must have been switched to in-memory in the test resource.
-<3> Retrieve the outgoing channel (`queue`) - the channel must have been switched to in-memory in the test resource.
-<4> Use the `send` method to send a message to the `orders` channel. So, the application will process this message.
-<5> Use the `received` method to check the messages produced by the application.
+<3> Retrieve the outgoing channel (`beverages`) - the channel must have been switched to in-memory in the test resource.
+<4> Use the `send` method to send a message to the `orders` channel.
+The application will process this message and send a message to `beverages` channel.
+<5> Use the `received` method on `beverages` channel to check the messages produced by the application.
+
+[IMPORTANT]
+====
+With in-memory channels we were able to test application code processing messages without starting a Kafka broker.
+Note that different in-memory channels are independent, and switching channel connector to in-memory does not simulate message delivery between channels configured to the same Kafka topic.
+====
 
 === Starting Kafka in a test resource
 
@@ -1945,7 +2019,7 @@ public Multi<String> stream() {
     return Multi.createBy().merging()
             .streams(
                     fruits.map(this::toJson),
-                    getPingStream()
+                    emitAPeriodicPing()
             );
 }
 
@@ -1965,6 +2039,23 @@ private String toJson(Fruit f) {
 
 The workaround is a bit more complex as besides sending the fruits coming from Kafka, we need to send pings periodically.
 To achieve this we merge the stream coming from Kafka and a periodic stream emitting `{}` every 10 seconds.
+
+== Logging
+
+To reduce the amount of log written by the Kafka client, Quarkus sets the level of the following log categories to `WARNING`:
+
+- `org.apache.kafka.clients`
+- `org.apache.kafka.common.utils`
+- `org.apache.kafka.common.metrics`
+
+You can override the configuration by adding the following lines to the `application.properties`:
+
+[source, properties]
+----
+quarkus.log.category."org.apache.kafka.clients".level=INFO
+quarkus.log.category."org.apache.kafka.common.utils".level=INFO
+quarkus.log.category."org.apache.kafka.common.metrics".level=INFO
+----
 
 == Going further
 
