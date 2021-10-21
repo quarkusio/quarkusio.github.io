@@ -1,7 +1,7 @@
 ---
 layout: base-fullwidthcontent
 title: FAQ
-subtitle:
+subtitle: Get answers to some of your common Quarkus questions.
 permalink: /faq/
 ---
 
