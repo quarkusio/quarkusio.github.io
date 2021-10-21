@@ -1,0 +1,339 @@
+---
+layout: post
+title: RESTEasy Reactive - To block or not to block
+date: 2021-08-25   
+tags: reactive rest
+synopsis: Quarkus 2.2 includes a new dispatching strategy to make RESTEasy Reactive even better.
+author: cescoffier
+---
+
+:imagesdir: /assets/images/posts
+
+In January 2021, the Quarkus team announced RESTEasy Reactive, a novel way to serve HTTP API in Quarkus. 
+Since its introduction, RESTEasy Reactive adoption has been quite good, and we plan to make it the default approach to implement HTTP API shortly. 
+
+But, wait a minute, what does that mean for my imperative APIs? Do I need to learn reactive programming to use Quarkus now? Let's be clear: **no**. 
+This blog post will look at a few changes we made in RESTEasy reactive to make the transition smooth and transparent. 
+
+== A brief history of HTTP APIs in Quarkus
+
+Quarkus has, since its genesis, has been able to serve HTTP API. The inclusion of https://resteasy.github.io/[RESTEasy] has been a major milestone of the first Quarkus beta releases. 
+With RESTEasy _classic_, you develop HTTP APIs using the well-known JAX-RS annotations such as `@GET`, `@Path`, `@POST`... 
+The following snippet shows a short _hello world_ example:
+
+[source, java]
+----
+package org.acme;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/hello")
+public class GreetingResource {
+
+   @GET
+   public String hello() {
+       return "Hello";
+   }
+}
+----
+
+RESTEasy _classic_ invokes the HTTP endpoint (the `hello` method in the previous snippet) on a worker thread associated with the HTTP request. 
+It is a well-understood model, simple to understand. 
+However, relying on worker threads introduces a concurrency limit: the number of threads. 
+
+Even with the infusion of reactive at the core of Quarkus, RESTEasy _classic_ kept this dispatching strategy. 
+It was fragmenting the Quarkus ecosystem. On one side, we had the the imperative camp using RESTEasy _classic_, Hibernate ORM... 
+On the other side, we had the reactive camp using Reactive Routes, Vert.x APIs and other reactive extensions.
+Both were using, under the hood, the reactive engine of Quarkus, but the reactive camp we using it in a more efficient way.
+
+Following the unification of imperative and reactive idea, in Quarkus 1.11, we introduced RESTEasy _reactive_, a novel implementation of the JAX-RS model on top of the Quarkus reactive architecture. 
+It offers a similar development model and much better throughput. 
+I won't detail the RESTEasy _reactive_ architecture and benefits. 
+Georgios covered them in two posts: https://quarkus.io/blog/resteasy-reactive/[RESTEasy Reactive introduction] and https://quarkus.io/blog/resteasy-reactive-faq/[Massive performance without headaches].
+
+From the user point of view, the main difference between RESTEasy _classic_ and _reactive_ is how they call the HTTP endpoint methods:
+
+* _classic_ - always on a worker thread,
+* _reactive_ - on the I/O thread or on a worker thread (and you, as the developer, have the choice)
+
+You may wonder why it's so important. 
+Threads are expensive, especially in containers or on the cloud where the resources are limited. 
+Using the I/O threads avoids creating additional threads (improving memory consumption) and avoids context switches (improving response time). 
+Emmanuel explained the benefits in the https://quarkus.io/blog/io-thread-benchmark/[A IO thread and a worker thread walk into a bar: a microbenchmark story] blog post.
+
+== To block or not to block, that is the question.
+
+When we introduced RESTEasy _reactive_, we decided to use a non-blocking approach by default: if not stated otherwise, it calls the HTTP endpoint method on the I/O thread. 
+This model resulted in outstanding performance and was simple enough, thanks to the usage of the `@Blocking` annotation. 
+
+In the last few months, the adoption of RESTEasy _reactive_ has been incredible! 
+We have received many questions and, obviously, bug reports.
+The central question is about the usage of Hibernate ORM. 
+
+As Hibernate ORM _classic_ (we also have Hibernate _reactive_) is blocking, you can't use it with RESTEasy _reactive_ without using the `@Blocking` annotation. 
+This annotation changes the dispatching strategy to use a worker thread (instead of the I/O thread).
+
+While the resulting model looked efficient and straightforward for us, non-aware users have seen a lot of: 
+
+[source, text]
+----
+You have attempted to perform a blocking operation on a IO thread. This is not allowed, as blocking the IO thread will cause major performance issues with your application. If you want to perform blocking EntityManager operations make sure you are doing it from a worker thread.: java.lang.IllegalStateException: You have attempted to perform a blocking operation on a IO thread. This is not allowed, as blocking the IO thread will cause major performance issues with your application. If you want to perform blocking EntityManager operations make sure you are doing it from a worker thread.
+----
+
+The error message is explicit. 
+But, it rarely makes us happy when we have such a wall of text printed in our terminal. 
+
+You may say... “well, let's do blocking by default.” 
+It's not that simple. 
+It's as dangerous to call reactive APIs expected to be called on an I/O thread on a worker thread than calling blocking APIs on the I/O thread.
+
+== New world, new rules! 
+
+In Quarkus 2.2.0, we introduced a new dispatching strategy based on the method signatures. 
+The Quarkus build-time approach lets us be wise and deduce if a method should be called on the I/O thread or a worker thread at build time, reducing the runtime overhead.  
+
+The following table summarizes the new set of rules:
+
+[cols="1,1"]
+|===
+|Method signature |Dispatching strategy
+
+| `T method(...)` | Worker thread
+| `Uni<T> method(...)` | I/O thread 
+| `CompletionStage<T> method(...)` | I/O thread 
+| `Multi<T> method(...)` | I/O thread 
+| `Publisher<T> method(...)` | I/O thread 
+| `@Transactional CompletionStage<T>  method(...)` | Worker thread
+|===
+
+Basically: _synchronous methods default to worker threads, and asynchronous methods default to I/O threads, except if explicitly stated otherwise_. 
+Of course, you can override the behavior using the `@Blocking` and `@NonBlocking` annotations.
+The `@Transactional` annotation is an exception to the default rules as it often means you are accessing blocking resources (such as an entity manager).
+
+== What does that change for you? 
+    
+Let’s discuss a few examples explaining how this new strategy improves the user experience without limiting efficiency and flexibility.
+
+
+=== Hello RESTEasy Reactive
+
+Using RESTEasy _reactive_ does not change the _hello_ example from above:
+
+[source, java]    
+----
+package org.acme;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/hello")
+public class GreetingResource {
+
+   @GET
+   public String hello() {
+       return "Hello";
+   }
+}
+----
+
+That method is invoked on a worker thread because it has a synchronous signature. 
+Previously (before Quarkus 2.2), with RESTEasy _reactive_, it would have been called on the I/O thread. 
+To switch back to that behavior, add `@NonBlocking`:
+
+[source, java]    
+----    
+package org.acme;
+
+import io.smallrye.common.annotation.NonBlocking;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/hello")
+public class GreetingResource {
+
+   @GET
+   @NonBlocking
+   public String hello() {
+       return "Hello";
+   }
+}
+----
+    
+Alternatively, you can return a `Uni`:    
+
+[source, java]    
+----    
+package org.acme;
+
+import io.smallrye.mutiny.Uni;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/hello")
+public class GreetingResource {
+
+   @GET
+   public Uni<String> hello() {
+       return Uni.createFrom().item("Hello");
+   }
+}
+----
+
+=== Integrating with Hibernate ORM
+
+Following the feedback from users, let’s imagine you want to use Hibernate _classic_ with RESTEasy _reactive_:
+
+[source, java]    
+----
+package org.acme;
+
+import org.jboss.resteasy.reactive.RestQuery;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/fruit")
+public class FruitResource {
+
+   @GET
+   public Fruit getFruit(@RestQuery String name) {
+       return Fruit.find("name", name).firstResult();
+   }
+}
+----
+    
+You don't need to use `@Blocking` as the signature is synchronous. No more wall of text!  
+
+=== Integrating with Hibernate Reactive
+
+If you use Hibernate _reactive_, you will use the Mutiny API, and so the resulting code will be:
+    
+[source, java]    
+----
+package org.acme;
+
+import io.smallrye.mutiny.Uni;
+import org.jboss.resteasy.reactive.RestQuery;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+
+@Path("/fruit")
+public class FruitResource {
+
+   @GET
+   public Uni<Fruit> getFruit(@RestQuery String name) {
+       return Fruit.find("name", name).firstResult();
+   }
+}
+----
+
+This method runs on the I/O thread, which is what Hibernate _reactive_  expects.
+
+=== Integrating with Kafka
+
+If you combine HTTP and Kafka (using reactive messaging), you will use an emitter. 
+Depending on the emitter type (`Emitter` or `MutinyEmitter`), the `send` method returns a `CompletionStage` or a `Uni`. 
+So, the following HTTP method runs on the I/O thread:
+
+[source, java]    
+----
+package org.acme;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.MutinyEmitter;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+
+@Path("/fruit")
+public class FruitResource {
+
+   @Channel("kafka")
+   MutinyEmitter<Fruit> emitter;
+
+   @POST
+   public Uni<Void> writeToKafka(Fruit fruit) {
+       return emitter.send(fruit);
+   }
+}
+----
+
+If you change it to a synchronous signature, it runs on a worker thread:
+
+[source, java]    
+----
+package org.acme;
+
+import io.smallrye.reactive.messaging.MutinyEmitter;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import java.time.Duration;
+
+@Path("/fruit")
+public class FruitResource {
+
+   @Channel("kafka")
+   MutinyEmitter<Fruit> emitter;
+
+   @POST
+   public void writeToKafka(Fruit fruit) {
+       System.out.println(Thread.currentThread().getName());
+       emitter.send(fruit).await().atMost(Duration.ofSeconds(5));
+   }
+}
+----
+    
+=== Combining RESTEasy Reactive, Hibernate ORM and Kafka
+
+Let's now combine Resteasy _reactive_, Hibernate ORM _classic_ and Kafka to persist an entity and write it to a Kafka topic: 
+
+[source, java]    
+----
+package org.acme;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.MutinyEmitter;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import javax.transaction.Transactional;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+
+@Path("/fruit")
+public class FruitResource {
+
+   @Channel("kafka")
+   MutinyEmitter<Fruit> emitter;
+
+   @POST
+   @Transactional
+   public Uni<Void> persistAndWriteToKafka(Fruit fruit) {
+       System.out.println(Thread.currentThread().getName());
+       fruit.persist();
+       return emitter.send(fruit);
+   }
+}
+----
+
+This method runs on a worker thread despite the signature. 
+The `@Transactional` annotation configures the dispatching strategy to use a worker thread.
+    
+   
+== Summary
+    
+With Quarkus 2.2, the dispatching strategy of RESTEasy _reactive_ becomes smarter thus improving the developer experience.
+
+* You don't need to learn the reactive way; you can keep using imperative code. 
+* You don't need to think about your threads; Quarkus does that for you.  
+* You don't lose in flexibility; you can override the decision. 
+        
+Starting with Quarkus 2.3, the Quarkus team is thinking of making RESTEasy _reactive_  the default way to implement HTTP APIs. 
+It does not mean that the RESTEasy _classic_ extension will be retired, just that we reach the point where RESTEasy _reactive_ gives you more without burden. 
+

@@ -3,12 +3,12 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc
 ////
-= Quarkus - Using OpenID Connect to Protect Web Applications using Authorization Code Flow.
+= Using OpenID Connect (OIDC) to Protect Web Applications using Authorization Code Flow.
 
 include::./attributes.adoc[]
 :toc:
 
-This guide demonstrates how to use Quarkus OpenID Connect Extension to protect your Quarkus HTTP endpoints using OpenId Connect Authorization Code Flow supported by OpenId Connect compliant Authorization Servers such as https://www.keycloak.org/about.html[Keycloak].
+This guide demonstrates how to use Quarkus OpenID Connect (OIDC) Extension to protect your Quarkus HTTP endpoints using OpenId Connect Authorization Code Flow supported by OpenId Connect compliant Authorization Servers such as https://www.keycloak.org/about.html[Keycloak].
 
 The extension allows to easily authenticate the users of your web application by redirecting them to the OpenID Connect Provider (e.g.: Keycloak) to login and, once the authentication is complete, return them back with the code confirming the successful authentication. The extension will request ID and access tokens from the OpenID Connect Provider using an authorization code grant and verify these tokens in order to authorize an access to the application.
 
@@ -50,7 +50,7 @@ First, we need a new project. Create a new project with the following command:
 
 [source,bash,subs=attributes+]
 ----
-mvn io.quarkus:quarkus-maven-plugin:{quarkus-version}:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:{quarkus-version}:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-openid-connect-web-authentication-quickstart \
     -Dextensions="resteasy,oidc" \
@@ -437,6 +437,13 @@ Please see link:security-openid-connect#token-verification-introspection for det
 
 Note that in case of `web-app` applications only `IdToken` is verified by default since the access token is not used by default to access the current Quarkus `web-app` endpoint and instead meant to be propagated to the services expecting this access token, for example, to the OpenId Connect Provider's UserInfo endpoint, etc. However if you expect the access token to contain the roles required to access the current Quarkus endpoint (`quarkus.oidc.roles.source=accesstoken`) then it will also be verified.
 
+[[token-introspection-userinfo-cache]]
+== Token Introspection and UserInfo Cache
+
+Code flow access tokens are not introspected unless they are expected to be the source of roles but will be used to get `UserInfo`. So there will be one or two remote calls with the code flow access token, if the token introspection and/or `UserInfo` are required.
+
+Please see link:security-openid-connect#token-introspection-userinfo-cache for more information about using a default token cache or registering a custom cache implementation.
+
 [[session-management]]
 == Session Management
 
@@ -468,6 +475,59 @@ If the ID, access and refresh tokens are JWT tokens then combining all of them (
 In such cases, you can use `quarkus.oidc.token-state-manager.split-tokens=true` to have a unique session token per each of these tokens.
 
 Register your own `io.quarkus.oidc.TokenStateManager' implementation as an `@ApplicationScoped` CDI bean if you need to customize the way the tokens are associated with the session cookie. For example, you may want to keep the tokens in a database and have only a database pointer stored in a session cookie. Note though that it may present some challenges in making the tokens available across multiple microservices nodes.
+
+Here is a simple example:
+
+[source, java]
+----
+package io.quarkus.oidc.test;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+import io.quarkus.arc.AlternativePriority;
+import io.quarkus.oidc.AuthorizationCodeTokens;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.TokenStateManager;
+import io.quarkus.oidc.runtime.DefaultTokenStateManager;
+import io.smallrye.mutiny.Uni;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+@AlternativePriority(1)
+public class CustomTokenStateManager implements TokenStateManager {
+
+    @Inject
+    DefaultTokenStateManager tokenStateManager;
+
+    @Override
+    public Uni<String> createTokenState(RoutingContext routingContext, OidcTenantConfig oidcConfig,
+            AuthorizationCodeTokens sessionContent, TokenStateManager.CreateTokenStateRequestContext requestContext) {
+        return tokenStateManager.createTokenState(routingContext, oidcConfig, sessionContent, requestContext)
+                .map(t -> (t + "|custom"));
+    }
+
+    @Override
+    public Uni<AuthorizationCodeTokens> getTokens(RoutingContext routingContext, OidcTenantConfig oidcConfig,
+            String tokenState, TokenStateManager.GetTokensRequestContext requestContext) {
+        if (!tokenState.endsWith("|custom")) {
+            throw new IllegalStateException();
+        }
+        String defaultState = tokenState.substring(0, tokenState.length() - 7);
+        return tokenStateManager.getTokens(routingContext, oidcConfig, defaultState, requestContext);
+    }
+
+    @Override
+    public Uni<Void> deleteTokens(RoutingContext routingContext, OidcTenantConfig oidcConfig, String tokenState,
+            TokenStateManager.DeleteTokensRequestContext requestContext) {
+        if (!tokenState.endsWith("|custom")) {
+            throw new IllegalStateException();
+        }
+        String defaultState = tokenState.substring(0, tokenState.length() - 7);
+        return tokenStateManager.deleteTokens(routingContext, oidcConfig, defaultState, requestContext);
+    }
+}
+----
 
 == Listening to important authentication events
 
@@ -564,11 +624,11 @@ quarkus.oidc.authorization-path=/protocol/openid-connect/auth
 quarkus.oidc.token-path=/protocol/openid-connect/token
 # JWK set endpoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/certs
 quarkus.oidc.jwks-path=/protocol/openid-connect/certs
-# UserInfo endoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/userinfo
+# UserInfo endpoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/userinfo
 quarkus.oidc.user-info-path=/protocol/openid-connect/userinfo
-# Token Introspection endoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/token/introspect
+# Token Introspection endpoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/token/introspect
 quarkus.oidc.introspection-path=/protocol/openid-connect/token/introspect
-# End session endoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/logout
+# End session endpoint: http://localhost:8180/auth/realms/quarkus/protocol/openid-connect/logout
 quarkus.oidc.end-session-path=/protocol/openid-connect/logout
 ----
 
@@ -580,6 +640,107 @@ It applies to ID tokens but also to access tokens in a JWT format if the `web-ap
 
 == Token Propagation
 Please see link:security-openid-connect-client#token-propagation[Token Propagation] section about the Authorization Code Flow access token propagation to the downstream services.
+
+[[oidc-provider-client-authentication]]
+== Oidc Provider Client Authentication
+
+`quarkus.oidc.runtime.OidcProviderClient` is used when a remote request to an OpenId Connect Provider has to be done. It has to authenticate to the OpenId Connect Provider when the authorization code has to be exchanged for the ID, access and refresh tokens, when the ID and access tokens have to be refreshed or introspected.
+
+All the https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication[OIDC Client Authentication] options are supported, for example:
+
+`client_secret_basic`:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.secret=mysecret
+----
+
+or
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.client-secret.value=mysecret
+----
+
+or with the secret retrieved from a link:credentials-provider[CredentialsProvider]:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+
+# This is a key which will be used to retrieve a secret from the map of credentials returned from CredentialsProvider
+quarkus.oidc.credentials.client-secret.provider.key=mysecret-key
+# Set it only if more than one CredentialsProvider can be registered
+quarkus.oidc.credentials.client-secret.provider.name=oidc-credentials-provider
+----
+
+`client_secret_post`:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.client-secret.value=mysecret
+quarkus.oidc.credentials.client-secret.method=post
+----
+
+`client_secret_jwt`:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.jwt.secret=AyM1SysPpbyDfgZld3umj1qzKObwVMkoqQ-EstJQLr_T-1qS0gZH75aKtMN3Yj0iPS4hcgUuTwjAzZr1Z9CAow
+# This is a token key identifier 'kid' header - set it if your OpenId Connect provider requires it,
+quarkus.oidc.credentials.jwt.token-key-id=mykey
+----
+
+or with the secret retrieved from a link:credentials-provider[CredentialsProvider]:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+
+# This is a key which will be used to retrieve a secret from the map of credentials returned from CredentialsProvider
+quarkus.oidc.credentials.jwt.secret-provider.key=mysecret-key
+# Set it only if more than one CredentialsProvider can be registered
+quarkus.oidc.credentials.jwt.secret-provider.name=oidc-credentials-provider
+----
+
+`private_key_jwt` with the PEM key file:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.jwt.key-file=privateKey.pem
+# This is a token key identifier 'kid' header - set it if your OpenId Connect provider requires it
+quarkus.oidc.credentials.jwt.token-key-id=mykey
+----
+
+`private_key_jwt` with the key store file:
+
+[source,properties]
+----
+quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.jwt.key-store-file=keystore.jks
+quarkus.oidc.credentials.jwt.key-store-password=mypassword
+quarkus.oidc.credentials.jwt.key-password=mykeypassword
+# Private key alias inside the keystore
+quarkus.oidc.credentials.jwt.key-id=mykey
+# This is a token key identifier 'kid' header - set it if your OpenId Connect provider requires it,
+# Note it can be different to the `quarkus.oidc.credentials.jwt.key-id` value
+quarkus.oidc.credentials.jwt.token-key-id=mykey
+----
+
+Using `client_secret_jwt` or `private_key_jwt` authentication methods ensures that no client secret goes over the wire.
 
 [[integration-testing]]
 == Testing
@@ -683,10 +844,46 @@ Additionally, `OidcWiremockTestResource` set token issuer and audience to `https
 
 `OidcWiremockTestResource` can be used to emulate all OpenId Connect providers.
 
-[[integration-testing-keycloak]]
-=== Keycloak
+[[integration-testing-keycloak-devservices]]
+=== Dev Services for Keycloak
 
-If you work with Keycloak then you can test against a live Keycloak instance by adding the following dependency:
+Using link:security-openid-connect-dev-services[Dev Services for Keycloak] is recommended for the integration testing against Keycloak.
+`Dev Services for Keycloak` will launch and initialize a test container: it will create a `quarkus` realm, a `quarkus-app` client (`secret` secret) and add `alice` (`admin` and `user` roles) and `bob` (`user` role) users, where all of these properties can be customized.
+
+First prepare `application.properties`. You can start with a completely empty `application.properties` as `Dev Services for Keycloak` will register `quarkus.oidc.auth-server-url` pointing to the running test container as well as `quarkus.oidc.client-id=quarkus-app` and `quarkus.oidc.credentials.secret=secret`.
+
+But if you already have all the required `quarkus-oidc` properties configured then you only need to associate `quarkus.oidc.auth-server-url` with the `prod` profile for `Dev Services for Keycloak`to start a container, for example:
+
+[source,properties]
+----
+%prod.quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus
+----
+
+If a custom realm file has to be imported into Keycloak before running the tests then you can configure `Dev Services for Keycloak` as follows:
+
+[source,properties]
+----
+%prod.quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus
+quarkus.keycloak.devservices.realm-path=quarkus-realm.json
+----
+
+Finally write a test code the same way as it is described in the <<integration-testing-wiremock, Wiremock>> section above.
+The only difference is that `@QuarkusTestResource` is no longer needed:
+
+[source, java]
+----
+@QuarkusTest
+public class CodeFlowAuthorizationTest {
+}
+----
+
+[[integration-testing-keycloak]]
+=== KeycloakTestResourceLifecycleManager
+
+If you need to do the integration testing against Keycloak then you are encouraged to do it with <<integration-testing-keycloak-devservices,Dev Services For Keycloak>>.
+Use `KeycloakTestResourceLifecycleManager` for your tests only if there is a good reason not to use `Dev Services for Keycloak`.
+
+Start with adding the following dependency:
 
 [source,xml]
 ----
@@ -697,7 +894,9 @@ If you work with Keycloak then you can test against a live Keycloak instance by 
 </dependency>
 ----
 
-and configure `maven.surefire.plugin` as follows:
+which provides `io.quarkus.test.keycloak.server.KeycloakTestResourceLifecycleManager` - an implementation of `io.quarkus.test.common.QuarkusTestResourceLifecycleManager` which starts a Keycloak container.
+
+And configure `maven.surefire.plugin` as follows:
 
 [source,xml]
 ----
@@ -705,7 +904,7 @@ and configure `maven.surefire.plugin` as follows:
     <artifactId>maven-surefire-plugin</artifactId>
     <configuration>
         <systemPropertyVariables>
-            <!-- or, alternativey, configure 'keycloak.version' -->
+            <!-- or, alternatively, configure 'keycloak.version' -->
             <keycloak.docker.image>${keycloak.docker.image}</keycloak.docker.image>
             <!--
               Disable HTTPS if required:
@@ -751,13 +950,21 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcProvider".level=TRACE
 quarkus.log.category."io.quarkus.oidc.runtime.OidcProvider".min-level=TRACE
 ----
 
+Please enable `io.quarkus.oidc.runtime.OidcRecorder` `TRACE` level logging to see more details about the OidcProvider client initialization errors:
+
+[source, properties]
+----
+quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".level=TRACE
+quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE
+----
+
 == Running behind a reverse proxy
 
 OIDC authentication mechanism can be affected if your Quarkus application is running behind a reverse proxy/gateway/firewall when HTTP `Host` header may be reset to the internal IP address, HTTPS connection may be terminated, etc. For example, an authorization code flow `redirect_uri` parameter may be set to the internal host instead of the expected external one.
 
-In such cases configuring Quarkus to recognize the original headers forwarded by the proxy will be required, see link:vertx#reverse-proxy[Running behind a reverse proxy] Vert.x documentation section for more information.
+In such cases configuring Quarkus to recognize the original headers forwarded by the proxy will be required, see link:http-reference#reverse-proxy[Running behind a reverse proxy] Vert.x documentation section for more information.
 
-For example, if your Quarkus endpoint runs in a cluster behind Kubernetes Ingress then a redirect from the OpenId Connect Provider back to this endpoint may not work since the calcuated `redirect_uri` parameter may point to the internal endpoint address. This problem can be resolved with the following configuration:
+For example, if your Quarkus endpoint runs in a cluster behind Kubernetes Ingress then a redirect from the OpenId Connect Provider back to this endpoint may not work since the calculated `redirect_uri` parameter may point to the internal endpoint address. This problem can be resolved with the following configuration:
 
 [source,properties]
 ----
@@ -779,6 +986,17 @@ In such cases an issuer verification failure may be reported by the endpoint and
 In such cases, if you work with Keycloak then please start it with a `KEYCLOAK_FRONTEND_URL` system property set to the externally accessible base URL.
 If you work with other Openid Connect providers then please check your provider's documentation.
 
+== Customize authentication requests
+
+By default, only the `response_type` (set to `code`), `scope` (set to 'openid'), `client_id`, `redirect_uri` and `state` properties are passed as HTTP query parameters to the OpenId Connect provider's authorization endpoint when the user is redirected to it to authenticate.
+
+You can add more properties to it with `quarkus.oidc.authentication.extra-params`. For example, some OpenId Connect providers may choose to return the authorization code as part of the redirect URI's fragment which would break the authentication process - it can be fixed as follows:
+
+[source,properties]
+----
+quarkus.oidc.authentication.extra-params.response_mode=query
+----
+
 == Configuration Reference
 
 include::{generated-dir}/config/quarkus-oidc.adoc[opts=optional]
@@ -789,4 +1007,5 @@ include::{generated-dir}/config/quarkus-oidc.adoc[opts=optional]
 * https://openid.net/connect/[OpenID Connect]
 * https://tools.ietf.org/html/rfc7519[JSON Web Token]
 * link:security-openid-connect-client[Quarkus - Using OpenID Connect and OAuth2 Client and Filters to manage access tokens]
+* link:security-openid-connect-dev-services[Dev Services for Keycloak]
 * link:security[Quarkus Security]

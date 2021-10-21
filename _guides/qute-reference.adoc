@@ -3,7 +3,7 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc
 ////
-= Quarkus - Qute Reference Guide
+= Qute Reference Guide
 
 include::./attributes.adoc[]
 
@@ -17,7 +17,11 @@ The usage of reflection is minimized to reduce the size of native images.
 The API combines both the imperative and the non-blocking reactive style of coding.
 In the development mode, all files located in the `src/main/resources/templates` folder are watched for changes and modifications are immediately visible in your application.
 Furthermore, Qute attempts to detect most of the template problems at build time and fail fast.
+
 In this guide, you will find an <<hello_world_example,introductory example>>, the description of the <<core_features,core features>> and <<quarkus_integration,Quarkus integration>> details.
+
+NOTE: Qute is primarily designed as a Quarkus extension. It is possible to use it as a "standalone" library too. However, in such case some of the features are not available. In general, any feature mentioned under the <<quarkus_integration>> section is missing. You can find more information about the limitations and possibilities in the <<standalone>> section.
+
 
 [[hello_world_example]]
 == Hello World Example
@@ -215,6 +219,7 @@ It consists of one or more parts separated by dot (dot notation) or square brack
 In the `object.property` (dot notation) syntax, the `property` must be a <<identifiers,valid identifier>>.
 In the `object[property_name]` (bracket notation) syntax, the `property_name` has to be a non-null <<literals, literal>> value. 
 An expression could start with an optional namespace followed by a colon (`:`).
+A valid namespace consist of alphanumeric characters and underscores.
 
 .Expressions Example
 [source]
@@ -374,7 +379,9 @@ NOTE: In fact, the operators are implemented as "virtual methods" that consume o
 
 ==== Arrays
 
-You can iterate over elements of an array with the <<loop_section>>. Moreover, it's also possible to get the length of the specified array and access the elements directly via an index value.
+You can iterate over elements of an array with the <<loop_section>>. 
+Moreover, it's also possible to get the length of the specified array and access the elements directly via an index value.
+Additionaly, you can access the first/last `n` elements via the `take(n)/takeLast(n)` methods.
 
 .Array Examples
 [source,html]
@@ -390,11 +397,13 @@ You can iterate over elements of an array with the <<loop_section>>. Moreover, i
  <li>{element}</li>
  {/for}
 </ol>
+First two elements: {#each myArray.take(2)}{it}{/each} <5>
 ----
 <1> Outputs the length of the array.
 <2> Outputs the first element of the array.
 <3> Outputs the second element of the array using the bracket notation.
 <4> Outputs the third element of the array via the virtual method `get()`.
+<5> Outputs the first two elements of the array.
 
 ==== Character Escapes
 
@@ -404,8 +413,8 @@ NOTE: In Quarkus, a variant is set automatically for templates located in the `s
 
 If you need to render the unescaped value:
 
-1. Use the `raw` or `safe` properties implemented as extension methods of the `java.lang.Object`,
-2. Wrap the `String` value in a `io.quarkus.qute.RawString`.
+1. Either use the `raw` or `safe` properties implemented as extension methods of the `java.lang.Object`,
+2. Or wrap the `String` value in a `io.quarkus.qute.RawString`.
 
 [source,html]
 ----
@@ -517,9 +526,9 @@ A section helper that defines the logic of a section can "execute" any of the bl
 [[loop_section]]
 ==== Loop Section
 
-The loop section makes it possible to iterate over an instance of `Iterable`, `Map` 's entry set, `Stream` and an `Integer`.
+The loop section makes it possible to iterate over an instance of `Iterable`, `Iterator`, array, `Map` 's entry set, `Stream` and an `Integer`.
 It has two flavors.
-The first one is using the `each` name alias.
+The first one is using the `each` name and `it` is an implicit alias for the iteration element.
 
 [source]
 ----
@@ -527,9 +536,9 @@ The first one is using the `each` name alias.
   {it.name} <1>
 {/each}
 ----
-<1> `it` is an implicit alias. `name` is resolved against the current iteration element.
+<1> `name` is resolved against the current iteration element.
 
-The other form is using the `for` name alias and can specify the alias used to reference the iteration element:
+The other form is using the `for` name and can specify the alias used to reference the iteration element:
 
 [source]
 ----
@@ -546,7 +555,9 @@ It's also possible to access the iteration metadata inside the loop:
   {count}. {it.name} <1>
 {/each}
 ----
-<1> `count` represents one-based index. Metadata also include zero-based `index`, `hasNext`, `odd` and `even`.
+<1> `count` represents one-based index. 
+
+TIP: The iteration metadata also include zero-based `index`, `hasNext`, `odd` and `even` properties.
 
 The `for` statement also works with integers, starting from 1. In the example below, considering that `total = 3`:
 
@@ -557,11 +568,22 @@ The `for` statement also works with integers, starting from 1. In the example be
 {/for}
 ----
 
-The output will be:
+And the output will be:
 
 [source]
 ----
 1:2:3:
+----
+
+A loop section may define the `{#else}` block that is executed when there are no items to iterate:
+
+[source]
+----
+{#for item in items}
+  {item.name}
+{#else}
+  No items.
+{/for}
 ----
 
 [[if_section]]
@@ -974,6 +996,7 @@ NOTE: The template rendering is divided in two phases. During the first phase, w
 
 === Engine Configuration
 
+[[value-resolvers]]
 ==== Value Resolvers
 
 Value resolvers are used when evaluating expressions.
@@ -988,6 +1011,7 @@ engineBuilder.addValueResolver(ValueResolver.builder()
     .build());
 ----
 
+[[template-locator]]
 ==== Template Locator
 
 Manual registration is sometimes handy but it's also possible to register a template locator using `EngineBuilder.addLocator(Function<String, Optional<Reader>>)`.
@@ -1010,6 +1034,26 @@ engineBuilder.addParserHook(new ParserHook() {
 });
 ----
 <1> Escape all occurences of `${`.
+
+==== Strict Rendering
+
+The strict rendering enables the developers to catch insidious errors caused by typos and invalid expressions.
+If enabled then any expression that cannot be resolved, i.e. is evaluated to an instance of `io.quarkus.qute.Results.NotFound`, will always result in a `TemplateException` and the rendering is aborted.
+A `NotFound` value is considered an error because it basically means that no value resolver was able to resolve the expression correctly.
+
+NOTE: `null` is a valid value though. It is considered `falsy` as described in the <<if_section>> and does not produce any output.
+
+Strict rendering is enabled by default.
+However, you can disable this functionality via `io.quarkus.qute.EngineBuilder.strictRendering(boolean)`.
+
+TIP: In Quarkus, a dedicated config property can be used instead: `quarkus.qute.strict-rendering`.
+
+If you really need to use an expression which can potentially lead to a "not found" error, you can use _default values_ and _safe expressions_ in order to suppress the error.
+A default value is used if the previous part of an expression cannot be resolved or resolves to `null`. 
+You can use the elvis operator to output the default value: `{foo.bar ?: 'baz'}`, which is effectively the same as the following virtual method: `{foo.bar.or('baz')}`.
+A safe expression ends with the `??` suffix and results in `null` if the expression cannot be resolved.
+It can be very useful e.g. in `{#if}` sections: `{#if valueNotFound??}Only rendered if valueNotFound is truthy!{/if}`.
+In fact, `??` is just a shorthand notation for `.or(null)`, i.e. `{#if valueNotFound??}` becomes `{#if valueNotFound.or(null)}`.
 
 [[quarkus_integration]]
 == Quarkus Integration
@@ -1410,6 +1454,12 @@ TIP: A map value can be also accessed directly: `{map.myKey}`. Use the bracket n
 * `reversed`: Returns a reversed iterator over a list
 ** `{#for r in recordsList.reversed}`
 
+* `take`: Returns the first `n` elements from the given list; throws an `IndexOutOfBoundsException` if `n` is out of range
+** `{#for r in recordsList.take(3)}`
+
+* `takeLast`: Returns the last `n` elements from the given list; throws an `IndexOutOfBoundsException` if `n` is out of range
+** `{#for r in recordsList.takeLast(3)}`
+
 TIP: A list element can be accessed directly: `{list.10}` or `{list[10]}`.
 
 ===== Numbers
@@ -1432,7 +1482,16 @@ TIP: A list element can be accessed directly: `{list.10}` or `{list[10]}`.
 ** `{config:foo}` or `{config:['property.with.dot.in.name']}`
 
 * `config:property(name)`: Returns the config value for the given property name; the name can be obtained dynamically by an expression 
-** `{config:property('quarkus.foo')}` or `{config:property(foo.getPropertyName())}`
+** `{config:property('quarkus.foo')}`
+** `{config:property(foo.getPropertyName())}`
+
+* `config:boolean(name)`: Returns the config value for the given property name as a boolean; the name can be obtained dynamically by an expression
+** `{config:boolean('quarkus.foo.boolean') ?: 'Not Found'}`
+** `{config:boolean(foo.getPropertyName()) ?: 'property is false'}`
+
+* `config:integer(name)`: Returns the config value for the given property name as an integer; the name can be obtained dynamically by an expression
+** `{config:integer('quarkus.foo')}`
+** `{config:integer(foo.getPropertyName())}`
 
 ===== Time
 
@@ -1515,6 +1574,22 @@ class Item {
 {/each}
 ----
 <1> The generated value resolver knows how to invoke the `BigDecimal.setScale()` method.
+
+[[native_executables]]
+=== Native Executables
+
+In the JVM mode a reflection-based value resolver may be used to access properties and call methods of the model classes.
+But this does not work for <<building-native-image.adoc,a native executable>> out of the box.
+As a result, you may encounter template exceptions like `Property "name" not found on the base object "org.acme.Foo" in expression {foo.name} in template hello.html` even if the `Foo` class declares a relevant getter method.
+
+There are several ways to solve this problem:
+
+* Make use of <<typesafe_templates,type-safe templates>> or <<typesafe_expressions,type-safe expressions>>
+** In this case, an optimized value resolver is generated automatically and used at runtime
+** This is the preferred solution
+* Annotate the model class with <<template_data,`@TemplateData`>> - a specialized value resolver is generated and used at runtime
+* Annotate the model class with `@io.quarkus.runtime.annotations.RegisterForReflection` to make the reflection-based value resolver work
+
 
 [[resteasy_integration]]
 === RESTEasy Integration
@@ -1620,6 +1695,7 @@ WARNING: Unlike with `@Inject` the templates obtained via `RestTemplate` are not
 
 In the development mode, all files located in `src/main/resources/templates` are watched for changes and modifications are immediately visible.
 
+[[type-safe-message-bundles]]
 === Type-safe Message Bundles
 
 ==== Basic Concepts
@@ -1712,20 +1788,36 @@ public interface GermanAppMessages extends AppMessages {
 Message bundle files must be encoded in UTF-8.
 The file name consists of the relevant bundle name (e.g. `msg`) and underscore followed by the locate tag (IETF).
 The file format is very simple: each line represents either a key/value pair with the equals sign used as a separator or a comment (line starts with `#`).
-Keys are mapped to method names from the corresponding message bundle interface.
+Blank lines are ignored.
+Keys are _mapped to method names_ from the corresponding message bundle interface.
 Values represent the templates normally defined by `io.quarkus.qute.i18n.Message#value()`.
-We use `.properties` suffix in our example because most IDEs and text editors support syntax highlighting of `.properties` files.
-But in fact, the suffix could be anything.
+A value may be spread out across several adjacent normal lines.
+In such case, the line terminator must be escaped with a backslash character `\`.
+The behavior is very similar to the behavior of the `java.util.Properties.load(Reader)` method.
 
 .Localized File Example - `msg_de.properties`
 [source,properties]
 ----
+# This comment is ignored
 hello_name=Hallo {name}! <1> <2>
 ----
-<1> Each line in a localized file represents a message template. 
+<1> Each line in a localized file represents a key/value pair. The key must correspond to a method declared on the message bundle interface. The value is the message template.
 <2> Keys and values are separated by the equals sign.
 
-Once we have the localized bundles defined we need a way to _select_ a correct bundle.
+NOTE: We use the `.properties` suffix in our example because most IDEs and text editors support syntax highlighting of `.properties` files. But in fact, the suffix could be anything - it is just ignored.
+
+TIP: An example properties file is generated into the target directory for each message bundle interface automatically. For example, by default if no name is specified for `@MessageBundle` the file `target/qute-i18n-examples/msg.properties` is generated when the application is build via `mvn clean package`. You can use this file as a base for a specific locale. Just rename the file - e.g. `msg_fr.properties`, change the message templates and move it in the `src/main/resources/messages` directory.
+
+.Value Spread Out Across Several Adjacent Lines
+[source,properties]
+----
+hello=Hello \
+   {name} and \
+   good morning!
+----
+Note that the line terminator is escaped with a backslash character `\` and white space at the start of the following line is ignored. I.e. `{msg:hello('Edgar')}` would be rendered as `Hello Edgar and good morning!`.
+
+Once we have the localized bundles defined we need a way to _select_ the correct bundle.
 If you use a message bundle expression in a template you'll have to specify the `locale` attribute of a template instance.
 
 .`locale` Attribute Example
@@ -1769,3 +1861,33 @@ public class MyBean {
 === Configuration Reference
 
 include::{generated-dir}/config/quarkus-qute.adoc[leveloffset=+1, opts=optional]
+
+
+[[standalone]]
+== Qute Used as a Standalone Library
+
+Qute is primarily designed as a Quarkus extension. 
+However. it is possible to use it as a "standalone" library.
+In this case, some features are not available and some additional configuration is needed.
+
+Engine:: First of all, no managed `Engine` instance is available out of the box.
+You'll need to configure a new instance via `Engine.builder()`.
+
+Templates:: 
+* By default, no <<template-locator,template locators>> are registered, i.e. `Engine.getTemplate(String)` will not work. 
+* You can register a custom template locator or parse a template manually and put the reulst in the cache via `Engine.putTemplate(String, Template)`.
+
+Value resolvers:: 
+* No <<value-resolvers,``ValueResolver``s>> are generated automatically.
+** <<template_extension_methods,`@TemplateExtension` methods>> will not work. 
+** <<template_data,`@TemplateData`>> annotations are ignored.
+* It's recommended to register a `ReflectionValueResolver` instance via `Engine.addValueResolver(new ReflectionValueResolver())` so that Qute can access object properties and call public methods. 
++
+NOTE: Keep in mind that reflection may not work correctly in some restricted environments or may require additional configuration, e.g. registration in case of a GraalVM native image. 
+* A custom value resolver can be easily built via `ValueResolver.builder()`
+
+Type-safety::
+* <<typesafe_expressions>> are not validated.
+* <<type-safe-message-bundles,Type-safe message bundles>> are not supported.
+
+Injection:: It is not possible to inject a `Template` instance and vice versa - a template cannot inject a `@Named` CDI bean via the `inject:` namespace.
