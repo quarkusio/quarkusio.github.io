@@ -73,55 +73,50 @@ In most cases, all that is needed to integrate an extensions functionality into 
 TIP: Quarkus extensions are what make the whole process so powerful. Individually, they are easy enough to setup and add value to each service but, when made an integral part of an automated process, their simplicity and flexibility really start to shine.  Similar to the DevPanel you get using `quarkus:dev`, you can weave the extensions together to provide a complete picture of environments from development to deployment and more.
 
 == Dreaming of Pipelines
-Our development pipelines, which are comprised mostly of Quarkus-based services, rely heavily on https://docs.gitlab.com/ee/ci/pipelines/merge_request_pipelines.html[merge-requests pipelines^] in GitLab. 
 
 === Go With the Flow Development
-Using merge-requests we are able to provide a good amount visibility and functionality to developers in one place so that they can easily iterate and experiment in safety within the confines of a feature.
+An important part of rethinking our development process from the ground-up to fit better in a microservice world was how could we streamline the development process?  We never had a problem with deploying services to higher environments, albeit it being tedious, but we envisioned a process that was much more heavily developer orientated.
+
+Using GitLab, we decided to standardize on using a https://docs.gitlab.com/ee/ci/pipelines/merge_request_pipelines.html[merge-requests pipelines^] to drive our process in its entirety.
 
 image::gitlab/merge-request.png[Merge Request,align="center"]
 
-Within each merge-request we:
+Within every merge-request we:
 
-- Always run the unit tests
+- Always run all the unit tests
 - Run integration tests (Mongo, Redis)
 - Run E2E tests (AWS, external services)
 - Generate code coverage and quality reports
-- Provide interactive access to that branch's Swagger API
-- Deploy one or more services into a isolated namespace
+- Provide live interaction with that branch's Swagger API
 
-Merge-requests are specialized pipelines specific to the day-to-day developer process. From a merge-request, developers can work with any branch and deploy or test those services in isolation.
+Finally, within the merge-request developers can choose to deploy one or more services, essentially recreating the cluster specific to that feature, in complete isolation and safety. If only a few services are involved in the feature we reconfigure the deployment so that it falls back to the staging services.
 
 image::gitlab/develop-pipeline.png[Review Pipeline,align="center"]
 
-The merge-request pipeline leverages two reusable downstream pipelines:
-
-- Quarkus Build
-- Cluster Deploy
+Two important parts of our pipeline are the downstream jobs to build Quarkus services and then deploy them.
 
 === Downstream Quarkus Build
-Regardless of being in a merge-request, promoting from the default branch, or releasing a build, Quarkus services are handled through their own downstream pipeline.
+The downstream Quarkus build is a unique pipeline specific to building, testing, and containerizing Quarkus services.
 
-For Quarkus services specifically, the following jobs are always run in a downstream job:
+When a Quarkus service is involved we:
 
-- Build the service, usually native, but using labels can be FastJars.
+- Build the service.
 - Run any tests for the service.
-- Generate the Kubernetes manifests for the service.
-- Build and deploy the container to the registry.
-
-We will reuse this pipeline whenever we need to build, test, and deploy a Quarkus service.
+- Generate the manifests for the service.
+- Build the container
 
 image::gitlab/develop-downstream.png[Service Downstream Service,align="center"]
 
-Once the container is built the service can be deployed at anytime.
+TIP: We stop at building and deploying the container because here we take the generated Kubernetes manifests and upload them to S3 instead of deploying directly.  This lets us group any number of services in one deployable unit that can be tracked.  That unit may be a merge-request or an environment such as staging or production.
 
-After a service has been built it can be selectively deployed into an isolated namespace in the cluster. Services that are not required get deployed using the latest staging service.
+Once the container is built and the manifests are uploaded the service can be deployed at anytime (or we can easily rollback to a previous version if needed).
 
-Deploying a service into the cluster triggers another downstream job responsible for the deployment.
+After any/all of the services have been build we can then deploy them to the cluster.
 
 === Faster, Faster, Faster Pipelines
-Talk more about a parallel builds but more native builds.
+In order to speed up the pipelines, especially when building multiple native services, we use GitLab AutoScaling runners and invoke the builds in parallel.  This generally allows us to build all of our services in a relatively constant time frame of about 10 minutes.
 
-We make heavy use of GitLabs `needs` keyword to speed up the pipelines. For example, compile and unit tests are all that is required within a merge-request to deploy the service.  Even though integration tests may be running, once the compile job finishes you can immediately deploy the service into the cluster.
+Additionally, we make use of GitLab's `needs` keyword to short-circuit the pipeline so that we can get to more important jobs when the bare minimum requirements are met.  This allows us to immediately, and repeatedly if needed, deploy services as they are ready instead of having to wait.
 
 The DAG shows how we short-circuit longer-running jobs so that other jobs can be started quicker, further speeding up the process.
 
