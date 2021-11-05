@@ -89,68 +89,58 @@ TIP: Lighter than a feather - Quarkus Native Builds are 1/10th the size of their
 
 Two important parts of our pipeline are the downstream jobs to build Quarkus services and then deploy them.
 
-=== Downstream Quarkus Build
-The downstream Quarkus build is a unique pipeline specific to building, testing, and containerizing (only) Quarkus services. This is where we make heavy use of the Quarkus Kubernetes and Kubernetes Config extension.
+=== Building Quarkus Services
+The downstream Quarkus build is a unique pipeline specific to building, testing, and containerizing (only) Quarkus services. 
 
-When a Quarkus service is involved we:
+For each Quarkus service we:
 
-- Build the service.
-- Run any tests for the service.
-- Generate the manifests for the service.
+- Build the service - native or FastJar
+- Run any tests for the service
+- Generate the manifests for the service
 - Build and deploy the container
 
 image::gitlab/develop-downstream.png[Service Downstream Service,align="center"]
 
-TIP: We stop at building and deploying the container because here we take the generated Kubernetes manifests and upload them to S3 instead of deploying directly.  This lets us group any number of services in one deployable unit that can be tracked.  That unit may be a merge-request or an environment such as staging or production.
+TIP: We stop at building and deploying the container to take the generated Kubernetes manifests and upload them to S3 instead of deploying directly.  This lets us collect the services into a single deployable package that can be managed.  That unit may be a merge-request or an environment such as staging or production.
 
-Once the container is built and the manifests are uploaded the service can be deployed at anytime (or we can easily rollback to a previous version if needed).
+Once the container is built and the manifests are uploaded, the deploy package can be used anytime (or we can rollback to any previous version if needed).
 
-After any/all of the services have been build we can then deploy them to the cluster.
+=== Faster Faster Pipelines
+To speed up the pipelines, especially when building multiple native services, we use GitLab AutoScaling runners and run the builds in parallel.  This generally allows us to build all of our services in a relatively constant time frame of about 10 minutes.
 
-=== Faster, Faster, Faster Pipelines
-To speed up the pipelines, especially when building multiple native services, we use GitLab AutoScaling runners and invoke the builds in parallel.  This generally allows us to build all of our services in a relatively constant time frame of about 10 minutes.
+TIP: Native builds are intensive, it is best to run them in parallel. We found using AWS M5.XL instances to be the best value for our money.
 
-Additionally, we make use of GitLab's `needs` keyword to short-circuit the pipeline so that we can get to more important jobs when the bare minimum requirements are met.  This allows us to immediately, and repeatedly if needed, deploy services as they are ready instead of having to wait.
-
-The DAG shows how we short-circuit longer-running jobs so that other jobs can be started quicker, further speeding up the process.
+We use the GitLab `needs` keyword to short-circuit pipelines so that we can get to more important jobs quicker.  This allows us to immediately, and repeatedly if needed, deploy services as they are ready instead of having to wait for other jobs to finish.
 
 image::gitlab/develop-dag.png[Review DAG,align="center"]
 
-In the above DAG, anytime any service is ready we can choose to deploy it.
+In the above DAG, anytime any service is ready we can deploy it without having to wait for other jobs.
 
 == One Deploy to Rule Them All
-Where a branch drives the development process, a tag drives the release process. 
-
-Once a tag has been created, all of the steps below are completely automated up to production.
-
-Whenever we decide to promote from the default branch, and it can happen multiple times a day, we create a release tag that is tracked and deployed into higher environments.
+Where a branch drives the development process, a tag drives the release process. Each promotion starts once the branch(s) has been merged into the default branch.
 
 image::gitlab/promotion.png[Promoting a Release,align="center"]
 
-Running the `promote` performs the following actions:
+Clicking `promote` automically performs these actions:
 
 - Creates a release tag.
 - Updates the changelog of the project.
-- Build and deploy the selected services.
+- Build and deploy the selected service(s) and containers.
 - Bump the version to the next version.
 
 image::gitlab/release-pipeline.png[Deploy to Staging,align="center"]
 
-After the containers are deployed we immediately deploy them to the cluster.
+When the release package is available its automically deployed into the cluster.
 
 image::gitlab/deployment.png[Single Deployment,align="center"]
 
-For any given cluster deployment, we update the configuration and deploy all of the affected services into the environment.
+This triggers a job to pull the release's Kuberenetes manifest(s) and then deploy.
 
 image::gitlab/cluster-downstream.png[Cluster Downstream Service,align="center"]
 
-You can see the transitioning from a merge-request, to merging into the default branch, and finally promotion in the jobs pictured below.
+You can see the transition from a merge request, to being merged, and then finally being released below.
 
 image::gitlab/transition.png[Transitions of Pipelines,align="center"]
-
-And the history of versions, which we can rollback to at any time.
-
-image::gitlab/history.png[History of Deployments,align="center"]
 
 == Git Your Quarkus Features
 The end result of tightly integrating our GitLab process with our Quarkus-based platform is that not only has our process become greatly streamlined but, we also are able to provide a one-stop shop for most of the relevant tools, logs, and monitoring needed by all of our teams.  
