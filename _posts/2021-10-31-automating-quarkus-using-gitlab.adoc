@@ -56,8 +56,8 @@ Two of the most important extensions we use are the https://quarkus.io/guides/de
 
 Other useful extensions we integrate with GitLab are:
 
-- https://quarkus.io/guides/tests-with-coverage[Quarkus Jacoco Extension^] which provides coverage https://docs.gitlab.com/ee/ci/pipelines/settings.html#add-test-coverage-results-to-a-merge-request[results^] and https://docs.gitlab.com/ee/user/project/merge_requests/test_coverage_visualization.html[reports^] for the job
-- https://quarkus.io/guides/logging-sentry[Quarkus Logging Sentry Extension^] hooks into https://docs.gitlab.com/ee/operations/error_tracking.html[GitLab Error Tracking]
+- https://quarkus.io/guides/tests-with-coverage[Quarkus Jacoco Extension^] which provides coverage https://docs.gitlab.com/ee/ci/pipelines/settings.html#add-test-coverage-results-to-a-merge-request[results^] and https://docs.gitlab.com/ee/user/project/merge_requests/test_coverage_visualization.html[reports^]
+- https://quarkus.io/guides/logging-sentry[Quarkus Logging Sentry Extension^] hooks into https://docs.gitlab.com/ee/operations/error_tracking.html[GitLab Error Tracking^]
 - https://quarkus.io/guides/smallrye-health[Quarkus SmallRye Health^] hooks into https://docs.gitlab.com/ee/operations/metrics/[GitLab Metrics^]
 - https://quarkus.io/guides/openapi-swaggerui[Quarkus SmallRye OpenAPI Extension^] exposes https://docs.gitlab.com/ee/api/openapi/openapi_interactive.html[Swagger^] from within GitLab
 - https://quarkus.io/guides/opentracing[Quarkus SmallRye OpenTracing Extension^] hooks into https://docs.gitlab.com/ee/operations/tracing.html[GitLab Tracing^]
@@ -67,9 +67,11 @@ TIP: Quarkus extensions are what make the whole process so powerful. Individuall
 == Dreaming of Pipelines
 
 === Developer Powered Deployments
-In rethinking our development process from the ground-up for a cloud-native world we wanted to simplify the developer/deploy process. Previously, deployments to higher environments was tedious but doable by ops teams on request. Developers were not involved in this process. Since moving to Quarkus, developers are now responsible for developing and deploying (limitations apply). 
+In rethinking our development process from the ground-up for a cloud-native world we wanted to simplify the developer/deploy process. 
 
-Using GitLab, we focused on using https://docs.gitlab.com/ee/ci/pipelines/merge_request_pipelines.html[merge requests pipelines^] to drive our process in its entirety.
+Previously, deployments to higher environments was tedious but doable by our Ops team on request. Developers were not involved in this process. Since moving to Quarkus, developers are now responsible for developing and deploying (limitations apply). 
+
+Using GitLab, we focused on using https://docs.gitlab.com/ee/ci/pipelines/merge_request_pipelines.html[merge requests pipelines^] as the catalyst to drive our development process.
 
 image::gitlab/merge-request.png[Merge Request,align="center"]
 
@@ -85,62 +87,71 @@ From the merge request developers can deploy one or more services. This lets dev
 
 image::gitlab/develop-pipeline.png[Review Pipeline,align="center"]
 
-TIP: Lighter than a feather - Quarkus Native Builds are 1/10th the size of their comparable pure Java counterparts. This allows us to deploy a full cluster, if needed, per feature branch in the space it would typically take to deploy a single Spring-Boot application.
+TIP: Lighter than a feather, Quarkus Native Builds are 1/10th the size of their comparable pure Java counterparts. This allows us to deploy a full cluster, if needed, per branch in the space it would typically take to deploy a single Spring-Boot application.
 
-Two important parts of our pipeline are the downstream jobs to build Quarkus services and then deploy them.
+Two important parts of our pipeline are the downstream jobs that handle Quarkus services and then deploy them.
 
 === Building Quarkus Services
-The downstream Quarkus build is a unique pipeline specific to building, testing, and containerizing (only) Quarkus services. 
+The downstream Quarkus build is a unique pipeline specific to building, testing, and containerizing (only) just Quarkus services. 
 
-For each Quarkus service we:
+For each changed service we:
 
-- Build the service - native or FastJar
-- Run any tests for the service
-- Generate the manifests for the service
-- Build and deploy the container
+- Build the executable - native or FastJar
+- Run any tests
+- Generate Kubernetes manifests
+- Build and deploy its container
 
 image::gitlab/develop-downstream.png[Service Downstream Service,align="center"]
 
-TIP: We stop at building and deploying the container to take the generated Kubernetes manifests and upload them to S3 instead of deploying directly.  This lets us collect the services into a single deployable package that can be managed.  That unit may be a merge-request or an environment such as staging or production.
+Once a container has been built and the manifests uploaded, the deploy package can be referenced anytime (or we can rollback to any previous version if needed).
 
-Once the container is built and the manifests are uploaded, the deploy package can be used anytime (or we can rollback to any previous version if needed).
+TIP: We _only_ push the container and upload the manifests to AWS S3. This lets us accumulate, over time if needed, any changes into a single package that can be further configured during deployment. 
 
 === Faster Faster Pipelines
-To speed up the pipelines, especially when building multiple native services, we use GitLab AutoScaling runners and run the builds in parallel.  This generally allows us to build all of our services in a relatively constant time frame of about 10 minutes.
-
-TIP: Native builds are intensive, it is best to run them in parallel. We found using AWS M5.XL instances to be the best value for our money.
+To speed up the pipelines, especially when building multiple native services, we use GitLab AutoScaling runners and run the jobs in parallel.  This allows us to build any number of services in a relatively constant time frame of about 10-15 minutes.
 
 We use the GitLab `needs` keyword to short-circuit pipelines so that we can get to more important jobs quicker.  This allows us to immediately, and repeatedly if needed, deploy services as they are ready instead of having to wait for other jobs to finish.
 
 image::gitlab/develop-dag.png[Review DAG,align="center"]
 
-In the above DAG, anytime any service is ready we can deploy it without having to wait for other jobs.
+In the above https://docs.gitlab.com/ee/ci/directed_acyclic_graph/[DAG^], anytime any service is ready we can deploy it without having to wait for other jobs.
+
+TIP: Native builds are intensive, it is best to run them in parallel. Mileage may vary but We found AWS M5.XL instances to be the best value for our money when building native services.
 
 == One Deploy to Rule Them All
-Where a branch drives the development process, a tag drives the release process. Each promotion starts once the branch(s) has been merged into the default branch.
+Where a branch drives the development process, a tag drives the release process. 
+
+At any given time the default branch can be promoted with a single click. This initiates a series of jobs that eventually _deploy only updated services into our staging cluster without manual intervention_.
 
 image::gitlab/promotion.png[Promoting a Release,align="center"]
 
-Clicking `promote` automically performs these actions:
+Clicking `promote` starts out by performing these steps:
 
-- Creates a release tag.
-- Updates the changelog of the project.
-- Build and deploy the selected service(s) and containers.
-- Bump the version to the next version.
+- Reconcile Maven versions
+- Update the changelog
+- Create the release tag
+- Build service(s) and deploy the containers
+- Generate the Kubernetes manifests
+- Publish Swagger API and generate OpenAPI clients
+- Bumping the version to the next version
+
+TIP: For better or worse, we do use https://maven.apache.org/maven-ci-friendly.html[Maven CI Friendly^] versions to help us simplify our versioning and deployment.
 
 image::gitlab/release-pipeline.png[Deploy to Staging,align="center"]
 
-When the release package is available its automically deployed into the cluster.
+Once the release package is ready, the downstream cluster job is triggered automatically.
 
 image::gitlab/deployment.png[Single Deployment,align="center"]
 
-This triggers a job to pull the release's Kuberenetes manifest(s) and then deploy.
+The cluster job pulls down the generated manifests, performs any environment specific configurations, then finally deploys the service(s) to an environment.
 
 image::gitlab/cluster-downstream.png[Cluster Downstream Service,align="center"]
 
 You can see the transition from a merge request, to being merged, and then finally being released below.
 
 image::gitlab/transition.png[Transitions of Pipelines,align="center"]
+
+TIP: Currently, for 20+ services, we can perform complete end-to-end deployments, including native builds, in easily less than 30 minutes without any manual intervention. Most of the time we are only deploying changed services and the net time is far less.
 
 == Git Your Quarkus Features
 By tightly integrating our GitLab process with our Quarkus platform, our process has been trimmed down and it provides a one-stop shop for tools, logs, and monitoring. The most significant benefit is that everything can be accessed right from GitLab...
