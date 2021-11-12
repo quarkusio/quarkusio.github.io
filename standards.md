@@ -1,6 +1,6 @@
 ---
 layout: standards
 title: Standards
-subtitle: Let’s go to the quark of things
+subtitle: Let’s go to the quark of things.
 permalink: /standards/
 ---
