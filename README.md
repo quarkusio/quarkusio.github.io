@@ -7,7 +7,10 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 ### Installation
 [Jekyll static site generator docs](https://jekyllrb.com/docs/).
 
-1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/)
+1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). You need Ruby 2.7.0. If you use RVM, you can switch using:
+
+        rvm use 2.7.0
+
 2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems) 
   
         gem install bundler
