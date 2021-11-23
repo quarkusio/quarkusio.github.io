@@ -14,7 +14,6 @@ import java.io.FileReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
@@ -22,26 +21,7 @@ import java.util.stream.Collectors;
         description = "UnlinkedGuides made with jbang")
 class unlinkedguides implements Callable<Integer> {
 
-    private static final String LATEST = "latest";
-
-    private static final Set<String> IGNORED_ENTRIES = Set.of(
-        "0-glossary",
-        "platform-include",
-        "quarkus-intro",
-        "duration-format-note",
-        "status-include",
-        "quarkus-blaze-persistence",
-        "attributes",
-        "smallrye-kafka-incoming",
-        "smallrye-kafka-outgoing",
-        "faq",
-        "building-substrate-howto",
-        "README",
-        "gradle-config",
-        "amazon-credentials"
-    );
-
-    @Parameters(index = "0", description = "The version of guides", defaultValue = LATEST)
+    @Parameters(index = "0", description = "The version of guides", defaultValue = "latest")
     private String version;
 
     public static void main(String... args) {
@@ -55,11 +35,11 @@ class unlinkedguides implements Callable<Integer> {
         representer.getPropertyUtils().setSkipMissingProperties(true);
         Yaml yaml = new Yaml(representer);
         yaml.setBeanAccess(BeanAccess.FIELD);
-        String guidesPath = "_data/guides-" + version + ".yaml";
+        String guidesPath = "./_data/guides-" + version + ".yaml";
         Categories cats = yaml.loadAs(new FileReader(guidesPath), Categories.class);
 
 
-        System.out.println("Guides not linked in " + guidesPath + ", please add entries there:\n");
+        System.out.println("Unlinked guides in " + guidesPath);
 
         List<String> guides = cats.categories.stream()
                 .flatMap(c -> c.guides.stream())
@@ -69,15 +49,7 @@ class unlinkedguides implements Callable<Integer> {
         Files.find(Path.of(getGuidesPath(version)), 1, (p, a) -> p.toString().endsWith(".adoc"))
                 .map(p -> p.getFileName().toString().replace(".adoc", ""))
                 .filter(p -> !guides.contains(p))
-                .filter(p -> !IGNORED_ENTRIES.contains(p))
-                .map(p -> "- " + p + "\n  › https://github.com/quarkusio/quarkus/blob/main/docs/src/main/asciidoc/" + p + ".adoc")
-                .sorted()
                 .forEach(System.out::println);
-
-        if (LATEST.equals(version)) {
-            System.out.println("\nCheck that they have not been already added to _data/guides-main.yaml. If so just copy the entries to guides-latest.yaml.");
-            System.out.println("Also please keep guides-main.yaml in sync.\n");
-        }
 
         return 0;
     }
