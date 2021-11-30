@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html>
+
+
+
+
+
+<head>
+  <title>Quarkus - Inspecting the Quarkus Native call path universe with Neo4j</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-Content-Security-Policy" content="default-src https://dpm.demdex.net; script-src 'self' 'unsafe-eval' 'sha256-ANpuoVzuSex6VhqpYgsG25OHWVA1I+F6aGU04LoI+5s=' 'sha256-ipy9P/3rZZW06mTLAR0EnXvxSNcnfSDPLDuh3kzbB1w=' js.bizographics.com https://www.redhat.com https://static.redhat.com assets.adobedtm.com jsonip.com https://ajax.googleapis.com https://www.googletagmanager.com https://www.google-analytics.com https://use.fontawesome.com https://app.mailjet.com http://www.youtube.com http://www.googleadservices.com https://googleads.g.doubleclick.net https://dpm.demdex.net; style-src 'self' https://fonts.googleapis.com https://use.fontawesome.com; img-src 'self' *; media-src 'self'; frame-src https://www.googletagmanager.com https://www.youtube.com https://embed.restream.io https://app.mailjet.com; base-uri 'none'; object-src 'none'; form-action 'none'; font-src 'self' https://use.fontawesome.com https://fonts.gstatic.com;" />
+  <script id="adobe_dtm" src="https://www.redhat.com/dtm.js" type="text/javascript"></script>
+  <script src="/assets/javascript/highlight.pack.js" type="text/javascript"></script>
+  <META HTTP-EQUIV='X-XSS-Protection' CONTENT="1; mode=block">
+  <META HTTP-EQUIV='X-Content-Type-Options' CONTENT="nosniff">
+  <meta name="description" content="Quarkus: Supersonic Subatomic Java">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@QuarkusIO"> 
+  <meta name="twitter:creator" content="@QuarkusIO">
+  <meta property="og:url" content="https://quarkus.io/blog/quarkus-native-neo4j-call-tree/" />
+  <meta property="og:title" content="Inspecting the Quarkus Native call path universe with Neo4j" />
+  <meta property="og:description" content="Quarkus: Supersonic Subatomic Java" />
+  <meta property="og:image" content="https://quarkus.io/assets/images/quarkus_card.png" />
+  
+  <link rel="canonical" href="https://quarkus.io/blog/quarkus-native-neo4j-call-tree/">
+  <link rel="shortcut icon" type="image/png" href="/favicon.ico" >
+  <link rel="stylesheet" href="/guides/stylesheet/config.css" />
+  <link rel="stylesheet" href="/assets/css/main.css?2021-07-29" />
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.1.0/css/all.css" integrity="sha384-lKuwvrZot6UHsBSfcMvOkWwlCMgc0TaWr+30HWe3a4ltaBwTZhyTEggF5tJv8tbt" crossorigin="anonymous">
+  <link rel="alternate" type="application/rss+xml"  href="/feed.xml" title="Quarkus">
+  <script src="/assets/javascript/goan.js" type="text/javascript"></script>
+  <script src="/assets/javascript/hl.js" type="text/javascript"></script>
+</head>
+
+<body class="post">
+  <!-- Google Tag Manager (noscript) -->
+  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-NJWS5L"
+  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+  <!-- End Google Tag Manager (noscript) -->
+
+  
+
+<div class="nav-wrapper">
+  <div class="grid-wrapper">
+    <div class="width-12-12">
+      <input type="checkbox" id="checkbox" />
+      <nav id="main-nav" class="main-nav">
+  <div class="container">
+    <div class="logo-wrapper">
+      
+        <a href="/"><img src="/assets/images/quarkus_logo_horizontal_rgb_600px_reverse.png" class="project-logo" title="Quarkus"></a>
+      
+    </div>
+    <label class="nav-toggle" for="checkbox">
+      <i class="fa fa-bars"></i>
+    </label>
+    <div id="menu" class="menu">
+      <span>
+        <a href="/get-started/" class="">Get Started</a>
+      </span>
+      <span>
+        <a href="/guides/" class="">Guides</a>
+      </span>
+      <span>
+        <a href="/community/" class="">Community</a>
+      </span>
+      <span>
+        <a href="/support/" class="">Support</a>
+      </span>
+      <span>
+        <a href="/blog/" class="active">Blog</a>
+      </span>
+      <span>
+        <a href="https://code.quarkus.io" class="button-cta secondary white">Start Coding</a>
+      </span>
+    </div>
+  </div>
+      </nav>
+    </div>
+  </div>
+</div>
+
+  <div class="content">
+    <div class="post-page grid-wrapper">
+  <div class="width-8-12 width-12-12-m doc-content">
+    <div class="grid-wrapper">
+      <div class="width-12-12">
+        <p>
+          <a href="/blog"><i class="fas fa-angle-left"></i> Back to all posts</a>
+        </p>
+      </div>
+      <div class="width-12-12">
+        <div class="post-date">
+          November 30, 2021 
+          
+            <span class="tags"><a href="/blog/tag/development-tips">#development-tips</a><a href="/blog/tag/native">#native</a><a href="/blog/tag/neo4j">#neo4j</a></span>
+          
+        </div>
+        <h1 class="post-title">Inspecting the Quarkus Native call path universe with Neo4j</h1>
+        <div class="grid-wrapper">
+          <div class="width-8-12 width-12-12-m byline-wrapper">
+            
+            
+            <p class="byline">By </p>
+          </div>
+          <div class="width-12-12">
+              <div class="paragraph">
+<p>This blog post is the culmination of an idea that Sanne (Grinovero) floated to me during some lunch,
+back at a time when we, remote engineers, would occasionally meet face to face and have the opportunity to share ideas spontaneously.
+I&#8217;m unsure if the lunch was in Neuchâtel or Barcelona,
+but essentially Sanne was diagnosing an issue and he struggled with GraalVM&#8217;s native image analysis call tree text output.
+He wondered whether that data could instead be formatted differently and imported into a graph database for easier inspection.
+I&#8217;m happy to announce that the GraalVM and Mandrel 21.3.0 releases include improvements to address this particular issue.</p>
+</div>
+<div class="paragraph">
+<p>Essentially, they bring much needed improvements for analysing code paths that get included in the native binary.
+Debugging these code paths aims to answer questions such as:</p>
+</div>
+<div class="quoteblock">
+<blockquote>
+why does this code path get included in the native binary?
+</blockquote>
+</div>
+<div class="paragraph">
+<p>These code paths can be optionally reported when enabling printing of the analysis call tree.
+With Quarkus, this is achieved by passing in the <code>-Dquarkus.native.enable-reports</code> option.</p>
+</div>
+<div class="paragraph">
+<p>Before 21.3.0, when Quarkus instructed a GraalVM distribution to print out the call tree,
+the resulting output would be a single text file representing the call tree in a <a href="https://www.graalvm.org/reference-manual/native-image/Reports">custom tree format</a>.
+This text file would contain a lot of duplicated information and could be as big as several gigabytes in size.</p>
+</div>
+<div class="paragraph">
+<p>GraalVM 21.3.0 introduces the possibility of representing call trees as CSV files instead of a single text file.
+These CSV files contain method information and different connections between them
+(e.g. direct calls, virtual calls, overrides, etc).
+One immediate benefit is that there&#8217;s no information duplication,
+so the CSV files can be several times smaller in size compared to the corresponding text file.
+In some situations, they can be as much as several thousands times smaller.
+However, the main reason why this feature was implemented was
+to make it easier to feed the call tree to other tools, like graph databases such as
+<a href="https://neo4j.com/">Neo4j</a>.
+Once imported, a user can execute graph queries over the call tree,
+which makes it easier to extract relevant information and answer questions like the one above.</p>
+</div>
+<div class="paragraph">
+<p>In this blog post, you will learn how to:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Instruct a Quarkus application to generate call tree CSV files.</p>
+</li>
+<li>
+<p>Run a Neo4j graph database within a container</p>
+</li>
+<li>
+<p>Import those CSV files into a Neo4j graph database.</p>
+</li>
+<li>
+<p>Run Neo4j cypher queries against the graph database to understand the call paths in the Quarkus application.</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>This blog post uses the
+<a href="https://github.com/quarkusio/quarkus-quickstarts/tree/main/hibernate-orm-quickstart">Quarkus Hibernate ORM quickstart</a>
+as a sample Quarkus application.
+Download the application and execute:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>./mvnw package -DskipTests -Pnative \
+    -Dquarkus.native.container-build=true \
+    -Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel:21.3-java11 \
+    -Dquarkus.native.enable-reports</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The above command will generate a native binary and the CSV files mentioned above.</p>
+</div>
+<div class="paragraph">
+<p>Next, start Neo4j in a container:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ export NEO_PASS=...
+$ podman run \
+    --detach \
+    --rm \
+    --name testneo4j \
+    -p7474:7474 -p7687:7687 \
+    --env NEO4J_AUTH=neo4j/${NEO_PASS} \
+    neo4j:latest</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Once the container is running,
+you can access the Neo4j browser via <a href="http://localhost:7474">http://localhost:7474</a>.
+Use <code>neo4j</code> as the username and the value of <code>NEO_PASS</code> as the password to log in.</p>
+</div>
+<div class="paragraph">
+<p>To import the CSV files, we need the following cypher script which will import the data within the CSV files and create graph database nodes and edges:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-cypher hljs" data-lang="cypher">CREATE CONSTRAINT unique_vm_id ON (v:VM) ASSERT v.vmId IS UNIQUE;
+CREATE CONSTRAINT unique_method_id ON (m:Method) ASSERT m.methodId IS UNIQUE;
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_vm.csv' AS row
+MERGE (v:VM {vmId: row.Id, name: row.Name})
+RETURN count(v);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_methods.csv' AS row
+MERGE (m:Method {methodId: row.Id, name: row.Name, type: row.Type, parameters: row.Parameters, return: row.Return, display: row.Display})
+RETURN count(m);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_virtual_methods.csv' AS row
+MERGE (m:Method {methodId: row.Id, name: row.Name, type: row.Type, parameters: row.Parameters, return: row.Return, display: row.Display})
+RETURN count(m);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_entry_points.csv' AS row
+MATCH (m:Method {methodId: row.Id})
+MATCH (v:VM {vmId: '0'})
+MERGE (v)-[:ENTRY]-&gt;(m)
+RETURN count(*);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_direct_edges.csv' AS row
+MATCH (m1:Method {methodId: row.StartId})
+MATCH (m2:Method {methodId: row.EndId})
+MERGE (m1)-[:DIRECT {bci: row.BytecodeIndexes}]-&gt;(m2)
+RETURN count(*);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_override_by_edges.csv' AS row
+MATCH (m1:Method {methodId: row.StartId})
+MATCH (m2:Method {methodId: row.EndId})
+MERGE (m1)-[:OVERRIDEN_BY]-&gt;(m2)
+RETURN count(*);
+
+LOAD CSV WITH HEADERS FROM 'file:///reports/csv_call_tree_virtual_edges.csv' AS row
+MATCH (m1:Method {methodId: row.StartId})
+MATCH (m2:Method {methodId: row.EndId})
+MERGE (m1)-[:VIRTUAL {bci: row.BytecodeIndexes}]-&gt;(m2)
+RETURN count(*);</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>You can download the cypher script from
+<a href="../assets/examples/posts/quarkus-native-neo4j-call-tree/import.cypher">this link</a>
+or copy and paste it in a file called <code>import.cypher</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+The script above is generic enough to work with any Quarkus application,
+but it will only work with Mandrel 21.3.0.Final.
+GraalVM CE 21.3.0.Final lacks the symbolic links to make the <code>csv</code> file references work,
+so if you&#8217;re on this GraalVM CE, you&#8217;ll have to modify the CSV file names with project specific, timestamped, file names.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Next, copy the import cypher script and CSV files into Neo4j&#8217;s import folder:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ podman cp target/*-native-image-source-jar/reports testneo4j:/var/lib/neo4j/import
+$ podman cp import.cypher testneo4j:/var/lib/neo4j</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>After copying all the files, invoke the import script:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ podman exec testneo4j bin/cypher-shell -u neo4j -p ${NEO_PASS} -f import.cypher</pre>
+</div>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+If you need to reimport the data,
+you&#8217;ll need to clear the previously imported data,
+otherwise you&#8217;ll get errors.
+You can clear the previously imported data by executing:
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ podman exec testneo4j bin/cypher-shell -u neo4j -p ${NEO_PASS} "MATCH(n) DETACH DELETE n"
+$ podman exec testneo4j bin/cypher-shell -u neo4j -p ${NEO_PASS} "DROP CONSTRAINT unique_vm_id"
+$ podman exec testneo4j bin/cypher-shell -u neo4j -p ${NEO_PASS} "DROP CONSTRAINT unique_method_id"</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Once the import completes (shouldn&#8217;t take more than a couple of minutes),
+go to the Neo4j browser and you&#8217;ll be able to observe a small summary of the data in the graph:</p>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/data-loaded-side.png" alt="data loaded side">
+</div>
+</div>
+<div class="paragraph">
+<p>The data above shows that there are ~100000 methods,
+and just over ~300000 edges between them.</p>
+</div>
+<div class="paragraph">
+<p>Next, let&#8217;s try out some cypher queries to explore the call graph.
+I don&#8217;t know anything about the Quarkus application itself,
+but given it&#8217;s a Hibernate ORM application,
+I can assume that some sort of <code>persist</code> method will be called.
+Go into the browser and type a query for this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-cypher hljs" data-lang="cypher">match (m:Method) where m.name = "persist" return *</code></pre>
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/persist-query.png" alt="persist query">
+</div>
+</div>
+<div class="paragraph">
+<p>We got some hits,
+but the default style for the nodes presented is not very readable.
+We can however tweak the stylesheet as shown by
+<a href="https://neo4j.com/developer/neo4j-browser/#browser-styling-adv">this guide</a>.
+Two useful modifications for this use case is to increase the default <code>node</code> <code>diameter</code> value to say, <code>150px</code>.
+The other modification is to switch <code>node.Method</code> <code>caption</code> value to <code>"{display}"</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<code>display</code> is a field within each method that shows a shortened id of the method,
+that includes package and classname (only the first letter of each),
+and the method name in camel case with single letters.
+E.g. <code>j.p.EM.persist</code> would be the <code>display</code> for the <code>persist</code> method in <code>javax.persistence.EntityManager</code>.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Let&#8217;s repeat the query after modifying the browser style and moving the nodes to clearly view them:</p>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/persist-query-big-nodes.png" alt="persist query big nodes">
+</div>
+</div>
+<div class="paragraph">
+<p>We can see above that one of the <code>persist</code> is to <code>javax.persistence.EntityManager</code>.
+This is the JPA method for persisting entities and the one we&#8217;ll be exploring further.
+Let&#8217;s narrow the query down to that one to have a clearer view:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-cypher hljs" data-lang="cypher">match (m:Method) where m.name = "persist" and m.type =~ ".*EntityManager" return *</code></pre>
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/entitymanager-persist-query.png" alt="entitymanager persist query">
+</div>
+</div>
+<div class="paragraph">
+<p>Note that if we hover over the node we get information about the method itself.</p>
+</div>
+<div class="paragraph">
+<p>Going back to the original question,
+we wanted to find out why a given code path gets included.
+One way to do it is to start by the method itself,
+and then walk backwards to find what links
+(e.g. direct calls, virtual calls, overrides&#8230;&#8203;etc)
+exist to that method within a certain depth.
+For example, let&#8217;s try to find what other methods have a direct link to the <code>persist</code> method:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-cypher hljs" data-lang="cypher">match (m:Method) &lt;- [*1..1] - (o) where m.name = "persist" and m.type =~ ".*EntityManager" return *</code></pre>
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/entitymanager-persist-depth-1-query.png" alt="entitymanager persist depth 1 query">
+</div>
+</div>
+<div class="paragraph">
+<p>Aha, so there&#8217;s only one path and that&#8217;s a virtual call (i.e., an interface call) that comes from the <code>create</code> method in the <code>org.acme.hibernate.orm.FruitResource</code> class,
+which takes a <code>org.acme.hibernate.orm.Fruit</code> parameter and returns a <code>javax.ws.rs.core.Response</code>.</p>
+</div>
+<div class="paragraph">
+<p>Next, let&#8217;s expand the query further and try to find all links with a depth of 2 to the <code>persist</code> method:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-cypher hljs" data-lang="cypher">match (m:Method) &lt;- [*1..2] - (o) where m.name = "persist" and m.type =~ ".*EntityManager" return *</code></pre>
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/entitymanager-persist-depth-2-query.png" alt="entitymanager persist depth 2 query">
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/subclass.png" alt="subclass">
+</div>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/reflection-access-holder.png" alt="reflection access holder">
+</div>
+</div>
+<div class="paragraph">
+<p>As we peel further back,
+we start to see some generated classes that invoke the <code>create</code> method in <code>org.acme.hibernate.orm.FruitResource</code>.
+<code>org.acme.hibernate.orm.FruitResource_ClientProxy</code> and <code>org.acme.hibernate.orm.FruitResource_Subclass</code> both directly call the method.
+One more interesting call comes from the <code>FruitResource_create_d0&#8230;&#8203;</code> method in <code>com.oracle.svm.core.reflect.ReflectionAccessorHolder</code>.
+This essentially means that the <code>create</code> method has been registered in GraalVM for access via reflection.</p>
+</div>
+<div class="paragraph">
+<p>If we query for a depth of 3, we&#8217;ll find that the reflection access is an entry point.
+So, we&#8217;ve found the shortest path to the <code>persist</code> method,
+but that&#8217;s not necessarily the only path:</p>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="/assets/images/posts/quarkus-native-neo4j-call-tree/entitymanager-persist-depth-3-query.png" alt="entitymanager persist depth 3 query">
+</div>
+</div>
+<div class="paragraph">
+<p>You can continue going up layers,
+but unfortunately if you reach a depth with too many nodes,
+the Neo4j browser will be unable to visualize them all.
+When that happens, you can alternatively run the queries directly against the cypher shell. E.g.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ podman exec testneo4j bin/cypher-shell -u neo4j -p ${NEO_PASS} \
+    "match (m:Method) &lt;- [*1..10] - (o) where m.name = 'persist' and m.type =~ '.*EntityManager' return *"</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>After you are done with the exploration don&#8217;t forget to shut down (<code>kill</code>) the <code>testneo4j</code> container:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ podman kill testneo4j</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Note that this will also remove the container (since we used <code>--rm</code> when we created it).</p>
+</div>
+<div class="paragraph">
+<p>We&#8217;ve only just started exploring the possibilities of Neo4j for this use case,
+and so we still have to learn all the tips and tricks to make the most out of it.
+As we learn more we&#8217;ll share any tips or query templates with the community.</p>
+</div>
+              
+          </div>
+          <div class="width-12-12"><div class="share-page">
+  <a class="share-linkedin" href="https://www.linkedin.com/shareArticle?mini=true&url=https://quarkus.io/blog/quarkus-native-neo4j-call-tree/&title=Inspecting the Quarkus Native call path universe with Neo4j" rel="nofollow" target="_blank" title="Share on LinkedIn">
+    <img src="/assets/images/share-page/icons_social-linkedin.png"/>
+  </a>
+  <a class="share-twitter" href="https://twitter.com/intent/tweet?text=Inspecting the Quarkus Native call path universe with Neo4j&url=https://quarkus.io/blog/quarkus-native-neo4j-call-tree/&via=quarkusio&related=quarkusio" rel="nofollow" target="_blank" title="Share on Twitter">
+    <img src="/assets/images/share-page/icons_social-twitter.png"/>
+  </a>
+  <a class="share-facebook" href="https://facebook.com/sharer.php?u=https://quarkus.io/blog/quarkus-native-neo4j-call-tree/" rel="nofollow" target="_blank" title="Share on Facebook">
+    <img src="/assets/images/share-page/icons_social-facebook.png"/>
+  </a>
+  <a class="share-reddit" href="http://www.reddit.com/submit?url=https://quarkus.io/blog/quarkus-native-neo4j-call-tree/" onclick="window.open(this.href, 'pop-up', 'left=20,top=20,width=900,height=500,toolbar=1,resizable=0'); return false;" title="Share on Reddit" >
+    <img src="/assets/images/share-page/icons_social-reddit.png"/>
+  </a>
+  <a class="share-email" href="mailto:?subject=Inspecting the Quarkus Native call path universe with Neo4j&amp;body=Inspecting the Quarkus Native call path universe with Neo4j https://quarkus.io/blog/quarkus-native-neo4j-call-tree/" title="Share via Email" >
+    <img src="/assets/images/share-page/icons_social-email.png"/>
+  </a>
+</div>
+</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  </div>
+
+  <div class="content project-footer">
+  <div class="footer-section">
+    <div class="logo-wrapper">
+      <a href="/"><img src="/assets/images/quarkus_logo_horizontal_rgb_reverse.svg" class="project-logo" title="Quarkus"></a>
+    </div>
+  </div>
+  <div class="grid-wrapper">
+    <p class="grid__item width-3-12">Quarkus is open. All dependencies of this project are available under the <a href='https://www.apache.org/licenses/LICENSE-2.0' target='_blank'>Apache Software License 2.0</a> or compatible license.<br /><br />This website was built with <a href='https://jekyllrb.com/' target='_blank'>Jekyll</a>, is hosted on <a href='https://pages.github.com/' target='_blank'>Github Pages</a> and is completely open source. If you want to make it better, <a href='https://github.com/quarkusio/quarkusio.github.io' target='_blank'>fork the website</a> and show us what you’ve got.</p>
+
+    
+      <div class="width-1-12 project-links">
+        <span>Navigation</span>
+        <ul class="footer-links">
+          
+            <li><a href="/">Home</a></li>
+          
+            <li><a href="/guides">Guides</a></li>
+          
+            <li><a href="/community/#contributing">Contribute</a></li>
+          
+            <li><a href="/faq">FAQ</a></li>
+          
+            <li><a href="/get-started">Get Started</a></li>
+          
+        </ul>
+      </div>
+    
+      <div class="width-1-12 project-links">
+        <span>Contribute</span>
+        <ul class="footer-links">
+          
+            <li><a href="https://twitter.com/quarkusio">Follow us</a></li>
+          
+            <li><a href="https://github.com/quarkusio">GitHub</a></li>
+          
+            <li><a href="/security">Security&nbsp;policy</a></li>
+          
+        </ul>
+      </div>
+    
+      <div class="width-2-12 project-links">
+        <span>Get Help</span>
+        <ul class="footer-links">
+          
+            <li><a href="https://stackoverflow.com/questions/tagged/quarkus">Stack Overflow</a></li>
+          
+            <li><a href="https://quarkusio.zulipchat.com">Chat room</a></li>
+          
+            <li><a href="https://groups.google.com/forum/#!forum/quarkus-dev">Development mailing list</a></li>
+          
+        </ul>
+      </div>
+    
+
+    
+      <div class="width-4-12 more-links">
+        <span>Quarkus is made of community projects</span>
+        <ul class="footer-links">
+          
+            <li><a href="https://vertx.io/" target="_blank">Eclipse Vert.x</a></li>
+          
+            <li><a href="https://smallrye.io" target="_blank">SmallRye</a></li>
+          
+            <li><a href="https://hibernate.org" target="_blank">Hibernate</a></li>
+          
+            <li><a href="https://netty.io" target="_blank">Netty</a></li>
+          
+            <li><a href="https://resteasy.github.io" target="_blank">RESTEasy</a></li>
+          
+            <li><a href="https://camel.apache.org" target="_blank">Apache Camel</a></li>
+          
+            <li><a href="https://microprofile.io" target="_blank">Eclipse MicroProfile</a></li>
+          
+            <li><a href="https://code.quarkus.io/" target="_blank">And many more...</a></li>
+          
+        </ul>
+      </div>
+    
+  </div>
+</div>
+
+  <div class="content redhat-footer">
+  <div class="grid-wrapper">
+    <span class="licence">
+      <i class="fab fa-creative-commons"></i><i class="fab fa-creative-commons-by"></i> <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank">CC by 3.0</a> | <a href="https://www.redhat.com/en/about/privacy-policy">Privacy Policy</a>
+    </span>
+    <span class="redhat">
+      Sponsored by
+    </span>
+    <span class="redhat-logo">
+      <a href="https://www.redhat.com/" target="_blank"><img src="/assets/images/redhat_reversed.svg"></a>
+    </span>
+  </div>
+</div>
+
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js" integrity="sha384-8gBf6Y4YYq7Jx97PIqmTwLPin4hxIzQw5aDmUg/DDhul9fFpbbLcLh3nTIIDJKhx" crossorigin="anonymous"></script>
+  <script type="text/javascript" src="/assets/javascript/mobile-nav.js"></script>
+  <script type="text/javascript" src="/assets/javascript/scroll-down.js"></script>
+  <script src="/assets/javascript/satellite.js" type="text/javascript"></script>
+  <script src="/guides/javascript/config.js" type="text/javascript"></script>
+  <script src="/assets/javascript/search-filter.js" type="text/javascript"></script>
+  <script src="/assets/javascript/guides-version-dropdown.js" type="text/javascript"></script>
+  <script src="/assets/javascript/back-to-top.js" type="text/javascript"></script>
+</body>
+
+</html>
