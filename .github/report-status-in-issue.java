@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 		description = "Takes care of updating the an issue depending on the status of the build")
 class Report implements Runnable {
 
-	@Option(names = "token", description = "Github token to use when calling the Github API")
+	@Option(names = "token", description = "GitHub token to use when calling the GitHub API")
 	private String token;
 
 	@Option(names = "status", description = "The status of the CI run")
@@ -33,7 +33,7 @@ class Report implements Runnable {
 	@Option(names = "thisRepo", description = "The repository for which we are reporting the CI status")
 	private String thisRepo;
 
-	@Option(names = "runId", description = "The ID of the Github Action run for  which we are reporting the CI status")
+	@Option(names = "runId", description = "The ID of the GitHub Action run for  which we are reporting the CI status")
 	private String runId;
 
 	@Override
