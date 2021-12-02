@@ -34,7 +34,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 **For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
 
-### Deploying to Github Pages
+### Deploying to GitHub Pages
 The website deployment is automatically performed by GitHub Actions (when commits are pushed to the `develop` branch). 
 If for some reason you need to deploy from your local machine, follow these instructions: 
 
