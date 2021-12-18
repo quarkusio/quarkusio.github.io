@@ -1,0 +1,181 @@
+---
+layout: post
+title: 'Compressing native executables with UPX'
+date: 2021-12-20
+tags: native feature
+synopsis: How does Quarkus make your native executable smaller using UPX
+author: cescoffier
+---
+
+UPX is is an open-source, portable, high-performance *executable packer* initially created in 1996. 
+It takes an executable as input and produces a compressed executable. 
+Readers from a _certain_ age may have already used UPX a long time ago when programs needed to be compressed to fit on a floppy disk. 
+More than 20 years later, UPX is still rocking.
+
+In Quarkus 2.6, we integrated UPX compression in the Quarkus build. 
+So, Quarkus can automatically produce a compressed executable. 
+This post explains how you can use this new feature. 
+But, before going further, you need to understand that **nothing comes for free**. 
+The compressed executable is smaller on disk, but its memory usage is higher. 
+So make sure to read the "big warning" section before using it. 
+
+== Getting you ready
+
+Quarkus can compress your executable if you have installed UPX on your system or use an in-container build.
+
+UPX is available on most operating systems. 
+So, you should be able to download it from https://github.com/upx/upx/releases/tag/v3.96[their release page]. 
+UPX is cross-platform. 
+So you can compress a Linux 64 bits executable even from a macOS or Windows machine. 
+
+If installing UPX is not an option for you, you can ask Quarkus to build your native executable using an in-container build (with `-Dquarkus.native.container-build=true`). 
+You will get a Linux 64 bits executable (perfect for containers but unusable from your machine if you don't use Linux). 
+The in-container build provides UPX so that it can compress the executable. 
+When using an in-container build, you don't need GraalVM or UPX on your machine. 
+This option is particularly interesting on CI. 
+
+In this post, we will use the first approach. The https://quarkus.io/version/main/guides/building-native-image#creating-a-container[Building a Native Executable] page explains how to use in-container build.
+
+== Let's get something to compress
+
+First, we need an application. 
+To keep things simple, let's create a new application from https://code.quarkus.io/?a=upx-compression-demo&e=resteasy-reactive-jacksoncode.quarkus.io. 
+This application uses RESTEasy Reactive and its Jackson support, but the compression works with any project, and we won't even look at the code. 
+
+Before using UPX, we need to measure the disk space and memory usage of the non-compressed native executable. 
+To do that, we need the native executable:
+  
+[source, bash]
+----
+> ./mvnw package -Dnative
+----
+
+The resulting executable use ~46 MB of disk space:
+
+[source, bash]
+----
+.rwxr-xr-x 46M clement 11 Dec 17:44 upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+Now, let's have a look at the memory consumption. 
+Start the application using:
+
+[source, bash]
+----
+> ./target/upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+In another terminal, invoke the application using curl and gets its memory usage:
+
+
+[source, bash]
+----
+> curl http://localhost:8080/hello
+Hello RESTEasy Reactive%
+
+> rss runner
+PID 0M COMMAND
+3947 21M ./target/upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+So, it takes 21 MB of https://en.wikipedia.org/wiki/Resident_set_size[RSS], basically the amount of RAM it uses. 
+
+TIP: The `rss` command is the following function: 
+
+[source, bash]
+----
+rss () {
+  pgrep $1 | xargs ps -o pid,rss,command -p | awk '{$2=int($2/1024)"M";}{ print;}'
+}
+----
+
+Check https://quarkus.io/guides/performance-measure[Quarkus - Measuring Performance] to learn more about RSS and how to measure it
+
+== Configuring the compression
+
+To compress your executable, you need to configure the compression level. 
+The compression goes from 1 to 10:
+
+- `1`: faster compression 
+- `9`: better compression
+- `10`: best compression (can be slow for big files)
+
+Configure the level from the `application.properties` file:
+
+[source, properties]
+----
+quarkus.native.compression.level=7
+----
+
+That's all you need to do to enable the compression.
+
+== Building the compressed native executable
+
+Let's regenerate the native executable. This time, because of the configured compression level, Quarkus will compress it:
+
+[source, bash]
+----
+> ./mvnw package -Dnative
+...
+...
+[INFO] [io.quarkus.deployment.pkg.steps.UpxCompressionBuildStep] Executing /usr/local/bin/upx -7 /Users/clement/Downloads/upx-compression-demo/target/upx-compression-demo-1.0.0-SNAPSHOT-runner
+ Ultimate Packer for eXecutables
+ Copyright (C) 1996 - 2020
+ UPX 3.96 Markus Oberhumer, Laszlo Molnar & John Reiser Jan 23rd 2020
+
+ File size            Ratio  Format      Name
+ -------------------- ------ ----------- -----------
+ 46242352 -> 14774288 31.95% macho/amd64 upx-compression-demo-1.0.0-SNAPSHOT-runner
+
+... 
+----
+
+As you can see, this time, it runs UPX to compress the native executable. If you check the size, you should get something around 15 MB:  
+
+[source, bash]
+----
+.rwxr-xr-x 15M clement 11 Dec 18:03 upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+So we went from 46 M to 15 M; this is a considerable gain, even if it still does not fit on a floppy disk.  
+
+== The **BIG** warning
+
+However, as said in the introduction, nothing comes for free. 
+Earlier, we also measured the memory usage of the uncompressed executable (21 MB). 
+Let's compare with the compressed executable.
+
+Run the application with:
+
+[source, bash]
+----
+> ./target/upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+And, in another terminal, run:
+
+[source, bash]
+----
+> curl http://localhost:8080/hello
+Hello RESTEasy Reactive%
+
+> rss runner
+PID 0M COMMAND
+4501 57M ./target/upx-compression-demo-1.0.0-SNAPSHOT-runner
+----
+
+**57 MB**! So, it uses ~2.7 times more RSS than the uncompressed executable. 
+This overhead is because the compressed executable must unpack the program on startup and store it in memory. 
+It can also increase the startup time, but this startup overhead is insignificant most of the time. 
+
+== Summary
+
+UPX lets you compress your native executables. 
+In Quarkus 2.6, you only need to configure the compression level, and voilà, it compresses it for you. 
+
+However, do not think it all comes for free. 
+While the gain on disk space is fantastic, do not ignore the RSS overhead. 
+
+UPX compression can benefit CLI tools or environments where disk space is a constrained resource. 
+For long-running applications or microservices, the RSS overhead reduces the deployment density. 
+So, if the storage is not a problem or if the density of deployment is crucial for you, better not compress your executable.
