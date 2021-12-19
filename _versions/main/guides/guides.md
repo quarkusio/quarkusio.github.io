@@ -1,5 +1,5 @@
 ---
 layout: guides-index
-title: Quarkus - Guides
+title: Guides - Main branch (SNAPSHOT)
 permalink: /version/main/guides/
 ---
