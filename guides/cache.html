@@ -166,13 +166,21 @@
 <li><a href="#creating-the-maven-project">Creating the Maven project</a></li>
 <li><a href="#creating-the-rest-api">Creating the REST API</a></li>
 <li><a href="#enabling-the-cache">Enabling the cache</a></li>
-<li><a href="#caching-annotations">Caching annotations</a>
+<li><a href="#annotations-api">Caching using annotations</a>
 <ul class="sectlevel2">
 <li><a href="#cacheresult">@CacheResult</a></li>
 <li><a href="#cacheinvalidate">@CacheInvalidate</a></li>
 <li><a href="#cacheinvalidateall">@CacheInvalidateAll</a></li>
 <li><a href="#cachekey">@CacheKey</a></li>
 <li><a href="#composite-cache-key-building-logic">Composite cache key building logic</a></li>
+</ul>
+</li>
+<li><a href="#programmatic-api">Caching using the programmatic API</a>
+<ul class="sectlevel2">
+<li><a href="#injecting-a-cache-with-the-cachename-annotation">Injecting a <code>Cache</code> with the <code>@CacheName</code> annotation</a></li>
+<li><a href="#retrieving-a-cache-from-the-cachemanager">Retrieving a <code>Cache</code> from the <code>CacheManager</code></a></li>
+<li><a href="#building-a-programmatic-cache-key">Building a programmatic cache key</a></li>
+<li><a href="#retrieving-all-keys-from-a-caffeinecache">Retrieving all keys from a <code>CaffeineCache</code></a></li>
 </ul>
 </li>
 <li><a href="#configuring-the-underlying-caching-provider">Configuring the underlying caching provider</a>
@@ -186,6 +194,7 @@
 <li><a href="#explicit-composite-cache-key">Explicit composite cache key</a></li>
 <li><a href="#default-cache-key">Default cache key</a></li>
 <li><a href="#multiple-annotations-on-a-single-method">Multiple annotations on a single method</a></li>
+<li><a href="#clear-all-application-caches">Clear all application caches</a></li>
 </ul>
 </li>
 <li><a href="#negative-cache">Negative caching and nulls</a>
@@ -193,6 +202,7 @@
 <li><a href="#let-exceptions-bubble-up">Let exceptions bubble up</a></li>
 </ul>
 </li>
+<li><a href="#going-native">Going native</a></li>
 </ul></div>
     <div>
       <div id="preamble">
@@ -567,7 +577,7 @@ The following sections will show you everything there is to know about it.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="caching-annotations"><a class="anchor" href="#caching-annotations"></a>Caching annotations</h2>
+<h2 id="annotations-api"><a class="anchor" href="#annotations-api"></a>Caching using annotations</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Quarkus offers a set of annotations that can be used in a CDI managed bean to enable caching abilities.</p>
@@ -714,6 +724,169 @@ public class CachedService {
 <td>Calling this method WILL NOT invalidate values cached by the <code>load</code> method because the key elements order is different.</td>
 </tr>
 </table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="programmatic-api"><a class="anchor" href="#programmatic-api"></a>Caching using the programmatic API</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Quarkus also offers a programmatic API which can be used to store, retrieve or delete values from any cache declared using the annotations API.
+All operations from the programmatic API are non-blocking and rely on <a href="https://smallrye.io/smallrye-mutiny/">Mutiny</a> under the hood.</p>
+</div>
+<div class="paragraph">
+<p>Before accessing programmatically the cached data, you need to retrieve an <code>io.quarkus.cache.Cache</code> instance.
+The following sections will show you how to do that.</p>
+</div>
+<div class="sect2">
+<h3 id="injecting-a-cache-with-the-cachename-annotation"><a class="anchor" href="#injecting-a-cache-with-the-cachename-annotation"></a>Injecting a <code>Cache</code> with the <code>@CacheName</code> annotation</h3>
+<div class="paragraph">
+<p><code>io.quarkus.cache.CacheName</code> can be used on a field, a constructor parameter or a method parameter to inject a <code>Cache</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.cache;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.smallrye.mutiny.Uni;
+
+@ApplicationScoped
+public class CachedExpensiveService {
+
+    @Inject <i class="conum" data-value="1"></i><b>(1)</b>
+    @CacheName("my-cache")
+    Cache cache;
+
+    public Uni&lt;String&gt; getNonBlockingExpensiveValue(Object key) { <i class="conum" data-value="2"></i><b>(2)</b>
+        return cache.get(key, k -&gt; { <i class="conum" data-value="3"></i><b>(3)</b>
+            /*
+             * Put an expensive call here.
+             * It will be executed only if the key is not already associated with a value in the cache.
+             */
+        });
+    }
+
+    public String getBlockingExpensiveValue(Object key) {
+        return cache.get(key, k -&gt; {
+            // Put an expensive call here.
+        }).await().indefinitely(); <i class="conum" data-value="4"></i><b>(4)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>This is optional.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>This method returns the <code>Uni&lt;String&gt;</code> type which is non-blocking.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The <code>k</code> argument contains the cache key value.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>If you don&#8217;t need the call to be non-blocking, this is how you can retrieve the cache value in a blocking way.</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="retrieving-a-cache-from-the-cachemanager"><a class="anchor" href="#retrieving-a-cache-from-the-cachemanager"></a>Retrieving a <code>Cache</code> from the <code>CacheManager</code></h3>
+<div class="paragraph">
+<p>Another way to retrieve a <code>Cache</code> instance consists in injecting the <code>io.quarkus.cache.CacheManager</code> first and then retrieving the desired <code>Cache</code> from its name:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.cache;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheManager;
+
+import java.util.Optional;
+
+@ApplicationScoped
+public class CacheClearer {
+
+    @Inject
+    CacheManager cacheManager;
+
+    public void clearCache(String cacheName) {
+        Optional&lt;Cache&gt; cache = cacheManager.getCache(cacheName);
+        if (cache.isPresent()) {
+            cache.get().invalidateAll().await().indefinitely();
+        }
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="building-a-programmatic-cache-key"><a class="anchor" href="#building-a-programmatic-cache-key"></a>Building a programmatic cache key</h3>
+<div class="paragraph">
+<p>Before building a programmatic cache key, you need to know how cache keys are built by the annotations API when an annotated method is invoked:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If the method has no arguments, then the cache key is an instance of <code>io.quarkus.cache.DefaultCacheKey</code> built from the cache name.</p>
+</li>
+<li>
+<p>If the method has exactly one argument, then this argument is the cache key.</p>
+</li>
+<li>
+<p>If the method has multiple arguments but only one annotated with <code>@CacheKey</code>, then this annotated argument is the cache key.</p>
+</li>
+<li>
+<p>In all other cases, the cache key is an instance of <code>io.quarkus.cache.CompositeCacheKey</code> built from multiple method arguments (annotated with <code>@CacheKey</code> or not).</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Now, if you want to retrieve or delete, using the programmatic API, a cache value that was stored using the annotations API, you just need to make sure the same key is used with both APIs.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="retrieving-all-keys-from-a-caffeinecache"><a class="anchor" href="#retrieving-all-keys-from-a-caffeinecache"></a>Retrieving all keys from a <code>CaffeineCache</code></h3>
+<div class="paragraph">
+<p>The cache keys from a specific <code>CaffeineCache</code> can be retrieved as an unmodifiable <code>Set</code> as shown below.
+If the cache entries are modified while an iteration over the set is in progress, the set will remain unchanged.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.cache;
+
+import javax.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.quarkus.cache.CaffeineCache;
+
+import java.util.Set;
+
+@ApplicationScoped
+public class CacheKeysService {
+
+    @CacheName("my-cache")
+    Cache cache;
+
+    public Set&lt;Object&gt; getAllCacheKeys() {
+        return cache.as(CaffeineCache.class).keySet();
+    }
+}</code></pre>
+</div>
 </div>
 </div>
 </div>
@@ -1029,6 +1202,32 @@ public class CachedService {
 </table>
 </div>
 </div>
+<div class="sect2">
+<h3 id="clear-all-application-caches"><a class="anchor" href="#clear-all-application-caches"></a>Clear all application caches</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.cache;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+import io.quarkus.cache.CacheManager;
+
+@ApplicationScoped
+public class CacheClearer {
+
+    @Inject
+    CacheManager cacheManager;
+
+    public void clearAllCaches() {
+        for (String cacheName : cacheManager.getCacheNames()) {
+            cacheManager.getCache(cacheName).get().invalidateAll().await().indefinitely();
+        }
+    }
+}</code></pre>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -1138,6 +1337,62 @@ so that a subsequent call to <code>callRemote()</code> with the same parameter v
 answered out of the cache.
 It will instead result in another attempt to call the remote.</p>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="going-native"><a class="anchor" href="#going-native"></a>Going native</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The Cache extension supports building native executables.</p>
+</div>
+<div class="paragraph">
+<p>However, to optimize runtime speed, Caffeine embarks many cache implementation classes that are selected depending on the cache configuration.
+We are not registering all of them for reflection
+(and the ones not registered are not included into the native executables) as registering all of them would be very costly.</p>
+</div>
+<div class="paragraph">
+<p>We are registering the most common implementations but, depending on your cache configuration, you might encounter errors like:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">2021-12-08 02:32:02,108 ERROR [io.qua.run.Application] (main) Failed to start application (with profile prod): java.lang.ClassNotFoundException: com.github.benmanes.caffeine.cache.PSAMS <i class="conum" data-value="1"></i><b>(1)</b>
+        at java.lang.Class.forName(DynamicHub.java:1433)
+        at java.lang.Class.forName(DynamicHub.java:1408)
+        at com.github.benmanes.caffeine.cache.NodeFactory.newFactory(NodeFactory.java:111)
+        at com.github.benmanes.caffeine.cache.BoundedLocalCache.&lt;init&gt;(BoundedLocalCache.java:240)
+        at com.github.benmanes.caffeine.cache.SS.&lt;init&gt;(SS.java:31)
+        at com.github.benmanes.caffeine.cache.SSMS.&lt;init&gt;(SSMS.java:64)
+        at com.github.benmanes.caffeine.cache.SSMSA.&lt;init&gt;(SSMSA.java:43)</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>PSAMS</code> is one of the many cache implementation classes of Caffeine so this part may vary.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>When you encounter this error, you can easily fix it by adding the following annotation to any of your application classes
+(or you can create a new class such as <code>Reflections</code> just to host this annotation if you prefer):</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@RegisterForReflection(classNames = { "com.github.benmanes.caffeine.cache.PSAMS" }) <i class="conum" data-value="1"></i><b>(1)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>It is an array so you can register several cache implementations in one go if your configuration requires several of them.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>This annotation will register the cache implementation classes for reflection and this will include the classes into the native executable.</p>
 </div>
 </div>
 </div>
