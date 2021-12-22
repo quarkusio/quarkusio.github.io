@@ -38,7 +38,8 @@ class unlinkedguides implements Callable<Integer> {
         "building-substrate-howto",
         "README",
         "gradle-config",
-        "amazon-credentials"
+        "amazon-credentials",
+        "kogito-dev-services-build-time-config"
     );
 
     @Parameters(index = "0", description = "The version of guides", defaultValue = LATEST)
