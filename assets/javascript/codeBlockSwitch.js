@@ -1,10 +1,10 @@
 function addBlockSwitches() {
-    $('.primary').each(function() {
+    $('.listingblock.primary').each(function() {
         primary = $(this);
         createSwitchItem(primary, createBlockSwitch(primary)).item.addClass("selected");
         primary.children('.title').remove();
     });
-    $('.secondary').each(function(idx, node) {
+    $('.listingblock.secondary').each(function(idx, node) {
         secondary = $(node);
         primary = findPrimary(secondary);
         switchItem = createSwitchItem(secondary, primary.children('.switch'));
