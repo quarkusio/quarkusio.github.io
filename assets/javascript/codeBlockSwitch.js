@@ -21,11 +21,7 @@ function createBlockSwitch(primary) {
 }
 
 function findPrimary(secondary) {
-    candidate = secondary.prev();
-    while (!candidate.is('.primary')) {
-        candidate = candidate.prev();
-    }
-    return candidate;
+    return secondary.prev('.primary');
 }
 
 function createSwitchItem(block, blockSwitch) {
@@ -42,5 +38,6 @@ function createSwitchItem(block, blockSwitch) {
     return {'item': item, 'content': content};
 }
 
-$(addBlockSwitches);
-
+$(document).ready(function() {
+    addBlockSwitches();
+});
