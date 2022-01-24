@@ -1,10 +1,14 @@
 function addBlockSwitches() {
-    $('.listingblock.primary').each(function() {
+    $('.listingblock.primary, .sidebarblock.primary').each(function() {
         primary = $(this);
         createSwitchItem(primary, createBlockSwitch(primary)).item.addClass("selected");
-        primary.children('.title').remove();
+        if (primary.children('.title').length) {
+            primary.children('.title').remove();
+        } else {
+            primary.children('.content').first().children('.title').remove();
+        }
     });
-    $('.listingblock.secondary').each(function(idx, node) {
+    $('.listingblock.secondary, .sidebarblock.secondary').each(function(idx, node) {
         secondary = $(node);
         primary = findPrimary(secondary);
         switchItem = createSwitchItem(secondary, primary.children('.switch'));
@@ -25,7 +29,12 @@ function findPrimary(secondary) {
 }
 
 function createSwitchItem(block, blockSwitch) {
-    blockName = block.children('.title').text();
+    if (block.children('.title').length) {
+        blockName = block.children('.title').text();
+    } else {
+        blockName = block.children('.content').first().children('.title').text();
+        block.children('.content').first().children('.title').remove();
+    }
     content = block.children('.content').first().append(block.next('.colist'));
     item = $('<div class="switch--item">' + blockName + '</div>');
     item.on('click', '', content, function(e) {
