@@ -27,5 +27,5 @@ clipboard.on('success', function(e) {
     setTimeout(function() {
         e.trigger.className = e.trigger.className.replace("fa-check", "fa-clipboard");
         e.trigger.setAttribute("title", "Copy to clipboard")
-    }, 1000);
+    }, 2000);
 });
