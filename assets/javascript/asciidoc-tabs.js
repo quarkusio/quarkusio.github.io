@@ -12,6 +12,7 @@ $(document).ready(function() {
             } else {
                 primary.children('.content').first().children('.title').remove();
             }
+            getAllSyncClasses(primary).forEach(className => primary.removeClass(className));
         });
 
         $('.listingblock.secondary, .sidebarblock.secondary').each(function(idx, node) {
@@ -34,6 +35,23 @@ $(document).ready(function() {
         return secondary.prev('.primary');
     }
 
+    function getSyncClasses(element) {
+        return element.attr('class').replaceAll(/\s+/g, ' ').split(' ').filter(className => className.startsWith('asciidoc-tabs-sync'));
+    }
+
+    function getAllSyncClasses(element) {
+        return element.attr('class').replaceAll(/\s+/g, ' ').split(' ').filter(className => className.startsWith('asciidoc-tabs-sync') || className.startsWith('asciidoc-tabs-target-sync'));
+    }
+
+    function triggerSyncEvent(element) {
+        var syncClasses = getSyncClasses(element);
+        if (syncClasses.length == 0) {
+            return;
+        }
+        $('.asciidoc-tabs-switch--item.' + syncClasses[0] + ':not(.selected)').not(element).click();
+        $('.asciidoc-tabs-switch--item.' + syncClasses[0].replace('asciidoc-tabs-sync', 'asciidoc-tabs-target-sync') + ':not(.selected)').not(element).click();
+    }
+
     function createSwitchItem(block, blockSwitch) {
         var blockName;
         if (block.children('.title').length) {
@@ -42,13 +60,16 @@ $(document).ready(function() {
             blockName = block.children('.content').first().children('.title').text();
             block.children('.content').first().children('.title').remove();
         }
+        var allSyncClasses = getAllSyncClasses(block);
         var content = block.children('.content').first().append(block.next('.colist'));
-        var item = $('<div class="asciidoc-tabs-switch--item">' + blockName + '</div>');
+        var item = $('<div class="asciidoc-tabs-switch--item ' + allSyncClasses.join(' ') + '">' + blockName + '</div>');
         item.on('click', '', content, function(e) {
             $(this).addClass('selected');
             $(this).siblings().removeClass('selected');
             e.data.siblings('.content').addClass('asciidoc-tabs-hidden');
             e.data.removeClass('asciidoc-tabs-hidden');
+
+            triggerSyncEvent($(this));
         });
         blockSwitch.append(item);
         return {'item': item, 'content': content};
