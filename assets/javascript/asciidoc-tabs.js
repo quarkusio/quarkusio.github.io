@@ -1,3 +1,7 @@
+// code originally coming from:
+// https://github.com/bmuschko/asciidocj-tabbed-code-extension
+// adapted to work with jQuery
+
 $(document).ready(function() {
     function addBlockSwitches() {
         $('.listingblock.primary, .sidebarblock.primary').each(function() {
@@ -13,15 +17,15 @@ $(document).ready(function() {
         $('.listingblock.secondary, .sidebarblock.secondary').each(function(idx, node) {
             var secondary = $(node);
             var primary = findPrimary(secondary);
-            var switchItem = createSwitchItem(secondary, primary.children('.switch'));
-            switchItem.content.addClass('hidden');
+            var switchItem = createSwitchItem(secondary, primary.children('.asciidoc-tabs-switch'));
+            switchItem.content.addClass('asciidoc-tabs-hidden');
             findPrimary(secondary).append(switchItem.content);
             secondary.remove();
         });
     }
 
     function createBlockSwitch(primary) {
-        var blockSwitch = $('<div class="switch"></div>');
+        var blockSwitch = $('<div class="asciidoc-tabs-switch"></div>');
         primary.prepend(blockSwitch);
         return blockSwitch;
     }
@@ -39,12 +43,12 @@ $(document).ready(function() {
             block.children('.content').first().children('.title').remove();
         }
         var content = block.children('.content').first().append(block.next('.colist'));
-        var item = $('<div class="switch--item">' + blockName + '</div>');
+        var item = $('<div class="asciidoc-tabs-switch--item">' + blockName + '</div>');
         item.on('click', '', content, function(e) {
             $(this).addClass('selected');
             $(this).siblings().removeClass('selected');
-            e.data.siblings('.content').addClass('hidden');
-            e.data.removeClass('hidden');
+            e.data.siblings('.content').addClass('asciidoc-tabs-hidden');
+            e.data.removeClass('asciidoc-tabs-hidden');
         });
         blockSwitch.append(item);
         return {'item': item, 'content': content};
