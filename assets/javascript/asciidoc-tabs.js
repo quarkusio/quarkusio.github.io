@@ -39,17 +39,24 @@ $(document).ready(function() {
         return element.attr('class').replaceAll(/\s+/g, ' ').split(' ').filter(className => className.startsWith('asciidoc-tabs-sync'));
     }
 
+    function getTargetSyncClasses(element) {
+        return element.attr('class').replaceAll(/\s+/g, ' ').split(' ').filter(className => className.startsWith('asciidoc-tabs-target-sync'));
+    }
+
     function getAllSyncClasses(element) {
         return element.attr('class').replaceAll(/\s+/g, ' ').split(' ').filter(className => className.startsWith('asciidoc-tabs-sync') || className.startsWith('asciidoc-tabs-target-sync'));
     }
 
     function triggerSyncEvent(element) {
         var syncClasses = getSyncClasses(element);
-        if (syncClasses.length == 0) {
-            return;
+        if (syncClasses.length > 0) {
+            $('.asciidoc-tabs-switch--item.' + syncClasses[0] + ':not(.selected)').not(element).click();
+            $('.asciidoc-tabs-switch--item.' + syncClasses[0].replace('asciidoc-tabs-sync', 'asciidoc-tabs-target-sync') + ':not(.selected)').not(element).click();
         }
-        $('.asciidoc-tabs-switch--item.' + syncClasses[0] + ':not(.selected)').not(element).click();
-        $('.asciidoc-tabs-switch--item.' + syncClasses[0].replace('asciidoc-tabs-sync', 'asciidoc-tabs-target-sync') + ':not(.selected)').not(element).click();
+        var targetSyncClasses = getTargetSyncClasses(element);
+        for (const targetSyncClass of targetSyncClasses) {
+            $('.asciidoc-tabs-switch--item.' + targetSyncClass + ':not(.selected)').not(element).click();
+        }
     }
 
     function createSwitchItem(block, blockSwitch) {
