@@ -175,8 +175,20 @@
 <li><a href="#default-header-factory">Default header factory</a></li>
 </ul>
 </li>
-<li><a href="#multipart-form-support">Multipart Form support</a></li>
+<li><a href="#exception-handling">Exception handling</a>
+<ul class="sectlevel2">
+<li><a href="#using-clientexceptionmapper">Using @ClientExceptionMapper</a></li>
+</ul>
+</li>
+<li><a href="#multipart-form-support">Multipart Form support</a>
+<ul class="sectlevel2">
+<li><a href="#sending-multipart-messages">Sending Multipart messages</a></li>
+<li><a href="#receiving-multipart-messages">Receiving Multipart Messages</a></li>
+</ul>
+</li>
+<li><a href="#proxy-support">Proxy support</a></li>
 <li><a href="#package-and-run-the-application">Package and run the application</a></li>
+<li><a href="#logging-traffic">Logging traffic</a></li>
 <li><a href="#using-a-mock-http-server-for-tests">Using a Mock HTTP Server for tests</a></li>
 <li><a href="#known-limitations">Known limitations</a></li>
 <li><a href="#further-reading">Further reading</a></li>
@@ -560,6 +572,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
+import java.net.URI;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
@@ -570,7 +583,7 @@ public class ExtensionsResource {
 
     public ExtensionsResource() {
         extensionsService = RestClientBuilder.newBuilder()
-            .baseUri("https://stage.code.quarkus.io/api")
+            .baseUri(URI.create("https://stage.code.quarkus.io/api"))
             .build(ExtensionsService.class);
     }
 
@@ -744,7 +757,7 @@ public interface ExtensionsService {
     // ...
 
     @GET
-    Uni&lt;Set&lt;Extension&gt;&gt; getByIdAsUni(@QueryParam("id") String id)
+    Uni&lt;Set&lt;Extension&gt;&gt; getByIdAsUni(@QueryParam("id") String id);
 }</code></pre>
 </div>
 </div>
@@ -765,7 +778,7 @@ import java.util.Set;
 import java.util.concurrent.CompletionStage;
 
 @Path("/extension")
-public class ExtensionsResource
+public class ExtensionsResource {
 
     @RestClient
     ExtensionsService extensionsService;
@@ -893,6 +906,21 @@ public interface ExtensionsService {
 </tr>
 </table>
 </div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>When using Kotlin, if default methods are going to be leveraged, then the Kotlin compiler needs to be configured to use Java&#8217;s default interface capabilities.
+See <a href="https://kotlinlang.org/docs/java-to-kotlin-interop.html#default-methods-in-interfaces">this</a> for more details.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
 <div class="paragraph">
 <p>A <code>ClientHeadersFactory</code> can look as follows:</p>
 </div>
@@ -993,10 +1021,81 @@ public interface ExtensionsService {
 </div>
 </div>
 <div class="sect1">
+<h2 id="exception-handling"><a class="anchor" href="#exception-handling"></a>Exception handling</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The MicroProfile REST Client specification introduces the <code>org.eclipse.microprofile.rest.client.ext.ResponseExceptionMapper</code> whose purpose is to convert an HTTP response to an exception.</p>
+</div>
+<div class="paragraph">
+<p>A simple example of implementing such a <code>ResponseExceptionMapper</code> for the <code>ExtensionsService</code> discussed above, could be:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public interface MyResponseExceptionMapper implements ResponseExceptionMapper&lt;RuntimeException&gt; {
+
+    RuntimeException toThrowable(Response response) {
+        if (response.getStatus() == 500) {
+            throw new RuntimeException("The remote service responded with HTTP 500");
+        }
+        return null;
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>ResponseExceptionMapper</code> also defines the <code>getPriority</code> method which is used in order to determine the priority with which <code>ResponseExceptionMapper</code> implementations will be called (implementations with a lower value for <code>getPriority</code> will be invoked first).
+If <code>toThrowable</code> returns an exception, then that exception will be thrown. If <code>null</code> is returned, the next implementation of <code>ResponseExceptionMapper</code> in the chain will be called (if there is any).</p>
+</div>
+<div class="paragraph">
+<p>The class as written above, would not be automatically be used by any REST Client. To make it available to every REST Client of the application, the class needs to be annotated with <code>@Provider</code> (as long as <code>quarkus.rest-client-reactive.provider-autodiscovery</code> is not set to <code>false</code>).
+Alternatively, if the exception handling class should only apply to specific REST Client interfaces, you can either annotate the interfaces with <code>@RegisterProvider(MyResponseExceptionMapper.class)</code>, or register it using configuration using the <code>providers</code> property of the proper <code>quarkus.rest-client</code> configuration group.</p>
+</div>
+<div class="sect2">
+<h3 id="using-clientexceptionmapper"><a class="anchor" href="#using-clientexceptionmapper"></a>Using @ClientExceptionMapper</h3>
+<div class="paragraph">
+<p>A simpler way to convert HTTP response codes of 400 or above is to use the <code>@ClientExceptionMapper</code> annotation.</p>
+</div>
+<div class="paragraph">
+<p>For the <code>ExtensionsService</code> REST Client interface defined above, an example use of <code>@ClientExceptionMapper</code> would be:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/extensions")
+@RegisterRestClient
+public interface ExtensionsService {
+
+    @GET
+    Set&lt;Extension&gt; getById(@QueryParam("id") String id);
+
+    @GET
+    CompletionStage&lt;Set&lt;Extension&gt;&gt; getByIdAsync(@QueryParam("id") String id);
+
+    @ClientExceptionMapper
+    static RuntimeException toException(Response response) {
+        if (response.getStatus() == 500) {
+            throw new RuntimeException("The remote service responded with HTTP 500");
+        }
+        return null;
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Naturally this handling is per REST Client. <code>@ClientExceptionMapper</code> uses the default priority if the <code>priority</code> attribute is not set and the normal rules of invoking all handlers in turn apply.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="multipart-form-support"><a class="anchor" href="#multipart-form-support"></a>Multipart Form support</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Rest Client Reactive allows sending data as multipart forms. This way you can for example
+<p>REST Client Reactive support multipart messages.</p>
+</div>
+<div class="sect2">
+<h3 id="sending-multipart-messages"><a class="anchor" href="#sending-multipart-messages"></a>Sending Multipart messages</h3>
+<div class="paragraph">
+<p>REST Client Reactive allows sending data as multipart forms. This way you can for example
 send files efficiently.</p>
 </div>
 <div class="paragraph">
@@ -1005,7 +1104,7 @@ to be sent, e.g.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">class FormDto {
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public class FormDto {
     @FormParam("file")
     @PartType(MediaType.APPLICATION_OCTET_STREAM)
     public File file;
@@ -1045,6 +1144,134 @@ clients created with the <code>@RegisterRestClient</code> annotation.
 All the available modes are described in the <a href="https://netty.io/4.1/api/io/netty/handler/codec/http/multipart/HttpPostRequestEncoder.EncoderMode.html">Netty documentation</a></p>
 </div>
 </div>
+<div class="sect2">
+<h3 id="receiving-multipart-messages"><a class="anchor" href="#receiving-multipart-messages"></a>Receiving Multipart Messages</h3>
+<div class="paragraph">
+<p>REST Client Reactive also supports receiving multipart messages.
+As with sending, to parse a multipart response, you need to create a class that describes the response data, e.g.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public class FormDto {
+    @RestForm <i class="conum" data-value="1"></i><b>(1)</b>
+    @PartType(MediaType.APPLICATION_OCTET_STREAM)
+    public File file;
+
+    @FormParam("otherField") <i class="conum" data-value="2"></i><b>(2)</b>
+    @PartType(MediaType.TEXT_PLAIN)
+    public String textProperty;
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>uses the shorthand <code>@RestForm</code> annotation to make a field as a part of a multipart form</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>the standard <code>@FormParam</code> can also be used. It allows to override the name of the multipart part.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Then, create an interface method that corresponds to the call and make it return the <code>FormDto</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @GET
+    @Produces(MediaType.MULTIPART_FORM_DATA)
+    @Path("/get-file")
+    FormDto data sendMultipart();</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>At the moment, multipart response support is subject to the following limitations:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>files sent in multipart responses can only be parsed to <code>File</code>, <code>Path</code> and <code>FileDownload</code></p>
+</li>
+<li>
+<p>each field of the response type has to be annotated with <code>@PartType</code> - fields without this annotation are ignored</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>REST Client Reactive needs to know the classes used as multipart return types upfront. If you have an interface method that produces <code>multipart/form-data</code>, the return type will be discovered automatically. However, if you intend to use the <code>ClientBuilder</code> API to parse a response as multipart, you need to annotate your DTO class with <code>@MultipartForm</code>.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+The files you download are not automatically removed and can take up a lot of disk space. Consider removing the files when you are done working with them.
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="proxy-support"><a class="anchor" href="#proxy-support"></a>Proxy support</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>REST Client Reactive supports sending requests through a proxy.
+It honors the JVM settings for it but also allows to specify both:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>global client proxy settings, with <code>quarkus.rest-client.proxy-address</code>, <code>quarkus.rest-client.proxy-user</code>, <code>quarkus.rest-client.proxy-password</code>, <code>quarkus.rest-client.non-proxy-hosts</code></p>
+</li>
+<li>
+<p>per-client proxy settings, with <code>quarkus.rest-client.&lt;my-client&gt;.proxy-address</code>, etc. These are applied only to clients injected with CDI, that is the ones created with <code>@RegisterRestClient</code></p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>If <code>proxy-address</code> is set on the client level, the client uses its specific proxy settings. No proxy settings are propagated from the global configuration or JVM properties.</p>
+</div>
+<div class="paragraph">
+<p>If <code>proxy-address</code> is not set for the client but is set on the global level, the client uses the global settings.
+Otherwise, the client uses the JVM settings.</p>
+</div>
+<div class="paragraph">
+<p>An example configuration for setting proxy:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># global proxy configuration is used for all clients
+quarkus.rest-client.proxy-address=localhost:8182
+quarkus.rest-client.proxy-user=&lt;proxy user name&gt;
+quarkus.rest-client.proxy-password=&lt;proxy password&gt;
+quarkus.rest-client.non-proxy-hosts=example.com
+
+# per-client configuration overrides the global settings for a specific client
+quarkus.rest-client.my-client.proxy-address=localhost:8183
+quarkus.rest-client.my-client.proxy-user=&lt;proxy user name&gt;
+quarkus.rest-client.my-client.proxy-password=&lt;proxy password&gt;
+quarkus.rest-client.my-client.url=...</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+MicroProfile REST Client specification does not allow setting proxy credentials. In order to specify proxy user and proxy password programmatically, you need to cast your <code>RestClientBuilder</code> to <code>RestClientBuilderImpl</code>.
+</td>
+</tr>
+</table>
+</div>
+</div>
 </div>
 <div class="sect1">
 <h2 id="package-and-run-the-application"><a class="anchor" href="#package-and-run-the-application"></a>Package and run the application</h2>
@@ -1059,6 +1286,51 @@ Open your browser to <a href="http://localhost:8080/extension/id/io.quarkus:quar
 <div class="paragraph">
 <p>As usual, the application can be packaged using <code>./mvnw clean package</code> and executed using the <code>target/quarkus-app/quarkus-run.jar</code> file.
 You can also generate the native executable with <code>./mvnw clean package -Pnative</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="logging-traffic"><a class="anchor" href="#logging-traffic"></a>Logging traffic</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>REST Client Reactive can log the requests it sends and the responses it receives.
+To enable logging, add the <code>quarkus.rest-client.logging.scope</code> property to your <code>application.properties</code> and set it to:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>request-response</code> to log the request and response contents, or</p>
+</li>
+<li>
+<p><code>all</code> to also enable low level logging of the underlying libraries.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>As HTTP messages can have large bodies, we limit the amount of body characters logged. The default limit is <code>100</code>, you can change it by specifying <code>quarkus.rest-client.logging.body-limit</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+REST Client Reactive is logging the traffic with level DEBUG and does not alter logger properties. You may need to adjust your logger configuration to use this feature.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>An example logging configuration:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.rest-client.logging.scope=request-response
+quarkus.rest-client.logging.body-limit=50
+
+quarkus.log.category."org.jboss.resteasy.reactive.client.logging".level=DEBUG</code></pre>
+</div>
 </div>
 </div>
 </div>
