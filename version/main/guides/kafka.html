@@ -212,7 +212,7 @@
 <li><a href="#testing-a-kafka-application">17. Testing a Kafka application</a>
 <ul class="sectlevel2">
 <li><a href="#testing-without-a-broker">17.1. Testing without a broker</a></li>
-<li><a href="#starting-kafka-in-a-test-resource">17.2. Starting Kafka in a test resource</a></li>
+<li><a href="#testing-using-a-kafka-broker">17.2. Testing using a Kafka broker</a></li>
 </ul>
 </li>
 <li><a href="#kafka-dev-services">18. Dev Services for Kafka</a>
@@ -2706,7 +2706,118 @@ Note that different in-memory channels are independent, and switching channel co
 </div>
 </div>
 <div class="sect2">
-<h3 id="starting-kafka-in-a-test-resource"><a class="anchor" href="#starting-kafka-in-a-test-resource"></a>17.2. Starting Kafka in a test resource</h3>
+<h3 id="testing-using-a-kafka-broker"><a class="anchor" href="#testing-using-a-kafka-broker"></a>17.2. Testing using a Kafka broker</h3>
+<div class="paragraph">
+<p>If you are using <a href="#kafka-dev-services">Dev Services for Kafka</a>, a Kafka broker will be started and available throughout the tests, unless it is disabled in <code>%test</code> profile.
+While it is possible to connect to this broker using Kafka Clients API,
+<a href="https://smallrye.io/smallrye-reactive-messaging/latest/kafka/test-companion/">Kafka Companion Library</a> proposes an easier way of interacting with a Kafka broker and, creating consumer, producer and admin actions inside tests.</p>
+</div>
+<div class="paragraph">
+<p>For using <code>KafkaCompanion</code> API in tests, start by adding the following dependency:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-test-kafka-companion&lt;/artifactId&gt;
+    &lt;scope&gt;test&lt;/scope&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>which provides <code>io.quarkus.test.kafka.KafkaCompanionResource</code> - an implementation of <code>io.quarkus.test.common.QuarkusTestResourceLifecycleManager</code>.</p>
+</div>
+<div class="paragraph">
+<p>Then use <code>@QuarkusTestResource</code> to configure the Kafka Companion in tests, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import java.util.UUID;
+
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.Test;
+
+import io.quarkus.test.common.QuarkusTestResource;
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.kafka.InjectKafkaCompanion;
+import io.quarkus.test.kafka.KafkaCompanionResource;
+import io.smallrye.reactive.messaging.kafka.companion.ConsumerTask;
+import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
+
+@QuarkusTest
+@QuarkusTestResource(KafkaCompanionResource.class)
+public class OrderProcessorTest {
+
+    @InjectKafkaCompanion <i class="conum" data-value="1"></i><b>(1)</b>
+    KafkaCompanion companion;
+
+    @Test
+    void testProcessor() {
+        companion.produceStrings().usingGenerator(i -&gt; new ProducerRecord&lt;&gt;("orders", UUID.randomUUID().toString())); <i class="conum" data-value="2"></i><b>(2)</b>
+
+        // Expect that the tested application processes orders from 'orders' topic and write to 'orders-processed' topic
+
+        ConsumerTask&lt;String, String&gt; orders = companion.consumeStrings().fromTopics("orders-processed", 10); <i class="conum" data-value="3"></i><b>(3)</b>
+        orders.awaitCompletion(); <i class="conum" data-value="4"></i><b>(4)</b>
+        assertEquals(10, orders.count());
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>@InjectKafkaCompanion</code> injects the <code>KafkaCompanion</code> instance, configured to access the Kafka broker created for tests.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Use <code>KafkaCompanion</code> to create producer task which writes 10 records to 'orders' topic.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Create consumer task which subscribes to 'orders-processed' topic and consumes 10 records.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Await completion of the consumer task.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>If the Kafka Dev Service is available during tests, <code>KafkaCompanionResource</code> uses the created Kafka broker, otherwise it creates a Kafka broker using <a href="https://github.com/strimzi/test-container">Strimzi Test Container</a>.</p>
+</div>
+<div class="paragraph">
+<p>The configuration of the created Kafka broker can be customized using <code>@ResourceArg</code>, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTestResource(value = KafkaCompanionResource.class, initArgs = {
+        @ResourceArg(name = "strimzi.kafka.image", value = "quay.io/strimzi/kafka:0.28.0-kafka-3.0.0"), // Image name
+        @ResourceArg(name = "kafka.port", value = "9092"), // Fixed port for kafka, by default it will be exposed on a random port
+        @ResourceArg(name = "kraft", value = "true"), // Enable Kraft mode
+        @ResourceArg(name = "num.partitions", value = "3"), // Other custom broker configurations
+})
+public class OrderProcessorTest {
+    // ...
+}</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="custom-test-resource"><a class="anchor" href="#custom-test-resource"></a>17.2.1. Custom test resource</h4>
 <div class="paragraph">
 <p>Alternatively, you can start a Kafka broker in a test resource.
 The following snippet shows a test resource starting a Kafka broker using <a href="https://www.testcontainers.org/modules/kafka/">Testcontainers</a>:</p>
@@ -2737,6 +2848,7 @@ The following snippet shows a test resource starting a Kafka broker using <a hre
 <td>Configure the Kafka bootstrap location, so the application connects to this broker.</td>
 </tr>
 </table>
+</div>
 </div>
 </div>
 </div>
@@ -3545,6 +3657,13 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>-1</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>propagate-headers</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A comma-separating list of incoming record headers to be propagated to the outgoing record</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>propagate-record-key</strong></span></p></td>
