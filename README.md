@@ -48,7 +48,7 @@ If for some reason you need to deploy from your local machine, follow these inst
 To write a blog:
 
 - create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
-  - `emailhash` you can get by running `echo -n your@email.org | md5` using an email you have registered from the [Gravatar service](https://gravatar.com),
+  - `emailhash` you can get by running `echo -n your@email.org | md5sum` on Linux or `echo -n your@email.org | md5` on macOS using an email you have registered from the [Gravatar service](https://gravatar.com),
      
 - create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_posts)
   - the file name is `yyyy-mm-dd-slug.adoc`
