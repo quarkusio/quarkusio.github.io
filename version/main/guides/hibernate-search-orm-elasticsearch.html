@@ -305,7 +305,7 @@ However, you can go right to the completed example.</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus create app org.acme:hibernate-search-orm-elasticsearch-quickstart \
-    --extension=hibernate-orm-panache,jdbc-postgresql,hibernate-search-orm-elasticsearch,resteasy-jackson \
+    --extension=hibernate-orm-panache,jdbc-postgresql,hibernate-search-orm-elasticsearch,resteasy-reactive-jackson \
     --no-code
 cd hibernate-search-orm-elasticsearch-quickstart</code></pre>
 </div>
@@ -326,7 +326,7 @@ cd hibernate-search-orm-elasticsearch-quickstart</code></pre>
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:999-SNAPSHOT:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=hibernate-search-orm-elasticsearch-quickstart \
-    -Dextensions="hibernate-orm-panache,jdbc-postgresql,hibernate-search-orm-elasticsearch,resteasy-jackson" \
+    -Dextensions="hibernate-orm-panache,jdbc-postgresql,hibernate-search-orm-elasticsearch,resteasy-reactive-jackson" \
     -DnoCode
 cd hibernate-search-orm-elasticsearch-quickstart</code></pre>
 </div>
@@ -351,7 +351,7 @@ cd hibernate-search-orm-elasticsearch-quickstart</code></pre>
 <p>Hibernate Search + Elasticsearch,</p>
 </li>
 <li>
-<p>RESTEasy and Jackson.</p>
+<p>RESTEasy Reactive and Jackson.</p>
 </li>
 </ul>
 </div>
@@ -527,19 +527,26 @@ public class Book extends PanacheEntity {
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.hibernate.search.elasticsearch;
 
+import java.util.List;
+import java.util.Optional;
+
+import javax.enterprise.event.Observes;
+import javax.inject.Inject;
 import javax.transaction.Transactional;
-import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
+import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 
 import org.acme.hibernate.search.elasticsearch.model.Author;
 import org.acme.hibernate.search.elasticsearch.model.Book;
-import org.jboss.resteasy.annotations.jaxrs.FormParam;
-import org.jboss.resteasy.annotations.jaxrs.PathParam;
+import org.hibernate.search.mapper.orm.session.SearchSession;
+import org.jboss.resteasy.reactive.RestForm;
+import org.jboss.resteasy.reactive.RestQuery;
+
+import io.quarkus.runtime.StartupEvent;
 
 @Path("/library")
 public class LibraryResource {
@@ -548,7 +555,7 @@ public class LibraryResource {
     @Path("book")
     @Transactional
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    public void addBook(@FormParam String title, @FormParam Long authorId) {
+    public void addBook(@RestForm String title, @RestForm Long authorId) {
         Author author = Author.findById(authorId);
         if (author == null) {
             return;
@@ -566,7 +573,7 @@ public class LibraryResource {
     @DELETE
     @Path("book/{id}")
     @Transactional
-    public void deleteBook(@PathParam Long id) {
+    public void deleteBook(Long id) {
         Book book = Book.findById(id);
         if (book != null) {
             book.author.books.remove(book);
@@ -578,7 +585,7 @@ public class LibraryResource {
     @Path("author")
     @Transactional
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    public void addAuthor(@FormParam String firstName, @FormParam String lastName) {
+    public void addAuthor(@RestForm String firstName, @RestForm String lastName) {
         Author author = new Author();
         author.firstName = firstName;
         author.lastName = lastName;
@@ -589,7 +596,7 @@ public class LibraryResource {
     @Path("author/{id}")
     @Transactional
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    public void updateAuthor(@PathParam Long id, @FormParam String firstName, @FormParam String lastName) {
+    public void updateAuthor(Long id, @RestForm String firstName, @RestForm String lastName) {
         Author author = Author.findById(id);
         if (author == null) {
             return;
@@ -602,7 +609,7 @@ public class LibraryResource {
     @DELETE
     @Path("author/{id}")
     @Transactional
-    public void deleteAuthor(@PathParam Long id) {
+    public void deleteAuthor(Long id) {
         Author author = Author.findById(id);
         if (author != null) {
             author.delete();
@@ -612,7 +619,7 @@ public class LibraryResource {
 </div>
 </div>
 <div class="paragraph">
-<p>Nothing out of the ordinary here: it is just good old Hibernate ORM with Panache operations in a standard JAX-RS service.</p>
+<p>Nothing out of the ordinary here: it is just good old Hibernate ORM with Panache operations in a REST service.</p>
 </div>
 <div class="paragraph">
 <p>In fact, the interesting part is that we will need to add very few elements to make our full text search application working.</p>
@@ -922,13 +929,13 @@ see <a href="#multiple-persistence-units-attaching-cdi">CDI integration</a>.</td
     @GET
     @Path("author/search") <i class="conum" data-value="3"></i><b>(3)</b>
     @Transactional
-    public List&lt;Author&gt; searchAuthors(@QueryParam String pattern, <i class="conum" data-value="4"></i><b>(4)</b>
-            @QueryParam Optional&lt;Integer&gt; size) {
+    public List&lt;Author&gt; searchAuthors(@RestQuery String pattern, <i class="conum" data-value="4"></i><b>(4)</b>
+            @RestQuery Optional&lt;Integer&gt; size) {
         return searchSession.search(Author.class) <i class="conum" data-value="5"></i><b>(5)</b>
                 .where(f -&gt;
                     pattern == null || pattern.trim().isEmpty() ?
-                            f.matchAll() : <i class="conum" data-value="6"></i><b>(6)</b>
-                            f.simpleQueryString()
+                        f.matchAll() : <i class="conum" data-value="6"></i><b>(6)</b>
+                        f.simpleQueryString()
                                 .fields("firstName", "lastName", "books.title").matching(pattern) <i class="conum" data-value="7"></i><b>(7)</b>
                 )
                 .sort(f -&gt; f.field("lastName_sort").then().field("firstName_sort")) <i class="conum" data-value="8"></i><b>(8)</b>
@@ -956,7 +963,7 @@ the mass indexer should then only be used when you change your indexing configur
 </tr>
 <tr>
 <td><i class="conum" data-value="4"></i><b>4</b></td>
-<td>Use the <code>org.jboss.resteasy.annotations.jaxrs.QueryParam</code> annotation type to avoid repeating the parameter name.</td>
+<td>Use the <code>org.jboss.resteasy.reactive.RestQuery</code> annotation type to avoid repeating the parameter name.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="5"></i><b>5</b></td>
