@@ -183,6 +183,13 @@
 <li><a href="#https">Using HTTPS or SSL/TLS</a></li>
 <li><a href="#aws-sdk-v2">Using the AWS Java SDK v2</a></li>
 <li><a href="#additional-requirements-for-client-ssl">Additional requirements for client SSL</a></li>
+<li><a href="#deploy-to-aws-lambda-using-a-container-image">Deploy to AWS Lambda using a Container Image</a>
+<ul class="sectlevel2">
+<li><a href="#jvm-container-image">JVM container image</a></li>
+<li><a href="#native-executable-container-image">Native executable container image</a></li>
+<li><a href="#deploying-a-container-image-lambda">Deploying a container image lambda</a></li>
+</ul>
+</li>
 <li><a href="#amazon-alexa-integration">Amazon Alexa Integration</a></li>
 </ul></div>
     <div>
@@ -1175,6 +1182,104 @@ If you are using a Docker image to build, then you must extract these files from
     runner
     cacerts
     libsunec.so</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="deploy-to-aws-lambda-using-a-container-image"><a class="anchor" href="#deploy-to-aws-lambda-using-a-container-image"></a>Deploy to AWS Lambda using a Container Image</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>AWS Lambda supports creating your lambdas by referencing <a href="https://docs.aws.amazon.com/lambda/latest/dg/lambda-images.html">container images</a> rather than uploading ZIP files. This can have some benefits such as bypassing the size limit of the uploaded ZIP files. You can define lambda functions for both native builds as well as regular JVM builds.</p>
+</div>
+<div class="sect2">
+<h3 id="jvm-container-image"><a class="anchor" href="#jvm-container-image"></a>JVM container image</h3>
+<div class="paragraph">
+<p>For a regular JVM distribution you need to base your image off the official AWS Java base images. Below is an example of a Dockerfile that would create a container image from your Quarkus Lambda project. It assumes that <code>mvn package</code> has been executed and binaries are available in the <code>target/</code> directory:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-Dockerfile hljs" data-lang="Dockerfile">FROM  public.ecr.aws/lambda/java:11
+
+ADD target/my-service-0.0.1-SNAPSHOT-runner.jar /var/task/lib/my-service.jar
+ADD target/lib/  /var/task/lib/
+
+CMD ["io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"]</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="native-executable-container-image"><a class="anchor" href="#native-executable-container-image"></a>Native executable container image</h3>
+<div class="paragraph">
+<p>To create a lambda container image that uses the native executable we&#8217;ll need to do things a little differently. In this case, we won&#8217;t need to use the <code>java:11</code> base image from AWS but instead we&#8217;ll use a special image that assumes that the runtime environment for the lambda is provided. The example below creates such a container. It assumes that a Maven build has been executed (such as <code>mvn package -Dnative=true</code>) and has generated the native binary into the <code>target/</code> directory. The binary needs to be named <code>bootstrap</code> and be placed in <code>/var/runtime/</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-Dockerfile hljs" data-lang="Dockerfile">FROM  public.ecr.aws/lambda/provided
+
+ADD target/my-service-0.0.1-SNAPSHOT-runner /var/runtime/bootstrap
+RUN chmod ugo+x /var/runtime/bootstrap
+
+CMD ["io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"]</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="deploying-a-container-image-lambda"><a class="anchor" href="#deploying-a-container-image-lambda"></a>Deploying a container image lambda</h3>
+<div class="paragraph">
+<p>Below, you can see how the container images created above can be built and deployed to AWS using the <code>docker</code> and <code>aws</code> command line tools. These instructions work for both native and jvm container images and assume that the <code>aws</code> command line tool has been logged in.</p>
+</div>
+<div class="sect3">
+<h4 id="build-the-docker-image"><a class="anchor" href="#build-the-docker-image"></a>Build the Docker image</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash"># Assuming we are located in the root directory of the project and created a Dockerfile there
+docker build .
+   [output omitted]
+    =&gt; exporting to image                    0.0s
+    =&gt; =&gt; exporting layers                   0.0s
+    =&gt; =&gt; writing image sha256:[SOME SHA]    0.0s</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="create-an-ecr-repository-in-the-users-aws-account"><a class="anchor" href="#create-an-ecr-repository-in-the-users-aws-account"></a>Create an ECR repository in the users AWS account</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">aws ecr create-repository --repository-name my/test/quarkus-lambda</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="tag-the-image-using-your-ecr-registry-information"><a class="anchor" href="#tag-the-image-using-your-ecr-registry-information"></a>Tag the image using your ECR registry information</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker tag [SOME SHA] [YOUR AWS ACCOUNT ID].dkr.ecr.[YOUR AWS ACCOUNT REGION].amazonaws.com/my/test/quarkus-lambda:v1</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="log-docker-into-your-ecr-registry-and-push-the-docker-image-to-it"><a class="anchor" href="#log-docker-into-your-ecr-registry-and-push-the-docker-image-to-it"></a>Log Docker into your ECR registry and push the Docker image to it</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">aws ecr get-login-password --region region | docker login --username AWS --password-stdin [YOUR AWS ACCOUNT ID].dkr.ecr.[YOUR AWS ACCOUNT REGION].amazonaws.com
+docker push [YOUR AWS ACCOUNT ID].dkr.ecr.[YOUR AWS ACCOUNT REGION].amazonaws.com/my/test/quarkus-lambda:v1</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="create-the-aws-lambda-function-with-the-aws-cli-tool"><a class="anchor" href="#create-the-aws-lambda-function-with-the-aws-cli-tool"></a>Create the AWS lambda function with the AWS CLI tool</h4>
+<div class="paragraph">
+<p>Make sure you reference the image you uploaded previously (assumes that a role exists that can be used to run the lambda). Please note that it is not unlikely that for the JVM lambda function, the default memory limit of <code>128Mb</code> will not be enough to run the function. In that case, you can increase the memory limit when creating the function by providing the <code>--memory-size 256</code> parameter to your <code>aws lambda create-function</code> command. You can also adjust the function in the AWS console after you&#8217;ve created it.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">aws lambda create-function --function-name my-test-quarkus-lambda-function --package-type Image --code ImageUri=[YOUR AWS ACCOUNT ID].dkr.ecr.[YOUR AWS ACCOUNT REGION].amazonaws.com/my/test/quarkus-lambda:v1 --role arn:aws:iam::[YOUR AWS ACCOUNT ID]:role/[SOME ROLE]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now you can use the AWS console to view and test your new lambda function.</p>
+</div>
 </div>
 </div>
 </div>
