@@ -212,7 +212,7 @@
 <li><a href="#testing-a-kafka-application">17. Testing a Kafka application</a>
 <ul class="sectlevel2">
 <li><a href="#testing-without-a-broker">17.1. Testing without a broker</a></li>
-<li><a href="#starting-kafka-in-a-test-resource">17.2. Starting Kafka in a test resource</a></li>
+<li><a href="#testing-using-a-kafka-broker">17.2. Testing using a Kafka broker</a></li>
 </ul>
 </li>
 <li><a href="#kafka-dev-services">18. Dev Services for Kafka</a>
@@ -530,7 +530,7 @@ import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
-import org.jboss.resteasy.annotations.SseElementType;
+import org.jboss.resteasy.reactive.RestStreamElementType;
 
 @Path("/prices")
 public class PriceResource {
@@ -542,7 +542,7 @@ public class PriceResource {
     @GET
     @Path("/prices")
     @Produces(MediaType.SERVER_SENT_EVENTS)
-    @SseElementType("text/plain")
+    @RestStreamElementType(MediaType.TEXT_PLAIN)
     public Multi&lt;Double&gt; stream() {
         return prices;
     }
@@ -562,7 +562,7 @@ in this example exposing it as a Server-Sent Events endpoint.</p>
 <td class="content">
 <div class="paragraph">
 <p>When consuming messages with <code>@Channel</code>, the application code is responsible for the subscription.
-In the example above, RESTEasy endpoint handles that for you.</p>
+In the example above, the RESTEasy Reactive endpoint handles that for you.</p>
 </div>
 </td>
 </tr>
@@ -997,6 +997,30 @@ Different consumer groups can thus scale independently according to the message 
 </div>
 </li>
 </ol>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>A common business requirement is to consume and process Kafka records in order.
+The Kafka broker preserves order of records inside a partition and not inside a topic.
+Therefore it is important to think about how records are partitioned inside a topic.
+The default partitioner uses record key hash to compute the partition for a record, or when the key is not defined, chooses a partition randomly per batch or records.</p>
+</div>
+<div class="paragraph">
+<p>During normal operation, a Kafka consumer preserves the order of records inside each partition assigned to it.
+Smallrye Reactive Messaging keeps this order for processing, unless <code>@Blocking(ordered = false)</code> is used (see <a href="#blocking-processing">Blocking processing</a>).</p>
+</div>
+<div class="paragraph">
+<p>Note that due to consumer rebalances, Kafka consumers only guarantee at-least-once processing of single records, meaning that uncommitted records <em>can</em> be processed again by consumers.</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 <div class="sect3">
 <h4 id="consumer-rebalance-listener"><a class="anchor" href="#consumer-rebalance-listener"></a>4.5.1. Consumer Rebalance Listener</h4>
@@ -2022,9 +2046,7 @@ import io.quarkus.kafka.client.serialization.ObjectMapperDeserializer;
 
 public class ListOfFruitDeserializer extends ObjectMapperDeserializer&lt;List&lt;Fruit&gt;&gt; {
     public ListOfFruitDeserializer() {
-        TypeReference&lt;List&lt;Fruit&gt;&gt; listType = new TypeReference&lt;&gt;() {
-        };
-        super(listType);
+        super(new TypeReference&lt;List&lt;Fruit&gt;&gt;() {});
     }
 }</code></pre>
 </div>
@@ -2117,8 +2139,7 @@ import io.quarkus.kafka.client.serialization.JsonbDeserializer;
 
 public class ListOfFruitDeserializer extends JsonbDeserializer&lt;List&lt;Fruit&gt;&gt; {
     public ListOfFruitDeserializer() {
-        Type listType = new ArrayList&lt;MyEntity&gt;() {}.getClass().getGenericSuperclass();
-        super(listType);
+        super(new ArrayList&lt;MyEntity&gt;() {}.getClass().getGenericSuperclass());
     }
 }</code></pre>
 </div>
@@ -2243,6 +2264,9 @@ Emitter&lt;Double&gt; priceEmitter;</code></pre>
 <p>classes generated from Avro schemas, as well as Avro <code>GenericRecord</code>, if Confluent or Apicurio Registry <em>serde</em> is present</p>
 <div class="ulist">
 <ul>
+<li>
+<p>in case multiple Avro serdes are present, serializer/deserializer must be configured manually for Avro-generated classes, because autodetection is impossible</p>
+</li>
 <li>
 <p>see <a href="kafka-schema-registry-avro">Using Apache Kafka with Schema Registry and Avro</a> for more information about using Confluent or Apicurio Registry libraries</p>
 </li>
@@ -2682,7 +2706,118 @@ Note that different in-memory channels are independent, and switching channel co
 </div>
 </div>
 <div class="sect2">
-<h3 id="starting-kafka-in-a-test-resource"><a class="anchor" href="#starting-kafka-in-a-test-resource"></a>17.2. Starting Kafka in a test resource</h3>
+<h3 id="testing-using-a-kafka-broker"><a class="anchor" href="#testing-using-a-kafka-broker"></a>17.2. Testing using a Kafka broker</h3>
+<div class="paragraph">
+<p>If you are using <a href="#kafka-dev-services">Dev Services for Kafka</a>, a Kafka broker will be started and available throughout the tests, unless it is disabled in <code>%test</code> profile.
+While it is possible to connect to this broker using Kafka Clients API,
+<a href="https://smallrye.io/smallrye-reactive-messaging/latest/kafka/test-companion/">Kafka Companion Library</a> proposes an easier way of interacting with a Kafka broker and, creating consumer, producer and admin actions inside tests.</p>
+</div>
+<div class="paragraph">
+<p>For using <code>KafkaCompanion</code> API in tests, start by adding the following dependency:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-test-kafka-companion&lt;/artifactId&gt;
+    &lt;scope&gt;test&lt;/scope&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>which provides <code>io.quarkus.test.kafka.KafkaCompanionResource</code> - an implementation of <code>io.quarkus.test.common.QuarkusTestResourceLifecycleManager</code>.</p>
+</div>
+<div class="paragraph">
+<p>Then use <code>@QuarkusTestResource</code> to configure the Kafka Companion in tests, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import java.util.UUID;
+
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.Test;
+
+import io.quarkus.test.common.QuarkusTestResource;
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.kafka.InjectKafkaCompanion;
+import io.quarkus.test.kafka.KafkaCompanionResource;
+import io.smallrye.reactive.messaging.kafka.companion.ConsumerTask;
+import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
+
+@QuarkusTest
+@QuarkusTestResource(KafkaCompanionResource.class)
+public class OrderProcessorTest {
+
+    @InjectKafkaCompanion <i class="conum" data-value="1"></i><b>(1)</b>
+    KafkaCompanion companion;
+
+    @Test
+    void testProcessor() {
+        companion.produceStrings().usingGenerator(i -&gt; new ProducerRecord&lt;&gt;("orders", UUID.randomUUID().toString())); <i class="conum" data-value="2"></i><b>(2)</b>
+
+        // Expect that the tested application processes orders from 'orders' topic and write to 'orders-processed' topic
+
+        ConsumerTask&lt;String, String&gt; orders = companion.consumeStrings().fromTopics("orders-processed", 10); <i class="conum" data-value="3"></i><b>(3)</b>
+        orders.awaitCompletion(); <i class="conum" data-value="4"></i><b>(4)</b>
+        assertEquals(10, orders.count());
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>@InjectKafkaCompanion</code> injects the <code>KafkaCompanion</code> instance, configured to access the Kafka broker created for tests.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Use <code>KafkaCompanion</code> to create producer task which writes 10 records to 'orders' topic.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Create consumer task which subscribes to 'orders-processed' topic and consumes 10 records.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Await completion of the consumer task.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>If the Kafka Dev Service is available during tests, <code>KafkaCompanionResource</code> uses the created Kafka broker, otherwise it creates a Kafka broker using <a href="https://github.com/strimzi/test-container">Strimzi Test Container</a>.</p>
+</div>
+<div class="paragraph">
+<p>The configuration of the created Kafka broker can be customized using <code>@ResourceArg</code>, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTestResource(value = KafkaCompanionResource.class, initArgs = {
+        @ResourceArg(name = "strimzi.kafka.image", value = "quay.io/strimzi/kafka:0.28.0-kafka-3.0.0"), // Image name
+        @ResourceArg(name = "kafka.port", value = "9092"), // Fixed port for kafka, by default it will be exposed on a random port
+        @ResourceArg(name = "kraft", value = "true"), // Enable Kraft mode
+        @ResourceArg(name = "num.partitions", value = "3"), // Other custom broker configurations
+})
+public class OrderProcessorTest {
+    // ...
+}</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="custom-test-resource"><a class="anchor" href="#custom-test-resource"></a>17.2.1. Custom test resource</h4>
 <div class="paragraph">
 <p>Alternatively, you can start a Kafka broker in a test resource.
 The following snippet shows a test resource starting a Kafka broker using <a href="https://www.testcontainers.org/modules/kafka/">Testcontainers</a>:</p>
@@ -2713,6 +2848,7 @@ The following snippet shows a test resource starting a Kafka broker using <a hre
 <td>Configure the Kafka bootstrap location, so the application connects to this broker.</td>
 </tr>
 </table>
+</div>
 </div>
 </div>
 </div>
@@ -2802,25 +2938,25 @@ You can set the port by configuring the <code>quarkus.kafka.devservices.port</co
 <div class="sect2">
 <h3 id="configuring-the-image"><a class="anchor" href="#configuring-the-image"></a>18.4. Configuring the image</h3>
 <div class="paragraph">
-<p>Dev Services for Kafka uses: <code>vectorized/redpanda</code> images.
-You can select any version from <a href="https://hub.docker.com/r/vectorized/redpanda" class="bare">https://hub.docker.com/r/vectorized/redpanda</a>:</p>
+<p>Dev Services for Kafka supports <a href="https://redpanda.com">Redpanda</a> and <a href="https://strimzi.io">Strimzi</a> (in <a href="https://github.com/apache/kafka/blob/trunk/config/kraft/README.md">Kraft</a> mode).</p>
+</div>
+<div class="paragraph">
+<p>Redpanda is a Kafka compatible event streaming platform.
+Because it provides a faster startup time dev services defaults to <code>vectorized/redpanda</code> images.
+You can select any version from <a href="https://hub.docker.com/r/vectorized/redpanda" class="bare">https://hub.docker.com/r/vectorized/redpanda</a>.</p>
+</div>
+<div class="paragraph">
+<p>Strimzi provides container images and Operators for running Apache Kafka on Kubernetes.
+While Strimzi is optimized for Kubernetes, the images work perfectly in classic container environments.
+Strimzi container images run "genuine" Kafka broker on JVM, which is slower to start.</p>
+</div>
+<div class="paragraph">
+<p>For Strimzi, you can select any image with a Kafka version which has Kraft support (2.8.1 and higher) from <a href="https://quay.io/repository/strimzi-test-container/test-container?tab=tags" class="bare">https://quay.io/repository/strimzi-test-container/test-container?tab=tags</a></p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.image-name=vectorized/redpanda:latest</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.image-name=quay.io/strimzi-test-container/test-container:0.100.0-kafka-3.1.0</code></pre>
 </div>
-</div>
-<div class="admonitionblock important">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-important" title="Important"></i>
-</td>
-<td class="content">
-Dev Services for Kafka only support Redpanda.
-</td>
-</tr>
-</table>
 </div>
 </div>
 <div class="sect2">
@@ -2903,6 +3039,25 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 <div class="sectionbody">
 <div class="paragraph">
 <p>More details about the SmallRye Reactive Messaging configuration can be found in the <a href="https://smallrye.io/smallrye-reactive-messaging/smallrye-reactive-messaging/3.1/kafka/kafka.html">SmallRye Reactive Messaging - Kafka Connector Documentation</a>.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Each channel can be disabled via configuration using:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.[incoming|outgoing].[channel].enabled=false</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>The most important attributes are listed in the tables below:</p>
@@ -3282,6 +3437,17 @@ You can explicitly ask for automatically generated unique id by setting this pro
 </div>
 </div>
 <div class="paragraph">
+<p>You can also pass any property supported by the underlying <a href="https://kafka.apache.org/documentation/#producerconfigs">Kafka producer</a>.</p>
+</div>
+<div class="paragraph">
+<p>For example, to configure the <code>max.block.ms</code> property, use:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.[channel].max.block.ms=10000</code></pre>
+</div>
+</div>
+<div class="paragraph">
 <p>Some producer client properties are configured to sensible default values:</p>
 </div>
 <div class="paragraph">
@@ -3491,6 +3657,13 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>-1</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>propagate-headers</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A comma-separating list of incoming record headers to be propagated to the outgoing record</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>propagate-record-key</strong></span></p></td>

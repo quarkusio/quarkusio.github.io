@@ -179,6 +179,7 @@
 </ul>
 </li>
 <li><a href="#testing-the-application">Testing the Application</a></li>
+<li><a href="#resolving-tenant-identifiers-with-annotations">Resolving Tenant Identifiers with Annotations</a></li>
 <li><a href="#programmatically-resolving-tenants-configuration">Programmatically Resolving Tenants Configuration</a></li>
 <li><a href="#tenant-resolution-for-oidc-web-app-applications">Tenant Resolution for OIDC 'web-app' applications</a></li>
 <li><a href="#disable-tenant">Disabling Tenant Configurations</a></li>
@@ -283,7 +284,7 @@ However, you can go right to the completed example.</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus create app org.acme:security-openid-connect-multi-tenancy-quickstart \
-    --extension=oidc,resteasy-jackson \
+    --extension=oidc,resteasy-reactive-jackson \
     --no-code
 cd security-openid-connect-multi-tenancy-quickstart</code></pre>
 </div>
@@ -304,7 +305,7 @@ cd security-openid-connect-multi-tenancy-quickstart</code></pre>
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:2.7.5.Final:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-openid-connect-multi-tenancy-quickstart \
-    -Dextensions="oidc,resteasy-jackson" \
+    -Dextensions="oidc,resteasy-reactive-jackson" \
     -DnoCode
 cd security-openid-connect-multi-tenancy-quickstart</code></pre>
 </div>
@@ -369,6 +370,7 @@ to your project by running the following command in your project base directory:
 import javax.inject.Inject;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
@@ -391,6 +393,7 @@ public class HomeResource {
      * @return the landing page HTML
      */
     @GET
+    @Produces("text/html")
     public String getHome() {
         StringBuilder response = new StringBuilder().append("&lt;html&gt;").append("&lt;body&gt;");
 
@@ -521,12 +524,12 @@ If you also use <a href="hibernate-orm#multitenancy">Hibernate ORM multitenancy<
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Default Tenant Configuration
-quarkus.oidc.auth-server-url=http://localhost:8180/auth/realms/quarkus
+quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus
 quarkus.oidc.client-id=multi-tenant-client
 quarkus.oidc.application-type=web-app
 
 # Tenant A Configuration
-quarkus.oidc.tenant-a.auth-server-url=http://localhost:8180/auth/realms/tenant-a
+quarkus.oidc.tenant-a.auth-server-url=http://localhost:8180/realms/tenant-a
 quarkus.oidc.tenant-a.client-id=multi-tenant-client
 quarkus.oidc.tenant-a.application-type=web-app
 
@@ -577,11 +580,14 @@ quarkus.oidc.tenant-b.authentication.scopes=email,profile,openid</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker run --name keycloak -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:{keycloak version}</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker run --name keycloak -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:{keycloak.version} start-dev</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>You should be able to access your Keycloak Server at <a href="http://localhost:8180/auth">localhost:8180/auth</a>.</p>
+<p>where <code>keycloak.version</code> should be set to <code>17.0.0</code> or higher.</p>
+</div>
+<div class="paragraph">
+<p>You should be able to access your Keycloak Server at <a href="http://localhost:8180">localhost:8180</a>.</p>
 </div>
 <div class="paragraph">
 <p>Log in as the <code>admin</code> user to access the Keycloak Administration Console. Username should be <code>admin</code> and password <code>admin</code>.</p>
@@ -762,6 +768,69 @@ user <code>alice</code> exists in both tenants, for the application they are dis
 </div>
 </div>
 <div class="sect1">
+<h2 id="resolving-tenant-identifiers-with-annotations"><a class="anchor" href="#resolving-tenant-identifiers-with-annotations"></a>Resolving Tenant Identifiers with Annotations</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>You can use the annotations and CDI interceptors for resolving the tenant identifiers as an alternative to using
+<code>quarkus.oidc.TenantResolver</code>. This can be done by setting the value for the key <code>OidcUtils.TENANT_ID_ATTRIBUTE</code> on
+the current <code>RoutingContext</code>.</p>
+</div>
+<div class="paragraph">
+<p>Assuming your application supports two OIDC tenants (<code>hr</code>, and default) first you need to define one
+annotation per tenant ID other than default:</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Proactive HTTP authentication needs to be disabled (<code>quarkus.http.auth.proactive=false</code>) for this to work. See
+<a href="security-built-in-authentication#proactive-authentication">Proactive Authentication</a> section for further details.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Inherited
+@InterceptorBinding
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.METHOD, ElementType.TYPE})
+public @interface HrTenant {
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Next, you&#8217;ll need one interceptor for each of those annotations:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Interceptor
+@HrTenant
+public class HrTenantInterceptor {
+    @Inject
+    RoutingContext routingContext;
+
+    @AroundInvoke
+    Object setTenant(InvocationContext context) throws Exception {
+        routingContext.put(OidcUtils.TENANT_ID_ATTRIBUTE, "hr");
+        return context.proceed();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now all methods and classes carrying <code>@HrTenant</code> will be authenticated using the OIDC provider configured by
+<code>quarkus.oidc.hr.auth-server-url</code>, while all other classes and methods will still be authenticated using the default
+OIDC provider.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="programmatically-resolving-tenants-configuration"><a class="anchor" href="#programmatically-resolving-tenants-configuration"></a>Programmatically Resolving Tenants Configuration</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -810,7 +879,7 @@ public class CustomTenantConfigResolver implements TenantConfigResolver {
         final OidcTenantConfig config = new OidcTenantConfig();
 
         config.setTenantId("tenant-c");
-        config.setAuthServerUrl("http://localhost:8180/auth/realms/tenant-c");
+        config.setAuthServerUrl("http://localhost:8180/realms/tenant-c");
         config.setClientId("multi-tenant-client");
         OidcTenantConfig.Credentials credentials = new OidcTenantConfig.Credentials();
 
@@ -958,13 +1027,13 @@ public class CustomTenantResolver implements TenantResolver {
 <div class="openblock description">
 <div class="content">
 <div class="paragraph">
-<p>The container image name to use, for container based DevServices providers. Image with a Quarkus based Keycloak-X distribution is used by default. Image with a WildFly based Keycloak distribution can be selected instead, for example: 'quay.io/keycloak/keycloak:16.1.0'.
- Note Keycloak-X and Keycloak images are initialized differently. By default, Dev Services for Keycloak will assume it is a Keycloak-X image if the image name contains a 'keycloak-x' string. Set 'quarkus.keycloak.devservices.keycloak-x-image' to override this check.</p>
+<p>The container image name to use, for container based DevServices providers. Image with a Quarkus based distribution is used by default. Image with a WildFly based distribution can be selected instead, for example: 'quay.io/keycloak/keycloak:17.0.1-legacy'.
+ Note Keycloak Quarkus and Keycloak WildFly images are initialized differently. By default, Dev Services for Keycloak will assume it is a Keycloak Quarkus image if the image version does not end with a '-legacy' string. Set 'quarkus.keycloak.devservices.keycloak-x-image' to override this check.</p>
 </div>
 </div>
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>quay.io/keycloak/keycloak-x:16.1.0</code></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>quay.io/keycloak/keycloak:17.0.1</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -2112,6 +2181,20 @@ public class CustomTenantResolver implements TenantResolver {
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.authentication.response-mode"></a><code><a href="#quarkus-oidc_quarkus.oidc.authentication.response-mode">quarkus.oidc.authentication.response-mode</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Authorization code flow response mode</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>query</code>, <code>form-post</code></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>query</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-oidc_quarkus.oidc.authentication.redirect-path"></a><code><a href="#quarkus-oidc_quarkus.oidc.authentication.redirect-path">quarkus.oidc.authentication.redirect-path</a></code></p>
 </div>
 <div class="openblock description">
@@ -2151,6 +2234,20 @@ public class CustomTenantResolver implements TenantResolver {
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.authentication.error-path"></a><code><a href="#quarkus-oidc_quarkus.oidc.authentication.error-path">quarkus.oidc.authentication.error-path</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Relative path to the public endpoint which will process the error response from the OIDC authorization endpoint. If the user authentication has failed then the OIDC provider will return an 'error' and an optional 'error_description' parameters, instead of the expected authorization 'code'. If this property is set then the user will be redirected to the endpoint which can return a user friendly error description page. It has to start from a forward slash and will be appended to the request URI&#8217;s host and port. For example, if it is set as '/error' and the current request URI is 'https://localhost:8080/callback?error=invalid_scope' then a redirect will be made to 'https://localhost:8080/error?error=invalid_scope'. If this property is not set then HTTP 401 status will be returned in case of the user authentication failure.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -2323,6 +2420,34 @@ public class CustomTenantResolver implements TenantResolver {
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.authentication.pkce-required"></a><code><a href="#quarkus-oidc_quarkus.oidc.authentication.pkce-required">quarkus.oidc.authentication.pkce-required</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Requires that a Proof Key for Code Exchange (PKCE) is used.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.authentication.pkce-secret"></a><code><a href="#quarkus-oidc_quarkus.oidc.authentication.pkce-secret">quarkus.oidc.authentication.pkce-secret</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Secret which will be used to encrypt a Proof Key for Code Exchange (PKCE) code verifier in the code flow state. This secret must be set if PKCE is required but no client secret is set. The length of the secret which will be used to encrypt the code verifier must be 32 characters long.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-oidc_quarkus.oidc.token-state-manager.strategy"></a><code><a href="#quarkus-oidc_quarkus.oidc.token-state-manager.strategy">quarkus.oidc.token-state-manager.strategy</a></code></p>
 </div>
 <div class="openblock description">
@@ -2348,6 +2473,34 @@ public class CustomTenantResolver implements TenantResolver {
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.token-state-manager.encryption-required"></a><code><a href="#quarkus-oidc_quarkus.oidc.token-state-manager.encryption-required">quarkus.oidc.token-state-manager.encryption-required</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Requires that the tokens are encrypted before being stored in the cookies.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.token-state-manager.encryption-secret"></a><code><a href="#quarkus-oidc_quarkus.oidc.token-state-manager.encryption-secret">quarkus.oidc.token-state-manager.encryption-secret</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Secret which will be used to encrypt the tokens. This secret must be set if the token encryption is required but no client secret is set. The length of the secret which will be used to encrypt the tokens must be 32 characters long.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -3441,6 +3594,20 @@ public class CustomTenantResolver implements TenantResolver {
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.authentication.response-mode"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.authentication.response-mode">quarkus.oidc."tenant".authentication.response-mode</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Authorization code flow response mode</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>query</code>, <code>form-post</code></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>query</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-oidc_quarkus.oidc.-tenant-.authentication.redirect-path"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.authentication.redirect-path">quarkus.oidc."tenant".authentication.redirect-path</a></code></p>
 </div>
 <div class="openblock description">
@@ -3480,6 +3647,20 @@ public class CustomTenantResolver implements TenantResolver {
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.authentication.error-path"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.authentication.error-path">quarkus.oidc."tenant".authentication.error-path</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Relative path to the public endpoint which will process the error response from the OIDC authorization endpoint. If the user authentication has failed then the OIDC provider will return an 'error' and an optional 'error_description' parameters, instead of the expected authorization 'code'. If this property is set then the user will be redirected to the endpoint which can return a user friendly error description page. It has to start from a forward slash and will be appended to the request URI&#8217;s host and port. For example, if it is set as '/error' and the current request URI is 'https://localhost:8080/callback?error=invalid_scope' then a redirect will be made to 'https://localhost:8080/error?error=invalid_scope'. If this property is not set then HTTP 401 status will be returned in case of the user authentication failure.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -3666,6 +3847,34 @@ public class CustomTenantResolver implements TenantResolver {
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.authentication.pkce-required"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.authentication.pkce-required">quarkus.oidc."tenant".authentication.pkce-required</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Requires that a Proof Key for Code Exchange (PKCE) is used.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.authentication.pkce-secret"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.authentication.pkce-secret">quarkus.oidc."tenant".authentication.pkce-secret</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Secret which will be used to encrypt a Proof Key for Code Exchange (PKCE) code verifier in the code flow state. This secret must be set if PKCE is required but no client secret is set. The length of the secret which will be used to encrypt the code verifier must be 32 characters long.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.strategy"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.strategy">quarkus.oidc."tenant".token-state-manager.strategy</a></code></p>
 </div>
 <div class="openblock description">
@@ -3691,6 +3900,34 @@ public class CustomTenantResolver implements TenantResolver {
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.encryption-required"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.encryption-required">quarkus.oidc."tenant".token-state-manager.encryption-required</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Requires that the tokens are encrypted before being stored in the cookies.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.encryption-secret"></a><code><a href="#quarkus-oidc_quarkus.oidc.-tenant-.token-state-manager.encryption-secret">quarkus.oidc."tenant".token-state-manager.encryption-secret</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Secret which will be used to encrypt the tokens. This secret must be set if the token encryption is required but no client secret is set. The length of the secret which will be used to encrypt the tokens must be 32 characters long.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">

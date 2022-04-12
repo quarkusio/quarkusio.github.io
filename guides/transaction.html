@@ -166,7 +166,8 @@
 <li><a href="#declarative-approach">Declarative approach</a></li>
 <li><a href="#transaction-configuration">Transaction Configuration</a></li>
 <li><a href="#reactive-extensions">Reactive extensions</a></li>
-<li><a href="#api-approach">API approach</a></li>
+<li><a href="#programmatic-approach">Programmatic Approach</a></li>
+<li><a href="#legacy-api-approach">Legacy API approach</a></li>
 </ul>
 </li>
 <li><a href="#configuring-the-transaction-timeout">Configuring the transaction timeout</a></li>
@@ -216,7 +217,8 @@ Add the following to your build file:</p>
 <h2 id="starting-and-stopping-transactions-defining-your-boundaries"><a class="anchor" href="#starting-and-stopping-transactions-defining-your-boundaries"></a>Starting and stopping transactions: defining your boundaries</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>You can define your transaction boundaries the easy way, or the less easy way :)</p>
+<p>You can define your transaction boundaries either declarativly with <code>@Transactional</code> or programmatically with <code>QuarkusTransaction</code>. You can also use
+the JTA <code>UserTransaction</code> API directly, however this is less user friendly than <code>QuarkusTransaction</code>.</p>
 </div>
 <div class="sect2">
 <h3 id="declarative-approach"><a class="anchor" href="#declarative-approach"></a>Declarative approach</h3>
@@ -387,7 +389,105 @@ work is really done, and not just until the reactive method returns.</p>
 </div>
 </div>
 <div class="sect2">
-<h3 id="api-approach"><a class="anchor" href="#api-approach"></a>API approach</h3>
+<h3 id="programmatic-approach"><a class="anchor" href="#programmatic-approach"></a>Programmatic Approach</h3>
+<div class="paragraph">
+<p>You can use static methods on <code>QuarkusTransaction</code> to define transaction boundaries. This provides two different options,
+a functional approach that allows you to run a lambda within the scope of a transaction, or by using explicit <code>begin</code>,
+<code>commit</code> and <code>rollback</code> methods.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.narayana.jta.QuarkusTransaction;
+import io.quarkus.narayana.jta.RunOptions;
+
+public class TransactionExample {
+
+    public void beginExample() {
+        QuarkusTransaction.begin();
+        //do work
+        QuarkusTransaction.commit();
+
+        QuarkusTransaction.begin(QuarkusTransaction.beginOptions()
+                .timeout(10));
+        //do work
+        QuarkusTransaction.rollback();
+    }
+
+    public void lambdaExample() {
+        QuarkusTransaction.run(() -&gt; {
+            //do work
+        });
+
+
+        int result = QuarkusTransaction.call(QuarkusTransaction.runOptions()
+                .timeout(10)
+                .exceptionHandler((throwable) -&gt; {
+                    if (throwable instanceof SomeException) {
+                        return RunOptions.ExceptionResult.COMMIT;
+                    }
+                    return RunOptions.ExceptionResult.ROLLBACK;
+                })
+                .semantic(RunOptions.Semantic.SUSPEND_EXISTING), () -&gt; {
+            //do work
+            return 0;
+        });
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The above example shows a few different ways the API can be used. The first method simply calls begin, does some work and commits it.
+This created transaction is tied to the CDI request scope, so if it is still active when the request scope is destroyed then it will
+be automatically rolled back. This removes the need to explicitly catch exceptions and call <code>rollback</code>, and acts as a safety net
+against inadvertent transaction leaks, however it does mean that this can only be used when the request scope is active. The second
+example in the method calls begin with a timeout option, and then rolls back the transaction.</p>
+</div>
+<div class="paragraph">
+<p>The second example shows the use of lambda scoped transactions, the first just runs a <code>Runnable</code> within a transaction, the second,
+runs <code>Callable</code> with some specific options. In particular the <code>exceptionHandler</code> method can be used to control if the transaction
+is rolled back or not on exception, and the <code>semantic</code> method controls the behaviour if an existing transaction is already started.</p>
+</div>
+<div class="paragraph">
+<p>The following semantics are supported:</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1">DISALLOW_EXISTING</dt>
+<dd>
+<p>If a transaction is already associated with the current thread a <code>QuarkusTransactionException</code> will be thrown,
+otherwise a new transaction is started, and follows all the normal lifecycle rules.</p>
+</dd>
+<dt class="hdlist1">JOIN_EXISTING</dt>
+<dd>
+<p>If no transaction is active then a new transaction will be started, and committed when the method ends.
+If an exception is thrown the exception handler registered by <code>#exceptionHandler(Function)</code> will be called to
+decide if the TX should be committed or rolled back.
+If an existing transaction is active then the method is run in the context of the existing transaction. If an
+exception is thrown the exception handler will be called, however
+a result of <code>ExceptionResult#ROLLBACK</code> will result in the TX marked as rollback only, while a result of
+<code>ExceptionResult#COMMIT</code> will result in no action being taken.</p>
+</dd>
+<dt class="hdlist1">REQUIRE_NEW</dt>
+<dd>
+<p>This is the default semantic.
+If an existing transaction is already associated with the current thread then the transaction is suspended, and
+resumed once
+the current transaction is complete.
+A new transaction is started after the existing transaction is suspended, and follows all the normal lifecycle rules.</p>
+</dd>
+<dt class="hdlist1">SUSPEND_EXISTING</dt>
+<dd>
+<p>If no transaction is active then this semantic is basically a no-op.
+If a transaction is active then it is suspended, and resumed after the task is run.
+The exception handler will never be consulted when this semantic is in use, specifying both an exception handler and
+this semantic is considered an error.
+This semantic allows for code to easily be run outside the scope of a transaction.</p>
+</dd>
+</dl>
+</div>
+</div>
+<div class="sect2">
+<h3 id="legacy-api-approach"><a class="anchor" href="#legacy-api-approach"></a>Legacy API approach</h3>
 <div class="paragraph">
 <p>The less easy way is to inject a <code>UserTransaction</code> and use the various transaction demarcation methods.</p>
 </div>

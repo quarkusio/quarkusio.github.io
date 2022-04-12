@@ -203,9 +203,10 @@ If you add the <code>quarkus-quartz</code> dependency to your project the lightw
 <h2 id="scheduled-methods"><a class="anchor" href="#scheduled-methods"></a>1. Scheduled Methods</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If you annotate a method with <code>@io.quarkus.scheduler.Scheduled</code> it is automatically scheduled for invocation.
-In fact, such a method must be a non-private non-static method of a CDI bean.
-As a consequence of being a method of a CDI bean a scheduled method can be annotated with interceptor bindings, such as <code>@javax.transaction.Transactional</code> and <code>@org.eclipse.microprofile.metrics.annotation.Counted</code>.</p>
+<p>A method annotated with <code>@io.quarkus.scheduler.Scheduled</code> is automatically scheduled for invocation.
+A scheduled method must not be abstract or private.
+It may be either static or non-static.
+A scheduled method can be annotated with interceptor bindings, such as <code>@javax.transaction.Transactional</code> and <code>@org.eclipse.microprofile.metrics.annotation.Counted</code>.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -214,7 +215,7 @@ As a consequence of being a method of a CDI bean a scheduled method can be annot
 <i class="fa icon-note" title="Note"></i>
 </td>
 <td class="content">
-If there is no CDI scope defined on the declaring class then <code>@Singleton</code> is used.
+If there is a bean class that has no scope and declares at least one non-static method annotated with <code>@Scheduled</code> then <code>@Singleton</code> is used.
 </td>
 </tr>
 </table>
@@ -234,10 +235,42 @@ The annotation is repeatable so a single method could be scheduled multiple time
 </tr>
 </table>
 </div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Subclasses never inherit the metadata of a <code>@Scheduled</code> method declared on a superclass. In the following example, the <code>everySecond()</code> method is only invoked upon the instance of <code>Jobs</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">class Jobs {
+
+   @Scheduled(every = "1s")
+   void everySecond() {
+     // ..do something
+   }
+}
+
+@Singleton
+class MyJobs extends Jobs {
+}</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>A CDI event of type <code>io.quarkus.scheduler.SuccessfulExecution</code> is fired synchronously and asynchronously when an execution of a scheduled method is successful. A CDI event of type <code>io.quarkus.scheduler.FailedExecution</code> is fired synchronously and asynchronously  when an execution of a scheduled method throws an exception.</p>
+</div>
 <div class="sect2">
 <h3 id="triggers"><a class="anchor" href="#triggers"></a>1.1. Triggers</h3>
 <div class="paragraph">
-<p>A trigger is defined either by the <code>@Scheduled#cron()</code> or by the <code>@Scheduled#every()</code> attributes.
+<p>A trigger is defined either by the <code>@Scheduled#cron()</code> or by the <code>@Scheduled#every()</code> attribute.
 If both are specified, the cron expression takes precedence.
 If none is specified, the build fails with an <code>IllegalStateException</code>.</p>
 </div>
@@ -335,9 +368,9 @@ void myMethod() { }</code></pre>
 <div class="sect2">
 <h3 id="identity"><a class="anchor" href="#identity"></a>1.2. Identity</h3>
 <div class="paragraph">
-<p>By default, a unique id is generated for each scheduled method.
-This id is used in log messages and during debugging.
-Sometimes a possibility to specify an explicit id may come in handy.</p>
+<p>By default, a unique identifier is generated for each scheduled method.
+This identifier is used in log messages, during debugging and as a parameter of some <code>io.quarkus.scheduler.Scheduler</code> methods.
+Therefore, a possibility to specify an explicit identifier may come in handy.</p>
 </div>
 <div class="listingblock">
 <div class="title">Identity Example</div>
@@ -590,6 +623,11 @@ class MyService {
       }
       scheduler.resume("myIdentity"); <i class="conum" data-value="3"></i><b>(3)</b>
       scheduler.resume(); <i class="conum" data-value="4"></i><b>(4)</b>
+      scheduler.getScheduledJobs(); <i class="conum" data-value="5"></i><b>(5)</b>
+      Trigger jobTrigger = scheduler.getScheduledJob("myIdentity"); <i class="conum" data-value="6"></i><b>(6)</b>
+      if (jobTrigger != null &amp;&amp; jobTrigger.isOverdue()){ <i class="conum" data-value="7"></i><b>(7)</b>
+        // the job is late to the party.
+      }
    }
 }</code></pre>
 </div>
@@ -611,6 +649,18 @@ class MyService {
 <tr>
 <td><i class="conum" data-value="4"></i><b>4</b></td>
 <td>Resume the scheduler.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>List all jobs in the scheduler.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>Get Trigger metadata for a specific scheduled job by its identity.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="7"></i><b>7</b></td>
+<td>You can configure the grace period for isOverdue() with quarkus.scheduler.overdue-grace-period</td>
 </tr>
 </table>
 </div>
@@ -744,8 +794,44 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
 </tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-scheduler_quarkus.scheduler.overdue-grace-period"></a><code><a href="#quarkus-scheduler_quarkus.scheduler.overdue-grace-period">quarkus.scheduler.overdue-grace-period</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Scheduled task will be flagged as overdue if next execution time is exceeded by this period.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/time/Duration.html">Duration</a>
+  <a href="#duration-note-anchor" title="More information about the Duration format"><span class="icon"><i class="fa fa-question-circle"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1S</code></p></td>
+</tr>
 </tbody>
 </table>
+<div id="duration-note-anchor" class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="title">About the Duration format</div>
+<div class="paragraph">
+<p>The format for durations uses the standard <code>java.time.Duration</code> format.
+You can learn more about it in the <a href="https://docs.oracle.com/javase/8/docs/api/java/time/Duration.html#parse-java.lang.CharSequence-">Duration#parse() javadoc</a>.</p>
+</div>
+<div class="paragraph">
+<p>You can also provide duration values starting with a number.
+In this case, if the value consists only of a number, the converter treats the value as seconds.
+Otherwise, <code>PT</code> is implicitly prepended to the value to obtain a standard <code>java.time.Duration</code> format.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
     </div>

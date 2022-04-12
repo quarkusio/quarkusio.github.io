@@ -154,6 +154,7 @@
     <div class="hide-mobile toc"><ul class="sectlevel1">
 <li><a href="#quarkus-security-dependency">Quarkus Security Dependency</a></li>
 <li><a href="#httpauthenticationmechanism-customization">HttpAuthenticationMechanism Customization</a></li>
+<li><a href="#dealing-with-more-than-one-httpauthenticationmechanism">Dealing with more than one HttpAuthenticationMechanism</a></li>
 <li><a href="#security-identity-customization">Security Identity Customization</a></li>
 <li><a href="#jaxrs-security-context">Custom JAX-RS SecurityContext</a></li>
 <li><a href="#disabling-authorization">Disabling Authorization</a></li>
@@ -233,9 +234,73 @@ public class CustomAwareJWTAuthMechanism implements HttpAuthenticationMechanism 
 	}
 
 	@Override
-	public HttpCredentialTransport getCredentialTransport() {
+	public Uni&lt;HttpCredentialTransport&gt; getCredentialTransport() {
 		return delegate.getCredentialTransport();
 	}
+
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="dealing-with-more-than-one-httpauthenticationmechanism"><a class="anchor" href="#dealing-with-more-than-one-httpauthenticationmechanism"></a>Dealing with more than one HttpAuthenticationMechanism</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>More than one <code>HttpAuthenticationMechanism</code> can be combined, for example, the built-in <code>Basic</code> or <code>JWT</code> mechanism provided by <code>quarkus-smallrye-jwt</code> has to be used to verify the service clients credentials passed as the HTTP <code>Authorization</code> <code>Basic</code> or <code>Bearer</code> scheme values while the <code>Authorization Code</code> mechanism provided by <code>quarkus-oidc</code> has to be used to authenticate the users with <code>Keycloak</code> or other <code>OpenId Connect</code> providers.</p>
+</div>
+<div class="paragraph">
+<p>In such cases the mechanisms are asked to verify the credentials in turn until a <code>SecurityIdentity</code> is created. The mechanisms are sorted in the descending order using their priority. <code>Basic</code> authentication mechanism has the highest priority of <code>2000</code>, followed by the <code>Authorization Code</code> one with the priority of <code>1001</code>, with all other mechanisms provided by Quarkus having the priority of <code>1000</code>.</p>
+</div>
+<div class="paragraph">
+<p>If no credentials are provided then the mechanism specific challenge is created, for example, <code>401</code> status is returned by either <code>Basic</code> or <code>JWT</code> mechanisms, URL redirecting the user to the <code>OpenId Connect</code> provider is returned by <code>quarkus-oidc</code>, etc.</p>
+</div>
+<div class="paragraph">
+<p>So if <code>Basic</code> and <code>Authorization Code</code> mechanisms are combined then <code>401</code> will be returned if no credentials are provided and if <code>JWT</code> and <code>Authorization Code</code> mechanisms are combined then a redirect URL will be returned.</p>
+</div>
+<div class="paragraph">
+<p>In some cases such a default logic of selecting the challenge is exactly what is required by a given application but sometimes it may not meet the requirements. In such cases (or indeed in other similar cases where you&#8217;d like to change the order in which the mechanisms are asked to handle the current authentication or challenge request), you can create a custom mechanism and choose which mechanism should create a challenge, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class CustomAwareJWTAuthMechanism implements HttpAuthenticationMechanism {
+
+	private static final Logger LOG = LoggerFactory.getLogger(CustomAwareJWTAuthMechanism.class);
+
+	@Inject
+	JWTAuthMechanism jwt;
+
+        @Inject
+	OidcAuthenticationMechanism oidc;
+
+	@Override
+	public Uni&lt;SecurityIdentity&gt; authenticate(RoutingContext context, IdentityProviderManager identityProviderManager) {
+	    return selectBetweenJwtAndOidc(context).authenticate(context, identityProviderManager);
+	}
+
+	@Override
+	public Uni&lt;ChallengeData&gt; getChallenge(RoutingContext context) {
+		return selectBetweenJwtAndOidcChallenge(context).getChallenge(context);
+	}
+
+	@Override
+	public Set&lt;Class&lt;? extends AuthenticationRequest&gt;&gt; getCredentialTypes() {
+		return selectBetweenJwtAndOidc(context).getCredentialTypes();
+	}
+
+	@Override
+	public HttpCredentialTransport getCredentialTransport(RoutingContext context) {
+		return selectBetweenJwtAndOidc(context).getCredentialTransport();
+	}
+
+        private HttpAuthenticationMechanism selectBetweenJwtAndOidc(RoutingContext context) {
+            ....
+        }
+
+        private HttpAuthenticationMechanism selectBetweenJwtAndOidcChallenge(RoutingContext context) {
+            // for example, if no `Authorization` header is available and no `code` parameter is provided - use `jwt` to create a challenge
+        }
 
 }</code></pre>
 </div>
@@ -415,7 +480,7 @@ public class SecurityOverrideFilter implements ContainerRequestFilter {
 <h2 id="disabling-authorization"><a class="anchor" href="#disabling-authorization"></a>Disabling Authorization</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If you have a good reason to disable the authorization (for example, when testing) then you can register a custom <code>AuthorizationController</code>:</p>
+<p>If you have a good reason to disable the authorization then you can register a custom <code>AuthorizationController</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -431,6 +496,14 @@ public class DisabledAuthController extends AuthorizationController {
         return !disableAuthorization;
     }
 }</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For manual testing Quarkus provides a convenient config property to disable authorization in dev mode. This property has the exact same effect as the custom <code>AuthorizationController</code> shown above, but is only available in dev mode:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.security.auth.enabled-in-dev-mode=false</code></pre>
 </div>
 </div>
 <div class="paragraph">

@@ -897,7 +897,7 @@ The current context can be accessed via the implicit binding <code>this</code>.
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">orEmpty</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Outputs an empty list if the previous part cannot be resolved or resolves to <code>null</code>.</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>{#for pet in pets.orEmpty}{pet.name}{/for}</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>{pets.orEmpty.size}</code> outputs <code>0</code> if <code>pets</code> is not resolvable or <code>null</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Ternary Operator</p></td>
@@ -1145,6 +1145,62 @@ If a part of an expression resolves to a <code>CompletionStage</code>, the resol
 For example, if there is an expression <code>{foo.size}</code> and <code>foo</code> resolves to <code>CompletionStage&lt;List&lt;String&gt;&gt;</code> then <code>size</code> is resolved against the completed result, i.e. <code>List&lt;String&gt;</code>.
 If a part of an expression resolves to a <code>Uni</code>, a <code>CompletionStage</code> is first created from <code>Uni</code> using <code>Uni#subscribeAsCompletionStage()</code> and then evaluated as described above.</p>
 </div>
+<div class="paragraph">
+<p>It can happen that a <code>CompletionStage</code> never completes or a <code>Uni</code> emits no item/failure.
+In this case, the rendering methods (such as <code>TemplateInstance#render()</code> and <code>TemplateInstance#createUni()</code>) fail after a specific timeout.
+The timeout can be specified as a template instance <code>timeout</code> attribute.
+If no <code>timeout</code> attribute is set the global rendering timeout is used.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+In Quarkus, the default timeout can be set via the <code>io.quarkus.qute.timeout</code> configuration property. If using Qute standalone then the <code>EngineBuilder#timeout()</code> method can be used.
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+In previous versions, only the <code>TemplateInstance#render()</code> method honored the timeout attribute. You can use the <code>io.quarkus.qute.useAsyncTimeout=false</code> config property to preserve the old behavior and take care of the timeout yourself, for example <code>templateInstance.createUtni().ifNoItem().after(Duration.ofMillis(500)).fail()</code>.
+</td>
+</tr>
+</table>
+</div>
+<div class="sect4">
+<h5 id="how-to-identify-a-problematic-part-of-the-template"><a class="anchor" href="#how-to-identify-a-problematic-part-of-the-template"></a>3.4.8.1. How to Identify a Problematic Part of the Template</h5>
+<div class="paragraph">
+<p>It&#8217;s not easy to find the problematic part of a template when a timeout occurs.
+You can set the <code>TRACE</code> level for the logger <code>io.quarkus.qute.nodeResolve</code> and try analyze the log output afterwards.</p>
+</div>
+<div class="listingblock">
+<div class="title"><code>application.properties</code> Example</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.log.category."io.quarkus.qute.nodeResolve".min-level=TRACE
+quarkus.log.category."io.quarkus.qute.nodeResolve".level=TRACE</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>You should see the following pair of log messages for every expression and section used in a template:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>TRACE [io.qua.qut.nodeResolve] Resolve {name} started: Template hello.html at line 8
+TRACE [io.qua.qut.nodeResolve] Resolve {name} completed: Template hello.html at line 8</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If a <code>completed</code> log message is missing then you have a good candidate to explore.</p>
+</div>
+</div>
 </div>
 <div class="sect3">
 <h4 id="missing-properties"><a class="anchor" href="#missing-properties"></a>3.4.9. Missing Properties</h4>
@@ -1248,8 +1304,11 @@ A section helper that defines the logic of a section can "execute" any of the bl
 <h4 id="loop_section"><a class="anchor" href="#loop_section"></a>3.5.1. Loop Section</h4>
 <div class="paragraph">
 <p>The loop section makes it possible to iterate over an instance of <code>Iterable</code>, <code>Iterator</code>, array, <code>Map</code> (element is a <code>Map.Entry</code>), <code>Stream</code>, <code>Integer</code> and <code>int</code> (primitive value).
-It has two flavors.
-The first one is using the <code>each</code> name and <code>it</code> is an implicit alias for the iteration element.</p>
+A <code>null</code> parameter value results in a no-op.</p>
+</div>
+<div class="paragraph">
+<p>This section has two flavors.
+The first one is using the name <code>each</code> and <code>it</code> is an implicit alias for the iteration element.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -1267,7 +1326,7 @@ The first one is using the <code>each</code> name and <code>it</code> is an impl
 </table>
 </div>
 <div class="paragraph">
-<p>The other form is using the <code>for</code> name and can specify the alias used to reference the iteration element:</p>
+<p>The other form is using the name <code>for</code> and specifies the alias used to reference the iteration element:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -2386,6 +2445,12 @@ If an invalid/incorrect expression is found then the build fails.</p>
 <p>An optional <em>parameter declaration</em> is used to bind a Java type to expressions whose first part matches the parameter name.
 Parameter declarations are specified directly in a template.</p>
 </div>
+<div class="paragraph">
+<p>A Java type should be always identified with a <em>fully qualified name</em> unless it&#8217;s a JDK type from the <code>java.lang</code> package - in this case, the package name is optional.
+Parameterized types are supported, however wildcards are always ignored - only the upper/lower bound is taken into account.
+For example, the parameter declaration <code>{@java.util.List&lt;? extends org.acme.Foo&gt; list}</code> is recognized as <code>{@java.util.List&lt;org.acme.Foo&gt; list}</code>.
+Type variables are not handled in a special way and should never be used.</p>
+</div>
 <div class="listingblock">
 <div class="title">Parameter Declaration Example</div>
 <div class="content">
@@ -2480,6 +2545,35 @@ Method parameters of <a href="#typesafe_templates">type-safe templates</a> are a
 </tr>
 </table>
 </div>
+<div class="listingblock">
+<div class="title">More Parameter Declarations Examples</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">{@int pages} <i class="conum" data-value="1"></i><b>(1)</b>
+{@java.util.List&lt;String&gt; strings} <i class="conum" data-value="2"></i><b>(2)</b>
+{@java.util.Map&lt;String,? extends Number&gt; numbers} <i class="conum" data-value="3"></i><b>(3)</b>
+{@java.util.Optional&lt;?&gt; param} <i class="conum" data-value="4"></i><b>(4)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>A primitive type.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td><code>String</code> is replaced with <code>java.lang.String</code>: <code>{@java.util.List&lt;java.lang.String&gt; strings}</code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The wildcard is ignored and the upper bound is used instead: <code>{@java.util.Map&lt;String,Number&gt;}</code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>The wildcard is ignored and the <code>java.lang.Object</code> is used instead: <code>{@java.util.Optional&lt;java.lang.Object&gt;}</code></td>
+</tr>
+</table>
+</div>
 </div>
 <div class="sect2">
 <h3 id="typesafe_templates"><a class="anchor" href="#typesafe_templates"></a>4.4. Type-safe Templates</h3>
@@ -2513,7 +2607,6 @@ and <code>/src/main/resources/templates/ItemResource/goodbye.txt</code>. Groupin
 import javax.inject.Inject;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 
@@ -2532,7 +2625,7 @@ public class ItemResource {
     @GET
     @Path("{id}")
     @Produces(MediaType.TEXT_HTML)
-    public TemplateInstance get(@PathParam("id") Integer id) {
+    public TemplateInstance get(Integer id) {
         return Templates.item(service.findItem(id)); <i class="conum" data-value="3"></i><b>(3)</b>
     }
 }</code></pre>
@@ -3790,7 +3883,7 @@ Additionally, there are two ways to define a localized bundle:</p>
 <p>Create an interface that extends the default interface that is annotated with <code>@Localized</code></p>
 </li>
 <li>
-<p>Create an UTF-8 encoded file located in <code>src/main/resources/messages</code>; e.g. <code>msg_de.properties</code>.</p>
+<p>Create an UTF-8 encoded file located in the <code>src/main/resources/messages</code> directory of an application archive; e.g. <code>msg_de.properties</code>.</p>
 </li>
 </ol>
 </div>
@@ -3801,7 +3894,7 @@ Additionally, there are two ways to define a localized bundle:</p>
 <i class="fa icon-tip" title="Tip"></i>
 </td>
 <td class="content">
-A localized interface is the preferred solution mainly due to the possibility of easy refactoring.
+While a localized interface enables easy refactoring an external file might be more convenient in many situations.
 </td>
 </tr>
 </table>
@@ -3834,7 +3927,7 @@ public interface GermanAppMessages extends AppMessages {
 </table>
 </div>
 <div class="paragraph">
-<p>Message bundle files must be encoded in UTF-8.
+<p>Message bundle files must be encoded in <em>UTF-8</em>.
 The file name consists of the relevant bundle name (e.g. <code>msg</code>) and underscore followed by the locate tag (IETF).
 The file format is very simple: each line represents either a key/value pair with the equals sign used as a separator or a comment (line starts with <code>#</code>).
 Blank lines are ignored.
@@ -4120,6 +4213,34 @@ public class MyBean {
 <div class="paragraph">
 <p>If set to <code>true</code> then any expression that is evaluated to a <code>Results.NotFound</code> value will always result in a <code>TemplateException</code> and the rendering is aborted.
  Note that the <code>quarkus.qute.property-not-found-strategy</code> config property is completely ignored if strict rendering is enabled.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-qute_quarkus.qute.timeout"></a><code><a href="#quarkus-qute_quarkus.qute.timeout">quarkus.qute.timeout</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>The global rendering timeout in milliseconds. It is used if no <code>timeout</code> template instance attribute is set.</p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">long</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>10000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-qute_quarkus.qute.use-async-timeout"></a><code><a href="#quarkus-qute_quarkus.qute.use-async-timeout">quarkus.qute.use-async-timeout</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>If set to <code>true</code> then the timeout should also be used for asynchronous rendering methods, such as <code>TemplateInstance#createUni()</code> and <code>TemplateInstance#renderAsync()</code>.</p>
 </div>
 </div>
 </div></div></td>
