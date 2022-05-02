@@ -182,11 +182,13 @@
 <li><a href="#handling-serialization-failures">5.5. Handling Serialization Failures</a></li>
 <li><a href="#in-memory-channels">5.6. In-memory channels</a></li>
 <li><a href="#broadcasting-messages-on-multiple-consumers">5.7. Broadcasting messages on multiple consumers</a></li>
+<li><a href="#kafka-transactions">5.8. Kafka Transactions</a></li>
 </ul>
 </li>
 <li><a href="#processing-messages">6. Processing Messages</a>
 <ul class="sectlevel2">
 <li><a href="#propagating-record-key">6.1. Propagating Record Key</a></li>
+<li><a href="#exactly-once-processing">6.2. Exactly-Once Processing</a></li>
 </ul>
 </li>
 <li><a href="#kafka-bare-clients">7. Accessing Kafka clients directly</a></li>
@@ -222,7 +224,7 @@
 <li><a href="#setting-the-port">18.3. Setting the port</a></li>
 <li><a href="#configuring-the-image">18.4. Configuring the image</a></li>
 <li><a href="#configuring-kafka-topics">18.5. Configuring Kafka topics</a></li>
-<li><a href="#enabling-transactions">18.6. Enabling transactions</a></li>
+<li><a href="#redpanda-enabling-transactions">18.6. Enabling transactions</a></li>
 </ul>
 </li>
 <li><a href="#kubernetes-service-bindings">19. Kubernetes Service Bindings</a></li>
@@ -242,6 +244,7 @@
 <li><a href="#writing-entities-managed-by-hibernate-to-kafka">22.4. Writing entities managed by Hibernate to Kafka</a></li>
 <li><a href="#writing-entities-managed-by-hibernate-reactive-to-kafka">22.5. Writing entities managed by Hibernate Reactive to Kafka</a></li>
 <li><a href="#streaming-kafka-topics-as-server-sent-events">22.6. Streaming Kafka topics as server-sent events</a></li>
+<li><a href="#chaining-kafka-transactions-with-hibernate-reactive-transactions">22.7. Chaining Kafka Transactions with Hibernate Reactive transactions</a></li>
 </ul>
 </li>
 <li><a href="#logging">23. Logging</a></li>
@@ -1740,6 +1743,113 @@ On the <code>@Incoming</code> methods, you can control how multiple channels are
 </table>
 </div>
 </div>
+<div class="sect2">
+<h3 id="kafka-transactions"><a class="anchor" href="#kafka-transactions"></a>5.8. Kafka Transactions</h3>
+<div class="paragraph">
+<p>Kafka transactions enable atomic writes to multiple Kafka topics and partitions.
+The Kafka connector provides <code>KafkaTransactions</code> custom emitter for writing Kafka records inside a transaction.
+It can be injected as a regular emitter <code>@Channel</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import javax.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.KafkaRecord;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@ApplicationScoped
+public class KafkaTransactionalProducer {
+
+    @Channel("tx-out-example")
+    KafkaTransactions&lt;String&gt; txProducer;
+
+    public Uni&lt;Void&gt; emitInTransaction() {
+        return txProducer.withTransaction(emitter -&gt; {
+            emitter.send(KafkaRecord.of(1, "a"));
+            emitter.send(KafkaRecord.of(2, "b"));
+            emitter.send(KafkaRecord.of(3, "c"));
+            return Uni.createFrom().voidItem();
+        });
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The function given to the <code>withTransaction</code> method receives a <code>TransactionalEmitter</code> for producing records, and returns a <code>Uni</code> that provides the result of the transaction.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If the processing completes successfully, the producer is flushed and the transaction is committed.</p>
+</li>
+<li>
+<p>If the processing throws an exception, returns a failing <code>Uni</code>, or marks the <code>TransactionalEmitter</code> for abort, the transaction is aborted.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Kafka transactional producers require configuring <code>acks=all</code> client property, and a unique id for <code>transactional.id</code>, which implies <code>enable.idempotence=true</code>.
+When Quarkus detects the use of <code>KafkaTransactions</code> for an outgoing channel it configures these properties on the channel,
+providing a default value of <code>"${quarkus.application.name}-${channelName}"</code> for <code>transactional.id</code> property.</p>
+</div>
+<div class="paragraph">
+<p>Note that for production use the <code>transactional.id</code> must be unique across all application instances.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>While a normal message emitter would support concurrent calls to <code>send</code> methods and consequently queues outgoing messages to be written to Kafka,
+a <code>KafkaTransactions</code> emitter only supports one transaction at a time.
+A transaction is considered in progress from the call to the <code>withTransaction</code> until the returned <code>Uni</code> results in success or failure.
+While a transaction is in progress, subsequent calls to the <code>withTransaction</code>, including nested ones inside the given function, will throw <code>IllegalStateException</code>.</p>
+</div>
+<div class="paragraph">
+<p>Note that in Reactive Messaging, the execution of processing methods, is already serialized, unless <code>@Blocking(ordered = false)</code> is used.
+If <code>withTransaction</code> can be called concurrently, for example from a REST endpoint, it is recommended to limit the concurrency of the execution.
+This can be done using the <code>@Bulkhead</code> annotation from <a href="https://quarkus.io/guides/smallrye-fault-tolerance"><em>Microprofile Fault Tolerance</em></a>.</p>
+</div>
+<div class="paragraph">
+<p>An example usage can be found in <a href="#chaining-kafka-transactions-with-hibernate-reactive-transactions">Chaining Kafka Transactions with Hibernate Reactive transactions</a>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="transaction-aware-consumers"><a class="anchor" href="#transaction-aware-consumers"></a>5.8.1. Transaction-aware consumers</h4>
+<div class="paragraph">
+<p>If you&#8217;d like to consume records only written and committed inside a Kafka transaction you need to configure the <code>isolation.level</code> property on the incoming channel as such:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.prices-in.isolation.level=read_committed</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>If you are using Dev Services for Kafka using Redpanda, you need to <a href="#redpanda-enabling-transactions">enable transactions</a>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -1812,6 +1922,118 @@ record key propagation produces the outgoing record with the same <em>key</em> a
 <div class="paragraph">
 <p>If the outgoing record already contains a <em>key</em>, it <strong>won&#8217;t be overridden</strong> by the incoming record key.
 If the incoming record does have a <em>null</em> key, the <code>mp.messaging.outgoing.$channel.key</code> property is used.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="exactly-once-processing"><a class="anchor" href="#exactly-once-processing"></a>6.2. Exactly-Once Processing</h3>
+<div class="paragraph">
+<p>Kafka Transactions allows managing consumer offsets inside a transaction, together with produced messages.
+This enables coupling a consumer with a transactional producer in a <em>consume-transform-produce</em> pattern, also known as <strong>exactly-once processing</strong>.</p>
+</div>
+<div class="paragraph">
+<p>The <code>KafkaTransactions</code> custom emitter provides a way to apply exactly-once processing to an incoming Kafka message inside a transaction.</p>
+</div>
+<div class="paragraph">
+<p>The following example includes a batch of Kafka records inside a transaction.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import javax.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.OnOverflow;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.KafkaRecord;
+import io.smallrye.reactive.messaging.kafka.KafkaRecordBatch;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@ApplicationScoped
+public class KafkaExactlyOnceProcessor {
+
+    @Channel("prices-out")
+    @OnOverflow(value = OnOverflow.Strategy.BUFFER, bufferSize = 500) <i class="conum" data-value="3"></i><b>(3)</b>
+    KafkaTransactions&lt;Integer&gt; txProducer;
+
+    @Incoming("prices-in")
+    public Uni&lt;Void&gt; emitInTransaction(KafkaRecordBatch&lt;String, Integer&gt; batch) { <i class="conum" data-value="1"></i><b>(1)</b>
+        return txProducer.withTransactionAndAck(batch, emitter -&gt; { <i class="conum" data-value="2"></i><b>(2)</b>
+            for (KafkaRecord&lt;String, Integer&gt; record : batch) {
+                emitter.send(KafkaRecord.of(record.getKey(), record.getPayload() + 1)); <i class="conum" data-value="3"></i><b>(3)</b>
+            }
+            return Uni.createFrom().voidItem();
+        });
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>It is recommended to use exactly-once processing along with the batch consumption mode.
+While it is possible to use it with a single Kafka message, it&#8217;ll have a significant performance impact.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The consumed <code>KafkaRecordBatch</code> message is passed to the <code>KafkaTransactions#withTransactionAndAck</code> in order to handle the offset commits and message acks.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The <code>send</code> method writes records to Kafka inside the transaction, without waiting for send receipt from the broker.
+Messages pending to be written to Kafka will be buffered, and flushed before committing the transaction.
+It is therefore recommended configuring the <code>@OnOverflow</code> <code>bufferSize</code> in order to fit enough messages, for example the <code>max.poll.records</code>, maximum amount of records returned in a batch.
+<div class="ulist">
+<ul>
+<li>
+<p>If the processing completes successfully, <em>before committing the transaction</em>, the topic partition offsets of the given batch message will be committed to the transaction.</p>
+</li>
+<li>
+<p>If the processing needs to abort, <em>after aborting the transaction</em>, the consumer&#8217;s position is reset to the last committed offset, effectively resuming the consumption from that offset. If no consumer offset has been committed to a topic-partition, the consumer&#8217;s position is reset to the beginning of the topic-partition, <em>even if the offset reset policy is `latest`</em>.</p>
+</li>
+</ul>
+</div></td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>When using exactly-once processing, consumed message offset commits are handled by the transaction and therefore the application should not commit offsets through other means.
+The consumer should have <code>enable.auto.commit=false</code> (the default) and set explicitly <code>commit-strategy=ignore</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.prices-in.commit-strategy=ignore
+mp.messaging.incoming.prices-in.failure-strategy=ignore</code></pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="error-handling-for-the-exactly-once-processing"><a class="anchor" href="#error-handling-for-the-exactly-once-processing"></a>6.2.1. Error handling for the exactly-once processing</h4>
+<div class="paragraph">
+<p>The <code>Uni</code> returned from the <code>KafkaTransactions#withTransaction</code> will yield a failure if the transaction fails and is aborted.
+The application can choose to handle the error case, but if a failing <code>Uni</code> is returned from the <code>@Incoming</code> method, the incoming channel will effectively fail and stop the reactive stream.</p>
+</div>
+<div class="paragraph">
+<p>The <code>KafkaTransactions#withTransactionAndAck</code> method acks and nacks the message but will <strong>not</strong> return a failing <code>Uni</code>.
+Nacked messages will be handled by the failure strategy of the incoming channel, (see <a href="#error-handling">Error Handling Strategies</a>).
+Configuring <code>failure-strategy=ignore</code> simply resets the Kafka consumer to the last committed offsets and resumes the consumption from there.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Redpanda does not yet support <a href="https://github.com/redpanda-data/redpanda/issues/3279">producer scalability for exactly-once processing</a>.
+In order to use Kafka exactly-once processing with Quarkus you can configure Dev Services for Kafka to <a href="#configuring-the-image">use Strimzi images instead of Redpanda</a>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 </div>
@@ -2999,7 +3221,7 @@ without trying to re-partition the existing topic to a different number of parti
 </div>
 </div>
 <div class="sect2">
-<h3 id="enabling-transactions"><a class="anchor" href="#enabling-transactions"></a>18.6. Enabling transactions</h3>
+<h3 id="redpanda-enabling-transactions"><a class="anchor" href="#redpanda-enabling-transactions"></a>18.6. Enabling transactions</h3>
 <div class="paragraph">
 <p>By default, the Red Panda broker does not act as a transaction coordinator.
 To enable transactions, set:</p>
@@ -4365,6 +4587,180 @@ private String toJson(Fruit f) {
 To achieve this we merge the stream coming from Kafka and a periodic stream emitting <code>{}</code> every 10 seconds.</p>
 </div>
 </div>
+<div class="sect2">
+<h3 id="chaining-kafka-transactions-with-hibernate-reactive-transactions"><a class="anchor" href="#chaining-kafka-transactions-with-hibernate-reactive-transactions"></a>22.7. Chaining Kafka Transactions with Hibernate Reactive transactions</h3>
+<div class="paragraph">
+<p>By chaining a Kafka transaction with a Hibernate Reactive transaction you can send records to a Kafka transaction,
+perform database updates and commit the Kafka transaction only if the database transaction is successful.</p>
+</div>
+<div class="paragraph">
+<p>The following example demonstrates:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Receive a payload by serving HTTP requests using RESTEasy Reactive,</p>
+</li>
+<li>
+<p>Limit concurrency of that HTTP endpoint using Smallrye Fault Tolerance,</p>
+</li>
+<li>
+<p>Start a Kafka transaction and send the payload to Kafka record,</p>
+</li>
+<li>
+<p>Store the payload in the database using Hibernate Reactive with Panache,</p>
+</li>
+<li>
+<p>Commit the Kafka transaction only if the entity is persisted successfully.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.core.MediaType;
+
+import org.eclipse.microprofile.faulttolerance.Bulkhead;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.hibernate.reactive.mutiny.Mutiny;
+
+import io.quarkus.hibernate.reactive.panache.Panache;
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@Path("/")
+public class FruitProducer {
+
+    @Channel("kafka") KafkaTransactions&lt;Fruit&gt; kafkaTx; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @POST
+    @Path("/fruits")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Bulkhead(1) <i class="conum" data-value="2"></i><b>(2)</b>
+    public Uni&lt;Void&gt; post(Fruit fruit) { <i class="conum" data-value="3"></i><b>(3)</b>
+        return kafkaTx.withTransaction(emitter -&gt; { <i class="conum" data-value="4"></i><b>(4)</b>
+            emitter.send(fruit); <i class="conum" data-value="5"></i><b>(5)</b>
+            return Panache.withTransaction(() -&gt; { <i class="conum" data-value="6"></i><b>(6)</b>
+                return fruit.&lt;Fruit&gt;persist(); <i class="conum" data-value="7"></i><b>(7)</b>
+            });
+        }).replaceWithVoid();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Inject a <code>KafkaTransactions</code> which exposes a Mutiny API. It allows the integration with the Mutiny API exposed by Hibernate Reactive with Panache.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Limit the concurrency of the HTTP endpoint to "1", preventing starting multiple transactions at a given time.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The HTTP method receiving the payload returns a <code>Uni&lt;Void&gt;</code>. The HTTP response is written when the operation completes (the entity is persisted and Kafka transaction is committed).</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Begin a Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Send the payload to Kafka inside the Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>Persist the entity into the database in a Hibernate Reactive transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="7"></i><b>7</b></td>
+<td>Once the persist operation completes, and there is no errors, the Kafka transaction is committed.
+The result is omitted and returned as the HTTP response.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>In the previous example the database transaction (inner) will commit followed by the Kafka transaction (outer).
+If you wish to commit the Kafka transaction first and the database transaction second, you need to nest them in the reverse order.</p>
+</div>
+<div class="paragraph">
+<p>The next example demostrates that using the Hibernate Reactive API (without Panache):</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import javax.inject.Inject;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.core.MediaType;
+
+import org.eclipse.microprofile.faulttolerance.Bulkhead;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.hibernate.reactive.mutiny.Mutiny;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+import io.vertx.mutiny.core.Context;
+import io.vertx.mutiny.core.Vertx;
+
+@Path("/")
+public class FruitProducer {
+
+    @Channel("kafka") KafkaTransactions&lt;Fruit&gt; kafkaTx;
+
+    @Inject Mutiny.SessionFactory sf; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @POST
+    @Path("/fruits")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Bulkhead(1)
+    public Uni&lt;Void&gt; post(Fruit fruit) {
+        Context context = Vertx.currentContext(); <i class="conum" data-value="2"></i><b>(2)</b>
+        return sf.withTransaction(session -&gt; <i class="conum" data-value="3"></i><b>(3)</b>
+                kafkaTx.withTransaction(emitter -&gt; <i class="conum" data-value="4"></i><b>(4)</b>
+                        session.persist(fruit).invoke(() -&gt; emitter.send(fruit)) <i class="conum" data-value="5"></i><b>(5)</b>
+                ).emitOn(context::runOnContext) <i class="conum" data-value="6"></i><b>(6)</b>
+        );
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Inject the Hibernate Reactive <code>SessionFactory</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Capture the caller Vert.x context.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Begin a Hibernate Reactive transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Begin a Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Persist the payload and send the entity to Kafka.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>The Kafka transaction terminates on the Kafka producer sender thread.
+We need to switch to the Vert.x context previously captured in order to terminate the Hibernate Reactive transaction on the same context we started it.</td>
+</tr>
+</table>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -4563,6 +4959,70 @@ stringData:
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.openshift.env.secrets=kafka-credentials</code></pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="red-hat-openshift-service-registry"><a class="anchor" href="#red-hat-openshift-service-registry"></a>24.2.1. Red Hat OpenShift Service Registry</h4>
+<div class="paragraph">
+<p><a href="https://www.redhat.com/en/technologies/cloud-computing/openshift/openshift-service-registry">Red Hat OpenShift Service Registry</a>
+provides fully managed service registry for handling Kafka schemas.</p>
+</div>
+<div class="paragraph">
+<p>You can follow the instructions from
+<a href="https://access.redhat.com/documentation/en-us/red_hat_openshift_service_registry/1/guide/ab1894d1-cae0-4d11-b185-81d62b4aabc7#_60472331-fa00-48ec-a621-bbd039500c7d">Getting started with Red Hat OpenShift Service Registry</a>,
+or use the <code>rhoas</code> CLI to create a new service registry instance:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">rhoas service-registry create --name my-schema-registry</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Make sure to note the <em>Registry URL</em> of the instance created.
+For authentication, you can use the same <em>ServiceAccount</em> you created previously.
+You need to make sure that it has the necessary permissions to access the service registry.</p>
+</div>
+<div class="paragraph">
+<p>For example, using the <code>rhoas</code> CLI, you can grant the <code>MANAGER</code> role to the service account:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">rhoas service-registry role add --role manager --service-account [SERVICE_ACCOUNT_CLIENT_ID]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then, you can configure the Quarkus application to connect to the schema registry as follows:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.connector.smallrye-kafka.apicurio.registry.url=${RHOAS_SERVICE_REGISTRY_URL} <i class="conum" data-value="1"></i><b>(1)</b>
+mp.messaging.connector.smallrye-kafka.apicurio.auth.service.token.endpoint=${RHOAS_OAUTH_TOKEN_ENDPOINT} <i class="conum" data-value="2"></i><b>(2)</b>
+mp.messaging.connector.smallrye-kafka.apicurio.auth.client.id=${RHOAS_CLIENT_ID} <i class="conum" data-value="3"></i><b>(3)</b>
+mp.messaging.connector.smallrye-kafka.apicurio.auth.client.secret=${RHOAS_CLIENT_ID} <i class="conum" data-value="4"></i><b>(4)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The service registry URL, given on the admin console, such as <code><a href="https://bu98.serviceregistry.rhcloud.com/t/0e95af2c-6e11-475e-82ee-f13bd782df24/apis/registry/v2" class="bare">https://bu98.serviceregistry.rhcloud.com/t/0e95af2c-6e11-475e-82ee-f13bd782df24/apis/registry/v2</a></code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The OAuth token endpoint URL, such as <code><a href="https://identity.api.openshift.com/auth/realms/rhoas/protocol/openid-connect/token" class="bare">https://identity.api.openshift.com/auth/realms/rhoas/protocol/openid-connect/token</a></code></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The client id (from the service account)</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>The client secret (from the service account)</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>You will need to include additional configuration</p>
 </div>
 </div>
 </div>
