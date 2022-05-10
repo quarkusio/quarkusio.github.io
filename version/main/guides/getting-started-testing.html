@@ -218,7 +218,7 @@
 </li>
 <li><a href="#hang-detection">14. Hang Detection</a></li>
 <li><a href="#native-executable-testing">15. Native Executable Testing</a></li>
-<li><a href="#quarkus-integration-test">16. Using @QuarkusIntegrationTest</a>
+<li><a href="#quarkus-integration-test">16. Using <code>@QuarkusIntegrationTest</code></a>
 <ul class="sectlevel2">
 <li><a href="#launching-containers">16.1. Launching containers</a></li>
 <li><a href="#executing-against-a-running-application">16.2. Executing against a running application</a></li>
@@ -1806,7 +1806,7 @@ guide except injecting into tests (and the native executable runs in a separate 
 </div>
 </div>
 <div class="sect1">
-<h2 id="quarkus-integration-test"><a class="anchor" href="#quarkus-integration-test"></a>16. Using @QuarkusIntegrationTest</h2>
+<h2 id="quarkus-integration-test"><a class="anchor" href="#quarkus-integration-test"></a>16. Using <code>@QuarkusIntegrationTest</code></h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p><code>@QuarkusIntegrationTest</code> should be used to launch and test the artifact produced by the Quarkus build, and supports testing a jar (of whichever type), a native image or container image.
@@ -1904,10 +1904,21 @@ The executable is retrieved by the <em>Failsafe Maven Plugin</em>.</td>
 This means that <code>@QuarkusIntegrationTest</code> works out of the box with containers launched via <a href="dev-services">Dev Services</a>, but it also means that it enables using <a href="#quarkus-test-resource">QuarkusTestLifecycleManager</a> resources that launch additional containers.
 This can be achieved by having your <code>QuarkusTestLifecycleManager</code> implement <code>io.quarkus.test.common.DevServicesContext.ContextAware</code>. A simple example could be the following:</p>
 </div>
+<div class="paragraph">
+<p>The container running the resource to test against, for example PostgreSQL via Testcontainers, is assigned an IP address from the container&#8217;s network.
+Use the container&#8217;s "public" IP from its network and the "unmapped" port number to connect to the service.
+The Testcontainers library usually return connection strings without respecting the container network, so additional code is needed to provide Quarkus the "correct" connection string using the container&#8217;s IP on the container network and the <em>unmapped</em> port number.</p>
+</div>
+<div class="paragraph">
+<p>The following example illustrates the use with PostgreSQL, but the approach is applicable to all containers.</p>
+</div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.test.common.DevServicesContext;
 import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
+
+import org.testcontainers.containers.JdbcDatabaseContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -1916,6 +1927,7 @@ import java.util.Optional;
 public class CustomResource implements QuarkusTestResourceLifecycleManager, DevServicesContext.ContextAware {
 
     private Optional&lt;String&gt; containerNetworkId;
+    private JdbcDatabaseContainer container;
 
     @Override
     public void setIntegrationTestContext(DevServicesContext context) {
@@ -1925,9 +1937,36 @@ public class CustomResource implements QuarkusTestResourceLifecycleManager, DevS
     @Override
     public Map&lt;String, String&gt; start() {
         // start a container making sure to call withNetworkMode() with the value of containerNetworkId if present
+        container = new PostgreSQLContainer&lt;&gt;("postgres:latest").withLogConsumer(outputFrame -&gt; {});
+
+        // apply the network to the container
+        containerNetworkId.ifPresent(container::withNetworkMode);
+
+        String jdbcUrl = container.getJdbcUrl();
+        if (containerNetworkId.isPresent()) {
+            // Replace hostname + port in the provided JDBC URL with the hostname of the Docker container
+            // running PostgreSQL and the listening port.
+            jdbcUrl = fixJdbcUrl(jdbcUrl);
+        }
 
         // return a map containing the configuration the application needs to use the service
-        return new HashMap&lt;&gt;();
+        return ImmutableMap.of(
+            "quarkus.datasource.username", container.getUsername(),
+            "quarkus.datasource.password", container.getPassword(),
+            "quarkus.datasource.jdbc.url", jdbcUrl);
+    }
+
+    private String fixJdbcUrl(String jdbcUrl) {
+        // Part of the JDBC URL to replace
+        String hostPort = container.getHost() + ':' + container.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT);
+
+        // Host/IP on the container network plus the unmapped port
+        String networkHostPort =
+            container.getCurrentContainerInfo().getConfig().getHostName()
+            + ':'
+            + PostgreSQLContainer.POSTGRESQL_PORT;
+
+        return jdbcUrl.replace(hostPort, networkHostPort);
     }
 
     @Override
