@@ -1829,6 +1829,165 @@ public class RecordsResource {
 <p>Using this injected bean of type <code>RestLinksProvider</code>, you can get the links by type using the method <code>RestLinksProvider.getTypeLinks</code> or get the links by a concrete instance using the method <code>RestLinksProvider.getInstanceLinks</code>.</p>
 </div>
 </div>
+<div class="sect3">
+<h4 id="json-hypertext-application-language-hal-support"><a class="anchor" href="#json-hypertext-application-language-hal-support"></a>JSON Hypertext Application Language (HAL) support</h4>
+<div class="paragraph">
+<p>The <a href="https://tools.ietf.org/id/draft-kelly-json-hal-01.html">HAL</a> standard is a simple format to represent web links.</p>
+</div>
+<div class="paragraph">
+<p>To enable the HAL support, add the <code>quarkus-hal</code> extension to your project. Also, as HAL needs JSON support, you need to add either the <code>quarkus-resteasy-reactive-jsonb</code> or the <code>quarkus-resteasy-reactive-jackson</code> extension.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<caption class="title">Table 9. Table Context object</caption>
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">GAV</th>
+<th class="tableblock halign-left valign-top">Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>io.quarkus:quarkus-hal</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><a href="https://tools.ietf.org/id/draft-kelly-json-hal-01.html">HAL</a></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>After adding the extensions, we can now annotate the REST resources to produce the media type <code>application/hal+json</code> (or use RestMediaType.APPLICATION_HAL_JSON). For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/records")
+public class RecordsResource {
+
+    @GET
+    @Produces({ MediaType.APPLICATION_JSON, RestMediaType.APPLICATION_HAL_JSON })
+    @RestLink(rel = "list")
+    @InjectRestLinks
+    public List&lt;Record&gt; getAll() {
+        // ...
+    }
+
+    @GET
+    @Produces({ MediaType.APPLICATION_JSON, RestMediaType.APPLICATION_HAL_JSON })
+    @Path("/{id}")
+    @RestLink(rel = "self")
+    @InjectRestLinks(RestLinkType.INSTANCE)
+    public TestRecord get(@PathParam("id") int id) {
+        // ...
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now, the endpoints <code>/records</code> and <code>/records/{id}</code> will accept the media type both <code>json</code> and <code>hal+json</code> to print the records in Hal format.</p>
+</div>
+<div class="paragraph">
+<p>For example, if we invoke the <code>/records</code> endpoint using curl to return a list of records, the HAL format will look like as follows:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">&amp; curl -H "Accept:application/hal+json" -i localhost:8080/records
+{
+    "_embedded": {
+        "items": [
+            {
+                "id": 1,
+                "slug": "first",
+                "value": "First value",
+                "_links": {
+                    "self": {
+                        "href": "http://localhost:8081/records/1"
+                    },
+                    "list": {
+                        "href": "http://localhost:8081/records"
+                    }
+                }
+            },
+            {
+                "id": 2,
+                "slug": "second",
+                "value": "Second value",
+                "_links": {
+                    "self": {
+                        "href": "http://localhost:8081/records/2"
+                    },
+                    "list": {
+                        "href": "http://localhost:8081/records"
+                    }
+                }
+            }
+        ]
+    },
+    "_links": {
+        "list": {
+            "href": "http://localhost:8081/records"
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When we call a resource <code>/records/1</code> that returns only one instance, then the output is:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">&amp; curl -H "Accept:application/hal+json" -i localhost:8080/records/1
+{
+    "id": 1,
+    "slug": "first",
+    "value": "First value",
+    "_links": {
+        "self": {
+            "href": "http://localhost:8081/records/1"
+        },
+        "list": {
+            "href": "http://localhost:8081/records"
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Finally, you can also provide additional HAL links programmatically in your resource just by returning either <code>HalCollectionWrapper</code> (to return a list of entities) or <code>HalEntityWrapper</code> (to return a single object) as described in the following example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/records")
+public class RecordsResource {
+
+    @Inject
+    RestLinksProvider linksProvider;
+
+    @GET
+    @Produces({ MediaType.APPLICATION_JSON, RestMediaType.APPLICATION_HAL_JSON })
+    @RestLink(rel = "list")
+    public HalCollectionWrapper getAll() {
+        List&lt;Record&gt; list = // ...
+        HalCollectionWrapper halCollection = new HalCollectionWrapper(list, "collectionName", linksProvider.getTypeLinks(Record.class));
+        halCollection.addLinks(Link.fromPath("/records/1").rel("first-record").build());
+        return halCollection;
+    }
+
+    @GET
+    @Produces({ MediaType.APPLICATION_JSON, RestMediaType.APPLICATION_HAL_JSON })
+    @Path("/{id}")
+    @RestLink(rel = "self")
+    @InjectRestLinks(RestLinkType.INSTANCE)
+    public HalEntityWrapper get(@PathParam("id") int id) {
+        Record entity = // ...
+        HalEntityWrapper halEntity = new HalEntityWrapper(entity, linksProvider.getInstanceLinks(entity));
+        halEntity.addLinks(Link.fromPath("/records/1/parent").rel("parent-record").build());
+        return halEntity;
+    }
+}</code></pre>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -2118,7 +2277,7 @@ class ExceptionMappers {
 <p>Your exception mapper may declare any of the following parameter types:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 9. Table Exception mapper parameters</caption>
+<caption class="title">Table 10. Table Exception mapper parameters</caption>
 <colgroup>
 <col style="width: 50%;">
 <col style="width: 50%;">
@@ -2148,7 +2307,7 @@ class ExceptionMappers {
 <p>It may declare any of the following return types:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 10. Table Exception mapper return types</caption>
+<caption class="title">Table 11. Table Exception mapper return types</caption>
 <colgroup>
 <col style="width: 50%;">
 <col style="width: 50%;">
@@ -2272,7 +2431,7 @@ annotation:</p>
 <p>Your filters may declare any of the following parameter types:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 11. Table Filter parameters</caption>
+<caption class="title">Table 12. Table Filter parameters</caption>
 <colgroup>
 <col style="width: 50%;">
 <col style="width: 50%;">
@@ -2306,7 +2465,7 @@ annotation:</p>
 <p>It may declare any of the following return types:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 12. Table Filter return types</caption>
+<caption class="title">Table 13. Table Filter return types</caption>
 <colgroup>
 <col style="width: 50%;">
 <col style="width: 50%;">
