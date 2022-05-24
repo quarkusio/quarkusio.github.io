@@ -84,11 +84,9 @@ Once a localized site has enough of its content translated, DNS needs to be enab
 a ticket to IT asking for XX domain:
 
 ```
-We need a CNAME record setup as soon as possible for XX.quarkus.io To have it serve out GitHub pages. 
+We need a CNAME record set up for XX.quarkus.io to have it serve out GitHub pages. 
 
-It's step 5 on https://docs.github.com/en/github/working-with-github-pages/managing-a-custom-domain-for-your-github-pages-site
-
-Basically setup On "quarkus.io" zone, add "XX" CNAME record to point to "quarkusio.github.io." domain.
+The CNAME record for XX.quarkus.io should point to "quarkusio.github.io.".
 ```
 
 
