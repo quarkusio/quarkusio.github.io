@@ -80,7 +80,7 @@ start another translation, please open an issue in this main repo.
 
 #### Enable DNS for l10n site
 
-One a localized site has enough of its content translated DNS needs to be enabled. To do that get one of the Red Hat admins to submit
+Once a localized site has enough of its content translated, DNS needs to be enabled. To do that get one of the Red Hat admins to submit
 a ticket to IT asking for XX domain:
 
 ```
