@@ -89,6 +89,7 @@ We need a CNAME record set up for XX.quarkus.io to have it serve out GitHub page
 The CNAME record for XX.quarkus.io should point to "quarkusio.github.io.".
 ```
 
+See Step 5 on https://docs.github.com/en/github/working-with-github-pages/managing-a-custom-domain-for-your-github-pages-site for more information.
 
 ## Contributing
 
