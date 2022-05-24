@@ -65,6 +65,32 @@ To write a blog:
   - Be aware that the `date` attribute in the asciidoc preamble defines when the article will be published. Use a present date while writing your article to test locally, then switch to the actual target date before submitting. 
 - send a pull request against the develop branch and voilà
 
+## Translations/Localization (l10n)
+
+The primary site (quarkus.io) is written in English. 
+
+There are separate repositories for community driven localized versions of quarkus.io:
+
+- [ja.quarkus.io](https://github.com/quarkusio/ja.quarkus.io) for Japanese
+- [cn.quarkus.io](https://github.com/quarkusio/cn.quarkus.io) for Chinese (simplified)
+- [es.quarkus.io](https://github.com/quarkusio/es.quarkus.io) for Spanish
+
+If you want to contribute to those efforts read the README in those projects. If you would like to
+start another translation, please open an issue in this main repo.
+
+#### Enable DNS for l10n site
+
+Once a localized site has enough of its content translated, DNS needs to be enabled. To do that get one of the Red Hat admins to submit
+a ticket to IT asking for XX domain:
+
+```
+We need a CNAME record set up for XX.quarkus.io to have it serve out GitHub pages. 
+
+The CNAME record for XX.quarkus.io should point to "quarkusio.github.io.".
+```
+
+See Step 5 on https://docs.github.com/en/github/working-with-github-pages/managing-a-custom-domain-for-your-github-pages-site for more information.
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/blob/master/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
