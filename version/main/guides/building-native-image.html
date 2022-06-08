@@ -184,7 +184,11 @@
 </ul>
 </li>
 <li><a href="#solution">Solution</a></li>
-<li><a href="#producing-a-native-executable">Producing a native executable</a></li>
+<li><a href="#producing-a-native-executable">Producing a native executable</a>
+<ul class="sectlevel2">
+<li><a href="#build-fully-static-native-executables">Build fully static native executables</a></li>
+</ul>
+</li>
 <li><a href="#testing-the-native-executable">Testing the native executable</a>
 <ul class="sectlevel2">
 <li><a href="#profiles">Profiles</a></li>
@@ -201,6 +205,7 @@
 <li><a href="#manually-using-the-minimal-base-image">Manually using the minimal base image</a></li>
 <li><a href="#multistage-docker">Using a multi-stage Docker build</a></li>
 <li><a href="#using-a-distroless-base-image">Using a Distroless base image</a></li>
+<li><a href="#using-a-scratch-base-image">Using a scratch base image</a></li>
 <li><a href="#native-executable-compression">Native executable compression</a></li>
 <li><a href="#separating-java-and-native-image-compilation">Separating Java and native image compilation</a></li>
 </ul>
@@ -569,6 +574,28 @@ You can do so by prepending the flag with <code>-J</code> and passing it as addi
 </td>
 </tr>
 </table>
+</div>
+<div class="sect2">
+<h3 id="build-fully-static-native-executables"><a class="anchor" href="#build-fully-static-native-executables"></a>Build fully static native executables</h3>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Fully static native executables support is experimental.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>On Linux it&#8217;s possible to package a native executable that doesn&#8217;t depend on any system shared library.
+There are <a href="https://www.graalvm.org/22.1/reference-manual/native-image/StaticImages/#preparation">some system requirements</a> to be fulfilled and additional build arguments to be used along with the <code>native-image</code> invocation, a minimum is <code>-Dquarkus.native.additional-build-args="--static","--libc=musl"</code>.</p>
+</div>
+<div class="paragraph">
+<p>Compiling fully static binaries is done by statically linking <a href="https://musl.libc.org/">musl</a> instead of <code>glibc</code> and should not be used in production without rigorous testing.</p>
+</div>
 </div>
 </div>
 </div>
@@ -1194,6 +1221,60 @@ Just add your application on top of this image, and you will get a tiny containe
 </div>
 <div class="paragraph">
 <p>Distroless images should not be used in production without rigorous testing.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="using-a-scratch-base-image"><a class="anchor" href="#using-a-scratch-base-image"></a>Using a scratch base image</h3>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Scratch image support is experimental.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Building fully statically linked binaries enables the usage of a <a href="https://hub.docker.com/_/scratch">scratch image</a> containing solely the resulting native executable.</p>
+</div>
+<div class="paragraph">
+<p>Sample multistage Dockerfile for building an image from <code>scratch</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">## Stage 1 : build with maven builder image with native capabilities
+FROM quay.io/quarkus/ubi-quarkus-native-image:22.0-java11 AS build
+USER root
+RUN microdnf install make gcc
+COPY --chown=quarkus:quarkus mvnw /code/mvnw
+COPY --chown=quarkus:quarkus .mvn /code/.mvn
+COPY --chown=quarkus:quarkus pom.xml /code/
+RUN mkdir /musl &amp;&amp; \
+    curl -L -o musl.tar.gz https://more.musl.cc/10.2.1/x86_64-linux-musl/x86_64-linux-musl-native.tgz &amp;&amp; \
+    tar -xvzf musl.tar.gz -C /musl --strip-components 1 &amp;&amp; \
+    curl -L -o zlib.tar.gz https://zlib.net/zlib-1.2.12.tar.gz &amp;&amp; \
+    mkdir zlib &amp;&amp; tar -xvzf zlib.tar.gz -C zlib --strip-components 1 &amp;&amp; \
+    cd zlib &amp;&amp; ./configure --static --prefix=/musl &amp;&amp; \
+    make &amp;&amp; make install &amp;&amp; \
+    cd .. &amp;&amp; rm -rf zlib &amp;&amp; rm -f zlib.tar.gz &amp;&amp; rm -f musl.tar.gz
+ENV PATH="/musl/bin:${PATH}"
+USER quarkus
+WORKDIR /code
+RUN ./mvnw -B org.apache.maven.plugins:maven-dependency-plugin:3.1.2:go-offline
+COPY src /code/src
+RUN ./mvnw package -Pnative -Dquarkus.native.additional-build-args="--static","--libc=musl"
+
+## Stage 2 : create the docker final image
+FROM scratch
+COPY --from=build /code/target/*-runner /application
+ENTRYPOINT [ "/application" ]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Scratch images should not be used in production without rigorous testing.</p>
 </div>
 </div>
 <div class="sect2">
