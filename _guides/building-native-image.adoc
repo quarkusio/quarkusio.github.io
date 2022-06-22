@@ -52,7 +52,7 @@ and https://github.com/graalvm/mandrel/releases[Mandrel releases].
 
 :prerequisites-docker:
 :prerequisites-graalvm-mandatory:
-include::includes/devtools/prerequisites.adoc[]
+include::{includes}/prerequisites.adoc[]
 * A xref:configuring-c-development[working C development environment]
 * The code of the application developed in the xref:getting-started.adoc[Getting Started Guide].
 
@@ -197,7 +197,7 @@ this allows native image tests to also be run.
 
 Create a native executable using:
 
-include::includes/devtools/build-native.adoc[]
+include::{includes}/devtools/build-native.adoc[]
 
 [[graal-and-windows]]
 [NOTE]
@@ -227,57 +227,18 @@ To produce a native executable, this means that the `--enable-preview` flag need
 You can do so by prepending the flag with `-J` and passing it as additional native build argument: `-Dquarkus.native.additional-build-args=-J--enable-preview`.
 ====
 
+=== Build fully static native executables
+
+IMPORTANT: Fully static native executables support is experimental.
+
+On Linux it's possible to package a native executable that doesn't depend on any system shared library.
+There are https://www.graalvm.org/22.1/reference-manual/native-image/StaticImages/#preparation[some system requirements] to be fulfilled and additional build arguments to be used along with the `native-image` invocation, a minimum is `-Dquarkus.native.additional-build-args="--static","--libc=musl"`.
+
+Compiling fully static binaries is done by statically linking https://musl.libc.org/[musl] instead of `glibc` and should not be used in production without rigorous testing.
+
 == Testing the native executable
 
-Producing a native executable can lead to a few issues, and so it's also a good idea to run some tests against the application running in the native file.
-
-In the `pom.xml` file, the `native` profile contains:
-
-[source, xml]
-----
-<plugin>
-    <groupId>org.apache.maven.plugins</groupId>
-    <artifactId>maven-failsafe-plugin</artifactId>
-    <version>${surefire-plugin.version}</version>
-    <executions>
-        <execution>
-            <goals>
-                <goal>integration-test</goal>
-                <goal>verify</goal>
-            </goals>
-            <configuration>
-                <systemPropertyVariables>
-                    <native.image.path>${project.build.directory}/${project.build.finalName}-runner</native.image.path>
-                    <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
-                    <maven.home>${maven.home}</maven.home>
-                </systemPropertyVariables>
-            </configuration>
-        </execution>
-    </executions>
-</plugin>
-----
-
-This instructs the failsafe-maven-plugin to run integration-test and indicates the location of the produced native executable.
-
-Then, open the `src/test/java/org/acme/quickstart/GreetingResourceIT.java`. It contains:
-
-[source,java]
-----
-package org.acme.quickstart;
-
-
-import io.quarkus.test.junit.QuarkusIntegrationTest;
-
-@QuarkusIntegrationTest // <1>
-public class GreetingResourceIT extends GreetingResourceTest { // <2>
-
-    // Run the same tests
-
-}
-----
-<1> Use another test runner that starts the application from the native file before the tests.
-The executable is retrieved using the `native.image.path` system property configured in the _Failsafe Maven Plugin_.
-<2> We extend our previous tests, but you can also implement your tests
+Producing a native executable can lead to a few issues, and so it's also a good idea to run some tests against the application running in the native file. The reasoning is explained in the link:getting-started-testing#quarkus-integration-test[Testing Guide].
 
 To see the `GreetingResourceIT` run against the native executable, use `./mvnw verify -Pnative`:
 [source,shell]
@@ -319,12 +280,38 @@ This procedure was formerly accomplished using the `@NativeImageTest` annotation
 capabilities of `@NativeImageTest`. More information about `@QuarkusIntegrationTest` can be found in the xref:getting-started-testing.adoc#quarkus-integration-test[Testing Guide].
 ====
 
-By default, integration tests runs using the `prod` profile.
-This can be overridden using the `quarkus.test.native-image-profile` property.
-For example, in your `application.properties` file, add: `quarkus.test.native-image-profile=test`.
-Alternatively, you can run your tests with: `./mvnw verify -Pnative -Dquarkus.test.native-image-profile=test`.
-However, don't forget that when the native executable is built the `prod` profile is enabled.
-So, the profile you enable this way must be compatible with the produced executable.
+=== Profiles
+By default, integration tests both *build* and *run* the native executable using the `prod` profile.
+
+You can override the profile the executable *runs* with during the test using the `quarkus.test.native-image-profile` property.
+Either by adding it to `application.properties` or by appending it to the command line:
+`./mvnw verify -Pnative -Dquarkus.test.native-image-profile=test`.
+Your `%test.` prefixed properties will be used at the test runtime.
+
+
+You can override the profile the executable is *built* with and *runs* with using the `quarkus-profile=test` property, e.g.
+`./mvnw clean verify -Pnative -Dquarkus-profile=test`. This might come handy if there are test specific resources to be processed,
+such as importing test data into the database.
+
+```
+quarkus.native.resources.includes=version.txt
+%test.quarkus.native.resources.includes=version.txt,import-dev.sql
+%test.quarkus.hibernate-orm.database.generation=drop-and-create
+%test.quarkus.hibernate-orm.sql-load-script=import-dev.sql
+```
+
+With the aforementioned example in your `application.properties`, your Hibernate ORM managed database will be populated with test
+data both during the JVM mode test run and during the native mode test run. The production
+executable will contain only the `version.txt` resource, no superfluous test data.
+
+[WARNING]
+====
+The executable built with `-Dquarkus-profile=test` is not suitable for production deployment.
+It contains your test resources files and settings. Once the testing is done, the executable would have to be built again,
+using the default, `prod` profile.
+====
+
+=== Java preview features
 
 [[graal-test-preview]]
 [NOTE]
@@ -342,14 +329,18 @@ you can only test via HTTP calls. Your test code does not actually run natively,
 that does not call your HTTP endpoints, it's probably not a good idea to run them as part of native tests.
 
 If you share your test class between JVM and native executions like we advise above, you can mark certain tests
-with the `@DisabledOnNativeImage` annotation in order to only run them on the JVM.
+with the `@DisabledOnIntegrationTest` annotation in order to skip them when testing against a native image.
 
+[NOTE]
+====
+Using `@DisabledOnIntegrationTest` will also disable the test in all integration test instances, including
+testing the application in JVM mode, in a container image, and native image.
+====
 
 === Testing an existing native executable
 
 It is also possible to re-run the tests against a native executable that has already been built. To do this run
-`./mvnw test-compile failsafe:integration-test`. This will discover the existing native image and run the tests against it using
-failsafe.
+`./mvnw test-compile failsafe:integration-test -Pnative`. This will discover the existing native image and run the tests against it using failsafe.
 
 If the process cannot find the native image for some reason, or you want to test a native image that is no longer in the
 target directory you can specify the executable with the `-Dnative.image.path=` system property.
@@ -367,7 +358,7 @@ to install as little software as possible).
 To this end, Quarkus provides a very convenient way of creating a native Linux executable by leveraging a container runtime such as Docker or podman.
 The easiest way of accomplishing this task is to execute:
 
-include::includes/devtools/build-native-container.adoc[]
+include::{includes}/devtools/build-native-container.adoc[]
 
 [TIP]
 ====
@@ -377,13 +368,13 @@ If you want to explicitely select the container runtime, you can do it with:
 For Docker:
 
 :build-additional-parameters: -Dquarkus.native.container-runtime=docker
-include::includes/devtools/build-native-container-parameters.adoc[]
+include::{includes}/devtools/build-native-container-parameters.adoc[]
 :!build-additional-parameters:
 
 For podman:
 
 :build-additional-parameters: -Dquarkus.native.container-runtime=podman
-include::includes/devtools/build-native-container-parameters.adoc[]
+include::{includes}/devtools/build-native-container-parameters.adoc[]
 :!build-additional-parameters:
 
 These are normal Quarkus config properties, so if you always want to build in a container
@@ -407,7 +398,7 @@ The reason for this is that the local build driver invoked through `-Dquarkus.na
 Building with Mandrel requires a custom builder image parameter to be passed additionally:
 
 :build-additional-parameters: -Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel:{mandrel-flavor}
-include::includes/devtools/build-native-container-parameters.adoc[]
+include::{includes}/devtools/build-native-container-parameters.adoc[]
 :!build-additional-parameters:
 
 Please note that the above command points to a floating tag.
@@ -642,6 +633,46 @@ It contains the required packages to run a native executable and is only **9Mb**
 Just add your application on top of this image, and you will get a tiny container image.
 
 Distroless images should not be used in production without rigorous testing.
+
+=== Using a scratch base image
+
+IMPORTANT: Scratch image support is experimental.
+
+Building fully statically linked binaries enables the usage of a https://hub.docker.com/_/scratch[scratch image] containing solely the resulting native executable.
+
+Sample multistage Dockerfile for building an image from `scratch`:
+
+[source, dockerfile]
+----
+## Stage 1 : build with maven builder image with native capabilities
+FROM quay.io/quarkus/ubi-quarkus-native-image:22.0-java11 AS build
+USER root
+RUN microdnf install make gcc
+COPY --chown=quarkus:quarkus mvnw /code/mvnw
+COPY --chown=quarkus:quarkus .mvn /code/.mvn
+COPY --chown=quarkus:quarkus pom.xml /code/
+RUN mkdir /musl && \
+    curl -L -o musl.tar.gz https://more.musl.cc/10.2.1/x86_64-linux-musl/x86_64-linux-musl-native.tgz && \
+    tar -xvzf musl.tar.gz -C /musl --strip-components 1 && \
+    curl -L -o zlib.tar.gz https://zlib.net/zlib-1.2.12.tar.gz && \
+    mkdir zlib && tar -xvzf zlib.tar.gz -C zlib --strip-components 1 && \
+    cd zlib && ./configure --static --prefix=/musl && \
+    make && make install && \
+    cd .. && rm -rf zlib && rm -f zlib.tar.gz && rm -f musl.tar.gz
+ENV PATH="/musl/bin:${PATH}"
+USER quarkus
+WORKDIR /code
+RUN ./mvnw -B org.apache.maven.plugins:maven-dependency-plugin:3.1.2:go-offline
+COPY src /code/src
+RUN ./mvnw package -Pnative -Dquarkus.native.additional-build-args="--static","--libc=musl"
+
+## Stage 2 : create the docker final image
+FROM scratch
+COPY --from=build /code/target/*-runner /application
+ENTRYPOINT [ "/application" ]
+----
+
+Scratch images should not be used in production without rigorous testing.
 
 === Native executable compression
 
