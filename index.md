@@ -1,4 +1,4 @@
 ---
 layout: index
-title: Supersonic Subatomic Java
+title: Quarkus - Supersonic Subatomic Java
 ---
