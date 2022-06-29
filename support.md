@@ -1,5 +1,5 @@
 ---
 layout: support
-title: Support When You Need It.
+title: Support When You Need It
 permalink: /support/
 ---
