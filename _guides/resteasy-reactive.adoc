@@ -134,7 +134,7 @@ public static class MyApplication extends Application {
 ----
 
 This will cause all rest endpoints to be resolve relative to `/api`, so the endpoint above with `@Path("rest")` would
-be accessible at `/api/rest/. You can also set the `quarkus.rest.path` build time property to set the root path if you
+be accessible at `/api/rest/`. You can also set the `quarkus.resteasy-reactive.path` build time property to set the root path if you
 don't want to use an annotation.
 
 === Declaring endpoints: HTTP methods
@@ -394,8 +394,8 @@ The following parameter types will be supported out of the box:
 |link:{jdkapi}/java/math/BigDecimal.html[`BigDecimal`], link:{jdkapi}/java/math/BigInteger.html[`BigInteger`]
 |Large integers and decimals.
 
-|link:{jsonpapi}/javax/json/JsonArray.html[`JsonArray`], link:{jsonpapi}/javax/json/JsonArray.html[`JsonObject`],
-link:{jsonpapi}/javax/json/JsonArray.html[`JsonStructure`], link:{jsonpapi}/javax/json/JsonArray.html[`JsonValue`]
+|link:{jsonpapi}/javax/json/JsonArray.html[`JsonArray`], link:{jsonpapi}/javax/json/JsonObject.html[`JsonObject`],
+link:{jsonpapi}/javax/json/JsonStructure.html[`JsonStructure`], link:{jsonpapi}/javax/json/JsonValue.html[`JsonValue`]
 |JSON value types  
 
 |link:{vertxapi}io/vertx/core/buffer/Buffer.html[`Buffer`]
@@ -482,7 +482,7 @@ TIP: The use of `@MultipartForm` is actually unnecessary as RESTEasy Reactive ca
 
 WARNING: When handling file uploads, it is very important to move the file to permanent storage (like a database, a dedicated file system or a cloud storage) in your code that handles the POJO.
 Otherwise, the file will no longer be accessible when the request terminates.
-Moreoever if `quarkus.http.body.delete-uploaded-files-on-end` is set to true, Quarkus will delete the uploaded file when the HTTP response is sent. If the setting is disabled,
+Moreover, if `quarkus.http.body.delete-uploaded-files-on-end` is set to true, Quarkus will delete the uploaded file when the HTTP response is sent. If the setting is disabled,
 the file will reside on the file system of the server (in the directory defined by the `quarkus.http.body.uploads-directory` configuration option), but as the uploaded files are saved
 with a UUID file name and no additional metadata is saved, these files are essentially a random dump of files.
 
@@ -528,7 +528,13 @@ public class Endpoint {
 }
 ----
 
-WARNING: For the time being, returning Multipart data is limited to be blocking endpoints. 
+WARNING: For the time being, returning Multipart data is limited to be blocking endpoints.
+
+==== Handling malformed input
+
+As part of reading the multipart body, RESTEasy Reactive invokes the proper MessageBodyReaderlink:{jaxrsapi}/javax/ws/rs/ext/MessageBodyReader.html[`MessageBodyReader`] for each part of the request.
+If an `IOException` occurs for one of these parts (for example if Jackson was unable to deserialize a JSON part), then a `org.jboss.resteasy.reactive.server.multipart.MultipartPartReadingException` is thrown.
+If this exception is not handled by the application as mentioned in <<exception-mapping>>, an HTTP 400 response is returned by default.
 
 === Returning a response body
 
@@ -1137,6 +1143,93 @@ To enable XML support, add the `quarkus-resteasy-reactive-jaxb` extension to you
 Importing this module will allow HTTP message bodies to be read from XML
 and serialised to XML, for <<resource-types,all the types not already registered with a more specific
 serialisation>>.
+
+==== Advanced JAXB-specific features
+
+When using the `quarkus-resteasy-reactive-jaxb` extension there are some advanced features that RESTEasy Reactive supports.
+
+===== Inject JAXB components
+
+The JAXB resteasy reactive extension will serialize and unserialize requests and responses transparently for users. However, if you need finer grain control over JAXB components, you can inject either the JAXBContext, Marshaller, or Unmarshaller components into your beans:
+
+[source,java]
+----
+@ApplicationScoped
+public class MyService {
+
+    @Inject
+    JAXBContext jaxbContext;
+
+    @Inject
+    Marshaller marshaller;
+
+    @Inject
+    Unmarshaller unmarshaller;
+
+    // ...
+}
+----
+
+[NOTE]
+====
+Quarkus will automatically find all the classes annotated with `@XmlRootElement` and then bound them to the JAXB context.
+====
+
+===== Customize the JAXB configuration
+
+To customize the JAXB configuration for either the JAXB context, and/or the Marshaller/Unmarshaller components, the suggested approach is to define a CDI bean of type `io.quarkus.jaxb.runtime.JaxbContextCustomizer`.
+
+An example where a custom module needs to be registered would look like so:
+
+[source,java]
+----
+@Singleton
+public class RegisterCustomModuleCustomizer implements JaxbContextCustomizer {
+
+    // For JAXB context configuration
+    @Override
+    public void customizeContextProperties(Map<String, Object> properties) {
+
+    }
+
+    // For Marshaller configuration
+    @Override
+    public void customizeMarshaller(Marshaller marshaller) throws PropertyException {
+        marshaller.setProperty("jaxb.formatted.output", Boolean.TRUE);
+    }
+
+    // For Unmarshaller configuration
+    @Override
+    public void customizeUnmarshaller(Unmarshaller unmarshaller) throws PropertyException {
+        // ...
+    }
+}
+----
+
+[NOTE]
+====
+It's not necessary to implement all three methods, but only the want you need.
+====
+
+Alternatively, you can provide your own `JAXBContext` bean by doing:
+
+[source,java]
+----
+public class CustomJaxbContext {
+
+    // Replaces the CDI producer for JAXBContext built into Quarkus
+    @Singleton
+    @Produces
+    JAXBContext jaxbContext() {
+        // ...
+    }
+}
+----
+
+[IMPORTANT]
+====
+Note that if you provide your custom JAXB context instance, you will need to register the classes you want to use for the XML serialization. This means that Quarkus will not update your custom JAXB context instance with the auto-discovered classes. 
+====
 
 === Web Links support
 
