@@ -27,7 +27,12 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 6. Build the site and make it available on a local server
   
-        bundle exec jekyll serve
+        ./serve.sh
+
+   Or if you want it faster and okey to not have guides included use the following:
+
+        ./serve-noguides.sh
+
 
 7. Now browse to http://localhost:4000
 
