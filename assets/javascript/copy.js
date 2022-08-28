@@ -9,6 +9,7 @@ codes.forEach((code) => {
   btn.setAttribute("data-clipboard-action", "copy");
   btn.setAttribute("data-clipboard-target", "#code" + countID);
   btn.setAttribute("title", "Copy to clipboard")
+  btn.setAttribute("float-right", "true");
   
   let div = document.createElement('div');
   div.appendChild(btn);
