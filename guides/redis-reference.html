@@ -206,12 +206,13 @@
 </li>
 <li><a href="#vert-x-redis-client">6. Vert.x Redis Client</a></li>
 <li><a href="#redis-health-check">7. Redis Health Check</a></li>
-<li><a href="#providing-redis-hosts-programmatically">8. Providing Redis Hosts Programmatically</a>
+<li><a href="#providing-redis-hosts-programmatically">8. Providing Redis Hosts Programmatically</a></li>
+<li><a href="#customizing-the-redis-options-programmatically">9. Customizing the Redis options programmatically</a>
 <ul class="sectlevel2">
-<li><a href="#dev-services">8.1. Dev Services</a></li>
+<li><a href="#dev-services">9.1. Dev Services</a></li>
 </ul>
 </li>
-<li><a href="#redis-configuration-reference">9. Configuration Reference</a></li>
+<li><a href="#redis-configuration-reference">10. Configuration Reference</a></li>
 </ul></div>
     <div>
       <div id="preamble">
@@ -1045,7 +1046,62 @@ You cannot use the pub/sub feature from within a transaction.
 </div>
 </div>
 <div class="sect3">
-<h4 id="executing-custom-commands"><a class="anchor" href="#executing-custom-commands"></a>5.3.6. Executing custom commands</h4>
+<h4 id="using-optimistic-locking"><a class="anchor" href="#using-optimistic-locking"></a>5.3.6. Using optimistic locking</h4>
+<div class="paragraph">
+<p>To use optimistic locking, you need to use a variant of the <code>withTransaction</code> method, allowing the execution of code before the transaction starts.
+In other words, it will be executed as follows:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">WATCH key
+
+// Pre-transaction block
+// ....
+// Produce a result
+
+MULTI
+  // In transaction code, receive the result produced by the pre-transaction block.
+EXEC</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For example, if you need to update a value in a hash only if the field exists, you will use the following API:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">OptimisticLockingTransactionResult&lt;Boolean&gt; result = blocking.withTransaction(ds -&gt; {
+    // The pre-transaction block:
+    HashCommands&lt;String, String, String&gt; hashCommands = ds.hash(String.class);
+    return hashCommands.hexists(key, "field"); // Produce a result (boolean in this case)
+},
+ (exists, tx) -&gt; { // The transactional block, receives the result and the transactional data source
+        if (exists) {
+            tx.hash(String.class).hset(key, "field", "new value");
+        } else {
+            tx.discard();
+        }
+ },
+  key); // The watched key</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If one of the watched keys is touched before or during the execution of the pre-transaction or transactional blocks, the transaction is aborted.
+The pre-transactional block produces a result that the transactional block can use.
+This construct is necessary because, within a transaction, the commands do not produce a result.
+Results can only be retrieved after the execution of the transaction.</p>
+</div>
+<div class="paragraph">
+<p>The pre-transaction and transactional blocks are invoked on the same Redis connection.
+Consequently, the pre-transaction block must use the passed data source to execute commands.
+Thus, the commands are emitted from that connection.
+These commands must not modify the watched keys.</p>
+</div>
+<div class="paragraph">
+<p>The transaction is aborted if the pre-transaction block throws an exception (or produces a failure when using the reactive API).</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="executing-custom-commands"><a class="anchor" href="#executing-custom-commands"></a>5.3.7. Executing custom commands</h4>
 <div class="paragraph">
 <p>To execute a custom command, or a command not supported by the API, use the following approach:</p>
 </div>
@@ -1149,8 +1205,34 @@ public class ExampleRedisHostProvider implements RedisHostsProvider {
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.redis.hosts-provider-name=hosts-provider</code></pre>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="customizing-the-redis-options-programmatically"><a class="anchor" href="#customizing-the-redis-options-programmatically"></a>9. Customizing the Redis options programmatically</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>You can expose a bean implementing the <code>io.quarkus.redis.client.RedisOptionsCustomizer</code> interface to customize the Redis client options.
+The bean is called for each configured Redis client:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public static class MyExampleCustomizer implements RedisOptionsCustomizer {
+
+    @Override
+    public void customize(String clientName, RedisOptions options) {
+        if (clientName.equalsIgnoreCase("my-redis")
+                || clientName.equalsIgnoreCase(RedisConfig.DEFAULT_CLIENT_NAME)) {
+            // modify the given options
+        } else {
+            throw new IllegalStateException("Unknown client name: " + clientName);
+        }
+    }
+}</code></pre>
+</div>
+</div>
 <div class="sect2">
-<h3 id="dev-services"><a class="anchor" href="#dev-services"></a>8.1. Dev Services</h3>
+<h3 id="dev-services"><a class="anchor" href="#dev-services"></a>9.1. Dev Services</h3>
 <div class="paragraph">
 <p>See <a href="redis-dev-services.adoc">Redis Dev Service</a>.</p>
 </div>
@@ -1158,7 +1240,7 @@ public class ExampleRedisHostProvider implements RedisHostsProvider {
 </div>
 </div>
 <div class="sect1">
-<h2 id="redis-configuration-reference"><a class="anchor" href="#redis-configuration-reference"></a>9. Configuration Reference</h2>
+<h2 id="redis-configuration-reference"><a class="anchor" href="#redis-configuration-reference"></a>10. Configuration Reference</h2>
 <div class="sectionbody">
 <div class="paragraph configuration-legend">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime</p>
