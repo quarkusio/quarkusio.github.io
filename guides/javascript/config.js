@@ -295,6 +295,10 @@ function makeCollapsibleHandler(descDiv, td, row,
         if( (target.localName == 'a' || getAncestor(target, "a"))) {
             return;
         }
+        // don't collapse if the target is button with attribute "do-not-collapse"
+        if( (target.localName == 'button' && target.hasAttribute("do-not-collapse"))) {
+            return;
+        }
 
         var isCollapsed = descDiv.classList.contains('description-collapsed');
         if( isCollapsed ) {
