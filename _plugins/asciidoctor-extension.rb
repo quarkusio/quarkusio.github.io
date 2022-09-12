@@ -38,3 +38,16 @@ Extensions.register do
     end
   end
 end
+
+env_var_id=0
+Extensions.register do
+  inline_macro do
+    named :env_var_with_copy_button
+    resolve_attributes false
+    process do |parent, target, attrs|
+      copy_btn = %(<code id="env-var-#{env_var_id}">#{target}</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-#{env_var_id}" title="Copy to clipboard" do-not-collapse="true"></button>)
+      env_var_id += 1
+      create_inline_pass parent, %(#{copy_btn})
+    end
+  end
+end
