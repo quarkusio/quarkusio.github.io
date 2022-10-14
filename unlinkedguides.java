@@ -32,6 +32,7 @@ class unlinkedguides implements Callable<Integer> {
         "status-include",
         "quarkus-blaze-persistence",
         "attributes",
+        "attributes-local",
         "smallrye-kafka-incoming",
         "smallrye-kafka-outgoing",
         "faq",
