@@ -183,27 +183,27 @@
   </div>
   <div class="width-12-12">
     <div class="hide-mobile toc"><ul class="sectlevel1">
+<li><a href="#native-memory-management">Native Memory Management</a>
+<ul class="sectlevel2">
+<li><a href="#garbage-collectors">Garbage Collectors</a></li>
+<li><a href="#memory-management-options">Memory Management Options</a></li>
+<li><a href="#gc-logging">GC Logging</a></li>
+</ul>
+</li>
+<li><a href="#inspecting-and-debugging">Inspecting and Debugging Native Executables</a>
+<ul class="sectlevel2">
 <li><a href="#requirements-and-assumptions">Requirements and Assumptions</a></li>
 <li><a href="#bootstrapping-the-project">Bootstrapping the project</a></li>
 <li><a href="#configure-quarkus-properties">Configure Quarkus properties</a></li>
 <li><a href="#first-debugging-steps">First Debugging Steps</a></li>
 <li><a href="#inspecting-native-executables">Inspecting Native Executables</a></li>
-<li><a href="#native-reports">Native Reports</a>
-<ul class="sectlevel2">
-<li><a href="#call-tree-reports">Call Tree Reports</a></li>
-<li><a href="#used-packagesclassesmethods-reports">Used Packages/Classes/Methods Reports</a></li>
-<li><a href="#further-reports">Further Reports</a></li>
-</ul>
-</li>
+<li><a href="#native-reports">Native Reports</a></li>
 <li><a href="#build-time-vs-run-time-initialization">Build-time vs Run-time Initialization</a></li>
-<li><a href="#profiling">Profile Runtime Behaviour</a>
-<ul class="sectlevel2">
-<li><a href="#single-thread">Single Thread</a></li>
-<li><a href="#multi-thread">Multi-Thread</a></li>
+<li><a href="#profiling">Profile Runtime Behaviour</a></li>
+<li><a href="#debug-info">Debugging Native Crashes</a></li>
 </ul>
 </li>
-<li><a href="#debug-info">Debugging Native Crashes</a></li>
-<li><a href="#frequently-asked-questions">Frequently Asked Questions</a>
+<li><a href="#native-faq">Frequently Asked Questions</a>
 <ul class="sectlevel2">
 <li><a href="#why-is-the-process-of-generating-a-native-executable-slow">Why is the process of generating a native executable slow?</a></li>
 <li><a href="#i-get-an-outofmemoryerror-oome-building-native-executables-what-can-i-do">I get an <code>OutOfMemoryError</code> (OOME) building native executables, what can I do?</a></li>
@@ -230,19 +230,209 @@
 <a href="native-and-ssl">Using SSL With Native Images</a>,
 and <a href="writing-native-applications-tips">Writing Native Applications</a>,
 guides.
-It provides further details to debugging issues in Quarkus native executables that might arise during development or production.</p>
+It explores advanced topics that help users diagnose issues,
+increase the reliability and improve the runtime performance of native executables.
+These are the high level sections to be found in this guide:</p>
 </div>
-<div class="paragraph">
-<p>This reference guide takes as input the application developed in the <a href="getting-started">Getting Started Guide</a>.
-You can find instructions on how to quickly set up this application in this guide.</p>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="#native-memory-management">Native Memory Management</a></p>
+</li>
+<li>
+<p><a href="#inspecting-and-debugging">Inspecting and Debugging Native Executables</a></p>
+</li>
+<li>
+<p><a href="#native-faq">Frequently Asked Questions</a></p>
+</li>
+</ul>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="requirements-and-assumptions"><a class="anchor" href="#requirements-and-assumptions"></a>Requirements and Assumptions</h2>
+<h2 id="native-memory-management"><a class="anchor" href="#native-memory-management"></a>Native Memory Management</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>This guide has the following requirements:</p>
+<p>Memory management for Quarkus native executables is enabled by GraalVM’s SubstrateVM runtime system.
+The memory management component in GraalVM is explained in detail
+<a href="https://www.graalvm.org/22.2/reference-manual/native-image/optimizations-and-performance/MemoryManagement">here</a>.
+This guide complements the information available in the GraalVM website with further observations particularly relevant to Quarkus applications.</p>
+</div>
+<div class="sect2">
+<h3 id="garbage-collectors"><a class="anchor" href="#garbage-collectors"></a>Garbage Collectors</h3>
+<div class="paragraph">
+<p>The garbage collectors available for Quarkus users are currently Serial GC and Epsilon GC.</p>
+</div>
+<div class="sect3">
+<h4 id="serial-gc"><a class="anchor" href="#serial-gc"></a>Serial GC</h4>
+<div class="paragraph">
+<p>Serial GC, the default option in GraalVM and Quarkus, is a single-threaded non-concurrent GC, just like HotSpot’s Serial GC.
+The implementation in GraalVM however is different from the HotSpot one,
+and there can be significant differences in the runtime behavior.</p>
+</div>
+<div class="paragraph">
+<p>One of the key differences between HotSpot’s Serial GC and GraalVM’s Serial GC is the way they perform full GC cycles.
+In HotSpot the algorithm used is mark-sweep-compact whereas in GraalVM it is mark-copy.
+Both need to traverse all live objects,
+but in mark-copy this traversal is also used to copy live objects to a secondary space or semi-space.
+As objects are copied from one semi-space to another they’re also compacted.
+In mark-sweep-compact, the compacting requires a second pass on the live objects.
+This makes full GCs in mark-copy more time efficient (in terms of time spent in each GC cycle) than mark-sweep-compact.
+The tradeoff mark-copy makes in order to make individual full GC cycles shorter is space.
+The use of semi-spaces means that for an application to maintain the same GC performance that mark-sweep achieves (in terms of allocated MB per second),
+it requires double the amount of memory.</p>
+</div>
+<div class="sect4">
+<h5 id="gc-collection-policy"><a class="anchor" href="#gc-collection-policy"></a>GC Collection Policy</h5>
+<div class="paragraph">
+<p>GraalVM&#8217;s Serial GC implementation offers a choice between two different collection policies, the default is called "adaptive" and the alternative is called "space/time".</p>
+</div>
+<div class="paragraph">
+<p>The “adaptive” collection policy is based on HotSpot&#8217;s ParallelGC adaptive size policy.
+The main difference with HotSpot is GraalVM&#8217;s focus on memory footprint.
+This means that GraalVM’s adaptive GC policy tries to aggressively trigger GCs in order to keep memory consumption down.</p>
+</div>
+<div class="paragraph">
+<p>Up to version 2.13, Quarkus used the “space/time” GC collection policy by default,
+but starting with version 2.14, it switched to using the “adaptive” policy instead.
+The reason why Quarkus initially chose to use "space/time" is because at that time it had considerable performance improvements over "adaptive".
+Recent performance experiments, however, indicate that the "space/time" policy can result in worse out-of-the-box experience compared to the "space/time" policy,
+while at the same time the benefits it used to offer have diminished considerably after improvements made to the "adaptive" policy.
+As a result, the "adaptive" policy appears to be the best option for most, if not all, Quarkus applications.
+Full details on this switch can be read in <a href="https://github.com/quarkusio/quarkus/issues/28267">this issue</a>.</p>
+</div>
+<div class="paragraph">
+<p>It is still possible to change the GC collection policy using GraalVM’s <code>-H:InitialCollectionPolicy</code> flag.
+Switching to the "space/time" policy can be done by passing the following via command line:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">-Dquarkus.native.additional-build-args=-H:InitialCollectionPolicy=com.oracle.svm.core.genscavenge.CollectionPolicy\$BySpaceAndTime</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Or adding this to the <code>application.properties</code> file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.native.additional-build-args=-H:InitialCollectionPolicy=com.oracle.svm.core.genscavenge.CollectionPolicy$BySpaceAndTime</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Escaping the <code>$</code> character is required to configure the "space/time" GC collection policy if passing via command line in Bash.
+Other command line environments might have similar requirements.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="epsilon-gc"><a class="anchor" href="#epsilon-gc"></a>Epsilon GC</h4>
+<div class="paragraph">
+<p>Epsilon GC is a no-op garbage collector which does not do any memory reclamation.
+From a Quarkus perspective, some of the most relevant use cases for this garbage collector are extremely short-lived jobs, e.g. serverless functions.
+To build Quarkus native with epsilon GC, pass the following argument at build time:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">-Dquarkus.native.additional-build-args=--gc=epsilon</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="memory-management-options"><a class="anchor" href="#memory-management-options"></a>Memory Management Options</h3>
+<div class="paragraph">
+<p>Options to control maximum heap size, young space and other typical use cases found in the JVM can be found in
+<a href="https://www.graalvm.org/22.2/reference-manual/native-image/optimizations-and-performance/MemoryManagement">the GraalVM memory management guide</a>.
+Setting the maximum heap size, either as a percentage or an explicit value, is generally recommended.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="gc-logging"><a class="anchor" href="#gc-logging"></a>GC Logging</h3>
+<div class="paragraph">
+<p>Multiple options exist to print information about garbage collection cycles, depending on the level of detail required.
+The minimum detail is provided <code>-XX:+PrintGC</code>, which prints a message for each GC cycle that occurs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ quarkus-project-0.1-SNAPSHOT-runner -XX:+PrintGC -Xmx64m
+...
+[Incremental GC (CollectOnAllocation) 20480K-&gt;11264K, 0.0003223 secs]
+[Full GC (CollectOnAllocation) 19456K-&gt;5120K, 0.0031067 secs]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When you combine this option with <code>-XX:+VerboseGC</code> you still get a message per GC cycle,
+but it contains extra information.
+Also, adding this option shows the sizing decisions made by the GC algorithm at startup:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ quarkus-project-0.1-SNAPSHOT-runner -XX:+PrintGC -XX:+VerboseGC -Xmx64m
+[Heap policy parameters:
+YoungGenerationSize: 25165824
+MaximumHeapSize: 67108864
+MinimumHeapSize: 33554432
+AlignedChunkSize: 1048576
+LargeArrayThreshold: 131072]
+...
+[[5378479783321 GC: before  epoch: 8  cause: CollectOnAllocation]
+[Incremental GC (CollectOnAllocation) 16384K-&gt;9216K, 0.0003847 secs]
+[5378480179046 GC: after   epoch: 8  cause: CollectOnAllocation  policy: adaptive  type: incremental
+collection time: 384755 nanoSeconds]]
+[[5379294042918 GC: before  epoch: 9  cause: CollectOnAllocation]
+[Full GC (CollectOnAllocation) 17408K-&gt;5120K, 0.0030556 secs]
+[5379297109195 GC: after   epoch: 9  cause: CollectOnAllocation  policy: adaptive  type: complete
+collection time: 3055697 nanoSeconds]]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Beyond these two options, <code>-XX:+PrintHeapShape</code> and <code>-XX:+TraceHeapChunks</code> provide even lower level details about memory chunks on top of which the different memory regions are constructed.</p>
+</div>
+<div class="paragraph">
+<p>The most up-to-date information on GC logging flags can be obtained by printing the list of flags that can be passed to native executables:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ quarkus-project-0.1-SNAPSHOT-runner -XX:PrintFlags=
+...
+  -XX:±PrintGC                                 Print summary GC information after each collection. Default: - (disabled).
+  -XX:±PrintGCSummary                          Print summary GC information after application main method returns. Default: - (disabled).
+  -XX:±PrintGCTimeStamps                       Print a time stamp at each collection, if +PrintGC or +VerboseGC. Default: - (disabled).
+  -XX:±PrintGCTimes                            Print the time for each of the phases of each collection, if +VerboseGC. Default: - (disabled).
+  -XX:±PrintHeapShape                          Print the shape of the heap before and after each collection, if +VerboseGC. Default: - (disabled).
+...
+  -XX:±TraceHeapChunks                         Trace heap chunks during collections, if +VerboseGC and +PrintHeapShape. Default: - (disabled).
+  -XX:±VerboseGC                               Print more information about the heap before and after each collection. Default: - (disabled).</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="inspecting-and-debugging"><a class="anchor" href="#inspecting-and-debugging"></a>Inspecting and Debugging Native Executables</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This debugging guide provides further details on debugging issues in Quarkus native executables that might arise during development or production.</p>
+</div>
+<div class="paragraph">
+<p>It takes as input the application developed in the <a href="getting-started">Getting Started Guide</a>.
+You can find instructions on how to quickly set up this application in this guide.</p>
+</div>
+<div class="sect2">
+<h3 id="requirements-and-assumptions"><a class="anchor" href="#requirements-and-assumptions"></a>Requirements and Assumptions</h3>
+<div class="paragraph">
+<p>This debugging guide has the following requirements:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -284,10 +474,8 @@ A minimum of 4 CPUs and 4GB of memory is required.</p>
 and these are built within a container so there is no need for installing Mandrel on the host.</p>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="bootstrapping-the-project"><a class="anchor" href="#bootstrapping-the-project"></a>Bootstrapping the project</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="bootstrapping-the-project"><a class="anchor" href="#bootstrapping-the-project"></a>Bootstrapping the project</h3>
 <div class="paragraph">
 <p>Start by creating a new Quarkus project.
 Open a terminal and run the following command:</p>
@@ -318,7 +506,7 @@ cd debugging-native</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:2.13.4.Final:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:2.14.0.Final:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=debugging-native \
     -Dextensions='resteasy-reactive,container-image-docker'
@@ -344,12 +532,10 @@ cd debugging-native</code></pre>
 </ul>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="configure-quarkus-properties"><a class="anchor" href="#configure-quarkus-properties"></a>Configure Quarkus properties</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="configure-quarkus-properties"><a class="anchor" href="#configure-quarkus-properties"></a>Configure Quarkus properties</h3>
 <div class="paragraph">
-<p>Some Quarkus configuration options will be used constantly throughout this guide,
+<p>Some Quarkus configuration options will be used constantly throughout this debugging guide,
 so to help declutter command line invocations,
 it&#8217;s recommended to add these options to the <code>application.properties</code> file.
 So, go ahead and add the following options to that file:</p>
@@ -357,16 +543,14 @@ So, go ahead and add the following options to that file:</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.native.container-build=true
-quarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel:22.3-java17
+quarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:22.2-java17
 quarkus.container-image.build=true
 quarkus.container-image.group=test</code></pre>
 </div>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="first-debugging-steps"><a class="anchor" href="#first-debugging-steps"></a>First Debugging Steps</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="first-debugging-steps"><a class="anchor" href="#first-debugging-steps"></a>First Debugging Steps</h3>
 <div class="paragraph">
 <p>As a first step, change to the project directory and build the native executable for the application:</p>
 </div>
@@ -519,10 +703,8 @@ it needs to be escaped to be processed correctly, e.g. <code>\\,</code>.</p>
 </table>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="inspecting-native-executables"><a class="anchor" href="#inspecting-native-executables"></a>Inspecting Native Executables</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="inspecting-native-executables"><a class="anchor" href="#inspecting-native-executables"></a>Inspecting Native Executables</h3>
 <div class="paragraph">
 <p>Given a native executable, various Linux tools can be used to inspect it.
 To allow supporting a variety of environments,
@@ -624,10 +806,8 @@ docker cp mytest:/work/application path/on/host/</code></pre>
 </table>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="native-reports"><a class="anchor" href="#native-reports"></a>Native Reports</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="native-reports"><a class="anchor" href="#native-reports"></a>Native Reports</h3>
 <div class="paragraph">
 <p>Optionally, the native build process can generate reports that show what goes into the binary:</p>
 </div>
@@ -641,8 +821,8 @@ docker cp mytest:/work/application path/on/host/</code></pre>
 <p>The reports will be created under <code>target/debugging-native-1.0.0-SNAPSHOT-native-image-source-jar/reports/</code>.
 These reports are some of the most useful resources when encountering issues with missing methods/classes, or encountering forbidden methods by Mandrel.</p>
 </div>
-<div class="sect2">
-<h3 id="call-tree-reports"><a class="anchor" href="#call-tree-reports"></a>Call Tree Reports</h3>
+<div class="sect3">
+<h4 id="call-tree-reports"><a class="anchor" href="#call-tree-reports"></a>Call Tree Reports</h4>
 <div class="paragraph">
 <p><code>call_tree</code> csv file reports are some of the default reports generated when the <code>-Dquarkus.native.enable-reports</code> option is passed in.
 These csv files can be imported into a graph database, such as Neo4j,
@@ -855,22 +1035,22 @@ When that happens, you can alternatively run the queries directly against the cy
 that explores the Quarkus Hibernate ORM quickstart using the techniques explained above.</p>
 </div>
 </div>
-<div class="sect2">
-<h3 id="used-packagesclassesmethods-reports"><a class="anchor" href="#used-packagesclassesmethods-reports"></a>Used Packages/Classes/Methods Reports</h3>
+<div class="sect3">
+<h4 id="used-packagesclassesmethods-reports"><a class="anchor" href="#used-packagesclassesmethods-reports"></a>Used Packages/Classes/Methods Reports</h4>
 <div class="paragraph">
 <p><code>used_packages</code>, <code>used_classes</code> and <code>used_methods</code> text file reports come in handy when comparing different versions of the application,
 e.g. why does the image take longer to build? Or why is the image bigger now?</p>
 </div>
 </div>
-<div class="sect2">
-<h3 id="further-reports"><a class="anchor" href="#further-reports"></a>Further Reports</h3>
+<div class="sect3">
+<h4 id="further-reports"><a class="anchor" href="#further-reports"></a>Further Reports</h4>
 <div class="paragraph">
 <p>Mandrel can produce further reports beyond the ones that are enabled with the <code>-Dquarkus.native.enable-reports</code> option.
 These are called expert options and you can learn more about them by running:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker run quay.io/quarkus/ubi-quarkus-mandrel:22.3-java17 --expert-options-all</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker run quay.io/quarkus/ubi-quarkus-mandrel-builder-image:22.2-java17 --expert-options-all</code></pre>
 </div>
 </div>
 <div class="admonitionblock warning">
@@ -893,10 +1073,8 @@ so they might change anytime.</p>
 </div>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="build-time-vs-run-time-initialization"><a class="anchor" href="#build-time-vs-run-time-initialization"></a>Build-time vs Run-time Initialization</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="build-time-vs-run-time-initialization"><a class="anchor" href="#build-time-vs-run-time-initialization"></a>Build-time vs Run-time Initialization</h3>
 <div class="paragraph">
 <p>Quarkus instructs Mandrel to initialize as much as possible at build time,
 so that runtime startup can be as fast as possible.
@@ -1117,12 +1295,10 @@ hellomandrel</code></pre>
 <p>Additional information on which classes are initialized and why can be obtained by passing in the <code>-H:+PrintClassInitialization</code> flag via <code>-Dquarkus.native.additional-build-args</code>.</p>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="profiling"><a class="anchor" href="#profiling"></a>Profile Runtime Behaviour</h2>
-<div class="sectionbody">
 <div class="sect2">
-<h3 id="single-thread"><a class="anchor" href="#single-thread"></a>Single Thread</h3>
+<h3 id="profiling"><a class="anchor" href="#profiling"></a>Profile Runtime Behaviour</h3>
+<div class="sect3">
+<h4 id="single-thread"><a class="anchor" href="#single-thread"></a>Single Thread</h4>
 <div class="paragraph">
 <p>In this exercise, we profile the runtime behaviour of some Quarkus application that was compiled to a native executable to determine where the bottleneck is.
 Assume that you’re in a scenario where profiling the pure Java version is not possible, maybe because the issue only occurs with the native version of the application.</p>
@@ -1368,8 +1544,8 @@ The issue is that 1 million characters need to be shifted in very small incremen
 </div>
 </div>
 </div>
-<div class="sect2">
-<h3 id="multi-thread"><a class="anchor" href="#multi-thread"></a>Multi-Thread</h3>
+<div class="sect3">
+<h4 id="multi-thread"><a class="anchor" href="#multi-thread"></a>Multi-Thread</h4>
 <div class="paragraph">
 <p>Multithreaded programs might require special attention when trying to understand their runtime behaviour.
 To demonstrate this, add this <code>MulticastResource</code> code to your project
@@ -1519,10 +1695,8 @@ Then, you can clearly see that there&#8217;s some locking that could affect perf
 </div>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="debug-info"><a class="anchor" href="#debug-info"></a>Debugging Native Crashes</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="debug-info"><a class="anchor" href="#debug-info"></a>Debugging Native Crashes</h3>
 <div class="paragraph">
 <p>One of the drawbacks of using native executables is that they cannot be debugged using the standard Java debuggers,
 instead we need to debug them using <code>gdb</code>, the GNU Project debugger.
@@ -1849,12 +2023,13 @@ Source directories searched: /data/target/debugging-native-1.0.0-SNAPSHOT-native
 (in this case we see that it fails at the first read from src which contains the address <code>0x0000</code>),
 or walk up the stack using <code>gdb</code>’s <code>up</code> command to see what part of our code led to this situation.
 To learn more about using gdb to debug native executables see
-<a href="https://www.graalvm.org/22.3/reference-manual/native-image/debugging-and-diagnostics/DebugInfo/">here</a>.</p>
+<a href="https://www.graalvm.org/22.2/reference-manual/native-image/debugging-and-diagnostics/DebugInfo/">here</a>.</p>
+</div>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="frequently-asked-questions"><a class="anchor" href="#frequently-asked-questions"></a>Frequently Asked Questions</h2>
+<h2 id="native-faq"><a class="anchor" href="#native-faq"></a>Frequently Asked Questions</h2>
 <div class="sectionbody">
 <div class="sect2">
 <h3 id="why-is-the-process-of-generating-a-native-executable-slow"><a class="anchor" href="#why-is-the-process-of-generating-a-native-executable-slow"></a>Why is the process of generating a native executable slow?</h3>
@@ -2020,28 +2195,13 @@ com.oracle.svm.core.VM=GraalVM 22.0.0.2-Final Java 11 Mandrel Distribution</code
 <div class="sect2">
 <h3 id="how-do-i-enable-gc-logging-in-native-executables"><a class="anchor" href="#how-do-i-enable-gc-logging-in-native-executables"></a>How do I enable GC logging in native executables?</h3>
 <div class="paragraph">
-<p>Executing the native executable with <code>-XX:PrintFlags=</code> prints a list of flags that can be passed to native executables.
-For various levels of GC logging one may use:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./target/debugging-native-1.0.0-SNAPSHOT-runner -XX:PrintFlags=
-...
-  -XX:±PrintGC                                 Print summary GC information after each collection. Default: - (disabled).
-  -XX:±PrintGCSummary                          Print summary GC information after application main method returns. Default: - (disabled).
-  -XX:±PrintGCTimeStamps                       Print a time stamp at each collection, if +PrintGC or +VerboseGC. Default: - (disabled).
-  -XX:±PrintGCTimes                            Print the time for each of the phases of each collection, if +VerboseGC. Default: - (disabled).
-  -XX:±PrintHeapShape                          Print the shape of the heap before and after each collection, if +VerboseGC. Default: - (disabled).
-...
-  -XX:±TraceHeapChunks                         Trace heap chunks during collections, if +VerboseGC and +PrintHeapShape. Default: - (disabled).
-  -XX:±VerboseGC                               Print more information about the heap before and after each collection. Default: - (disabled).</code></pre>
-</div>
+<p>See <a href="#gc-logging">Native Memory Management GC Logging section</a> for details.</p>
 </div>
 </div>
 <div class="sect2">
 <h3 id="can-i-get-a-heap-dump-of-a-native-executable-e-g-if-it-runs-out-of-memory"><a class="anchor" href="#can-i-get-a-heap-dump-of-a-native-executable-e-g-if-it-runs-out-of-memory"></a>Can I get a heap dump of a native executable? e.g. if it runs out of memory</h3>
 <div class="paragraph">
-<p>Starting with GraalVM 22.2.0 it will be possible to heap dumps upon request,
+<p>Starting with GraalVM 22.2.0 it is possible to create heap dumps upon request,
 e.g. <code>kill -SIGUSR1 &lt;pid&gt;</code>.
 Support for dumping the heap dump upon an out of memory error will follow up.</p>
 </div>
@@ -2196,7 +2356,7 @@ E.g.</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">./mvnw package -DskipTests -Dnative -Dquarkus.native.container-build=true \
-    -Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel:22.3-java17 \
+    -Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:22.2-java17 \
     -Dquarkus.native.enable-vm-inspection=true</code></pre>
 </div>
 </div>
@@ -2211,7 +2371,7 @@ E.g.</p>
 </div>
 </div>
 <div class="paragraph">
-<p>For more details on using JFR, see <a href="https://www.graalvm.org/22.3/reference-manual/native-image/debugging-and-diagnostics/JFR/">here</a>.</p>
+<p>For more details on using JFR, see <a href="https://www.graalvm.org/22.2/reference-manual/native-image/debugging-and-diagnostics/JFR/">here</a>.</p>
 </div>
 </div>
 <div class="sect2">
