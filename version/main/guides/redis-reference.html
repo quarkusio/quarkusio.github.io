@@ -172,15 +172,23 @@
 <li><a href="#the-value-group">5.3. The <code>value</code> group</a></li>
 </ul>
 </li>
-<li><a href="#vert-x-redis-client">6. Vert.x Redis Client</a></li>
-<li><a href="#redis-health-check">7. Redis Health Check</a></li>
-<li><a href="#providing-redis-hosts-programmatically">8. Providing Redis Hosts Programmatically</a></li>
-<li><a href="#customizing-the-redis-options-programmatically">9. Customizing the Redis options programmatically</a>
+<li><a href="#preload-data-into-redis">6. Preload data into Redis</a>
 <ul class="sectlevel2">
-<li><a href="#dev-services">9.1. Dev Services</a></li>
+<li><a href="#load-scripts">6.1. Load scripts</a></li>
+<li><a href="#load-script-format">6.2. Load Script format</a></li>
+<li><a href="#loading-configuration">6.3. Loading configuration</a></li>
+<li><a href="#devtest-vs-prod">6.4. Dev/Test vs. Prod</a></li>
 </ul>
 </li>
-<li><a href="#redis-configuration-reference">10. Configuration Reference</a></li>
+<li><a href="#vert-x-redis-client">7. Vert.x Redis Client</a></li>
+<li><a href="#redis-health-check">8. Redis Health Check</a></li>
+<li><a href="#providing-redis-hosts-programmatically">9. Providing Redis Hosts Programmatically</a></li>
+<li><a href="#customizing-the-redis-options-programmatically">10. Customizing the Redis options programmatically</a>
+<ul class="sectlevel2">
+<li><a href="#dev-services">10.1. Dev Services</a></li>
+</ul>
+</li>
+<li><a href="#redis-configuration-reference">11. Configuration Reference</a></li>
 </ul></div>
     <div>
       <div id="preamble">
@@ -1139,7 +1147,118 @@ You can also execute custom command in a transaction.
 </div>
 </div>
 <div class="sect1">
-<h2 id="vert-x-redis-client"><a class="anchor" href="#vert-x-redis-client"></a>6. Vert.x Redis Client</h2>
+<h2 id="preload-data-into-redis"><a class="anchor" href="#preload-data-into-redis"></a>6. Preload data into Redis</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>On startup, you can configure the Redis client to preload data into the Redis database.</p>
+</div>
+<div class="sect2">
+<h3 id="load-scripts"><a class="anchor" href="#load-scripts"></a>6.1. Load scripts</h3>
+<div class="paragraph">
+<p>Specify the <em>load script</em> you want to load using:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.redis.load-script=import.sql # import.sql is the default in dev, no-file is the default in prod
+quarkus.redis.my-redis.load-script=actors.redis, movies.redis</code></pre>
+</div>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<code>load-script</code> is a build time property than cannot be overridden at runtime.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Note that each client can have a different script, even a list of scripts.
+In the case of a list, the data is imported in the list order (for example, first <code>actors.redis</code>, then <code>movies.redis</code> for the <code>my-redis</code> client).</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="load-script-format"><a class="anchor" href="#load-script-format"></a>6.2. Load Script format</h3>
+<div class="paragraph">
+<p>The <code>.redis</code> file follows a <em>one command per line</em> format:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text"># Line starting with # and -- are ignored, as well as empty lines
+
+-- One command per line:
+HSET foo field1 abc field2 123
+
+-- Parameters with spaces must be wrapped into single or double quotes
+HSET bar field1 "abc def" field2 '123 456 '
+
+-- Parameters with double quotes must be wrapped into single quotes and the opposite
+SET key1 'A value using "double-quotes"'
+SET key2 "A value using 'single-quotes'"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Quarkus batches all the commands from a single file and sends all the commands.
+The loading process fails if there is any error, but the previous instructions may have been executed.
+To avoid that, you can wrap your command into a Redis <em>transaction</em>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text">-- Run inside a transaction
+MULTI
+SET key value
+SET space:key 'another value'
+INCR counter
+EXEC</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="loading-configuration"><a class="anchor" href="#loading-configuration"></a>6.3. Loading configuration</h3>
+<div class="paragraph">
+<p>The data is loaded when the application starts.
+By default, it drops the whole database before importing.
+You can prevent this using <code>quarkus.redis.flush-before-load=false</code>.</p>
+</div>
+<div class="paragraph">
+<p>Also, the import process only runs if the database is empty (no key).
+You can force to import even if there is data using the <code>quarkus.redis.load-only-if-empty=false</code></p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="devtest-vs-prod"><a class="anchor" href="#devtest-vs-prod"></a>6.4. Dev/Test vs. Prod</h3>
+<div class="paragraph">
+<p>As mentioned above, in dev and test modes, Quarkus tries to import data by looking for the <code>src/main/resources/import.redis</code>.
+This behavior is disabled in <em>prod</em> mode, and if you want to import even in production, add:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.redis.load-script=import.redis</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Before importing in <em>prod</em> mode, mae sure you configured <code>quarkus.redis.flush-before-load</code> accordingly.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+In dev mode, to reload the content of the <code>.redis</code> load scripts, you need to add: <code>%dev.quarkus.vertx.caching=false</code>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="vert-x-redis-client"><a class="anchor" href="#vert-x-redis-client"></a>7. Vert.x Redis Client</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>In addition to the high-level API, you can use the Vertx Redis clients directly in your code.
@@ -1148,7 +1267,7 @@ The documentation of the Vert.x Redis Client is available on the <a href="https:
 </div>
 </div>
 <div class="sect1">
-<h2 id="redis-health-check"><a class="anchor" href="#redis-health-check"></a>7. Redis Health Check</h2>
+<h2 id="redis-health-check"><a class="anchor" href="#redis-health-check"></a>8. Redis Health Check</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>If you are using the <code>quarkus-smallrye-health</code> extension, <code>quarkus-redis</code> will automatically add a readiness health check to validate the connection to the Redis server.</p>
@@ -1162,7 +1281,7 @@ The documentation of the Vert.x Redis Client is available on the <a href="https:
 </div>
 </div>
 <div class="sect1">
-<h2 id="providing-redis-hosts-programmatically"><a class="anchor" href="#providing-redis-hosts-programmatically"></a>8. Providing Redis Hosts Programmatically</h2>
+<h2 id="providing-redis-hosts-programmatically"><a class="anchor" href="#providing-redis-hosts-programmatically"></a>9. Providing Redis Hosts Programmatically</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The <code>RedisHostsProvider</code> programmatically provides redis hosts.
@@ -1207,7 +1326,7 @@ public class ExampleRedisHostProvider implements RedisHostsProvider {
 </div>
 </div>
 <div class="sect1">
-<h2 id="customizing-the-redis-options-programmatically"><a class="anchor" href="#customizing-the-redis-options-programmatically"></a>9. Customizing the Redis options programmatically</h2>
+<h2 id="customizing-the-redis-options-programmatically"><a class="anchor" href="#customizing-the-redis-options-programmatically"></a>10. Customizing the Redis options programmatically</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>You can expose a bean implementing the <code>io.quarkus.redis.client.RedisOptionsCustomizer</code> interface to customize the Redis client options.
@@ -1231,7 +1350,7 @@ public static class MyExampleCustomizer implements RedisOptionsCustomizer {
 </div>
 </div>
 <div class="sect2">
-<h3 id="dev-services"><a class="anchor" href="#dev-services"></a>9.1. Dev Services</h3>
+<h3 id="dev-services"><a class="anchor" href="#dev-services"></a>10.1. Dev Services</h3>
 <div class="paragraph">
 <p>See <a href="redis-dev-services">Redis Dev Service</a>.</p>
 </div>
@@ -1239,7 +1358,7 @@ public static class MyExampleCustomizer implements RedisOptionsCustomizer {
 </div>
 </div>
 <div class="sect1">
-<h2 id="redis-configuration-reference"><a class="anchor" href="#redis-configuration-reference"></a>10. Configuration Reference</h2>
+<h2 id="redis-configuration-reference"><a class="anchor" href="#redis-configuration-reference"></a>11. Configuration Reference</h2>
 <div class="sectionbody">
 <div class="paragraph configuration-legend">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime</p>
@@ -1258,6 +1377,62 @@ public static class MyExampleCustomizer implements RedisOptionsCustomizer {
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.load-script"></a><code><a href="#quarkus-redis-client_quarkus.redis.load-script">quarkus.redis.load-script</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>A list of files allowing to pre-load data into the Redis server. The file is formatted as follows:
+ - One instruction per line
+ - Each instruction is a Redis command and its parameter such as <code>HSET foo field value</code>
+ - Parameters can be wrapped into double-quotes if they include spaces
+ - Parameters can be wrapped into single-quote if they include spaces
+ - Parameters including double-quotes must be wrapped into single-quotes</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19366">QUARKUS_REDIS_LOAD_SCRIPT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19366" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>import.redis in DEV, TEST ; no-file otherwise</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.flush-before-load"></a><code><a href="#quarkus-redis-client_quarkus.redis.flush-before-load">quarkus.redis.flush-before-load</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>When using <code>redisLoadScript</code>, indicates if the Redis database must be flushed (erased) before importing.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19367">QUARKUS_REDIS_FLUSH_BEFORE_LOAD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19367" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.load-only-if-empty"></a><code><a href="#quarkus-redis-client_quarkus.redis.load-only-if-empty">quarkus.redis.load-only-if-empty</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>When using <code>redisLoadScript</code>, indicates if the import should only happen if the database is empty (no keys).</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19368">QUARKUS_REDIS_LOAD_ONLY_IF_EMPTY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19368" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.health.enabled"></a><code><a href="#quarkus-redis-client_quarkus.redis.health.enabled">quarkus.redis.health.enabled</a></code></p>
 </div>
 <div class="openblock description">
@@ -1266,7 +1441,7 @@ public static class MyExampleCustomizer implements RedisOptionsCustomizer {
 <p>Whether a health check is published in case the smallrye-health extension is present.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19360">QUARKUS_REDIS_HEALTH_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19360" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19369">QUARKUS_REDIS_HEALTH_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19369" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1284,7 +1459,7 @@ public static class MyExampleCustomizer implements RedisOptionsCustomizer {
 When DevServices is enabled Quarkus will attempt to automatically configure and start a database when running in Dev or Test mode and when Docker is running.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19361">QUARKUS_REDIS_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19361" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19370">QUARKUS_REDIS_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19370" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1301,7 +1476,7 @@ When DevServices is enabled Quarkus will attempt to automatically configure and 
 <p>The container image name to use, for container based DevServices providers. If you want to use Redis Stack modules (bloom, graph, search&#8230;&#8203;), use: <code>redis/redis-stack-server:latest</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19362">QUARKUS_REDIS_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19362" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19371">QUARKUS_REDIS_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19371" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1319,7 +1494,7 @@ When DevServices is enabled Quarkus will attempt to automatically configure and 
 If not defined, the port will be chosen randomly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19363">QUARKUS_REDIS_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19363" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19372">QUARKUS_REDIS_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19372" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1338,7 +1513,7 @@ The discovery uses the <code>quarkus-dev-service-redis</code> label. The value i
 Container sharing is only used in dev mode.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19364">QUARKUS_REDIS_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19364" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19373">QUARKUS_REDIS_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19373" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1356,12 +1531,68 @@ Container sharing is only used in dev mode.</p>
 This property is used when you need multiple shared Redis servers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19365">QUARKUS_REDIS_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19365" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19374">QUARKUS_REDIS_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19374" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>redis</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.-redis-client-name-.load-script"></a><code><a href="#quarkus-redis-client_quarkus.redis.-redis-client-name-.load-script">quarkus.redis."redis-client-name".load-script</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>A list of files allowing to pre-load data into the Redis server. The file is formatted as follows:
+ - One instruction per line
+ - Each instruction is a Redis command and its parameter such as <code>HSET foo field value</code>
+ - Parameters can be wrapped into double-quotes if they include spaces
+ - Parameters can be wrapped into single-quote if they include spaces
+ - Parameters including double-quotes must be wrapped into single-quotes</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19375">QUARKUS_REDIS__REDIS_CLIENT_NAME__LOAD_SCRIPT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19375" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>import.redis in DEV, TEST ; no-file otherwise</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.-redis-client-name-.flush-before-load"></a><code><a href="#quarkus-redis-client_quarkus.redis.-redis-client-name-.flush-before-load">quarkus.redis."redis-client-name".flush-before-load</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>When using <code>redisLoadScript</code>, indicates if the Redis database must be flushed (erased) before importing.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19376">QUARKUS_REDIS__REDIS_CLIENT_NAME__FLUSH_BEFORE_LOAD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19376" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-redis-client_quarkus.redis.-redis-client-name-.load-only-if-empty"></a><code><a href="#quarkus-redis-client_quarkus.redis.-redis-client-name-.load-only-if-empty">quarkus.redis."redis-client-name".load-only-if-empty</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>When using <code>redisLoadScript</code>, indicates if the import should only happen if the database is empty (no keys).</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-19377">QUARKUS_REDIS__REDIS_CLIENT_NAME__LOAD_ONLY_IF_EMPTY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19377" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -1374,7 +1605,7 @@ This property is used when you need multiple shared Redis servers.</p>
 When DevServices is enabled Quarkus will attempt to automatically configure and start a database when running in Dev or Test mode and when Docker is running.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19366">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19366" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19378">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19378" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1391,7 +1622,7 @@ When DevServices is enabled Quarkus will attempt to automatically configure and 
 <p>The container image name to use, for container based DevServices providers. If you want to use Redis Stack modules (bloom, graph, search&#8230;&#8203;), use: <code>redis/redis-stack-server:latest</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19367">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19367" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19379">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19379" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1409,7 +1640,7 @@ When DevServices is enabled Quarkus will attempt to automatically configure and 
 If not defined, the port will be chosen randomly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19368">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19368" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19380">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19380" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1428,7 +1659,7 @@ The discovery uses the <code>quarkus-dev-service-redis</code> label. The value i
 Container sharing is only used in dev mode.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19369">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19369" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19381">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19381" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -1446,7 +1677,7 @@ Container sharing is only used in dev mode.</p>
 This property is used when you need multiple shared Redis servers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-19370">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19370" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-19382">QUARKUS_REDIS__ADDITIONAL_REDIS_CLIENTS__DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-19382" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
