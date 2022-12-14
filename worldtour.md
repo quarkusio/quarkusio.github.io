@@ -1,5 +1,5 @@
 ---
-layout: worldtour-2022
+layout: worldtour
 title: World Tour
 permalink: /worldtour/
 ---
