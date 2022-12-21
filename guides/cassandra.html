@@ -157,7 +157,8 @@
 <li><a href="#solution">Solution</a></li>
 <li><a href="#creating-a-blank-maven-project">Creating a Blank Maven Project</a></li>
 <li><a href="#creating-the-data-model-and-data-access-objects">Creating the Data Model and Data Access Objects</a></li>
-<li><a href="#creating-a-service-json-rest-endpoint">Creating a Service &amp; JSON REST Endpoint</a></li>
+<li><a href="#generating-the-dao-and-mapper-implementations">Generating the DAO and mapper implementations</a></li>
+<li><a href="#creating-a-service-json-rest-endpoint">Creating a service &amp; JSON REST endpoint</a></li>
 <li><a href="#connecting-to-the-cassandra-database">Connecting to the Cassandra Database</a>
 <ul class="sectlevel2">
 <li><a href="#connecting-to-apache-cassandra-or-datastax-enterprise-dse">Connecting to Apache Cassandra or DataStax Enterprise (DSE)</a></li>
@@ -180,7 +181,7 @@
 </ul>
 </li>
 <li><a href="#running-in-native-mode">Running in native mode</a></li>
-<li><a href="#eager-vs-lazy-initialization">Eager vs Lazy Initialization</a></li>
+<li><a href="#choosing-between-eager-and-lazy-initialization">Choosing between eager and lazy initialization</a></li>
 <li><a href="#conclusion">Conclusion</a></li>
 </ul></div>
     <div>
@@ -377,7 +378,7 @@ implementation of this interface for you.</p>
 it&#8217;s the base type of result sets returned by the driver.</p>
 </div>
 <div class="paragraph">
-<p>Finally, let&#8217;s create the Mapper interface:</p>
+<p>Finally, let&#8217;s create a Mapper interface:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -390,13 +391,171 @@ public interface FruitMapper {
 </div>
 <div class="paragraph">
 <p>The <code>@Mapper</code> annotation is yet another annotation recognized by the DataStax Object Mapper. A
-mapper is responsible for constructing instances of DAOs – in this case, out mapper is constructing
+mapper is responsible for constructing DAO instances – in this case, out mapper is constructing
 an instance of our only DAO, <code>FruitDao</code>.</p>
+</div>
+<div class="paragraph">
+<p>Think of the mapper interface as a factory for DAO beans. If you intend to construct and inject a
+specific DAO bean in your own code, then you first must add a <code>@DaoFactory</code> method for it in a
+<code>@Mapper</code> interface.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<code>@DaoFactory</code> method names are irrelevant.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p><code>@DaoFactory</code> methods should return beans of the following types:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Any <code>@Dao</code>-annotated interface, e.g. <code>FruitDao</code>;</p>
+</li>
+<li>
+<p>A <code>CompletationStage</code> of any <code>@Dao</code>-annotated interface, e.g. <code>CompletionStage&lt;FruitDao&gt;</code>.</p>
+</li>
+<li>
+<p>A <code>Uni</code> of any <code>@Dao</code>-annotated interface, e.g. <code>Uni&lt;FruitDao&gt;</code>.</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<code>Uni</code> is a type from the Mutiny library, which is the reactive programming library used by
+Quarkus. This will be explained in more detail in the "Reactive Programming" section below.
+</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="creating-a-service-json-rest-endpoint"><a class="anchor" href="#creating-a-service-json-rest-endpoint"></a>Creating a Service &amp; JSON REST Endpoint</h2>
+<h2 id="generating-the-dao-and-mapper-implementations"><a class="anchor" href="#generating-the-dao-and-mapper-implementations"></a>Generating the DAO and mapper implementations</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>As you probably guessed already, we are not going to implement the interfaces above. Instead, the
+Object Mapper will generate such implementations for us.</p>
+</div>
+<div class="paragraph">
+<p>The Object Mapper is composed of 2 pieces:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>A (compile-time) annotation processor that scans the classpath for classes annotated with
+<code>@Mapper</code>, <code>@Dao</code> or <code>@Entity</code>, and generates code and CQL queries for them; and</p>
+</li>
+<li>
+<p>A runtime module that contains the logic to execute the generated queries.</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>Therefore, enabling the Object Mapper requires two steps:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Declare the <code>cassandra-quarkus-mapper-processor</code> annotation processor. With Maven, this is done
+by modifying the compiler plugin configuration in the project&#8217;s <code>pom.xml</code> file as follows:</p>
+</li>
+</ol>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;plugin&gt;
+  &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;
+  &lt;version&gt;3.10.1&lt;/version&gt;
+  &lt;configuration&gt;
+    &lt;source&gt;${java.version}&lt;/source&gt;
+    &lt;target&gt;${java.version}&lt;/target&gt;
+    &lt;annotationProcessorPaths&gt;
+      &lt;path&gt;
+        &lt;groupId&gt;com.datastax.oss.quarkus&lt;/groupId&gt;
+        &lt;artifactId&gt;cassandra-quarkus-mapper-processor&lt;/artifactId&gt;
+        &lt;version&gt;${cassandra-quarkus.version}&lt;/version&gt;
+      &lt;/path&gt;
+    &lt;/annotationProcessorPaths&gt;
+  &lt;/configuration&gt;
+&lt;/plugin&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With Gradle, this is done by adding the following line to the <code>build.gradle</code> file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-groovy hljs" data-lang="groovy">annotationProcessor "com.datastax.oss.quarkus:cassandra-quarkus-mapper-processor:${cassandra-quarkus.version}"</code></pre>
+</div>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Verify that you are enabling the right annotation processor! The Cassandra driver ships
+with its Object Mapper annotation processor, called <code>java-driver-mapper-processor</code>. But the
+Cassandra Quarkus extension also ships with its own annotation processor:
+<code>cassandra-quarkus-mapper-processor</code>, which has more capabilities than the driver&#8217;s. This annotation
+processor is the only one suitable for use in a Quarkus application, so check that this is the one
+in use. Also, never use both annotation processors together.
+</td>
+</tr>
+</table>
+</div>
+<div class="olist arabic">
+<ol class="arabic" start="2">
+<li>
+<p>Declare the <code>java-driver-mapper-runtime</code> dependency in compile scope in the project&#8217;s <code>pom.xml</code>
+file as follows:</p>
+</li>
+</ol>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+  &lt;groupId&gt;com.datastax.oss&lt;/groupId&gt;
+  &lt;artifactId&gt;java-driver-mapper-runtime&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Although this module is called "runtime", it must be declared in compile scope.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>If your project is correctly set up, you should now be able to compile it without errors, and you
+should see the generated code in the <code>target/generated-sources/annotations</code> directory (if you are
+using Maven). It&#8217;s not required to get familiar with the generated code though, as it is mostly
+internal machinery to interact with the database.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="creating-a-service-json-rest-endpoint"><a class="anchor" href="#creating-a-service-json-rest-endpoint"></a>Creating a service &amp; JSON REST endpoint</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Now let&#8217;s create a <code>FruitService</code> that will be the business layer of our application and store/load
@@ -421,7 +580,7 @@ public class FruitService {
 </div>
 <div class="paragraph">
 <p>Note how the service is being injected a <code>FruitDao</code> instance. This DAO instance is injected
-automatically.</p>
+automatically, thanks to the generated implementations.</p>
 </div>
 <div class="paragraph">
 <p>The Cassandra Quarkus extension allows you to inject any of the following beans in your own
@@ -433,8 +592,10 @@ components:</p>
 <p>All <code>@Mapper</code>-annotated interfaces in your project.</p>
 </li>
 <li>
-<p>All <code>@Dao</code>-annotated interfaces in your project, as long as they are produced by a corresponding
-<code>@DaoFactory</code>-annotated method declared in a mapper interface from your project.</p>
+<p>You can also inject a <code>CompletionStage</code> or <code>Uni</code> of any <code>@Mapper</code>-annotated interface.</p>
+</li>
+<li>
+<p>Any bean returned by a <code>@DaoFactory</code> method (see above for possible bean types).</p>
 </li>
 <li>
 <p>The
@@ -442,6 +603,9 @@ components:</p>
 bean: this application-scoped, singleton bean is your main entry point to the Cassandra client; it
 is a specialized Cassandra driver session instance with a few methods tailored especially for
 Quarkus. Read its javadocs carefully!</p>
+</li>
+<li>
+<p>You can also inject <code>CompletationStage&lt;QuarkusCqlSession&gt;</code> or <code>Uni&lt;QuarkusCqlSession&gt;</code>.</p>
 </li>
 </ul>
 </div>
@@ -521,7 +685,7 @@ below snippet to your application&#8217;s ppm.xml file:</p>
 &lt;/dependency&gt;
 &lt;dependency&gt;
   &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
-  &lt;artifactId&gt;quarkus-resteasy-jackson&lt;/artifactId&gt;
+  &lt;artifactId&gt;quarkus-resteasy-reactive-jackson&lt;/artifactId&gt;
 &lt;/dependency&gt;</code></pre>
 </div>
 </div>
@@ -1236,28 +1400,30 @@ you can run the native executable as follows:</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="eager-vs-lazy-initialization"><a class="anchor" href="#eager-vs-lazy-initialization"></a>Eager vs Lazy Initialization</h2>
+<h2 id="choosing-between-eager-and-lazy-initialization"><a class="anchor" href="#choosing-between-eager-and-lazy-initialization"></a>Choosing between eager and lazy initialization</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>This extension allows you to inject either:</p>
+<p>As explained above, this extension allows you to inject many types of beans:</p>
 </div>
 <div class="ulist">
 <ul>
 <li>
-<p>a <code>QuarkusCqlSession</code> bean;</p>
+<p>A simple bean like <code>QuarkusCqlSession</code> or <code>FruitDao</code>;</p>
 </li>
 <li>
-<p>or the asynchronous version of this bean, that is, <code>CompletionStage&lt;QuarkusCqlSession&gt;</code>;</p>
+<p>The asynchronous version of that bean, for example <code>CompletionStage&lt;QuarkusCqlSession&gt;</code> or
+`CompletionStage&lt;FruitDao&gt;;</p>
 </li>
 <li>
-<p>or the reactive version of this bean, that is, <code>Uni&lt;QuarkusCqlSession&gt;</code>.</p>
+<p>The reactive version of that bean, for example <code>Uni&lt;QuarkusCqlSession&gt;</code> or <code>Uni&lt;FruitDao&gt;</code>.</p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>The most straightforward approach is obviously to inject <code>QuarkusCqlSession</code> directly. This should
-work just fine for most applications; however, the <code>QuarkusCqlSession</code> bean needs to be initialized
-before it can be used, and this process is blocking.</p>
+<p>The most straightforward approach is obviously to inject the bean directly. This should work just
+fine for most applications. However, the <code>QuarkusCqlSession</code> bean, and all DAO beans that depend on
+it, might take some time to initialize before they can be used for the first time, and this process
+is blocking.</p>
 </div>
 <div class="paragraph">
 <p>Fortunately, it is possible to control when the initialization should happen: the
@@ -1270,23 +1436,23 @@ that needs to interact with the Cassandra database.</p>
 <div class="paragraph">
 <p>Using lazy initialization speeds up your application startup time, and avoids startup failures if
 the Cassandra database is not available. However, it could also prove dangerous if your code is
-fully asynchronous, e.g. if you are using <a href="https://quarkus.io/guides/reactive-routes">reactive
-routes</a>: indeed, the lazy initialization could accidentally happen on a thread that is not allowed
+fully non-blocking, for example if it uses <a href="https://quarkus.io/guides/reactive-routes">reactive
+routes</a>. Indeed, the lazy initialization could accidentally happen on a thread that is not allowed
 to block, such as a Vert.x event loop thread. Therefore, setting <code>quarkus.cassandra.init.eager-init</code>
 to <code>false</code> and injecting <code>QuarkusCqlSession</code> should be avoided in these contexts.</p>
 </div>
 <div class="paragraph">
-<p>If you want to use Vert.x (or any other reactive framework) and keep the lazy initialization
-behavior, you should instead inject only <code>CompletionStage&lt;QuarkusCqlSession&gt;</code> or
-<code>Uni&lt;QuarkusCqlSession&gt;</code>. When injecting these beans, the initialization process will be triggered
-lazily, but it will happen in the background, in a non-blocking way, leveraging the Vert.x event
-loop. This way you don&#8217;t risk blocking the Vert.x thread.</p>
+<p>If you want to use Vert.x (or any other non-blocking framework) and keep the lazy initialization
+behavior, you should instead inject only a <code>CompletionStage</code> or a <code>Uni</code> of the desired bean. When
+injecting these beans, the initialization process will be triggered lazily, but it will happen in
+the background, in a non-blocking way, leveraging the Vert.x event loop. This way you don&#8217;t risk
+blocking the Vert.x thread.</p>
 </div>
 <div class="paragraph">
 <p>Alternatively, you can set <code>quarkus.cassandra.init.eager-init</code> to true: in this case the session
-bean will be initialized eagerly during application startup, on the Quarkus main thread. This would
-eliminate any risk of blocking a Vert.x thread, at the cost of making your startup time (much)
-longer.</p>
+bean and all DAO beans will be initialized eagerly during application startup, on the Quarkus main
+thread. This would eliminate any risk of blocking a Vert.x thread, at the cost of making your
+startup time (much) longer.</p>
 </div>
 </div>
 </div>
