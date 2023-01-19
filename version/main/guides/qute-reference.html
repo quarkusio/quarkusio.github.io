@@ -167,7 +167,7 @@
 </li>
 <li><a href="#quarkus_integration">4. Quarkus Integration</a>
 <ul class="sectlevel2">
-<li><a href="#template-locator-registration">4.1. Template Locator Registration</a></li>
+<li><a href="#engine-customization">4.1. Engine Customization</a></li>
 <li><a href="#template-variants">4.2. Template Variants</a></li>
 <li><a href="#injecting-beans-directly-in-templates">4.3. Injecting Beans Directly In Templates</a></li>
 <li><a href="#typesafe_expressions">4.4. Type-safe Expressions</a></li>
@@ -2590,17 +2590,21 @@ class MyBean {
 </tr>
 </table>
 </div>
+<div class="sect2">
+<h3 id="engine-customization"><a class="anchor" href="#engine-customization"></a>4.1. Engine Customization</h3>
 <div class="paragraph">
-<p>It&#8217;s also possible to contribute to the engine configuration via a CDI observer method.</p>
+<p>Additional components can be registered manually via <code>EngineBuilder</code> methods in a CDI observer method at runtime:</p>
 </div>
 <div class="listingblock">
-<div class="title"><code>EngineBuilder</code> Observer Example</div>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.qute.EngineBuilder;
 
 class MyBean {
 
     void configureEngine(@Observes EngineBuilder builder) {
+       // Add a custom section helper
+       builder.addSectionHelper(new CustomSectionFactory());
+       // Add a custom value resolver
        builder.addValueResolver(ValueResolver.builder()
                 .appliesTo(ctx -&gt; ctx.getBase() instanceof Long &amp;&amp; ctx.getName().equals("tenTimes"))
                 .resolveSync(ctx -&gt; (Long) ec.getBase() * 10)
@@ -2609,8 +2613,70 @@ class MyBean {
 }</code></pre>
 </div>
 </div>
-<div class="sect2">
-<h3 id="template-locator-registration"><a class="anchor" href="#template-locator-registration"></a>4.1. Template Locator Registration</h3>
+<div class="paragraph">
+<p>However, in this particular case the section helper factory is ignored during validation at build time.
+If you want to register a section that participates in validation of templates at build time then use the convenient <code>@EngineConfiguration</code> annotation:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.qute.EngineConfiguration;
+import io.quarkus.qute.SectionHelper;
+import io.quarkus.qute.SectionHelperFactory;
+
+@EngineConfiguration <i class="conum" data-value="1"></i><b>(1)</b>
+public class CustomSectionFactory implements SectionHelperFactory&lt;CustomSectionHelper&gt; {
+
+    @Inject
+    Service service; <i class="conum" data-value="2"></i><b>(2)</b>
+
+    @Override
+    public List&lt;String&gt; getDefaultAliases() {
+        return List.of("custom");
+    }
+
+    @Override
+    public SectionHelper initialize(SectionInitContext context) {
+        if (context.getParameter("foo") == null) {
+            throw new IllegalStateException("Foo param not found"); <i class="conum" data-value="3"></i><b>(3)</b>
+        }
+        return new CustomSectionHelper();
+    }
+
+    class CustomSectionHelper implements SectionHelper {
+
+        @Override
+        public CompletionStage&lt;ResultNode&gt; resolve(SectionResolutionContext context) {
+            return CompletableFuture.completedStage(new SingleResultNode(service.getValue(), null)); <i class="conum" data-value="4"></i><b>(4)</b>
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>A <code>SectionHelperFactory</code> annotated with <code>@EngineConfiguration</code> is used during validation of templates at build time and automatically registered at runtime (a) as a section factory and (b) as a CDI bean.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>A CDI bean instance is used at runtime - this means that the factory can define injection points</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Validate that <code>foo</code> parameter is always present; e.g. <code>{#custom foo='bar' /}</code> is ok but <code>{#custom /}</code> results in a build failure.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Use the injected <code>Service</code> during rendering.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <code>@EngineConfiguration</code> annotation can be also used to register <code>ValueResolver</code>s and <code>NamespaceResolver</code>s.</p>
+</div>
+<div class="sect3">
+<h4 id="template-locator-registration"><a class="anchor" href="#template-locator-registration"></a>4.1.1. Template Locator Registration</h4>
 <div class="paragraph">
 <p>The easiest way to register <a href="#template-locator">template locators</a> is to make them CDI beans.
 As the custom locator is not available during the build time when a template validation is done, you need to disable the validation via the <code>@Locate</code> annotation.</p>
@@ -2649,6 +2715,7 @@ public class CustomLocator implements TemplateLocator {
 <td>Injection fields are resolved as template locators annotated with <code>@Locate</code> are registered as singleton session beans.</td>
 </tr>
 </table>
+</div>
 </div>
 </div>
 <div class="sect2">
