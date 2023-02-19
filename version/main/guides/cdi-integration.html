@@ -176,7 +176,11 @@
 <li><a href="#solution-2-synthesisfinishedbuilditem">5.2. <em>Solution 2</em>: <code>SynthesisFinishedBuildItem</code></a></li>
 </ul>
 </li>
-<li><a href="#synthetic_beans">6. Use Case - The Need for Synthetic Beans</a></li>
+<li><a href="#synthetic_beans">6. Use Case - The Need for Synthetic Beans</a>
+<ul class="sectlevel2">
+<li><a href="#synthetic-injection-points">6.1. Synthetic Injection Points</a></li>
+</ul>
+</li>
 <li><a href="#synthetic_observers">7. Use Case - Synthetic Observers</a></li>
 <li><a href="#generated_beans">8. Use Case - I Have a Generated Bean Class</a></li>
 <li><a href="#use-case-i-need-to-validate-the-deployment">9. Use Case - I Need to Validate the Deployment</a></li>
@@ -643,7 +647,7 @@ In regular CDI, this could be achieved using the <a href="https://jakarta.ee/spe
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep
 SyntheticBeanBuildItem syntheticBean() {
    return SyntheticBeanBuildItem.configure(String.class)
-             .qualifiers(new MyQualifierLiteral())
+             .qualifiers(AnnotationInstance.builder(MyQualifier.class).build())
              .creator(mc -&gt; mc.returnValue(mc.load("foo"))) <i class="conum" data-value="1"></i><b>(1)</b>
              .done();
 }</code></pre>
@@ -668,10 +672,10 @@ You can:</p>
 <p>Generate the bytecode of the <code>Contextual#create(CreationalContext&lt;T&gt;)</code> method directly via <code>ExtendedBeanConfigurator.creator(Consumer&lt;MethodCreator&gt;)</code>.</p>
 </li>
 <li>
-<p>Pass a <code>io.quarkus.arc.BeanCreator</code> implementation class via <code>ExtendedBeanConfigurator#creator(Class&lt;? extends BeanCreator&lt;U&gt;&gt;)</code>, and possibly specify some parameters via <code>ExtendedBeanConfigurator#param()</code>.</p>
+<p>Pass a subclass of <code>io.quarkus.arc.BeanCreator</code> via <code>ExtendedBeanConfigurator#creator(Class&lt;? extends BeanCreator&lt;U&gt;&gt;)</code>, and possibly specify some build-time parameters via <code>ExtendedBeanConfigurator#param()</code> and synthetic injection points via <code>ExtendedBeanConfigurator#addInjectionPoint()</code>.</p>
 </li>
 <li>
-<p>Produce the runtime instance through a proxy returned from a <a href="writing-extensions#bytecode-recording"><code>@Recorder</code> method</a> and set it via <code>ExtendedBeanConfigurator#runtimeValue(RuntimeValue&lt;?&gt;)</code> or <code>ExtendedBeanConfigurator#supplier(Supplier&lt;?&gt;)</code>.</p>
+<p>Produce the runtime instance through a proxy returned from a <a href="writing-extensions#bytecode-recording"><code>@Recorder</code> method</a> and set it via <code>ExtendedBeanConfigurator#runtimeValue(RuntimeValue&lt;?&gt;)</code>, <code>ExtendedBeanConfigurator#supplier(Supplier&lt;?&gt;)</code> or <code>ExtendedBeanConfigurator#createWith(Function&lt;SyntheticCreationalContext&lt;?&gt;, &lt;?&gt;)</code>.</p>
 </li>
 </ol>
 </div>
@@ -775,6 +779,69 @@ It is also possible to use the <code>BeanRegistrationPhaseBuildItem</code> to re
 </td>
 </tr>
 </table>
+</div>
+<div class="sect2">
+<h3 id="synthetic-injection-points"><a class="anchor" href="#synthetic-injection-points"></a>6.1. Synthetic Injection Points</h3>
+<div class="paragraph">
+<p>A synthetic bean may register a synthetic injection point via the <code>ExtendedBeanConfigurator#addInjectionPoint()</code> method.
+This injection point is validated at build time and considered when <a href="cdi-reference#remove_unused_beans">detecting unused beans</a>.
+The injected reference is accessible through the <code>SyntheticCreationalContext#getInjectedReference()</code> methods at runtime.</p>
+</div>
+<div class="listingblock">
+<div class="title">Synthetic Injection Point - Build Step Example</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import org.jboss.jandex.ClassType;
+import org.jboss.jandex.DotName;
+
+@BuildStep
+@Record(RUNTIME_INIT) <i class="conum" data-value="1"></i><b>(1)</b>
+SyntheticBeanBuildItem syntheticBean(TestRecorder recorder) {
+   return SyntheticBeanBuildItem.configure(Foo.class)
+                .scope(Singleton.class)
+                .addInjectionPoint(ClassType.create(DotName.createSimple(Bar.class))) <i class="conum" data-value="2"></i><b>(2)</b>
+                .createWith(recorder.createFoo()) <i class="conum" data-value="3"></i><b>(3)</b>
+                .done();
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The bean instance is initialized during <code>RUNTIME_INIT</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>A synthetic injection point with required type <code>Bar</code> was added; this is an equivalent of <code>@Inject Bar</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The bean instance is created with a function returned from a recorder method.</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="title">Synthetic Injection Point - Recorder Example</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Recorder
+public class TestRecorder {
+
+   public Function&lt;SyntheticCreationalContext&lt;Foo&gt;, Foo&gt; createFoo() {
+     return (context) -&gt; {
+        return new Foo(context.getInjectedReference(Bar.class)); <i class="conum" data-value="1"></i><b>(1)</b>
+     };
+   }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Pass a contextual reference of <code>Bar</code> to the constructor of <code>Foo</code>.</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 </div>
