@@ -165,7 +165,11 @@
 <li><a href="#permission-paths-and-http-root-path">Permission paths and HTTP root path</a></li>
 </ul>
 </li>
-<li><a href="#standard-security-annotations">Authorization using annotations</a></li>
+<li><a href="#standard-security-annotations">Authorization using annotations</a>
+<ul class="sectlevel2">
+<li><a href="#permission-annotation">Permission annotation</a></li>
+</ul>
+</li>
 <li><a href="#references">References</a></li>
 </ul></div>
     <div>
@@ -762,6 +766,358 @@ It is possible to use multiple expressions in the role definition.</td>
 <td>This <code>/subject/secured</code> endpoint requires an authenticated user that has been granted the role <code>User</code> in production but allows any authenticated user in development mode.</td>
 </tr>
 </table>
+</div>
+<div class="sect2">
+<h3 id="permission-annotation"><a class="anchor" href="#permission-annotation"></a>Permission annotation</h3>
+<div class="paragraph">
+<p>Quarkus also provides the <code>io.quarkus.security.PermissionsAllowed</code> annotation that will permit any authenticated user with given permission to access the resource.
+The annotation is extension of the common security annotations and has no relation to configuration permissions defined with the configuration property <code>quarkus.http.auth.permission</code>.</p>
+</div>
+<div class="listingblock">
+<div class="title">Example of endpoints secured with the <code>@PermissionsAllowed</code> annotation</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.arc.Arc;
+import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.QueryParam;
+
+import io.quarkus.security.PermissionsAllowed;
+
+import java.security.Permission;
+import java.util.Collection;
+import java.util.Collections;
+
+@Path("/crud")
+public class CRUDResource {
+
+    @PermissionsAllowed("create") <i class="conum" data-value="1"></i><b>(1)</b>
+    @PermissionsAllowed("update")
+    @POST
+    public String createOrUpdate() {
+        return "modified";
+    }
+
+    @PermissionsAllowed(value = {"create", "update"}, inclusive=true) <i class="conum" data-value="2"></i><b>(2)</b>
+    @POST
+    public String createOrUpdate(Long id) {
+        return id + " modified";
+    }
+
+    @PermissionsAllowed({"see:detail", "see:all", "read"}) <i class="conum" data-value="3"></i><b>(3)</b>
+    @GET
+    @Path("/id/{id}")
+    public String getItem(String id) {
+        return "item-detail-" + id;
+    }
+
+    @PermissionsAllowed(value = "list", permission = CustomPermission.class) <i class="conum" data-value="4"></i><b>(4)</b>
+    @GET
+    public Collection&lt;String&gt; list(@QueryParam("query-options") String queryOptions) {
+        // your business logic comes here
+        return Collections.emptySet();
+    }
+
+    public static class CustomPermission extends Permission {
+
+        public CustomPermission(String name) {
+            super(name);
+        }
+
+        @Override
+        public boolean implies(Permission permission) {
+            var event = Arc.container().instance(RoutingContext.class).get(); <i class="conum" data-value="5"></i><b>(5)</b>
+            var publicContent = "public-content".equals(event.request().params().get("query-options"));
+            var hasPermission = getName().equals(permission.getName());
+            return hasPermission &amp;&amp; publicContent;
+        }
+
+        ...
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Resource method <code>createOrUpdate</code> is only accessible by user with both <code>create</code> and <code>update</code> permissions.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>By default, at least one of the permissions specified through one annotation instance is required.
+You can require all of them by setting <code>inclusive=true</code>. Both resource methods <code>createOrUpdate</code> have equal authorization requirements.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Access is granted to <code>getItem</code> if <code>SecurityIdentity</code> has either <code>read</code> permission or <code>see</code> permission and one of actions (<code>all</code>, <code>detail</code>).</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>You can use any <code>java.security.Permission</code> implementation of your choice.
+By default, string-based permission is performed by the <code>io.quarkus.security.StringPermission</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Permissions are not beans, therefore only way to obtain bean instances is programmatically via the <code>Arc.container()</code>.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock caution">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-caution" title="Caution"></i>
+</td>
+<td class="content">
+If you plan to use the <code>@PermissionsAllowed</code> on the IO thread, review the information in <a href="security-proactive-authentication-concept">Proactive Authentication</a>.
+NOTE: The <code>@PermissionsAllowed</code> is not repeatable on class-level due to limitations of Quarkus interceptors.
+Please find well-argued explanation in the <a href="cdi-reference#repeatable-interceptor-bindings">Repeatable interceptor bindings</a> section of the CDI reference.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>You can also create a custom <code>java.security.Permission</code> with additional constructor parameters.
+These additional parameters will be matched with arguments of the method annotated with the <code>@PermissionsAllowed</code> annotation.
+Later, Quarkus will instantiate your custom Permission with actual arguments, with which the method annotated with the <code>@PermissionsAllowed</code> has been invoked.</p>
+</div>
+<div class="listingblock">
+<div class="title">Example of a custom <code>java.security.Permission</code> that accepts additional arguments</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Permission;
+import java.util.Arrays;
+import java.util.Set;
+
+public class LibraryPermission extends Permission {
+
+    private final Set&lt;String&gt; actions;
+    private final Library library;
+
+    public LibraryPermission(String libraryName, String[] actions, Library library) { <i class="conum" data-value="1"></i><b>(1)</b>
+        super(libraryName);
+        this.actions = Set.copyOf(Arrays.asList(actions));
+        this.library = library;
+    }
+
+    @Override
+    public boolean implies(Permission requiredPermission) {
+        if (requiredPermission instanceof LibraryPermission) {
+            LibraryPermission that = (LibraryPermission) requiredPermission;
+            boolean librariesMatch = getName().equals(that.getName());
+            boolean requiredLibraryIsSublibrary = library.isParentLibraryOf(that.library);
+            boolean hasOneOfRequiredActions = that.actions.stream().anyMatch(actions::contains);
+            return (librariesMatch || requiredLibraryIsSublibrary) &amp;&amp; hasOneOfRequiredActions;
+        }
+        return false;
+    }
+
+    ...
+
+    public static abstract class Library {
+
+        protected String description;
+
+        abstract boolean isParentLibraryOf(Library library);
+
+    }
+
+    public static class MediaLibrary extends Library {
+
+        @Override
+        boolean isParentLibraryOf(Library library) {
+            return library instanceof MediaLibrary;
+        }
+    }
+
+    public static class TvLibrary extends MediaLibrary {
+        ...
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>There must be exactly one constructor of a custom <code>Permission</code> class, also first parameter is always considered a permission name (must be <code>String</code>).
+Optionally, Quarkus may pass Permission actions to the constructor. Just declare the second parameter as <code>String[]</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <code>LibraryPermission</code> permit access to a library if <code>SecurityIdentity</code> is allowed to perform one of required actions
+(like <code>read</code>, <code>write</code>, <code>list</code>) on the very same library, or the parent one. Let&#8217;s see how it is used:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.security.PermissionsAllowed;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class LibraryService {
+
+    @PermissionsAllowed(value = "tv:write", permission = LibraryPermission.class) <i class="conum" data-value="1"></i><b>(1)</b>
+    public Library updateLibrary(String newDesc, Library update) {
+        update.description = newDesc;
+        return update;
+    }
+
+    @PermissionsAllowed(value = "tv:write", permission = LibraryPermission.class, params = "library") <i class="conum" data-value="2"></i><b>(2)</b>
+    @PermissionsAllowed(value = {"tv:read", "tv:list"}, permission = LibraryPermission.class)
+    public Library migrateLibrary(Library migrate, Library library) {
+        // migrate libraries
+        return library;
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Formal parameter <code>update</code> is identified as the first <code>Library</code> parameter and passed to the <code>LibraryPermission</code>.
+However this option comes with a price, as the <code>LibraryPermission</code> must be instantiated every single time <code>updateLibrary</code> method is invoked.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Here, the first <code>Library</code> parameter is <code>migrate</code>, therefore we marked <code>library</code> parameter explicitly via <code>PermissionsAllowed#params</code>.
+Please note that both Permission constructor and annotated method must have parameter <code>library</code>, otherwise validation will fail.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock caution">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-caution" title="Caution"></i>
+</td>
+<td class="content">
+If you would like to pass method parameters to a custom <code>Permission</code> constructor from RESTEasy Reactive endpoints,
+make sure you have <code>@PermissionsAllowed</code> annotation set not on the JAX-RS resource method itself, but on the injected CDI
+bean to which this method will delegate to. Setting <code>@PermissionsAllowed</code> on the JAX-RS resource method will not work
+because RESTEasy Reactive performs the security checks before the deserialization.
+These limitations are demonstrated in the example below.
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="title">Example of endpoint limitations when it comes to passing annotated method arguments to the Permission constructor</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/library")
+public class LibraryResource {
+
+    @Inject
+    LibraryService libraryService;
+
+    @PermissionsAllowed(value = "tv:write", permission = LibraryPermission.class)
+    @PUT
+    @Path("/id/{id}")
+    public Library updateLibrary(@PathParam("id") Integer id, Library library) { <i class="conum" data-value="1"></i><b>(1)</b>
+        ...
+    }
+
+    @PUT
+    @Path("/service-way/id/{id}")
+    public Library updateLibrarySvc(@PathParam("id") Integer id, Library library) {
+        String newDescription = "new description " + id;
+        return libraryService.updateLibrary(newDescription, library); <i class="conum" data-value="2"></i><b>(2)</b>
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>In the RESTEasy Reactive, the endpoint argument <code>library</code> won&#8217;t ever be passed to the <code>LibraryPermission</code>, because it is not available.
+Instead, Quarkus will pass <code>null</code> for the argument <code>library</code>.
+That gives you option to reuse your custom Permission when the method argument (like <code>library</code>) is optional.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Argument <code>library</code> will be passed to the <code>LibraryPermission</code> constructor as the <code>LibraryService#updateLibrary</code> method is not an endpoint.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Currently, there is only one way to add permissions, and that is <a href="security-customization#security-identity-customization">Security Identity Customization</a>.</p>
+</div>
+<div class="listingblock">
+<div class="title">Example of Adding the <code>LibraryPermission</code> to the <code>SecurityIdentity</code></div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Permission;
+import java.util.function.Function;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.security.identity.AuthenticationRequestContext;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.security.identity.SecurityIdentityAugmentor;
+import io.quarkus.security.runtime.QuarkusSecurityIdentity;
+import io.smallrye.mutiny.Uni;
+
+@ApplicationScoped
+public class PermissionsIdentityAugmentor implements SecurityIdentityAugmentor {
+
+    @Override
+    public Uni&lt;SecurityIdentity&gt; augment(SecurityIdentity identity, AuthenticationRequestContext context) {
+        if (isNotAdmin(identity)) {
+            return Uni.createFrom().item(identity);
+        }
+        return Uni.createFrom().item(build(identity));
+    }
+
+    private boolean isNotAdmin(SecurityIdentity identity) {
+        return identity.isAnonymous() || !"admin".equals(identity.getPrincipal().getName());
+    }
+
+    SecurityIdentity build(SecurityIdentity identity) {
+        Permission possessedPermission = new LibraryPermission("media-library",
+                new String[] { "read", "write", "list"}, new MediaLibrary()); <i class="conum" data-value="1"></i><b>(1)</b>
+        return QuarkusSecurityIdentity.builder(identity)
+                .addPermissionChecker(new Function&lt;Permission, Uni&lt;Boolean&gt;&gt;() { <i class="conum" data-value="2"></i><b>(2)</b>
+                    @Override
+                    public Uni&lt;Boolean&gt; apply(Permission requiredPermission) {
+                        boolean accessGranted = possessedPermission.implies(requiredPermission);
+                        return Uni.createFrom().item(accessGranted);
+                    }
+                })
+                .build();
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Created permission <code>media-library</code> is allowed to perform actions <code>read</code>, <code>write</code> and <code>list</code>.
+Considering <code>MediaLibrary</code> is the <code>TvLibrary</code> class parent, we know that administrator is also going to be allowed to modify television library.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>You can add a permission checker via <code>io.quarkus.security.runtime.QuarkusSecurityIdentity.Builder#addPermissionChecker</code>.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock caution">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-caution" title="Caution"></i>
+</td>
+<td class="content">
+Annotation permissions do not work with the custom <a href="security-customization#jaxrs-security-context">JAX-RS SecurityContext</a>, for there are no permissions in <code>jakarta.ws.rs.core.SecurityContext</code>.
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 </div>
