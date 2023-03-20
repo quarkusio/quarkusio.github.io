@@ -169,11 +169,11 @@
 <li><a href="#running-the-application-in-jvm-mode">Running the Application in JVM mode</a></li>
 <li><a href="#running-the-application-in-native-mode">Running the Application in Native Mode</a></li>
 <li><a href="#testing-the-application">Testing the Application</a></li>
-<li><a href="#checking-permissions-programmatically">Checking Permissions Programmatically</a></li>
 <li><a href="#injecting-the-authorization-client">Injecting the Authorization Client</a></li>
 <li><a href="#mapping-protected-resources">Mapping Protected Resources</a></li>
 <li><a href="#more-about-configuring-protected-resources">More About Configuring Protected Resources</a></li>
 <li><a href="#access-to-public-resources">Access to Public Resources</a></li>
+<li><a href="#checking-permission-scopes-programmatically">Checking Permission Scopes Programmatically</a></li>
 <li><a href="#multi-tenancy">Multi-Tenancy</a></li>
 <li><a href="#configuration-reference">Configuration Reference</a></li>
 <li><a href="#references">References</a></li>
@@ -769,40 +769,6 @@ If you try to access this endpoint with the previously issued access token, you 
 </div>
 </div>
 <div class="sect1">
-<h2 id="checking-permissions-programmatically"><a class="anchor" href="#checking-permissions-programmatically"></a>Checking Permissions Programmatically</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>In some cases, you may want to programmatically check whether a request is granted to access a protected resource. By
-injecting a <code>SecurityIdentity</code> instance in your beans, you are allowed to check permissions as follows:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.security.identity.SecurityIdentity;
-import io.smallrye.mutiny.Uni;
-
-@Path("/api/protected")
-public class ProtectedResource {
-
-    @Inject
-    SecurityIdentity identity;
-
-
-    @GET
-    public Uni&lt;List&lt;Permission&gt;&gt; get() {
-        return identity.checkPermission(new AuthPermission("{resource_name}")).onItem()
-                .transform(granted -&gt; {
-                    if (granted) {
-                        return identity.getAttribute("permissions");
-                    }
-                    throw new ForbiddenException();
-                });
-    }
-}</code></pre>
-</div>
-</div>
-</div>
-</div>
-<div class="sect1">
 <h2 id="injecting-the-authorization-client"><a class="anchor" href="#injecting-the-authorization-client"></a>Injecting the Authorization Client</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -882,6 +848,117 @@ quarkus.keycloak.policy-enforcer.paths.1.enforcement-mode=ENFORCING</code></pre>
 </div>
 <div class="paragraph">
 <p>Note only the default tenant configuration applies when controlling anonymous access to the public resource is required.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="checking-permission-scopes-programmatically"><a class="anchor" href="#checking-permission-scopes-programmatically"></a>Checking Permission Scopes Programmatically</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>In addition to resource permissions, you may want to specify method scopes. The scope usually represents an action that
+can be performed on a resource. You can create an enforcing Keycloak Authorization Policy with method scope like this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># path policy with enforced scope 'read' for method 'GET'
+quarkus.keycloak.policy-enforcer.paths.1.name=Scope Permission Resource
+quarkus.keycloak.policy-enforcer.paths.1.path=/api/protected/standard-way
+quarkus.keycloak.policy-enforcer.paths.1.methods.get.method=GET
+quarkus.keycloak.policy-enforcer.paths.1.methods.get.scopes=read <i class="conum" data-value="1"></i><b>(1)</b>
+
+# path policies without scope
+quarkus.keycloak.policy-enforcer.paths.2.name=Scope Permission Resource
+quarkus.keycloak.policy-enforcer.paths.2.path=/api/protected/programmatic-way
+quarkus.keycloak.policy-enforcer.paths.3.name=Scope Permission Resource
+quarkus.keycloak.policy-enforcer.paths.3.path=/api/protected/annotation-way</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>User must have resource permission 'Scope Permission Resource' and scope 'read'</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Request path <code>/api/protected/standard-way</code> is now secured by the Keycloak Policy Enforcer and does not require
+any additions (such as <code>@RolesAllowed</code> annotation). In some cases, you may want to perform the same check programmatically.
+You are allowed to do that by injecting a <code>SecurityIdentity</code> instance in your beans, as demonstrated in the example below.
+Alternatively, if you annotate resource method with the <code>@PermissionsAllowed</code> annotation, you can achieve the same effect.
+The following example shows three resource method that all requires same 'read' scope:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.BasicPermission;
+import java.util.List;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import org.keycloak.representations.idm.authorization.Permission;
+
+import io.quarkus.security.PermissionsAllowed;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.smallrye.mutiny.Uni;
+
+@Path("/api/protected")
+public class ProtectedResource {
+
+    @Inject
+    SecurityIdentity identity;
+
+    @GET
+    @Path("/standard-way")
+    public Uni&lt;List&lt;Permission&gt;&gt; standardWay() { <i class="conum" data-value="1"></i><b>(1)</b>
+        return Uni.createFrom().item(identity.&lt;List&lt;Permission&gt;&gt; getAttribute("permissions"));
+    }
+
+    @GET
+    @Path("/programmatic-way")
+    public Uni&lt;List&lt;Permission&gt;&gt; programmaticWay() {
+        var requiredPermission = new BasicPermission("Scope Permission Resource") {
+            @Override
+            public String getActions() {
+                return "read";
+            }
+        };
+        return identity.checkPermission(requiredPermission).onItem() <i class="conum" data-value="2"></i><b>(2)</b>
+                .transform(granted -&gt; {
+                    if (granted) {
+                        return identity.getAttribute("permissions");
+                    }
+                    throw new ForbiddenException();
+                });
+    }
+
+    @PermissionsAllowed("Scope Permission Resource:read") <i class="conum" data-value="3"></i><b>(3)</b>
+    @GET
+    @Path("/annotation-way")
+    public Uni&lt;List&lt;Permission&gt;&gt; annotationWay() {
+        return Uni.createFrom().item(identity.&lt;List&lt;Permission&gt;&gt; getAttribute("permissions"));
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Request sub-path <code>/standard-way</code> requires both resource permission and scope <code>read</code> according to the configuration properties we set in the <code>application.properties</code> before.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Request sub-path <code>/programmatic-way</code> only requires permission <code>Scope Permission Resource</code>, but we can enforce scope with <code>SecurityIdentity#checkPermission</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The <code>@PermissionsAllowed</code> annotation only grants access to the requests with permission <code>Scope Permission Resource</code> and scope <code>read</code>.
+For more information, see the section <a href="security-authorize-web-endpoints-reference#standard-security-annotations">Authorization using annotations</a> of the Security Authorization guide.</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
