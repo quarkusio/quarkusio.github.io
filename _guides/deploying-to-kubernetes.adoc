@@ -9,7 +9,7 @@ include::_attributes.adoc[]
 :summary: This guide covers how to deploy a native application on Kubernetes.
 
 Quarkus offers the ability to automatically generate Kubernetes resources based on sane defaults and user-supplied configuration using https://github.com/dekorateio/dekorate/[dekorate].
-It currently supports generating resources for vanilla <<#kubernetes,Kubernetes>>, <<#openshift,OpenShift>> and <<#knative,Knative>>.
+It currently supports generating resources for vanilla xref:kubernetes[Kubernetes], xref:openshift[OpenShift] and xref:knative[Knative].
 Furthermore, Quarkus can deploy the application to a target Kubernetes cluster by applying the generated manifests to the target cluster's API Server.
 Finally, when either one of container image extensions is present (see the xref:container-image.adoc[container image guide] for more details), Quarkus has the ability to create a container image and push it to a registry *before* deploying the application to the target platform.
 
@@ -169,6 +169,48 @@ quarkus.container-image.tag=1.0       #optional, defaults to the application ver
 
 The image that will be used in the generated manifests will be `quarkus/demo-app:1.0`
 
+=== Generating idempotent resources
+
+When generating the Kubernetes manifests, Quarkus automatically adds some labels and annotations to give extra information about the generation date or versions. For example:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.quarkus.io/commit-id: 0f8b87788bc446a9347a7961bea8a60889fe1494
+    app.quarkus.io/build-timestamp: 2023-02-10 - 13:07:51 +0000
+  labels:
+    app.kubernetes.io/managed-by: quarkus
+    app.kubernetes.io/version: 0.0.1-SNAPSHOT
+    app.kubernetes.io/name: example
+  name: example
+spec:
+  ...
+----
+
+The `app.quarkus.io/commit-id`, `app.quarkus.io/build-timestamp` labels and the `app.kubernetes.io/version` annotation might change every time we re-build the Kubernetes manifests which can be problematic when we want to deploy these resources using a Git-Ops tool (because these tools will detect differences and hence will perform a re-deployment). 
+
+To make the generated resources Git-Ops friendly and only produce idempotent resources (resources that won't change every time we build the sources), we need to add the following property:
+
+[source,properties]
+----
+quarkus.kubernetes.idempotent=true
+----
+
+Moreover, by default the directory where the generated resources are created is `target/kubernetes`, to change it, we need to use:
+
+[source,properties]
+----
+quarkus.kubernetes.output-directory=target/kubernetes-with-idempotent
+----
+
+[NOTE]
+====
+Note that the property `quarkus.kubernetes.output-directory` is relative to the current project location. 
+====
+
 === Changing the generated deployment resource
 
 Besides generating a `Deployment` resource, you can also choose to generate either a `StatefulSet`, or a `Job`, or a `CronJob` resource instead via `application.properties`:
@@ -255,7 +297,7 @@ quarkus.kubernetes.version=1.0-rc.1
 
 [NOTE]
 ====
-As is described in detail in the <<#openshift, OpenShift>> section, customizing OpenShift (or Knative) properties is done in the same way, but replacing
+As is described in detail in the xref:openshift[OpenShift] section, customizing OpenShift (or Knative) properties is done in the same way, but replacing
 `kubernetes` with `openshift` (or `knative`). The previous example for OpenShift would look like this:
 
 [source,properties]
@@ -443,7 +485,7 @@ quarkus.kubernetes.env.fields.foo=metadata.name
 
 [NOTE]
 ====
-As is described in detail in the <<#openshift, OpenShift>> section, customizing OpenShift properties is done in the same way, but replacing
+As is described in detail in the xref:openshift[OpenShift] section, customizing OpenShift properties is done in the same way, but replacing
 `kubernetes` with `openshift`. The previous example for OpenShift would look like this:
 
 [source,properties]
@@ -505,7 +547,7 @@ quarkus.kubernetes.secret-volumes.my-volume.secret-name=my-secret
 
 [source,properties]
 ----
-quarkus.kubernetes.config-map-volumes.my-volume.config-map-name=my-secret
+quarkus.kubernetes.config-map-volumes.my-volume.config-map-name=my-config-map
 ----
 
 ==== Passing application configuration
@@ -770,6 +812,7 @@ To secure the incoming connections, Kubernetes allows enabling https://kubernete
 [source,properties]
 ----
 quarkus.kubernetes.ingress.expose=true
+quarkus.kubernetes.ingress.target-port=https
 ## Ingress TLS configuration:
 quarkus.kubernetes.ingress.tls.my-secret.enabled=true
 ----
@@ -817,13 +860,70 @@ implementation("io.quarkus:quarkus-kubernetes-client")
 ----
 
 To access the API server from within a Kubernetes cluster, some RBAC related resources are required (e.g. a ServiceAccount, a RoleBinding).
-So, when the `kubernetes-client` extension is present, the `kubernetes` extension is going to create those resources automatically, so that application will be granted the `view` role.
-If more roles are required, they will have to be added manually.
+To ease the usage of the `kubernetes-client` extension, the `kubernetes` extension is going to generate a RoleBinding resource that binds a cluster role named "view" to the application ServiceAccount resource. It's important to note that the cluster role "view" won't be generated automatically, so it's expected that you have this cluster role with name "view" already installed in your cluster. 
+
+On the other hand, you can fully customize the roles, subjects and role bindings to generate using the properties under `quarkus.kubernetes.rbac.role-bindings`, and if present, the `kubernetes-client` extension will use it and hence won't generate any RoleBinding resource.
 
 [NOTE]
 ====
 You can disable the RBAC resources generation using the property `quarkus.kubernetes-client.generate-rbac=false`.
 ====
+
+=== Generating RBAC resources
+
+In some scenarios, it's necessary to generate additional https://kubernetes.io/docs/reference/access-authn-authz/rbac/[RBAC] resources that are used by Kubernetes to grant or limit access to other resources. For example, in our use case, we are building https://kubernetes.io/docs/concepts/extend-kubernetes/operator/#operators-in-kubernetes[a Kubernetes operator] that needs to read the list of the installed deployments. To do this, we would need to assign a service account to our operator and link this service account with a role that grants access to the Deployment resources. Let's see how to do this using the `quarkus.kubernetes.rbac` properties:
+
+[source,properties]
+----
+# Generate the Role resource with name "my-role" <1>
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.api-groups=extensions,apps
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.resources=deployments
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.verbs=list
+----
+
+<1> In this example, the role "my-role" will be generated with a policy rule to get the list of deployments.
+
+By default, if one role is configured, a RoleBinding resource will be generated as well to link this role with the ServiceAccount resource. 
+
+Moreover, you can have more control over the RBAC resources to be generated:
+
+[source,properties]
+----
+# Generate Role resource with name "my-role" <1>
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.api-groups=extensions,apps
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.resources=deployments
+quarkus.kubernetes.rbac.roles.my-role.policy-rules.0.verbs=get,watch,list
+
+# Generate ServiceAccount resource with name "my-service-account" in namespace "my_namespace" <2>
+quarkus.kubernetes.rbac.service-accounts.my-service-account.namespace=my_namespace
+
+# Bind Role "my-role" with ServiceAccount "my-service-account" <3>
+quarkus.kubernetes.rbac.role-bindings.my-role-binding.subjects.my-service-account.kind=ServiceAccount
+quarkus.kubernetes.rbac.role-bindings.my-role-binding.subjects.my-service-account.namespace=my_namespace
+quarkus.kubernetes.rbac.role-bindings.my-role-binding.role-name=my-role
+----
+
+<1> In this example, the role "my-role" will be generated with the specified policy rules.
+<2> Also, the service account "my-service-account" will be generated.
+<3> And we can configure the generated RoleBinding resource by selecting the role to be used and the subject. 
+
+Finally, we can also generate the cluster wide role resource of "ClusterRole" kind and a "ClusterRoleBinding" resource as follows: 
+
+[source,properties]
+----
+# Generate ClusterRole resource with name "my-cluster-role" <1>
+quarkus.kubernetes.rbac.cluster-roles.my-cluster-role.policy-rules.0.api-groups=extensions,apps
+quarkus.kubernetes.rbac.cluster-roles.my-cluster-role.policy-rules.0.resources=deployments
+quarkus.kubernetes.rbac.cluster-roles.my-cluster-role.policy-rules.0.verbs=get,watch,list
+
+# Bind the ClusterRole "my-cluster-role" with the application service account
+quarkus.kubernetes.rbac.cluster-role-bindings.my-cluster-role-binding.subjects.manager.kind=Group
+quarkus.kubernetes.rbac.cluster-role-bindings.my-cluster-role-binding.subjects.manager.api-group=rbac.authorization.k8s.io
+quarkus.kubernetes.rbac.cluster-role-bindings.my-cluster-role-binding.role-name=my-cluster-role <2>
+----
+
+<1> In this example, the cluster role "my-cluster-role" will be generated with the specified policy rules.
+<2> The name of the ClusterRole resource to use. Role resources are namespace-based and hence not allowed in ClusterRoleBinding resources.
 
 === Deploying to Minikube
 
@@ -1179,7 +1279,7 @@ quarkus.kubernetes.env-vars.foo.configmap=myconfigmap
 ==== `env-vars` properties
 
 `quarkus.kubernetes.env-vars` are deprecated (though still currently supported as of this writing) and the new declaration style should be used instead.
-See <<#env-vars>> and more specifically <<env-vars-backwards>> for more details.
+See xref:env-vars[Environment variables] and more specifically xref:env-vars-backwards[Backwards compatibility] for more details.
 
 == Deployment
 
@@ -1486,7 +1586,7 @@ The previous configuration, combined with the presence of `quarkus-datasource`, 
 
 By using the `apiVersion` and `kind` properties of the Operator resource, which matches the used `postgresql` Operator, the generated `ServiceBinding` resource binds the service or resource to the application.
 
-When you do not specify a name for your database service, the the value of the `db-kind` property is used as the default name.
+When you do not specify a name for your database service, the value of the `db-kind` property is used as the default name.
 
 [source,yaml]
 ----

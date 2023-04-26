@@ -1,0 +1,1 @@
+[{"configDocKey":{"type":"boolean","key":".enabled","configDoc":"Whether java info will be included in the info endpoint","withinAMap":false,"defaultValue":"true","javaDocSiteLink":"","docMapKey":"enabled","configPhase":"BUILD_TIME","acceptedValues":null,"optional":false,"list":false,"passThroughMap":false,"withinAConfigGroup":true,"topLevelGrouping":"","enum":false}}]

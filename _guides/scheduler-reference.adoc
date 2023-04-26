@@ -15,7 +15,7 @@ Modern applications often need to run specific tasks periodically.
 There are two scheduler extensions in Quarkus.
 The `quarkus-scheduler` extension brings the API and a lightweight in-memory scheduler implementation.
 The `quarkus-quartz` extension implements the API from the `quarkus-scheduler` extension and contains a scheduler implementation based on the Quartz library.
-You will only need `quarkus-quartz` for more advanced scheduling use cases, such as persistent tasks, clustering and programmatic scheduling of jobs.
+You will only need `quarkus-quartz` for more advanced scheduling use cases, such as persistent tasks and clustering.
 
 NOTE: If you add the `quarkus-quartz` dependency to your project the lightweight scheduler implementation from the `quarkus-scheduler` extension is automatically disabled. 
 
@@ -24,7 +24,7 @@ NOTE: If you add the `quarkus-quartz` dependency to your project the lightweight
 A method annotated with `@io.quarkus.scheduler.Scheduled` is automatically scheduled for invocation.
 A scheduled method must not be abstract or private.
 It may be either static or non-static.
-A scheduled method can be annotated with interceptor bindings, such as `@javax.transaction.Transactional` and `@org.eclipse.microprofile.metrics.annotation.Counted`.
+A scheduled method can be annotated with interceptor bindings, such as `@jakarta.transaction.Transactional` and `@org.eclipse.microprofile.metrics.annotation.Counted`.
 
 NOTE: If there is a bean class that has no scope and declares at least one non-static method annotated with `@Scheduled` then `@Singleton` is used.
 
@@ -75,7 +75,7 @@ The syntax used in CRON expressions is controlled by the `quarkus.scheduler.cron
 The values can be `cron4j`, `quartz`, `unix` and `spring`.
 `quartz` is used by default.
 
-The `cron` attribute supports <<config-reference#property-expressions,Property Expressions>> including default values and nested
+The `cron` attribute supports xref:config-reference.adoc#property-expressions[Property Expressions] including default values and nested
 Property Expressions. (Note that "{property.path}" style expressions are still supported but don't offer the full functionality of Property Expressions.)
 
 
@@ -105,6 +105,29 @@ void myMethod() { }
 
 If the property `myMethod.cron.expr` is undefined or `null`, the default value (`0 0 15 ? * MON *`) will be used.
 
+===== Time Zones
+
+The cron expression is evaluated in the context of the default time zone.
+However, it is also possible to associate the cron expression with a specific time zone.
+
+.Time Zone Example
+[source,java]
+----
+@Scheduled(cron = "0 15 10 * * ?", timeZone = "Europe/Prague") <1>
+void myMethod() { }
+----
+<1> The time zone ID is parsed using `java.time.ZoneId#of(String)`.
+
+The `timeZone` attribute supports xref:config-reference.adoc#property-expressions[Property Expressions] including default values and nested
+Property Expressions.
+
+.Time Zone Configuration Property Example
+[source,java]
+----
+@Scheduled(cron = "0 15 10 * * ?", timeZone = "{myMethod.timeZone}")
+void myMethod() { }
+----
+
 ==== Intervals
 
 An interval trigger defines a period between invocations.
@@ -119,7 +142,7 @@ So for example, `15m` can be used instead of `PT15M` and is parsed as "15 minute
 void every15Mins() { }
 ----
 
-The `every` attribute supports <<config-reference#property-expressions,Property Expressions>> including default values and nested
+The `every` attribute supports xref:config-reference.adoc#property-expressions[Property Expressions] including default values and nested
 Property Expressions. (Note that `"{property.path}"` style expressions are still supported but don't offer the full functionality of Property Expressions.)
 
 .Interval Config Property Example
@@ -153,7 +176,7 @@ Therefore, a possibility to specify an explicit identifier may come in handy.
 void myMethod() { }
 ----
 
-The `identity` attribute supports <<config-reference#property-expressions,Property Expressions>> including default values and nested
+The `identity` attribute supports xref:config-reference.adoc#property-expressions[Property Expressions] including default values and nested
 Property Expressions. (Note that `"{property.path}"` style expressions are still supported but don't offer the full functionality of Property Expressions.)
 
 .Interval Config Property Example
@@ -192,7 +215,7 @@ void everyTwoSeconds() { }
 NOTE: If `@Scheduled#delay()` is set to a value greater than zero the value of `@Scheduled#delayed()` is ignored.
 
 The main advantage over `@Scheduled#delay()` is that the value is configurable.
-The `delay` attribute supports <<config-reference#property-expressions,Property Expressions>> including default values and nested
+The `delay` attribute supports xref:config-reference.adoc#property-expressions[Property Expressions] including default values and nested
 Property Expressions. (Note that `"{property.path}"` style expressions are still supported but don't offer the full functionality of Property Expressions.)
 
 
@@ -334,41 +357,53 @@ class MyService {
 <6> Get Trigger metadata for a specific scheduled job by its identity.
 <7> You can configure the grace period for isOverdue() with quarkus.scheduler.overdue-grace-period
 
+NOTE: A CDI event is fired synchronously and asynchronously when the scheduler or a scheduled job is paused/resumed. The payload is `io.quarkus.scheduler.SchedulerPaused`, `io.quarkus.scheduler.SchedulerResumed`, `io.quarkus.scheduler.ScheduledJobPaused` and `io.quarkus.scheduler.ScheduledJobResumed` respectively.
+
+[[programmatic_scheduling]]
 == Programmatic Scheduling
 
-If you need to schedule a job programmatically you'll need to add the xref:quartz.adoc[Quartz extension] and use the Quartz API directly.
+An injected `io.quarkus.scheduler.Scheduler` can be also used to schedule a job programmatically.
 
-.Programmatic Scheduling with Quartz API
+.Programmatic Scheduling
 [source,java]
 ----
-import org.quartz.Scheduler;
+import io.quarkus.scheduler.Scheduler;
 
+@ApplicationScoped
 class MyJobs {
 
-    void onStart(@Observes StartupEvent event, Scheduler quartz) throws SchedulerException {
-        JobDetail job = JobBuilder.newJob(SomeJob.class)
-                .withIdentity("myJob", "myGroup")
-                .build();
-        Trigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity("myTrigger", "myGroup")
-                .startNow()
-                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
-                        .withIntervalInSeconds(1)
-                        .repeatForever())
-                .build();
-        quartz.scheduleJob(job, trigger);
+    @Inject
+    Scheduler scheduler;
+
+    void addMyJob() { <1>
+        scheduler.newJob("myJob")
+            .setCron("0/5 * * * * ?")
+            .setTask(executionContext -> { <2>
+                // do something important every 5 seconds
+            })
+            .schedule(); <3>
     }
+    
+    void removeMyJob() {
+        scheduler.unscheduleJob("myJob"); <4>
+    } 
 }
 ----
+<1> This is a programmatic alternative to a method annotated with `@Scheduled(identity = "myJob", cron = "0/5 * * * * ?")`.
+<2> The business logic is defined in a callback.
+<3> The job is scheduled once the `JobDefinition#schedule()` method is called.
+<4> A job that was added programmatically can be also removed.
 
-NOTE: By default, the scheduler is not started unless a `@Scheduled` business method is found. You may need to force the start of the scheduler for "pure" programmatic scheduling. See also <<quartz.adoc#quartz-configuration-reference,Quartz Configuration Reference>>.
+NOTE: By default, the scheduler is not started unless a `@Scheduled` business method is found. You may need to force the start of the scheduler for "pure" programmatic scheduling via `quarkus.scheduler.start-mode=forced`.
+
+NOTE: If the xref:quartz.adoc[Quartz extension] is present then the Quartz API can be also used to schedule a job programmatically.
 
 == Scheduled Methods and Testing
 
 It is often desirable to disable the scheduler when running the tests.
 The scheduler can be disabled through the runtime config property `quarkus.scheduler.enabled`.
 If set to `false` the scheduler is not started even though the application contains scheduled methods.
-You can even disable the scheduler for particular <<getting-started-testing#testing_different_profiles,Test Profiles>>.
+You can even disable the scheduler for particular xref:getting-started-testing.adoc#testing_different_profiles[Test Profiles].
 
 == Metrics
 
@@ -381,8 +416,6 @@ If the xref:smallrye-metrics.adoc[SmallRye Metrics extension] is present, then a
 == OpenTelemetry Tracing
 
 If `quarkus.scheduler.tracing.enabled` is set to `true` and the xref:opentelemetry.adoc[OpenTelemetry extension] is present then the `@io.opentelemetry.instrumentation.annotations.WithSpan` annotation is added automatically to every `@Scheduled` method. As a result, each execution of this method has a new `io.opentelemetry.api.trace.Span` associated.
-
-IMPORTANT: <<non-blocking-methods,Non-blocking methods>> are not supported, i.e. a new span is associated with the _actual_ invocation but it's not available within the asynchronous computation.
 
 == Configuration Reference
 

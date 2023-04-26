@@ -9,10 +9,10 @@ include::_attributes.adoc[]
 
 == Quarkus Security Dependency
 
-`io.quarkus:quarkus-security` module contains the core Quarkus security classes.
+`io.quarkus:quarkus-security` module contains the core Quarkus Security classes.
 
 In most cases, it does not have to be added directly to your project's build file as it is already provided by all the security extensions.
-However, if you need to write your own custom security code (for example, register a <<jaxrs-security-context, Custom JAX-RS SecurityContext>>) or use <<bouncy-castle, BouncyCastle>> libraries, then please make sure it is included:
+However, if you need to write your own custom security code (for example, register a xref:jaxrs-security-context[Custom Jakarta REST SecurityContext]) or use xref:bouncy-castle[BouncyCastle] libraries, then please make sure it is included:
 
 [source,xml,role="primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven"]
 .pom.xml
@@ -32,7 +32,7 @@ implementation("io.quarkus:quarkus-security")
 == HttpAuthenticationMechanism Customization
 
 One can customize `HttpAuthenticationMechanism` by registering a CDI implementation bean.
-In the example below the custom authenticator delegates to `JWTAuthMechanism` provided by `quarkus-smallrye-jwt`: 
+In the example below the custom authenticator delegates to `JWTAuthMechanism` provided by `quarkus-smallrye-jwt`:
 
 [source,java]
 ----
@@ -48,7 +48,7 @@ public class CustomAwareJWTAuthMechanism implements HttpAuthenticationMechanism 
 
 	@Override
 	public Uni<SecurityIdentity> authenticate(RoutingContext context, IdentityProviderManager identityProviderManager) {
-	    // do some custom action and delegate	
+	    // do some custom action and delegate
             return delegate.authenticate(context, identityProviderManager);
 	}
 
@@ -146,7 +146,7 @@ import io.quarkus.security.identity.SecurityIdentityAugmentor;
 import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 import java.util.function.Supplier;
 
 @ApplicationScoped
@@ -175,7 +175,7 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
 }
 ----
 
-Here is another example showing how to use the client certificate available in the current xref:security-built-in-authentication-support-concept.adoc#mutual-tls[Mutual TLS] request to add more roles:
+Here is another example showing how to use the client certificate available in the current xref:security-authentication-mechanisms-concept.adoc#mutual-TLS-authentication[mutual TLS (mTLS) authentication] request to add more roles:
 
 [source,java]
 ----
@@ -187,7 +187,7 @@ import io.quarkus.security.identity.SecurityIdentityAugmentor;
 import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 import java.util.function.Supplier;
 import java.util.Set;
 
@@ -232,7 +232,7 @@ You can enforce the order by implementing a default `SecurityIdentityAugmentor#p
 ====
 
 By default, the request context is not activated when augmenting the security identity, this means that if you want to use for example Hibernate
-that mandates a request context, you will have a `javax.enterprise.context.ContextNotActiveException`.
+that mandates a request context, you will have a `jakarta.enterprise.context.ContextNotActiveException`.
 
 The solution is to activate the request context, the following example shows how to get the roles from an Hibernate with Panache `UserRoleEntity`.
 
@@ -241,15 +241,18 @@ The solution is to activate the request context, the following example shows how
 import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
-import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.control.ActivateRequestContext;
-import java.util.function.Supplier;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 @ApplicationScoped
 public class RolesAugmentor implements SecurityIdentityAugmentor {
+
+    @Inject
+    Instance<SecurityIdentitySupplier> identitySupplierInstance;
+
     @Override
     public Uni<SecurityIdentity> augment(SecurityIdentity identity, AuthenticationRequestContext context) {
         if(identity.isAnonymous()) {
@@ -257,11 +260,30 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
         }
 
         // Hibernate ORM is blocking
-        return context.runBlocking(build(identity));
+        SecurityIdentitySupplier identitySupplier = identitySupplierInstance.get();
+        identitySupplier.setIdentity(identity);
+        return context.runBlocking(identitySupplier);
     }
+}
+----
 
-    @ActivateRequestContext // Will activate the request context
-    Supplier<SecurityIdentity> build(SecurityIdentity identity) {
+[source,java]
+----
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.security.runtime.QuarkusSecurityIdentity;
+
+import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.control.ActivateRequestContext;
+import java.util.function.Supplier;
+
+@Dependent
+class SecurityIdentitySupplier implements Supplier<SecurityIdentity> {
+
+    private SecurityIdentity identity;
+
+    @Override
+    @ActivateRequestContext
+    public SecurityIdentity get() {
         QuarkusSecurityIdentity.Builder builder = QuarkusSecurityIdentity.builder(identity);
         String user = identity.getPrincipal().getName();
 
@@ -269,25 +291,29 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
                 .filter(role -> user.equals(role.user))
                 .forEach(role -> builder.addRole(role.role));
 
-        return builder::build;
+        return builder.build();
+    }
+
+    public void setIdentity(SecurityIdentity identity) {
+        this.identity = identity;
     }
 }
 ----
 
 [[jaxrs-security-context]]
-== Custom JAX-RS SecurityContext
+== Custom Jakarta REST SecurityContext
 
-If you use JAX-RS `ContainerRequestFilter` to set a custom JAX-RS `SecurityContext` then make sure `ContainerRequestFilter` runs in the JAX-RS pre-match phase by adding a `@PreMatching` annotation to it for this custom security context to be linked with Quarkus `SecurityIdentity`, for example:
+If you use Jakarta REST `ContainerRequestFilter` to set a custom Jakarta REST `SecurityContext` then make sure `ContainerRequestFilter` runs in the Jakarta REST pre-match phase by adding a `@PreMatching` annotation to it for this custom security context to be linked with Quarkus `SecurityIdentity`, for example:
 
 [source,java]
 ----
 import java.security.Principal;
 
-import javax.ws.rs.container.ContainerRequestContext;
-import javax.ws.rs.container.ContainerRequestFilter;
-import javax.ws.rs.container.PreMatching;
-import javax.ws.rs.core.SecurityContext;
-import javax.ws.rs.ext.Provider;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.container.PreMatching;
+import jakarta.ws.rs.core.SecurityContext;
+import jakarta.ws.rs.ext.Provider;
 
 @Provider
 @PreMatching
@@ -391,14 +417,14 @@ and add the BouncyCastle provider dependency:
 ----
 <dependency>
     <groupId>org.bouncycastle</groupId>
-    <artifactId>bcprov-jdk15on</artifactId>
+    <artifactId>bcprov-jdk18on</artifactId>
 </dependency>
 ----
 
 [source,gradle,role="secondary asciidoc-tabs-target-sync-gradle"]
 .build.gradle
 ----
-implementation("org.bouncycastle:bcprov-jdk15on")
+implementation("org.bouncycastle:bcprov-jdk18on")
 ----
 
 [[bouncy-castle-jsse]]
@@ -426,14 +452,14 @@ and add the BouncyCastle TLS dependency:
 ----
 <dependency>
     <groupId>org.bouncycastle</groupId>
-    <artifactId>bctls-jdk15on</artifactId>
+    <artifactId>bctls-jdk18on</artifactId>
 </dependency>
 ----
 
 [source,gradle,role="secondary asciidoc-tabs-target-sync-gradle"]
 .build.gradle
 ----
-implementation("org.bouncycastle:bctls-jdk15on")
+implementation("org.bouncycastle:bctls-jdk18on")
 ----
 
 [[bouncy-castle-fips]]
@@ -595,3 +621,6 @@ xref:context-propagation.adoc[Context Propagation Guide].
 == References
 
 * xref:security-overview-concept.adoc[Quarkus Security overview]
+* xref:security-architecture-concept.adoc[Quarkus Security architecture] 
+* xref:security-authentication-mechanisms-concept.adoc#other-supported-authentication-mechanisms[Authentication mechanisms in Quarkus]
+* xref:security-identity-providers-concept.adoc[Identity providers]
