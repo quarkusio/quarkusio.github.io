@@ -169,7 +169,7 @@
 <li><a href="#httpauthenticationmechanism-customization">HttpAuthenticationMechanism Customization</a></li>
 <li><a href="#dealing-with-more-than-one-http-auth-mechanisms">Dealing with more than one HttpAuthenticationMechanism</a></li>
 <li><a href="#security-identity-customization">Security Identity Customization</a></li>
-<li><a href="#jaxrs-security-context">Custom JAX-RS SecurityContext</a></li>
+<li><a href="#jaxrs-security-context">Custom Jakarta REST SecurityContext</a></li>
 <li><a href="#disabling-authorization">Disabling Authorization</a></li>
 <li><a href="#registering-security-providers">Registering Security Providers</a>
 <ul class="sectlevel2">
@@ -189,11 +189,11 @@
 <h2 id="quarkus-security-dependency"><a class="anchor" href="#quarkus-security-dependency"></a>Quarkus Security Dependency</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p><code>io.quarkus:quarkus-security</code> module contains the core Quarkus security classes.</p>
+<p><code>io.quarkus:quarkus-security</code> module contains the core Quarkus Security classes.</p>
 </div>
 <div class="paragraph">
 <p>In most cases, it does not have to be added directly to your project&#8217;s build file as it is already provided by all the security extensions.
-However, if you need to write your own custom security code (for example, register a <a href="#jaxrs-security-context">Custom JAX-RS SecurityContext</a>) or use <a href="#bouncy-castle">BouncyCastle</a> libraries, then please make sure it is included:</p>
+However, if you need to write your own custom security code (for example, register a <a href="#jaxrs-security-context">Custom Jakarta REST SecurityContext</a>) or use <a href="#bouncy-castle">BouncyCastle</a> libraries, then please make sure it is included:</p>
 </div>
 <div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
 <div class="title">pom.xml</div>
@@ -348,7 +348,7 @@ import io.quarkus.security.identity.SecurityIdentityAugmentor;
 import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 import java.util.function.Supplier;
 
 @ApplicationScoped
@@ -378,7 +378,7 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
 </div>
 </div>
 <div class="paragraph">
-<p>Here is another example showing how to use the client certificate available in the current <a href="security-built-in-authentication-support-concept#mutual-tls">Mutual TLS</a> request to add more roles:</p>
+<p>Here is another example showing how to use the client certificate available in the current <a href="security-authentication-mechanisms-concept#mutual-TLS-authentication">mutual TLS (mTLS) authentication</a> request to add more roles:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -390,7 +390,7 @@ import io.quarkus.security.identity.SecurityIdentityAugmentor;
 import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.context.ApplicationScoped;
 import java.util.function.Supplier;
 import java.util.Set;
 
@@ -445,7 +445,7 @@ You can enforce the order by implementing a default <code>SecurityIdentityAugmen
 </div>
 <div class="paragraph">
 <p>By default, the request context is not activated when augmenting the security identity, this means that if you want to use for example Hibernate
-that mandates a request context, you will have a <code>javax.enterprise.context.ContextNotActiveException</code>.</p>
+that mandates a request context, you will have a <code>jakarta.enterprise.context.ContextNotActiveException</code>.</p>
 </div>
 <div class="paragraph">
 <p>The solution is to activate the request context, the following example shows how to get the roles from an Hibernate with Panache <code>UserRoleEntity</code>.</p>
@@ -455,15 +455,18 @@ that mandates a request context, you will have a <code>javax.enterprise.context.
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
-import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 
-import javax.enterprise.context.ApplicationScoped;
-import javax.enterprise.context.control.ActivateRequestContext;
-import java.util.function.Supplier;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 
 @ApplicationScoped
 public class RolesAugmentor implements SecurityIdentityAugmentor {
+
+    @Inject
+    Instance&lt;SecurityIdentitySupplier&gt; identitySupplierInstance;
+
     @Override
     public Uni&lt;SecurityIdentity&gt; augment(SecurityIdentity identity, AuthenticationRequestContext context) {
         if(identity.isAnonymous()) {
@@ -471,11 +474,30 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
         }
 
         // Hibernate ORM is blocking
-        return context.runBlocking(build(identity));
+        SecurityIdentitySupplier identitySupplier = identitySupplierInstance.get();
+        identitySupplier.setIdentity(identity);
+        return context.runBlocking(identitySupplier);
     }
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 
-    @ActivateRequestContext // Will activate the request context
-    Supplier&lt;SecurityIdentity&gt; build(SecurityIdentity identity) {
+import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.context.control.ActivateRequestContext;
+import java.util.function.Supplier;
+
+@Dependent
+class SecurityIdentitySupplier implements Supplier&lt;SecurityIdentity&gt; {
+
+    private SecurityIdentity identity;
+
+    @Override
+    @ActivateRequestContext
+    public SecurityIdentity get() {
         QuarkusSecurityIdentity.Builder builder = QuarkusSecurityIdentity.builder(identity);
         String user = identity.getPrincipal().getName();
 
@@ -483,7 +505,11 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
                 .filter(role -&gt; user.equals(role.user))
                 .forEach(role -&gt; builder.addRole(role.role));
 
-        return builder::build;
+        return builder.build();
+    }
+
+    public void setIdentity(SecurityIdentity identity) {
+        this.identity = identity;
     }
 }</code></pre>
 </div>
@@ -491,20 +517,20 @@ public class RolesAugmentor implements SecurityIdentityAugmentor {
 </div>
 </div>
 <div class="sect1">
-<h2 id="jaxrs-security-context"><a class="anchor" href="#jaxrs-security-context"></a>Custom JAX-RS SecurityContext</h2>
+<h2 id="jaxrs-security-context"><a class="anchor" href="#jaxrs-security-context"></a>Custom Jakarta REST SecurityContext</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If you use JAX-RS <code>ContainerRequestFilter</code> to set a custom JAX-RS <code>SecurityContext</code> then make sure <code>ContainerRequestFilter</code> runs in the JAX-RS pre-match phase by adding a <code>@PreMatching</code> annotation to it for this custom security context to be linked with Quarkus <code>SecurityIdentity</code>, for example:</p>
+<p>If you use Jakarta REST <code>ContainerRequestFilter</code> to set a custom Jakarta REST <code>SecurityContext</code> then make sure <code>ContainerRequestFilter</code> runs in the Jakarta REST pre-match phase by adding a <code>@PreMatching</code> annotation to it for this custom security context to be linked with Quarkus <code>SecurityIdentity</code>, for example:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Principal;
 
-import javax.ws.rs.container.ContainerRequestContext;
-import javax.ws.rs.container.ContainerRequestFilter;
-import javax.ws.rs.container.PreMatching;
-import javax.ws.rs.core.SecurityContext;
-import javax.ws.rs.ext.Provider;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.container.PreMatching;
+import jakarta.ws.rs.core.SecurityContext;
+import jakarta.ws.rs.ext.Provider;
 
 @Provider
 @PreMatching
@@ -620,14 +646,14 @@ configuration to register the "SunRsaSign" and "SunJCE" security providers:</p>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
     &lt;groupId&gt;org.bouncycastle&lt;/groupId&gt;
-    &lt;artifactId&gt;bcprov-jdk15on&lt;/artifactId&gt;
+    &lt;artifactId&gt;bcprov-jdk18on&lt;/artifactId&gt;
 &lt;/dependency&gt;</code></pre>
 </div>
 </div>
 <div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
 <div class="title">build.gradle</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("org.bouncycastle:bcprov-jdk15on")</code></pre>
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("org.bouncycastle:bcprov-jdk18on")</code></pre>
 </div>
 </div>
 </div>
@@ -657,14 +683,14 @@ quarkus.http.ssl.certificate.trust-store-password=password</code></pre>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
     &lt;groupId&gt;org.bouncycastle&lt;/groupId&gt;
-    &lt;artifactId&gt;bctls-jdk15on&lt;/artifactId&gt;
+    &lt;artifactId&gt;bctls-jdk18on&lt;/artifactId&gt;
 &lt;/dependency&gt;</code></pre>
 </div>
 </div>
 <div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
 <div class="title">build.gradle</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("org.bouncycastle:bctls-jdk15on")</code></pre>
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("org.bouncycastle:bctls-jdk18on")</code></pre>
 </div>
 </div>
 </div>
@@ -873,6 +899,15 @@ to make sure that Quarkus can propagate it. For more information see the
 <ul>
 <li>
 <p><a href="security-overview-concept">Quarkus Security overview</a></p>
+</li>
+<li>
+<p><a href="security-architecture-concept">Quarkus Security architecture</a></p>
+</li>
+<li>
+<p><a href="security-authentication-mechanisms-concept#other-supported-authentication-mechanisms">Authentication mechanisms in Quarkus</a></p>
+</li>
+<li>
+<p><a href="security-identity-providers-concept">Identity providers</a></p>
 </li>
 </ul>
 </div>

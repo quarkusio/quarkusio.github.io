@@ -176,7 +176,7 @@
 </ul>
 </li>
 <li><a href="#scheduler">2. Scheduler</a></li>
-<li><a href="#programmatic-scheduling">3. Programmatic Scheduling</a></li>
+<li><a href="#programmatic_scheduling">3. Programmatic Scheduling</a></li>
 <li><a href="#scheduled-methods-and-testing">4. Scheduled Methods and Testing</a></li>
 <li><a href="#metrics">5. Metrics</a></li>
 <li><a href="#opentelemetry-tracing">6. OpenTelemetry Tracing</a></li>
@@ -190,7 +190,7 @@
 There are two scheduler extensions in Quarkus.
 The <code>quarkus-scheduler</code> extension brings the API and a lightweight in-memory scheduler implementation.
 The <code>quarkus-quartz</code> extension implements the API from the <code>quarkus-scheduler</code> extension and contains a scheduler implementation based on the Quartz library.
-You will only need <code>quarkus-quartz</code> for more advanced scheduling use cases, such as persistent tasks, clustering and programmatic scheduling of jobs.</p>
+You will only need <code>quarkus-quartz</code> for more advanced scheduling use cases, such as persistent tasks and clustering.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -213,7 +213,7 @@ If you add the <code>quarkus-quartz</code> dependency to your project the lightw
 <p>A method annotated with <code>@io.quarkus.scheduler.Scheduled</code> is automatically scheduled for invocation.
 A scheduled method must not be abstract or private.
 It may be either static or non-static.
-A scheduled method can be annotated with interceptor bindings, such as <code>@javax.transaction.Transactional</code> and <code>@org.eclipse.microprofile.metrics.annotation.Counted</code>.</p>
+A scheduled method can be annotated with interceptor bindings, such as <code>@jakarta.transaction.Transactional</code> and <code>@org.eclipse.microprofile.metrics.annotation.Counted</code>.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -331,6 +331,39 @@ void myMethod() { }</code></pre>
 </div>
 <div class="paragraph">
 <p>If the property <code>myMethod.cron.expr</code> is undefined or <code>null</code>, the default value (<code>0 0 15 ? * MON *</code>) will be used.</p>
+</div>
+<div class="sect4">
+<h5 id="time-zones"><a class="anchor" href="#time-zones"></a>1.1.1.1. Time Zones</h5>
+<div class="paragraph">
+<p>The cron expression is evaluated in the context of the default time zone.
+However, it is also possible to associate the cron expression with a specific time zone.</p>
+</div>
+<div class="listingblock">
+<div class="title">Time Zone Example</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Scheduled(cron = "0 15 10 * * ?", timeZone = "Europe/Prague") <i class="conum" data-value="1"></i><b>(1)</b>
+void myMethod() { }</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The time zone ID is parsed using <code>java.time.ZoneId#of(String)</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <code>timeZone</code> attribute supports <a href="config-reference#property-expressions">Property Expressions</a> including default values and nested
+Property Expressions.</p>
+</div>
+<div class="listingblock">
+<div class="title">Time Zone Configuration Property Example</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Scheduled(cron = "0 15 10 * * ?", timeZone = "{myMethod.timeZone}")
+void myMethod() { }</code></pre>
+</div>
+</div>
 </div>
 </div>
 <div class="sect3">
@@ -698,36 +731,71 @@ class MyService {
 </tr>
 </table>
 </div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+A CDI event is fired synchronously and asynchronously when the scheduler or a scheduled job is paused/resumed. The payload is <code>io.quarkus.scheduler.SchedulerPaused</code>, <code>io.quarkus.scheduler.SchedulerResumed</code>, <code>io.quarkus.scheduler.ScheduledJobPaused</code> and <code>io.quarkus.scheduler.ScheduledJobResumed</code> respectively.
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="programmatic-scheduling"><a class="anchor" href="#programmatic-scheduling"></a>3. Programmatic Scheduling</h2>
+<h2 id="programmatic_scheduling"><a class="anchor" href="#programmatic_scheduling"></a>3. Programmatic Scheduling</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If you need to schedule a job programmatically you&#8217;ll need to add the <a href="quartz">Quartz extension</a> and use the Quartz API directly.</p>
+<p>An injected <code>io.quarkus.scheduler.Scheduler</code> can be also used to schedule a job programmatically.</p>
 </div>
 <div class="listingblock">
-<div class="title">Programmatic Scheduling with Quartz API</div>
+<div class="title">Programmatic Scheduling</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import org.quartz.Scheduler;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.scheduler.Scheduler;
 
+@ApplicationScoped
 class MyJobs {
 
-    void onStart(@Observes StartupEvent event, Scheduler quartz) throws SchedulerException {
-        JobDetail job = JobBuilder.newJob(SomeJob.class)
-                .withIdentity("myJob", "myGroup")
-                .build();
-        Trigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity("myTrigger", "myGroup")
-                .startNow()
-                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
-                        .withIntervalInSeconds(1)
-                        .repeatForever())
-                .build();
-        quartz.scheduleJob(job, trigger);
+    @Inject
+    Scheduler scheduler;
+
+    void addMyJob() { <i class="conum" data-value="1"></i><b>(1)</b>
+        scheduler.newJob("myJob")
+            .setCron("0/5 * * * * ?")
+            .setTask(executionContext -&gt; { <i class="conum" data-value="2"></i><b>(2)</b>
+                // do something important every 5 seconds
+            })
+            .schedule(); <i class="conum" data-value="3"></i><b>(3)</b>
+    }
+
+    void removeMyJob() {
+        scheduler.unscheduleJob("myJob"); <i class="conum" data-value="4"></i><b>(4)</b>
     }
 }</code></pre>
 </div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>This is a programmatic alternative to a method annotated with <code>@Scheduled(identity = "myJob", cron = "0/5 * * * * ?")</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The business logic is defined in a callback.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The job is scheduled once the <code>JobDefinition#schedule()</code> method is called.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>A job that was added programmatically can be also removed.</td>
+</tr>
+</table>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -736,7 +804,19 @@ class MyJobs {
 <i class="fa icon-note" title="Note"></i>
 </td>
 <td class="content">
-By default, the scheduler is not started unless a <code>@Scheduled</code> business method is found. You may need to force the start of the scheduler for "pure" programmatic scheduling. See also <a href="quartz#quartz-configuration-reference">Quartz Configuration Reference</a>.
+By default, the scheduler is not started unless a <code>@Scheduled</code> business method is found. You may need to force the start of the scheduler for "pure" programmatic scheduling via <code>quarkus.scheduler.start-mode=forced</code>.
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+If the <a href="quartz">Quartz extension</a> is present then the Quartz API can be also used to schedule a job programmatically.
 </td>
 </tr>
 </table>
@@ -774,18 +854,6 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <div class="paragraph">
 <p>If <code>quarkus.scheduler.tracing.enabled</code> is set to <code>true</code> and the <a href="opentelemetry">OpenTelemetry extension</a> is present then the <code>@io.opentelemetry.instrumentation.annotations.WithSpan</code> annotation is added automatically to every <code>@Scheduled</code> method. As a result, each execution of this method has a new <code>io.opentelemetry.api.trace.Span</code> associated.</p>
 </div>
-<div class="admonitionblock important">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-important" title="Important"></i>
-</td>
-<td class="content">
-<a href="#non-blocking-methods">Non-blocking methods</a> are not supported, i.e. a new span is associated with the <em>actual</em> invocation but it&#8217;s not available within the asynchronous computation.
-</td>
-</tr>
-</table>
-</div>
 </div>
 </div>
 <div class="sect1">
@@ -816,7 +884,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <p>The syntax used in CRON expressions.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5996">QUARKUS_SCHEDULER_CRON_TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5996" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6959">QUARKUS_SCHEDULER_CRON_TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6959" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -835,7 +903,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <p>Scheduled task metrics will be enabled if a metrics extension is present and this value is true.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5997">QUARKUS_SCHEDULER_METRICS_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5997" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6960">QUARKUS_SCHEDULER_METRICS_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6960" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -852,7 +920,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <p>Tracing will be enabled if the OpenTelemetry extension is present and this value is true.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5998">QUARKUS_SCHEDULER_TRACING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5998" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6961">QUARKUS_SCHEDULER_TRACING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6961" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -869,7 +937,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <p>If schedulers are enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5999">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5999" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6962">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6962" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
@@ -886,13 +954,34 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 <p>Scheduled task will be flagged as overdue if next execution time is exceeded by this period.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6000">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6000" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6963">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6963" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/time/Duration.html">Duration</a>
   <a href="#duration-note-anchor-quarkus-scheduler" title="More information about the Duration format"><span class="icon"><i class="fa fa-question-circle"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1S</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-scheduler_quarkus.scheduler.start-mode"></a><code><a href="#quarkus-scheduler_quarkus.scheduler.start-mode">quarkus.scheduler.start-mode</a></code></p>
+</div>
+<div class="openblock description">
+<div class="content">
+<div class="paragraph">
+<p>Scheduler can be started in different modes. By default, the scheduler is not started unless a <code>io.quarkus.scheduler.Scheduled</code> business method is found.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-6964">QUARKUS_SCHEDULER_START_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6964" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
+<p><span class="asciidoc-tooltip-wrapper"><code>normal</code><span class="asciidoc-tooltip">The scheduler is not started unless a <code>io.quarkus.scheduler.Scheduled</code> business method is found.</span></span>, tooltip:forced[The scheduler will be started even if no scheduled business methods are found.
+This is necessary for "pure" programmatic scheduling.], tooltip:halted[Just like the <code>forced</code> mode but the scheduler will not start triggering jobs until <code>Scheduler#resume()</code> is called.
+This can be useful to run some intialization logic that needs to be performed before the scheduler starts.]</p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"></td>
 </tr>
 </tbody>
 </table>
