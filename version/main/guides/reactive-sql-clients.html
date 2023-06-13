@@ -196,6 +196,7 @@
 <li><a href="#load-balancing-connections">Load-balancing connections</a></li>
 <li><a href="#pooled-connection-idle-timeout">Pooled Connection <code>idle-timeout</code></a></li>
 <li><a href="#customizing-pool-creation">Customizing pool creation</a></li>
+<li><a href="#pipelining">Pipelining</a></li>
 <li><a href="#configuration-reference">Configuration Reference</a>
 <ul class="sectlevel2">
 <li><a href="#common-datasource">Common Datasource</a></li>
@@ -1288,9 +1289,9 @@ This step depends on the database type.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>quarkus.datasource.reactive.url[0]=postgresql://host1:5432/default
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.datasource.reactive.url[0]=postgresql://host1:5432/default
 quarkus.datasource.reactive.url[1]=postgresql://host2:5432/default
-quarkus.datasource.reactive.url[2]=postgresql://host3:5432/default</pre>
+quarkus.datasource.reactive.url[2]=postgresql://host3:5432/default</code></pre>
 </div>
 </div>
 </div>
@@ -1394,6 +1395,66 @@ public class CustomPgPoolCreator implements PgPoolCreator {
     }
 }</code></pre>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="pipelining"><a class="anchor" href="#pipelining"></a>Pipelining</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The PostgreSQL and MariaDB/MySQL clients support pipelining of queries at the connection level.
+The feature consists in sending multiple queries on the same database connection without waiting for the corresponding responses.</p>
+</div>
+<div class="paragraph">
+<p>In some use cases, query pipelining can improve database access performance.</p>
+</div>
+<div class="paragraph">
+<p>Here&#8217;s an example for PostgreSQL:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+
+import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.pgclient.PgPool;
+
+public class PipeliningExample {
+
+    @Inject
+    PgPool client;
+
+    public Uni&lt;String&gt; favoriteFruitAndVegetable() {
+        // Explicitely acquire a connection
+        return client.withConnection(conn -&gt; {
+            Uni&lt;String&gt; favoriteFruit = conn.query("SELECT name FROM fruits WHERE preferred IS TRUE").execute()
+                    .onItem().transform(rows -&gt; rows.iterator().next().getString("name"));
+            Uni&lt;String&gt; favoriteVegetable = conn.query("SELECT name FROM vegetables WHERE preferred IS TRUE").execute()
+                    .onItem().transform(rows -&gt; rows.iterator().next().getString("name"));
+            // favoriteFruit and favoriteVegetable unis will be subscribed at the same time
+            return Uni.combine().all().unis(favoriteFruit, favoriteVegetable)
+                    .combinedWith(PipeliningExample::formatMessage);
+        });
+    }
+
+    private static String formatMessage(String fruit, String vegetable) {
+        return String.format("The favorite fruit is %s and the favorite vegetable is %s", fruit, vegetable);
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The maximum number of pipelined queries is configured with the <code>pipelining-limit</code> property:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># For PostgreSQL
+quarkus.datasource.reactive.postgresql.pipelining-limit=256
+# For MariaDB/MySQL
+quarkus.datasource.reactive.mysql.pipelining-limit=256</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>By default, <code>pipelining-limit</code> is set to 256.</p>
 </div>
 </div>
 </div>
