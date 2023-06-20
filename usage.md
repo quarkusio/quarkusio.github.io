@@ -9,7 +9,7 @@ Starting from Quarkus 3.2 when you run Quarkus in devmode (`quarkus dev`, `mvn q
 
 ![/assets/images/usage-prompt.png](/assets/images/usage-prompt.png)
 
-If you answer Yes then when you perform a quarkus build is performed anonymized data is sent
+If you answer Yes then, when you perform a quarkus build, anonymized data is sent
 to gather usage statistics on how Quarkus is being used and adopted.
 
 This service is provided by Red Hat and the details can be found on [usage policy](/usage/policy) page.
