@@ -5,7 +5,7 @@ subtitle:
 permalink: /usage/
 ---
 
-Starting from Quarkus 3.2 when you run Quarkus in devmode (`quarkus dev`, `mvn quarkus:dev`, etc.) you get asked if you agree to contribute anonymous build data to the Quarkus community.
+Starting from Quarkus 3.2 when you run Quarkus the first time in dev mode (`quarkus dev`, `mvn quarkus:dev`, etc.) you get asked if you agree to contribute anonymous build data to the Quarkus community.
 
 ![/assets/images/usage-prompt.png](/assets/images/usage-prompt.png)
 
