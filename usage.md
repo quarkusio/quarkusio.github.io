@@ -1,44 +1,53 @@
 ---
 layout: usage
 title: Quarkus Usage Analytics
-subtitle: 
+subtitle: Help us make Quarkus even better, anonymously.
 permalink: /usage/
 ---
 
-Starting from Quarkus 3.2 when you run Quarkus the first time in dev mode (`quarkus dev`, `mvn quarkus:dev`, etc.) you get asked if you agree to contribute anonymous build data to the Quarkus community.
+## Why does Quarkus want to gather usage analytics? 
 
-![/assets/images/usage-prompt.png](/assets/images/usage-prompt.png)
+Usage analytics (telemetry collection) is invaluable for the Quarkus team and contributors to gauge which operating systems, java version, build systems, extensions and more are used. This service is provided by Red Hat and the details can be found on [usage policy](/usage/policy) page.
 
-If you answer Yes then, when you perform a quarkus build, anonymized data is sent
-to gather usage statistics on how Quarkus is being used and adopted.
+## How will this work?
 
-This service is provided by Red Hat and the details can be found on [usage policy](/usage/policy) page.
+In order to get this information, beginning in Quarkus 3.2, when you run Quarkus the first time in dev mode (`quarkus dev`, `mvn quarkus:dev`, etc.) you get asked if you agree to contribute anonymous build data to the Quarkus community. 
 
-If you answer No, you will not be asked again and no usage data is sent.
+![/assets/images/usage-prompt-arrows.png](/assets/images/usage-prompt-arrows.png)
 
-This information is invaluable for the Quarkus team and contributors to 
-gauge which operating systems, java version, build systems, extensions and more are 
-used. 
+By answering **"Yes"**, when you perform a quarkus build, anonymized data is sent to gather usage statistics on how Quarkus is being used and adopted.
 
-We will share what is learned from these anonymous usage data and plan on integrate things like usage and adoption 
-into sites like [extensions.quarkus.io](extensions.quarkus.io) and [code.quarkus.io](code.quarkus.io).
+However if you anser **"No"**, then no usage data is sent and you will not be asked again.
 
-## Enabling and Disabling Telemetry Collection
+We will share what is learned from these anonymous usage data and plan on integrate things like usage and adoption into sites like [extensions.quarkus.io](extensions.quarkus.io) and [code.quarkus.io](code.quarkus.io).
+
+## How can I enable and disable ?
 
 Build time analytics is not active by default. If you have opted in and would like to disable build time analytics, you can do so in two ways:
 
-Globally, by editing the `com.redhat.devtools.quarkus.localconfig` file in the `.redhat` folder of your user’s home directory. Update the file as follows:
+### Set Globally
+
+You can configure the global settings by editing the `com.redhat.devtools.quarkus.localconfig` file in the `.redhat` folder of your user’s home directory.
+
+#### To active collection: 
+
+```
+{"active":true}
+```
+#### To de-active collection: 
 
 ```
 {"active":false}
 ```
 
-Per project, by using the system property`quarkus.analytics.disabled=true`
+### Set Per Project
 
-Example using maven:</p>
+You can set this by project using the system property `quarkus.analytics.disabled=true`
+
+Example using maven:
 
 ```
 mvn clean install -Dquarkus.analytics.disabled=true
 ```
 
-Similar you can set it to `quarkus.analytics.disabled=true` if you want to enable it for a single run.
+Similarly, you can set it to `quarkus.analytics.disabled=true` if you want to enable it for a single run.
