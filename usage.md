@@ -23,7 +23,7 @@ We will share what is learned from these anonymous usage data and plan on integr
 
 ## How can I enable and disable ?
 
-Build time analytics is not active by default. If you have opted in and would like to disable build time analytics, you can do so in two ways:
+Build time analytics is not active by default. If you have opted in and would like to disable build time analytics or would like to later enable collection, you can do so in two ways:
 
 ### Set Globally
 
