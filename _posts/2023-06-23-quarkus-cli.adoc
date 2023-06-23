@@ -1,0 +1,612 @@
+---
+layout: post
+title: 'Dev productivity - Quarkus CLI'
+date: 2023-06-23
+tags: feature
+synopsis: 'New Quarkus CLI features in 3.0 that will simplify your workflow and make your life easier'
+author: iocanel
+---
+
+People hardly realize that the Quarkus CLI was available from the first public release of Quarkus back in 2019.
+It originally only allowed project creation and extension manipulation. The following command shows the list of supported commands:
+
+[source,sh]
+----
+quarkus --help
+Usage: quarkus <command> [<args>]
+
+These are the common quarkus commands used in various situations
+
+Options:
+  -h, --help
+
+quarkus commands:
+    list-extensions  List extensions for a project
+    add-extension  Adds extensions to a project
+    create-project  Creates a base Quarkus maven project
+----
+
+Today, in version `3.1.2.Final` it includes almost 30 commands spread across 6 main categories. 3 of those categories were part of the 3.0 roadmap
+and will be the focus of this post. In particular, this post is about building container images, deploying and extending
+the Quarkus CLI.
+
+
+=== Building container images using the Quarkus CLI ===
+Providing a simple way for creating container images with Quarkus is not something new. Since, its early days Quarkus provided extensions
+that took care of building container images with technologies like:
+
+* https://quarkus.io/guides/container-image#docker[docker]
+* https://quarkus.io/guides/container-image#openshift[openshift]
+* https://quarkus.io/guides/container-image#jib[jib]
+* https://quarkus.io/guides/container-image#buildpacks[buildpacks]
+
+Using these extensions required their addition to the project, for example:
+
+[source,sh]
+----
+quarkus ext add quarkus-container-image-docker
+----
+
+Also, it required additional configuration options, in order to trigger the container image build:
+
+[source,sh]
+----
+./mvnw package -Dquarkus.container-image.build=true
+----
+
+While this is something that works well, users still needed to know about these extensions and the special configuration options needed to enable them.
+In other words, users needed to have a link to https://quarkus.io/guides/container-image[Quarkus container image documentation] handy in order to check the available and their usage options.
+
+Moreover, users needed to modify the project configuration each time they needed to switch between extensions.
+This is trivial, but something that should be optional as the actual application does not depend on how the container images are built.
+Also, it can potentially increase the noise in the version control log.
+
+
+==== Building container images using the Quarkus CLI ====
+Quarkus 3.0 introduces an alternative way of building container images using the Quarkus CLI. In the recent version of the CLI new sub commands are available for building and pushing container images.
+These are listed in the output of `quarkus --help`.
+
+[source,sh]
+----
+quarkus --help | grep image
+ image                   Build or push project container image.
+   build                 Build a container image.
+     docker              Build a container image using Docker.
+     buildpack           Build a container image using Buildpack.
+     jib                 Build a container image using Jib.
+     openshift           Build a container image using Openshift.
+   push                  Push a container image.
+----
+
+For example in order to perform a docker build:
+
+[source,sh]
+----
+quarkus image build docker
+----
+
+Note, that the command does not require users to edit their build files (e.g. pom.xml or build.gradle) in any way and can be run in any project without requiring any particular extension.
+It can be even run on blank quarkus project:
+
+[source,sh]
+----
+quarkus create app hello
+cd hello
+quarkus image build docker
+----
+
+No additional configuration needed, even when users decide to switch to a different container image technology like jib:
+
+[source,sh]
+----
+quarkus image build jib
+----
+
+Last but not least, the CLI does provide additional help like code completion and help messages:
+
+[source,sh]
+----
+quarkus image build jib --help
+----
+
+
+==== Deploying applications ====
+In a way similar to building container images Quarkus allowed the application deployment to platforms like https://kubernetes.io[Kubernetes] and https://openshift.com[OpenShift].
+Again, this is something the required the use of extensions and additional build options to enable deployment.
+For example to deploy an application on https://kubernetes.io[Kubernetes] one needed to explicitly add the extension to the project and enable deployment using the `quakrus.kubernetes.deploy` property.
+
+[source,sh]
+----
+quarkus ext add quarkus-kubernetes
+./mvnw package -Dquarkus.kubernetes.deploy=true
+----
+
+
+==== Deploying using the Quarkus CLI ====
+In Quarkus 3.0 the CLI includes the `deploy` sub command that is the entry point to commands related to deployment.
+Using `quarkus --help` one can list all the related commands:
+
+[source,sh]
+----
+quarkus --help | grep deploy
+deploy                  Deploy application.
+  kubernetes            Perform the deploy action on kubernetes.
+  openshift             Perform the deploy action on openshift.
+  knative               Perform the deploy action on knative.
+  kind                  Perform the deploy action on kind.
+  minikube              Perform the deploy action on minikube.
+----
+
+These commands allow developers to easily deploy their Quarkus application from one platform to the other without messing with their project files.
+
+Imagine a team with some developers using https://kind.sigs.k8s.io/[kind] and some others https://minikube.sigs.k8s.io/docs/start/[minikube]. Prior to 3.0 they would have to stash and apply the extension of their choice each time they needed to
+pull changes from version control. Alternatively, they could configure build profiles. Using the CLI users are able to deploy to the platform of their choice even in cases where it's not aligned
+with what is present in the project configuration. For example if the project includes the https://quarkus.io/guides/deploying-to-kubernetes[Quarkus Kubernetes exntension] but user prefers to use https://kind.sigs.k8s.io/[kind] extension and make use of
+optimized manifests for https://kind.sigs.k8s.io/[kind]:
+
+[source,sh]
+----
+quarkus deploy kind
+----
+
+It's important to note, that by having a command per platform, users can easily set platform specific configuration when executing these commands (see the `--help` output).
+
+
+==== Summarizing image building and deployment commands ====
+Quarkus 3.0 introduces new CLI commands for building container images and deploying. The commands improve the developer experience as they eliminate steps related to project
+setup and configuration. They allow developers to easily experiment with different technologies and guide them by providing help messages, hints and completion.
+
+Future releases of Quarkus will expand this concept to cover areas like https://quarkus.io/guides/azure-functions[Quarkus Azure Functions] and https://quarkus.io/guides/amazon-lambda[Quarkus Amazon Lambda].
+
+
+==== CLI Plugins ====
+The CLI brings some really interesting features for Developers, but unfortunately it can't grow indefinitely as it needs to be reasonably sized.
+This need lead to the implementation of a plugin system for the CLI, that allows the dynamic addition of commands in the form of plugins.
+
+
+===== What is a Plugin ? =====
+A plugin implements a command in one of the following ways:
+
+* As an arbitrary executable
+* As a java source file
+* As a jar (with main)
+* As a maven artifact
+* As a https://www.jbang.dev/[JBang] alias
+
+Plugins are added to the CLI either explicitly using the Quarkus CLI, or implicitly by adding extensions to the project.
+
+Let's see what the CLI commands related to plugins are available:
+
+[source,sh]
+----
+quarkus --help | grep plug
+plugin, plug            Configure plugins of the Quarkus CLI.
+  list, ls              List CLI plugins.
+  add                   Add plugin(s) to the Quarkus CLI.
+  remove                Remove plugin(s) to the Quarkus CLI.
+----
+
+Initially, there are no plugins installed so, `quarkus plug list` returns an empty list:
+
+[source,sh]
+----
+quarkus plug list
+No plugins installed!
+To include the installable plugins in the list, append --installable to the command.
+----
+
+It also returns a hint suggesting the use of the `--installable`, but what are `installable` plugins ?
+
+Installable refers to executables found in PATH, or https://www.jbang.dev/[JBang] aliases prefixed with the `quarkus` prefix.
+**Note**: The command does require https://www.jbang.dev/[JBang] (and prompts users for installation if not already installed).
+
+[source,sh]
+----
+quarkus plug list --installable
+  Name    	 Type  	 Scope 	 Location               	 Description
+  fmt     	 jbang 	 user  	 quarkus-fmt@quarkusio
+  kill    	 jbang 	 user  	 quarkus-kill@quarkusio
+  quarkus 	 jbang 	 user  	 quarkus@quarkusio
+----
+
+The plugins listed are https://www.jbang.dev/[JBang] aliases that are available in the https://github.com/quarkusio/jbang-catalog/blob/HEAD/jbang-catalog.json[quarkus.io JBang catalog] (enabled by default).
+More catalogs can be added using the https://www.jbang.dev/[JBang] binary.
+
+
+===== Writing plugins =====
+Let's see how to create a plugin for the Quarkus CLI. Out of the box the Quarkus CLI provides 3 ways of creating projects:
+
+* A webapp
+* A command line application
+* A Quarkus extension
+
+[source,sh]
+----
+quarkus --help | grep -A3 create
+create                  Create a new project.
+  app                   Create a Quarkus application project.
+  cli                   Create a Quarkus command-line project.
+  extension             Create a Quarkus extension project
+----
+
+We are going to create a plugin for `create` that creates new applications using https://github.com/quarkusio/quarkus-quickstarts[Quarkus Quickstarts].
+This is as simple as writing a script that clones the repository from Github and copies the quickstart of choice.
+To add some extra value on top of it let's use a https://git-scm.com/docs/git-sparse-checkout[Sparse Checkout] and also limit depth to 1.
+This minimizes the amount of data transferred and speeds things up.
+Moreover, recalling the actual steps needed for a https://git-scm.com/docs/git-sparse-checkout[Sparse Checkout] is not easy, therefore it's something that is really handy to have as a script:
+
+[source,sh]
+----
+#!/bin/bash
+
+DIRECTORY=$1
+REPO_URL="https://github.com/quarkusio/quarkus-quickstarts.git"
+
+# Create a new directory for your Git repo and navigate into it
+mkdir $DIRECTORY
+cd $DIRECTORY
+
+# Initialize a new Git repository here
+git init
+
+# Add the repository from GitHub as a place your local Git repo can fetch from
+git remote add origin $REPO_URL
+git config core.sparseCheckout true
+echo "$DIRECTORY" >> .git/info/sparse-checkout
+
+# Fetch just the history of the specific directory
+git fetch --depth 1 origin main:$DIRECTORY
+
+# Checkout the specific directory
+git checkout $DIRECTORY
+mv $DIRECTORY/* .
+rm -rf $DIRECTORY
+rm -rf .git
+----
+
+Let's save the script above in a file named `quarkus-create-from-quickstart` and add it to the PATH.
+The `quarkus-` is the required prefix and `create` is the name of the command under which the plugin is going to be installed.
+Next time `quarkus plug list --installable` is run it picks up the script:
+
+[source,sh]
+----
+quarkus plug list --installable
+  Name                   	 Type       	 Scope 	 Location                                         	 Description
+  create-from-quickstart 	 executable 	 user  	 /home/iocanel/bin/quarkus-create-from-quickstart
+  fmt                    	 jbang      	 user  	 quarkus-fmt@quarkusio
+  kill                   	 jbang      	 user  	 quarkus-kill@quarkusio
+  quarkus                	 jbang      	 user  	 quarkus@quarkusio
+
+Use the 'plugin add' subcommand and pass the location of any plugin listed above, or any remote location in the form of URL / GACTV pointing to a remote plugin.
+----
+
+The plugin can be now installed using:
+
+[source,sh]
+----
+quarkus plug add create-from-quickstart
+Added plugin:
+    Name                   	 Type       	 Scope 	 Location                                         	 Description
+ *  create-from-quickstart 	 executable 	 user  	 /home/iocanel/bin/quarkus-create-from-quickstart
+----
+
+The plugin now appears in the `quarkus --help` under the `create` command:
+
+[source,sh]
+----
+quarkus --help | grep -A4 create
+create                  Create a new project.
+  app                   Create a Quarkus application project.
+  cli                   Create a Quarkus command-line project.
+  extension             Create a Quarkus extension project
+  from-quickstart
+----
+
+And it can be used as regular command. Let's use it to create an application from the https://github.com/quarkusio/quarkus-quickstarts/tree/main/hibernate-orm-panache-quickstart[Hibernate ORM Panache Quickstart]:
+
+[source,sh]
+----
+quarkus create from-quickstart hibernate-orm-panache-quickstart
+----
+
+
+===== Using your Java skills to write plugins =====
+Using shell scripts or arbitrary binaries (written in any language) is one of writing plugins.
+Java developers can alternatively put their java skills to use.
+Any source file that contains a main or any jar that defines a main class can be used directly by passing their location (Path or URL).
+In case of jars maven coordinates in the form of GACTV (<Group ID>:<Artifact Id>:<Classifier>:<Type>:<Version>) are also supported.
+
+Let's rewrite the `create-from-github` in Java and see how we can plug a java source file to the Quarkus CLI.
+The implementation will use https://www.eclipse.org/jgit/[jgit] and https://commons.apache.org/proper/commons-io/[commons.io]. To simplify dependency management the source file includes https://www.jbang.dev/[JBang] meta comments that
+define the fore mentioned dependencies:
+
+[source,java]
+----
+///usr/bin/env jbang "$0" "$@" ; exit $?
+//DEPS org.eclipse.jgit:org.eclipse.jgit:6.5.0.202303070854-r
+//DEPS commons-io:commons-io:2.11.0
+//JAVA_OPTIONS -Djava.io.tmpdir=/tmp
+
+import org.eclipse.jgit.api.*;
+import org.eclipse.jgit.lib.*;
+import org.eclipse.jgit.transport.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Set;
+import org.apache.commons.io.FileUtils;
+
+public class CreateFromQuickstart {
+
+    private static final String REPO_URL = "https://github.com/quarkusio/quarkus-quickstarts.git";
+    private static final String FETCH = "+refs/heads/*:refs/remotes/origin/*";
+
+    public static void main(String[] args) {
+        String directory = args[0];
+        Set<String> paths = Set.of(directory);
+        try {
+            Path cloneDir = Files.createTempDirectory("create-from-quickstart-");
+            Git git = Git.init().setDirectory(cloneDir.toFile()).call();
+
+            StoredConfig config = git.getRepository().getConfig();
+            config.setString("remote", "origin", "url", REPO_URL);
+            config.setString("remote", "origin", "fetch", FETCH);
+            config.setBoolean("core", null, "sparseCheckout", true);
+            config.setBoolean("core", null, "sparseCheckout", true);
+            config.save();
+
+            Path file = cloneDir.resolve(".git").resolve("info").resolve("sparse-checkout");
+            file.getParent().toFile().mkdirs();
+            Files.write(file, directory.getBytes());
+            FetchResult result = git.fetch().setRemote("origin").setRefSpecs(new RefSpec(FETCH)).setThin(false).call();
+            git.checkout().setName("origin/main").call();
+            File source = cloneDir.resolve(directory).toFile();
+            File destination = new File(directory);
+            FileUtils.copyDirectory(source, destination);
+            FileUtils.deleteDirectory(cloneDir.toFile());
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+}
+----
+
+To add this source file as a Quarkus CLI plugin:
+
+[source,sh]
+----
+quarkus plug add /path/to/CreateFromQuickstart.java
+Added plugin:
+    Name                 	 Type 	 Scope 	 Location                                     	 Description
+ *  CreateFromQuickstart 	 java 	 user  	 /path/to/CreateFromQuickstart.java
+----
+
+Note that the name derived from the actual file/class name that is using https://en.wikipedia.org/wiki/Camel_case[Camel Case] and therefore is not matched to the `create` sub command.
+Instead, it is added as a sibling to `create`:
+
+[source,sh]
+----
+quarkus --help
+Commands:
+  create                  Create a new project.
+    app                   Create a Quarkus application project.
+    cli                   Create a Quarkus command-line project.
+    extension             Create a Quarkus extension project
+  # more commands here
+  CreateFromQuickstart
+----
+
+As of `3.1.2.Final` there is no direct way to alias a plugin. However, aliases are supported by https://www.jbang.dev/[JBang].
+Here's how aliases can be used:
+
+[source,sh]
+----
+jbang alias add --name quarkus-create-from-quickstart ~/path/to/CreateFromQuickstart.java
+[jbang] Alias 'quarkus-create-from-quickstart' added to '/home/user/.jbang/jbang-catalog.json'
+quarkus plug add create-from-quickstart
+Added plugin:
+    Name                   	 Type  	 Scope 	 Location                       	 Description
+ *  create-from-quickstart 	 jbang 	 user  	 quarkus-create-from-quickstart
+----
+
+
+===== Project specific plugins =====
+In all the examples so far the plugins listed as `user scoped`. This means that the plugins are global to the user. It is possible however to also have `project scoped` plugins.
+This is important as it allows:
+
+* Having project specific plugins
+* Overriding versions per project
+* Sharing the plugin catalog (via version control)
+* Support extension provided plugins
+
+When the `quarkus plug add` command is called from within a project, the plugin is added to the project catalog, unless the `--user` options is used.
+The plugin catalog is persisted in `.quarkus` in the root of the project. By adding this folder to version control, the project plugin catalog is shared between users of the project.
+In this case, its a good idea to also include the actual plugin source files in version control, or use a shared https://www.jbang.dev/[JBang] catalog.
+
+Let's create script that allows users to setup their project in an https://argoproj.github.io/cd/[ArgoCD] developer instance.
+https://argoproj.github.io/cd/[ArgoCD] is a GitOps continous delivery tool for https://kubernetes.io[Kubernetes].
+The following example demonstrates its setup process can be automated as a Quarkus CLI plugin:
+
+More specifically the plugin performs the following:
+
+* Installs the https://argoproj.github.io/cd/[ArgoCD] binary
+* Installs the https://argoproj.github.io/cd/[ArgoCD] resources to the target cluster
+* It generated https://kubernetes.io[Kubernetes] manifests for the project
+* It adds the generated resources to version control
+* It setups the project to https://argoproj.github.io/cd/[ArgoCD]
+
+Even though some of the steps above need only need to be performed once (e.g. adding manifests to version control) the remaining steps have to be performed for each developer environment.
+So, instead of adding the script to some shared folder or repository forever to be forgotten, it makes sense to have it inside the project as a CLI plugin.
+The source of the script could be something like:
+
+[source,sh]
+----
+#!/bin/bash
+set -e
+ARGOCD_VERSION="v2.7.4"
+
+check_requirements() {
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "Error: The current folder is not under version control."
+        exit 1
+    fi
+
+    if [ ! -f "target/kubernetes/kubernetes.yml" ]; then
+        mvn quarkus:deploy -Dquarkus.kubernetes.deploy=false
+        if [ ! -f "target/kubernetes/kubernetes.yml" ]; then
+         echo "Error: The target/kubernetes/kubernetes.yml file does not exist."
+         exit 1
+        fi
+    fi
+}
+
+install_argocd_binary() {
+    OS="`uname`"
+    case $OS in
+        'Linux')
+        OS='linux'
+        ;;
+        'Darwin')
+        OS='darwin'
+        ;;
+        *) ;;
+    esac
+
+    if ! command -v argocd &> /dev/null
+    then
+        curl -sSL -o $HOME/bin/argocd https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-${OS}-amd64
+        chmod +x $HOME/bin/argocd
+    fi
+}
+
+install_argocd_resources() {
+    if ! kubectl get namespace | grep -q 'argocd'; then
+        kubectl create namespace argocd
+    fi
+    if ! kubectl get pods -n argocd | grep -q 'argocd-server'; then
+        kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml
+
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-server -n argocd --timeout=120s
+    fi
+}
+
+wait_for_port() {
+    local PORT=$1
+    local TIMEOUT=5
+    local START_TIME=$SECONDS
+    while :
+    do
+        if nc -v $1 &> /dev/null; then
+            nc -z localhost $PORT  && return
+        fi
+        if (( SECONDS - START_TIME >= TIMEOUT )); then
+            return
+        fi
+        sleep 1
+    done
+}
+
+cleanup() {
+    kill $PORT_FORWARD_PID
+}
+
+create_app() {
+    NAMESPACE=`kubectl config view --minify --output 'jsonpath={..namespace}'`
+    GIT_URL=`git remote get-url origin | sed -s "s/git@github.com:/https:\/\/github.com\//"`
+    GIT_BRANCH=`git branch -l | grep "*" | awk '{print $2}'`
+    APP_DIR=`git rev-parse --show-toplevel`
+    APP_NAME=`git rev-parse --show-toplevel | xargs basename`
+    ARGOCD_PASSWORD=`argocd admin initial-password argo -n argocd | head -n1`
+
+
+    if [ -f "$APP_DIR/.argocd" ]; then
+        mkdir $APP_DIR/.argocd
+    fi
+    cp target/kubernetes/kubernetes.yml $APP_DIR/.argocd/
+    if [ -n "$(git status --porcelain | grep -v '?')" ]; then
+        git add $APP_DIR/.argocd
+        git commit -m "Add generated manifests to argocd" && git push origin $BRANCH
+    fi
+    kubectl port-forward svc/argocd-server -n argocd 9443:443 > /dev/null 2>&1 &
+    PORT_FORWARD_PID=$!
+    trap  "cleanup" EXIT SIGINT SIGTERM
+    wait_for_port 9443
+    argocd login localhost:9443 --username admin --password $ARGOCD_PASSWORD --insecure
+
+    argocd app create $APP_NAME --repo $GIT_URL --path .argocd --dest-server https://kubernetes.default.svc --dest-namespace default
+    argocd app sync $APP_NAME
+}
+
+check_requirements
+install_argocd_binary
+install_argocd_resources
+create_app
+----
+
+Let's save the file under `bin/quarkus-argocd-setup` and add it as a plugin:
+
+[source,sh]
+----
+quarkus plug add bin/quarkus-argocds-setup
+----
+
+Now by calling `quarkus argocd-setup` the application is setup for use with https://argoproj.github.io/cd/[ArgoCD].
+
+
+===== Extension provided plugins =====
+A Quarkus extension may contribute to the CLI plugins that are available to a project.
+At the moment the following Quarkiverse extensions provide plugins:
+
+* https://github.com/quarkiverse/quarkus-authzed-client[Quarkus Authzed Client]
+* https://github.com/quarkiverse/quarkus-helm[Quarkus Helm]
+
+Let's see how things work when such an extension is added to a project.
+The following command adds the https://github.com/quarkiverse/quarkus-helm[Quarkus Helm] extension, along with the https://kubernetes.io[Kubernetes] and docker extensions that often are used together.
+
+[source,sh]
+----
+quarkus ext add quarkus-helm quarkus-kubernetes quarkus-container-image-docker
+[SUCCESS] ✅  Extension io.quarkiverse.helm:quarkus-helm:1.0.7 has been installed
+[SUCCESS] ✅  Extension io.quarkus:quarkus-kubernetes has been installed
+[SUCCESS] ✅  Extension io.quarkus:quarkus-container-image-docker has been installed
+----
+
+Now the ``helm` plugin should be automatically added next time the CLI used:
+
+[source,sh]
+----
+quarkus --help
+Plugin catalog last updated on: 07/06/2023 10:29:05. Syncing!
+Looking for the newly published extensions in registry.quarkus.io
+Options:
+# option details
+Commads:
+# commands
+helm
+----
+
+The plugin can now be used to install the application using https://helm.sh/[Helm] charts. The plugin itself is a simple wrapper around the official
+https://helm.sh/[Helm] binary that simplifies its use. For example the app can be easily installed using:
+
+[source,sh]
+----
+quarkus helm install
+----
+
+
+===== Summarizing plugins =====
+The Quarkus CLI plugin system is not just a way for the Quarkus team to rightsize and modularize the Quarkus CLI, it also offers teams a way of creating
+scripts and recipes specific to their project and distribute them along with the code.
+
+
+=== See also ===
+If you want to see more about the new Quarkus CLI features make sure to check the following https://quarkus.io/insights/[Quarkus Insights] episodes.
+They demonstrate the new features in action and will hopefully inspire you with ideas for your own plugins.
+
+* https://www.youtube.com/watch?v=82NjJ7gDzv0[Quarkus Insigts #124: 1000 ways to deploy Quarkus]
+* https://www.youtube.com/watch?v=iskDa-i82RU[Quarkus Insights #129: Quarkus CLI plugins: JBang]
