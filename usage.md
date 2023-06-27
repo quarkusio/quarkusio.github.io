@@ -27,17 +27,17 @@ Build time analytics is not active by default. If you have opted in and would li
 
 ### Set Globally
 
-You can configure the global settings by editing the `com.redhat.devtools.quarkus.localconfig` file in the `.redhat` folder of your user’s home directory.
+You can configure the global settings by editing the `io.quarkus.analytics.localconfig` file in the `.redhat` folder of your user’s home directory.
 
 #### To active collection: 
 
 ```
-{"active":true}
+{"disabled":false}
 ```
 #### To de-active collection: 
 
 ```
-{"active":false}
+{"disabled":true}
 ```
 
 ### Set Per Project
