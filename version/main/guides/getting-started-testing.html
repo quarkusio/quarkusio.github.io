@@ -230,6 +230,7 @@
 <li><a href="#auto-mocking-unsatisfied-dependencies">20.2. Auto Mocking Unsatisfied Dependencies</a></li>
 <li><a href="#custom-mocks-for-unsatisfied-dependencies">20.3. Custom Mocks For Unsatisfied Dependencies</a></li>
 <li><a href="#configuration">20.4. Configuration</a></li>
+<li><a href="#mocking-cdi-interceptors">20.5. Mocking CDI Interceptors</a></li>
 </ul>
 </li>
 </ul></div>
@@ -2301,11 +2302,11 @@ public class FooTest {
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>Set a configuration property for the test.</td>
+<td>Sets a configuration property for the test.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="3"></i><b>3</b></td>
-<td>The test injects the component under the test. The types of all fields annotated with <code>@Inject</code> are considered the component types under test. You can also specify additional component classes via <code>@QuarkusComponentTest#value()</code>.</td>
+<td>The test injects the component under the test. The types of all fields annotated with <code>@Inject</code> are considered the component types under test. You can also specify additional component classes via <code>@QuarkusComponentTest#value()</code>. Furthermore, the static nested classes declared on the test class are components too.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="4"></i><b>4</b></td>
@@ -2354,7 +2355,7 @@ public class FooTest {
 <table>
 <tr>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>The <code>QuarkusComponentTestExtension</code> is configured in a static field.</td>
+<td>The <code>QuarkusComponentTestExtension</code> is configured in a static field of the test class.</td>
 </tr>
 </table>
 </div>
@@ -2403,6 +2404,133 @@ You can use the mock configurator API via the <code>QuarkusComponentTestExtensio
 <p>A dedicated <code>SmallRyeConfig</code> is registered during the <code>before all</code> test phase.
 Moreover, it&#8217;s possible to set the configuration properties via the <code>QuarkusComponentTestExtension#configProperty(String, String)</code> method or the <code>@TestConfigProperty</code> annotation.
 If you only need to use the default values for missing config properties, then the <code>QuarkusComponentTestExtension#useDefaultConfigProperties()</code> or <code>@QuarkusComponentTest#useDefaultConfigProperties()</code> might come in useful.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="mocking-cdi-interceptors"><a class="anchor" href="#mocking-cdi-interceptors"></a>20.5. Mocking CDI Interceptors</h3>
+<div class="paragraph">
+<p>If a tested component class declares an interceptor binding then you might need to mock the interception too.
+There are two ways to accomplish this task.
+First, you can define an interceptor class as a static nested class of the test class.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import jakarta.inject.Inject;
+import io.quarkus.test.component.QuarkusComponentTest;
+import org.junit.jupiter.api.Test;
+
+@QuarkusComponentTest
+public class FooTest {
+
+    @Inject
+    Foo foo;
+
+    @Test
+    public void testPing() {
+        assertEquals("OK", foo.ping());
+    }
+
+    @ApplicationScoped
+    static class Foo {
+
+       @SimpleBinding <i class="conum" data-value="1"></i><b>(1)</b>
+       String ping() {
+         return "ok";
+       }
+
+    }
+
+    @SimpleBinding
+    @Interceptor
+    static class SimpleInterceptor { <i class="conum" data-value="2"></i><b>(2)</b>
+
+        @AroundInvoke
+        Object aroundInvoke(InvocationContext context) throws Exception {
+            return context.proceed().toString().toUpperCase();
+        }
+
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>@SimpleBinding</code> is an interceptor binding.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The interceptor class is automatically considered a tested component.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Static nested classed declared on a test class that is annotated with <code>@QuarkusComponentTest</code> are excluded from bean discovery when running a <code>@QuarkusTest</code> in order to prevent unintentional CDI conflicts.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Furthermore, you can also declare a "test interceptor method" directly on the test class.
+This method is then invoked in the relevant interception phase.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import jakarta.inject.Inject;
+import io.quarkus.test.component.QuarkusComponentTest;
+import org.junit.jupiter.api.Test;
+
+@QuarkusComponentTest
+public class FooTest {
+
+    @Inject
+    Foo foo;
+
+    @Test
+    public void testPing() {
+        assertEquals("OK", foo.ping());
+    }
+
+    @SimpleBinding <i class="conum" data-value="1"></i><b>(1)</b>
+    @AroundInvoke <i class="conum" data-value="2"></i><b>(2)</b>
+    Object aroundInvoke(InvocationContext context) throws Exception {
+       return context.proceed().toString().toUpperCase();
+    }
+
+    @ApplicationScoped
+    static class Foo {
+
+       @SimpleBinding <i class="conum" data-value="1"></i><b>(1)</b>
+       String ping() {
+         return "ok";
+       }
+
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The interceptor bindings of the resulting interceptor are specified by annotating the method with the interceptor binding types.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Defines the interception type.</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
