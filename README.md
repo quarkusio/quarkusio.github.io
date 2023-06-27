@@ -6,6 +6,22 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 ### Installation
 
+#### Using Docker
+
+1. Install [Docker Desktop](https://docs.docker.com/install/).
+2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
+
+        git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
+
+3. Change into the project directory:
+
+        cd quarkusio.github.io
+4. Run Docker Composer
+
+        docker-compose up
+
+5. Now browse to http://localhost:4000
+#### Using a local Ruby environment
 [Jekyll static site generator docs](https://jekyllrb.com/docs/).
 
 1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 2.7.1`.
