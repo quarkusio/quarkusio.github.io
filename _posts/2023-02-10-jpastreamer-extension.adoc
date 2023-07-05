@@ -1,0 +1,164 @@
+---
+layout: post
+title: 'Express Hibernate Queries as Type-Safe Java Streams'
+date: 2023-02-10
+tags: extension announcement hibernate
+synopsis: 'Writing Hibernate queries using the Criteria API can be anything but intuitive and comes at the expense of wordiness. In this article, you will learn how the JPAStreamer Quarkus extension facilitates type-safe Hibernate queries without unnecessary complexity.'
+author: julgus
+---
+
+Writing Hibernate queries using the Criteria API can be anything but intuitive and comes at the expense of wordiness. In this article, you will learn how the  Quarkus extension facilitates type-safe Hibernate queries without unnecessary complexity.
+
+As much as the JPA Criteria builder is expressive, JPA queries are often equally verbose, and the API itself can be unintuitive to use, especially for newcomers. In the Quarkus ecosystem, Panache is a partial remedy for these problems when using Hibernate ORM. Still, I find myself juggling the Panache’s helper methods, preconfigured Enums and raw Strings when composing anything but the simplest of queries. You could claim I am just inexperienced and impatient or instead acknowledge that the perfect API is frictionless to use for everyone. Thus, the user experience of writing JPA queries can be further improved in that direction.
+
+One of the remaining shortcomings is that raw Strings are inherently not type-safe, meaning my IDE rejects me the helping hand of code completion and wish me good luck at best. On the upside, Quarkus facilitates application relaunches in a split second to issue quick verdicts on my code. And nothing beats the heart-felt joy and genuine surprise when I have composed a working query on the fifth, rather than the tenth, attempt...
+
+With this in mind, we built the open source library JPAStreamer to make the process of writing Hibernate queries more intuitive and less time-consuming, while leaving your existing codebase intact. It achieves this goal by allowing queries to be expressed as standard Java Streams. Upon execution, JPAStreamer translates the Stream pipeline to a HQL query for efficient execution and thereby avoids materialising anything but the relevant results.
+
+Let me take an example - in some random database exists a table called person represented in a Hibernate application by the following standard `@Entity`:
+
+[source, java]
+----
+@Entity
+@Table(name = "person")
+public class Person {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "person_id", nullable = false, updatable = false)
+    private Integer actorId;
+    
+    @Column(name = "first_name", nullable = false, columnDefinition = "varchar(45)")
+    private String firstName;
+    
+    @Column(name = "last_name", nullable = false, columnDefinition = "varchar(45)")
+    private String lastName;
+    
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+    
+    // Getters for all fields will follow from here
+}
+----
+
+To fetch the `Person` with an `Id` of 1 using JPAStreamer and Hibernate ORM, all you need is the following:
+
+[source, java]
+----
+@ApplicationScoped
+public class PersonRepository {
+
+   @PersistenceContext
+   EntityManagerFactory entityManagerFactory;
+
+   private final JPAStreamer jpaStreamer;
+
+   public PersonRepository (EntityManagerFactory entityManagerFactory) {
+       jpaStreamer = JPAStreamer.of(entityManagerFactory); <1>
+   }
+   
+   @Override
+   public Optional<Person> getPersonById(int id) {
+      return this.jpaStreamer.from(Person.class) <2>
+           .filter(Person$.personId.equal(id)) <3>
+           .findAny();
+   }
+
+}
+----
+<1> Initialize JPAStreamer in one line, the underlying JPA provider handles the DB configuration.
+<2>  The Stream source is set to be the Person table.
+<3>  The filter operation is treated as a SQL WHERE clause and the condition is expressed type-safely with JPAStreamer predicates (more on this to follow).
+
+Despite it looking as if JPAStreamer operates on all `Person` objects, the pipeline is optimized to a single query, in this case:
+
+[source, text]
+----
+select
+    person0_.person_id as person_id1_0_,
+    person0_.first_name as first_na2_0_,
+    person0_.last_name as last_nam3_0_,
+    person0_.created_at as created_4_0_,
+from
+    person person0_
+where
+    person0_.person_id=1
+----
+Thus, only the `Person` matching the search criteria is ever materialized.
+
+Next, we can look at a more complex example in which I am searching  for persons with a first name ending with an “A” and a last name that starts with “B”. The matches are sorted primarily by the first name and secondly by last name. I further decide to apply an offset of 5, excluding the first five results, and to limit the total results to 10. Here is the Stream pipeline to achieve this task:
+
+[source, java]
+----
+List<Person> list = jpaStreamer.stream(Person.class)
+    .filter(Person$.firstName.endsWith("A").and(Person$.lastName.startsWith("B"))) <1>
+    .sorted(Person$.firstName.comparator().thenComparing(Person$.lastName.comparator())) <2>
+    .skip(5) <3>
+    .limit(10) <4>
+    .collect(Collectors.toList())
+----
+<1> Filters can be combined with the and/or operators
+<2> Easily filter on one or more properties
+<3> Skip the first 5 Persons
+<4> Return at most 10 Persons
+
+In the context of queries, the Stream operators filter, sort, limit, and skip all have a natural mapping that makes the resulting query expressive and intuitive to read while remaining compact.
+
+The Stream above is translated by JPAStreamer to the following HQL statement: 
+[source, text]
+----
+select
+   person0_.person_id as person_id1_0_,
+   person0_.first_name as first_na2_0_,
+   person0_.last_name as last_nam3_0_,
+   person0_.created_at as created_4_0_,
+from
+   person person0_
+where
+   person0_.person_id=1
+where
+    (person0_.first_name like ?) 
+    and (person0_.last_name like ?)
+order by
+    person0_.first_name asc,
+    person0_.last_name asc limit ?, ?
+----
+
+== How JPAStreamer works
+Okay, it looks simple. But how does it work? JPAstreamer uses an annotation processor to form a meta-model at compile time. It inspects any classes marked with the standard JPA annotation `@Entity`, and for every entity `Foo.class`, a corresponding `Foo$.class` is created. The generated classes represent entity attributes as Fields used to form predicates on the form `User$.firstName.startsWith("A")` that can be interpreted by JPAStreamer's query optimizer.
+
+It is worth repeating that JPAStreamer does not alter or disturb the existing codebase but merely extends the API to handle Java Stream queries.
+
+== Installing the JPAstreamer Extension
+JPAStreamer is installed as any other Quarkus extension, using a Maven dependency:
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.jpastreamer</groupId>
+    <artifactId>quarkus-jpastreamer</artifactId>
+    <version>1.0.0</version>
+</dependency>
+----
+
+After the dependency is added, rebuild your Quarkus application to trigger JPAStreamer’s annotation processor. The installation is complete once the generated fields reside in `/target/generated-sources`; you’ll recognise them by the trailing $ in the classnames, e.g. `Person$.class`.
+
+NOTE: JPAStreamer requires an underlying JPA provider, such as Hibernate ORM. For this reason, JPAStreamer needs no additional configuration as the database integration is taken care of by the JPA provider.
+
+== JPAStreamer and Panache
+Any Panache fan will note that JPAStreamer shares some of its objectives with Panache, in simplifying many common queries. Still, JPAStreamer distinguishes itself by instilling more confidence in the queries with its type-safe Stream interface. Luckily however, no one if forced to take a pick as Panache and JPAStreamer work seamlessly alongside each other.
+
+NOTE: link:https://github.com/speedment/jpa-streamer-demo/tree/master/quarkus-hibernate-panache[Here] is an example Quarkus application that uses both JPAStreamer and Panache.
+
+At the time of writing, JPAStreamer does not have support for Panache’s Active Record Pattern, as it relies on standard JPA Entities to generate its meta model. This will likely change in the near future.
+
+== Summary
+JPA in general, and Hibernate ORM in particular, has greatly simplified application database access, but its API sometimes forces unnecessary complexity. With JPAstreamer, you can utilize JPA while keeping your codebase clean and maintainable.
+
+=== Resources 
+
+* **GitHub:** link:https://github.com/quarkiverse/quarkus-jpastreamer[github.com/quarkiverse/quarkus-jpastreamer]
+* **Homepage:** link:https://jpastreamer.org[jpastreamer.org]
+* **JPAStreamer Quarkus Demo:** link:https//github.com/speedment/jpa-streamer-demo/tree/master/quarkus-hibernate-panache[github.com/speedment/jpa-streamer-demo/tree/master/quarkus-hibernate-panache]
+* **Documentation:** link:https://speedment.github.io/jpa-streamer[speedment.github.io/jpa-streamer]
+* **Gitter Support Chat:** link:https://gitter.im/jpa-streamer[gitter.im/jpa-streamer]

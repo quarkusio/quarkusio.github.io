@@ -1,0 +1,141 @@
+---
+layout: post
+title: 'Configuring Podman for Quarkus Dev Services and Testcontainers on Linux'
+date: 2021-12-06
+tags: development-tips podman testcontainers
+synopsis: 'Expose a Podman service for usage with Quarkus Dev Services and Testcontainers'
+author: mjurc
+---
+
+Podman is a daemonless container engine for developing, managing, and running Containers on Linux systems. Since the
+release of version 3, Podman allows the user to run a service emulating a Docker API provided on a  Unix socket. This
+makes it possible for Testcontainers and Quarkus Dev Services to be utilized with Podman.
+
+Directions in this article will not work on macOS and Microsoft Windows.
+
+== Requirements
+
+* Running on a Linux system with Podman 3.x installed.
+* `podman-docker` installed to emulate the Docker CLI for Quarkus Dev Services.
+* (optional) `podman-remote` installed for verification steps.
+
+== Configuration
+
+=== TL;DR
+
+The following commands will set up Podman and environment variables up to work with Quarkus Dev Services and
+Testcontainers:
+
+[source,bash]
+----
+# Install the required podman packages from dnf. If you're not using rpm based
+# distro, replace with respective package manager
+sudo dnf install podman podman-docker
+# Enable the podman socket with Docker REST API
+systemctl --user enable podman.socket --now
+# Set the required envvars
+export DOCKER_HOST=unix:///run/user/${UID}/podman/podman.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
+----
+
+What this configuration does is explained below, along with basic troubleshooting.
+
+=== Configuring the Podman service
+
+Podman is a daemonless container engine. Quarkus Dev Services and Testcontainers expect a running Docker daemon
+listening at a Unix socket. Since version 3, Podman can be configured to create a service listening at a Unix socket
+and this service can be used with Dev Services and Testcontainers.
+
+By convention, the Docker clients attempt to connect to the service specified by URL configured in the `DOCKER_HOST`
+environment variable, so this variable needs to be configured to point to the Unix socket that the Podman service will
+be listening on:
+
+[source,bash]
+----
+export DOCKER_HOST=unix:///run/user/${UID}/podman/podman.sock
+----
+
+[NOTE]
+====
+This setting will only apply to the current terminal session. To make this configuration persistent, add the line to
+the profile files of your shell (e.g. `~/.profile`).
+====
+
+Testcontainers and Quarkus Dev Services also expect the container service they make requests against to be
+non-interactive. In case you have multiple registries configured in your Docker or Podman configuration, Podman responds
+with a prompt asking which registry should be used to pull containers from in case the containers pulled are specified
+by short name.
+
+You can disable this prompt by setting the `short-name-mode="disabled"` configuration property of Podman in
+`/etc/containers/registries.conf`.
+
+[NOTE]
+====
+This setting is security sensitive. Please see https://www.redhat.com/sysadmin/container-image-short-names[Container image short names in Podman]
+before changing this setting.
+====
+
+Finally, let's start the Podman service listening on the socket previously specified by the `DOCKER_HOST` environment
+variable.
+
+Podman is distributed with user-local systemd units on `apt` and `dnf` package managers configured to run a rootless
+Podman service. This means that the Podman process will be launched only with the privileges of the user you are logged
+in as, that the containers and configuration are stored in your home directory and that this service listens at
+`unix:///run/user/$\{UID\}/podman/podman.sock`. In most of the Linux distributions, you can enable this service with the
+following command:
+
+[source,bash]
+----
+systemctl --user enable podman.socket --now
+----
+
+You can verify that the container service is really running and responding at the URI specified by `DOCKER_HOST` with
+`podman-remote`.
+
+[source,bash]
+----
+podman-remote info
+----
+
+Podman's support for Ryuk container is currently flaky. Ryuk is a container that Testcontainers uses to clean up any
+containers spawned by Testcontainers after the end of their usage in Java code. You can configure Testcontainers not to
+use Ryuk.
+
+[source,bash]
+----
+export TESTCONTAINERS_RYUK_DISABLED=true
+----
+
+[NOTE]
+====
+This setting will only apply to the current terminal session. To make this configuration persistent, add the line to
+the profile files of your shell (e.g. `~/.profile`).
+====
+
+Podman is now available to respond to the Java Docker client used in Testcontainers. Please note that the Quarkus Dev
+Services require that a `docker` command is available on `PATH`. The `podman-docker` package on Linux distributions
+provides a Docker CLI emulation layer for Podman.
+
+The future releases of Quarkus will remove the expectation for `docker` command available on `PATH`.
+
+=== Migrating from Docker
+
+If you have previously been running Docker on a version that did not support cgroups V2 on modern Linux distributions,
+a workaround setting the cgroups to V1 had to be enabled. This applied for Docker versions older than 19, included.
+
+You can check whether the workaround has been previously applied to your system with the following command:
+
+[source,bash]
+----
+sudo grubby --info=ALL | grep "systemd.unified_cgroup_hierarchy=0"
+----
+
+If the output is present, this means that kernel argument to set cgroups to V1 has been applied. You can remove the
+kernel argument with the following command, re-enabling cgroups V2:
+
+[source,bash]
+----
+sudo grubby --update-kernel=ALL --remove-args="systemd.unified_cgroup_hierarchy=0"
+----
+
+This setting will only take effect after a reboot.

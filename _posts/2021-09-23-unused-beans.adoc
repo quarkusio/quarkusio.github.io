@@ -1,0 +1,76 @@
+---
+layout: post
+title: 'Unused Beans and Why We Remove Them'
+date: 2021-09-23
+tags: cdi arc 
+synopsis: Why does Quarkus detect and remove unused beans by default?
+author: mkouba
+---
+
+Quarkus is a build-time oriented stack, i.e. it tries to do as much as possible at build time to improve the startup time and memory usage of your application.
+However, it's not always so easy and straightforward as many existing frameworks and libraries do not take this design choice into account. 
+And CDI is one of them.
+
+== Why Bother
+
+A traditional CDI container attempts to find all beans during the application bootstrap.
+For each bean a metadata object is created and kept for the lifetime of the application.
+This allows for certain degree of dynamicity at runtime but it's suboptimal when it comes to memory consumption and application startup time.
+Quarkus, on the other hand, attempts to detect and remove all _unused_ beans, interceptors and decorators during build by default.
+And the reason is simple.
+This optimization helps to minimize the amount of generated classes and the number of metadata objects used at runtime, thus conserving memory.
+
+Speaking of generated classes.
+The bean discovery, validation and wiring all components together - all this is perfomed at build time.
+Quarkus then stores the collected metadata in the bytecode, i.e. for each bean one or more classes are generated.
+In order to fullfill some basic CDI API requirements, a bean has at least a corresponding `javax.enterprise.inject.spi.Bean` implementation.
+If it's a normal scoped bean then a client proxy class must be also generated.
+Finally, intercepted and decorated beans require some more internal constructs.
+
+Imagine that your application contains 50 beans that are actually not used anywhere.
+If they have a normal scope (e.g. `@ApplicationScoped`) and are intercepted (e.g. declare a method annotated with `@Transactional`) you can expect more than 150 generated classes.
+And these classes are completely useless.
+Still, the container would have to instantiate and hold a reference on those 50+ bean metadata classes.
+Needless to say, that the bean classes and any referenced classes cannot be a subject to dead code elimination when a native image is generated.
+Therefore, Quarkus implements an algorithm to get rid of all these classes.
+
+== What’s Actually Removed?
+
+Quarkus first identifies so-called _unremovable_ beans that form the roots in the dependency tree.
+Unremovable beans:
+
+- declare an observer method, or
+- have a name designated via `@Named`, or
+- are annotated with `@io.quarkus.arc.Unremovable`, or
+- are excluded via the `quarkus.arc.unremovable-types` config property, or
+- are otherwise identified by Quarkus extensions.
+
+The last point is probably most important, because this is how application entry points are made unremovable.
+A good example is a JAX-RS resource class, identified by the RESTEasy extension.
+Another example is a bean which declares a `@Scheduled` method, identified by the Scheduler extension.
+
+An _unused_ bean:
+
+- is not unremovable, and
+- is not eligible for injection to any injection point in the dependency tree, and
+- does not declare any producer which is eligible for injection to any injection point in the dependency tree, and
+- is not eligible for injection into any `javax.enterprise.inject.Instance` or `javax.inject.Provider` injection point.
+
+Finally, unused interceptors and decorators are not associated with any bean.
+
+TIP: When using the dev mode (e.g. running `./mvnw quarkus:dev`), you can see more information about which beans are being removed in the Dev UI.
+
+== Main Drawback
+
+But there's one problem.
+Quarkus can't detect the programmatic lookup performed via the `CDI.current()` static method.
+Therefore, it is possible that a certain bean removal results in a false positive error, i.e. a bean is removed although it's actually used.
+In such cases, you'll notice a big warning in the log.
+Of course, users and extension authors have several options how to eliminate these errors.
+For users, the easiest way is to add a special annotation: `@io.quarkus.arc.Unremovable` or use the `quarkus.arc.unremovable-types` config property.
+Finally, it's also possible to disable this optimization via the `quarkus.arc.remove-unused-beans=false` config property.
+
+== Conclusion
+
+Quarkus detects and removes unused beans to help you on your way to a subatomic application.
+And if something goes wrong, there are options that make it possible to configure the behavior of this optimization.

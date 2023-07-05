@@ -1,0 +1,185 @@
+---
+layout: post
+date:   2019-08-01
+author: ewittman
+tips: development-tips
+synopsis: With a little bit of config mojo, it is possible (and useful) to build a native Quarkus application in CircleCI.
+---
+
+= Using CircleCI to Build a Native Quarkus Application
+
+An important part of any software project, Quarkus applications included, is continuous integration. A popular 
+tool in the CI space is https://circleci.com/[CircleCI], especially with open source projects. There is lots
+of documentation out there about how to configure CircleCI for a standard Maven project. However, building a native
+Quarkus executable requires one or two extra steps. This blog post describes how to make it happen.
+
+NOTE: If you're in a hurry, just scroll down to the full (and annotated) example at the bottom of this post.
+
+== Anatomy of a CircleCI Job
+
+If you aren't familiar with CircleCI, a good place to start might be their https://circleci.com/docs/2.0/configuration-reference/[configuration documentation reference].
+This blog post assumes you have a basic familiarity with CircleCI and just want a little bit of help 
+configuring a native Quarkus build. For the most part, the job is configured just like any standard Maven
+build, including:
+
+* Checkout from source
+* Dependency caching
+* Build
+* Test
+
+However for a native Quarkus build, the extra configuration centers around installing https://www.graalvm.org/[GraalVM]
+and then performing (and verifying) the native image build.
+
+=== Docker vs. Machine
+
+CircleCI allows https://circleci.com/docs/2.0/configuration-reference/#docker-$$-$$machine-$$-$$macosexecutor[three types of "executors"] (the 
+runtime environment used to perform the build job). These are:
+
+* docker
+* machine
+* macos
+
+It seems that when performing a build using **docker** it is very common to run out of memory. So it is recommended that
+you use https://circleci.com/docs/2.0/executor-types/#using-machine[**machine**] for your executor. Fortunately, 
+the default virtual machine that is used already contains most of the build tools needed, including (but by no means limited to):
+
+* Java
+* Maven
+* Chrome
+* PhantomJS
+
+The only build tool you will need that is not pre-installed is GraalVM...
+
+=== GraalVM and native-image
+
+In order to successfully build a Quarkus native app using the `mvnw package -Pnative` command, GraalVM must be
+installed and available at the `GRAALVM_HOME` environment variable. This means that your build config must include
+the appropriate command(s) needed to download, unpack, and install GraalVM. And you also must configure the 
+`GRAALVM_HOME` environment variable appropriately. There are many ways to install GraalVM, but just one example
+might be something like this:
+
+[source,yaml]
+----
+      - run:
+          name: Install GraalVM
+          command: curl https://github.com/oracle/graal/releases/download/vm-19.1.1/graalvm-ce-linux-amd64-19.1.1.tar.gz -O -J -L && tar xfz graalvm-ce-linux-amd64-19.1.1.tar.gz && mv graalvm-ce-19.1.1 .graalvm && rm graalvm-ce-linux-amd64-19.1.1.tar.gz
+----
+
+Once GraalVM is installed, you will also need to install https://www.graalvm.org/docs/reference-manual/aot-compilation/[**native-image**], 
+which is an add-on to GraalVM. This is done by using the `gu` utility that comes with GraalVM. In the CircleCI config, it might
+look something like this:
+
+[source,yaml]
+----
+      - run:
+          name: Install native-image
+          command: $GRAALVM_HOME/bin/gu install native-image
+----
+
+As mentioned, you will need to set the `GRAALVM_HOME` environment variable. You can either do that globally in the `environment`
+section of the config, or you can set it separately for each **run** command. It's usually easiest to do the former:
+
+[source,yaml]
+----
+    environment:
+      GRAALVM_HOME: /home/circleci/repo/.graalvm
+----
+
+=== Native Build and Verify
+
+After GraalVM and native-image are installed, you can simply create one or more **run** commands to build and verify your
+native Quarkus app. It will look like this:
+
+[source,yaml]
+----
+      - run:
+          name: Build (Native)
+          command: ./mvnw clean package -Pnative -DskipTests -Dmaven.test.skip=true
+          no_output_timeout: 30m
+      - run:
+          name: Verify (Native)
+          command: ./mvnw verify -Pnative
+          no_output_timeout: 30m
+----
+
+You will notice that both commands have an additional setting for `no_output_timeout`. It seems that the **native-image**
+tool does not always complete in a timely fashion. Sometimes it is quick, but sometimes it takes a little bit of time - 
+more than the CircleCI default timeout of 10 minutes. I'm sure that as the GraalVM native-image tool matures, this will
+be improved (both the total time it takes to run and the variability). Until then, simply increasing the timeout seems
+to work well.
+
+== Full Example (Annotated)
+
+You probably just skipped all of the information above this point and want to copy/paste the example, don't you? Yeah
+that's what I would do too! Here is a full working example (**.circleci/config.yml**) of a native Quarkus build job in CircleCI:
+
+[source,yaml]
+----
+#
+# Native Quarkus CircleCI configuration file
+#
+version: 2
+jobs:
+  build:
+    # Use "machine" instead of e.g. "docker" for better/faster results
+    machine: true
+    # Uses a "medium" sized machine - maybe increase this to "large" if you pay for CircleCI
+    resource_class: medium
+    working_directory: ~/repo
+    environment:
+      MAVEN_OPTS: -Xmx6400m
+      # Set the GRAALVM_HOME env variable to the location where we will be installing GraalVM
+      GRAALVM_HOME: /home/circleci/repo/.graalvm
+    steps:
+      # Checkout the source code
+      # ########################
+      - checkout
+
+      # Restore any files we may have cached
+      # ########################
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+
+      # Download maven dependencies so that we can cache them
+      # ########################
+      - run:
+          name: Download Dependencies
+          command: mvn dependency:go-offline
+      # Cache the maven dependencies
+      - save_cache:
+          paths:
+            - ~/.m2
+          key: v1-dependencies-{{ checksum "pom.xml" }}
+
+      # Standard maven build and test phases - does not perform a native build (or verify)
+      # ########################
+      - run:
+          name: Build (Standard)
+          command: ./mvnw clean package -DskipTests -Dmaven.test.skip=true
+      - run:
+          name: Verify (Standard)
+          command: ./mvnw test
+
+      # Install GraalVM and native-image, needed for a native Quarkus build
+      # ########################
+      - run:
+          name: Install GraalVM
+          command: curl https://github.com/oracle/graal/releases/download/vm-19.1.1/graalvm-ce-linux-amd64-19.1.1.tar.gz -O -J -L && tar xfz graalvm-ce-linux-amd64-19.1.1.tar.gz && mv graalvm-ce-19.1.1 .graalvm && rm graalvm-ce-linux-amd64-19.1.1.tar.gz
+      - run: 
+          name: Install native-image
+          command: $GRAALVM_HOME/bin/gu install native-image
+
+      # Perform a native Quarkus build and verify
+      # ########################
+      - run:
+          name: Build (Native)
+          command: ./mvnw clean package -Pnative -DskipTests -Dmaven.test.skip=true
+          no_output_timeout: 30m
+      - run:
+          name: Verify (Native)
+          command: ./mvnw verify -Pnative
+          no_output_timeout: 30m
+----

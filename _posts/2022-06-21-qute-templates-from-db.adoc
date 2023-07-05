@@ -1,0 +1,267 @@
+---
+layout: post
+title: 'Using Qute with templates from a database'
+date: 2022-06-21
+tags: qute development-tips
+synopsis: 'We moved our Qute templates from the file storage to a database to improve the tenants experience in a multitenant Quarkus app.'
+author: gwenneg
+---
+:imagesdir: /assets/images/posts/qute-templates-from-db
+
+== Introduction
+
+I'm part of a Red Hat team that created a multitenant notifications service which sends the notifications from many https://console.redhat.com[Red Hat Hybrid Cloud Console] apps (the tenants).
+Our service can be used to send several kinds of notifications, including emails.
+Each tenant can create as many email templates as they need and link them with the events that will trigger the notifications.
+
+We implemented that with the amazing https://quarkus.io/guides/qute-reference[Qute templating engine] and templates stored as files in the `src/main/resources/templates` folder.
+It allowed our tenants to design templates tailored to fit their needs with minimal knowledge of Qute.
+However, we quickly realized that editing the templates was a slow and heavy process for the tenants.
+Indeed, they had to create a GitHub pull request in our repository, wait for a review and then wait again for a deployment before the templates could be tested.
+We needed to make that process easier for the tenants, ideally even self-serviced.
+
+Then we decided to move the templates from the file storage to a database using Qute's `TemplateLocator`.
+It helped us offer the tenants an easier, frictionless and self-serviced way of editing the templates.
+
+image:/assets/images/posts/qute-templates-from-db/before-after.png[]
+
+Here's how we did it.
+
+== The obvious part: persisting the templates into the database
+
+Before using templates from the DB with Qute, the templates obviously need to be persisted.
+It doesn't matter how this is performed.
+Any flavor of Hibernate (reactive or not, with Panache or not) will work.
+This post will show examples based on https://quarkus.io/guides/hibernate-orm-panache[Hibernate with Panache].
+
+The next sections will make use of this JPA entity:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
+
+import javax.persistence.Entity;
+import javax.persistence.Id;
+
+@Entity
+public class DbTemplate extends PanacheEntityBase {
+
+    @Id
+    public String name; <1>
+
+    public String content;
+}
+----
+<1> The template name will be the DB primary key.
+
+== The interesting part: connecting Qute to the database
+
+Now that templates can be persisted, we need a way to use them from Qute.
+Fortunately, Qute comes with a very interesting interface called `TemplateLocator` that can be used to load templates from any location, including from a DB.
+
+Here's how it can be used with the `DbTemplate` entity we defined earlier:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.logging.Log;
+import io.quarkus.qute.EngineBuilder;
+import io.quarkus.qute.TemplateLocator;
+import io.quarkus.qute.Variant;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.enterprise.event.Observes;
+import java.io.Reader;
+import java.io.StringReader;
+import java.util.Optional;
+
+@ApplicationScoped
+public class DbTemplateLocator implements TemplateLocator {
+
+    @Override
+    public Optional<TemplateLocation> locate(String name) {
+        DbTemplate template = DbTemplate.findById(name);
+        if (template == null) {
+            Log.tracef("Template with [name=%s] not found in the database", name);
+            return Optional.empty();
+        } else {
+            Log.tracef("Template with [name=%s] found in the database", name);
+            return Optional.of(buildTemplateLocation(template.getContent()));
+        }
+    }
+
+    @Override
+    public int getPriority() { <1>
+        return DEFAULT_PRIORITY - 1;
+    }
+
+    void configureEngine(@Observes EngineBuilder builder) { <2>
+        builder.addLocator(this);
+    }
+
+    private TemplateLocation buildTemplateLocation(String templateContent) {
+        return new TemplateLocation() {
+
+            @Override
+            public Reader read() {
+                return new StringReader(templateContent);
+            }
+
+            @Override
+            public Optional<Variant> getVariant() {
+                return Optional.empty();
+            }
+        };
+    }
+}
+----
+<1> If your Quarkus app contains templates loaded from both the file system and a database, you will need to override the template locator default priority. Otherwise, Quarkus will try to load templates from the file system using `DbTemplateLocator` which could lead to exceptions or unpredictable behaviors.
+<2> Before Quarkus 2.10, integrating `DbTemplateLocator` with the Qute engine instance provided by Quarkus could only be done with a CDI observer like this.
+
+[TIP]
+====
+Quarkus 2.10 recently introduced a new `@Locate` annotation that makes the https://quarkus.io/version/main/guides/qute-reference#template-locator-registration[Template Locator Registration] even simpler.
+====
+
+Now that the template locator is registered, we're ready to compile and render templates from the database with Qute.
+As you can see in the following example, DB templates are used exactly like file templates:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.qute.Engine;
+import io.quarkus.qute.Template;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+@ApplicationScoped
+public class EmailSender {
+
+    @Inject
+    Engine engine;
+
+    public void sendEmail(String templateName) {
+        Template template = engine.getTemplate(templateName);
+        if (template != null) {
+            String rendered = template.render();
+            // Send an email using the template.
+        }
+    }
+}
+----
+
+== Beware of Qute's internal cache
+
+Whenever Qute loads a template, it is stored into an internal `ConcurrentHashMap` and stays in memory forever, unless Qute is instructed otherwise.
+This means that you will need to remove a DB template from the Qute internal cache after it's been updated or deleted in the database.
+
+There are several ways of achieving that:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.qute.Engine;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+@ApplicationScoped
+public class DbEngineCacheManager {
+
+    @Inject
+    Engine engine;
+
+    public void removeTemplates(String name) {
+        engine.removeTemplates(templateName -> templateName.equals(name)); <1>
+    }
+
+    public void clearAll() {
+        engine.clearTemplates(); <2>
+    }
+}
+----
+<1> This removes the templates for which the mapping id matches the given predicate.
+<2> This removes all templates from the cache.
+
+Clearing that internal cache can become tricky if your app is running on a Kubernetes cluster with several replicas.
+You will indeed need a way to broadcast to all pods (possibly using a Kafka topic or a DB table) an instruction to remove from the cache the templates that have been updated or deleted.
+There is a cheaper (yet very imperfect) way of keeping all pods caches synced though, using a scheduled job:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.qute.Engine;
+import io.quarkus.scheduler.Scheduled;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+
+@ApplicationScoped
+public class DbEngineCacheScheduledCleaner {
+
+    @Inject
+    Engine engine;
+
+    @Scheduled(every = "5m", delayed = "5m") <1>
+    public void clearTemplates() {
+        engine.clearTemplates();
+    }
+}
+----
+<1> All templates will be cleared from the internal cache every 5 minutes.
+
+== Preventing the deletion of an included template
+
+A Qute template can be included into another template.
+If the inner template is deleted, then the outer template compilation will fail, which is obviously something that needs to be prevented while loading the templates from the DB.
+
+Here's a way to look for the inclusion of a template into another one before deleting it:
+
+[source,java]
+----
+package org.acme;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+import javax.persistence.EntityManager;
+import javax.transaction.Transactional;
+
+@ApplicationScoped
+public class TemplateRepository {
+
+    @Inject
+    EntityManager entityManager;
+
+    @Transactional
+    public void deleteTemplate(String name) {
+        long count = entityManager.createQuery("SELECT COUNT(*) FROM DbTemplate WHERE name != :name AND content LIKE :include", Long.class)
+                .setParameter("name", name)
+                .setParameter("include", "%{#include " + name + "%")
+                .getSingleResult();
+        if (count > 0) {
+            throw new IllegalStateException("Included templates can't be deleted, remove the inclusion or delete the outer template first");
+        } else {
+            entityManager.createQuery("DELETE FROM DbTemplate WHERE name = :name")
+                    .setParameter("name", name)
+                    .executeUpdate();
+        }
+    }
+}
+----
+
+== Database templates validation
+
+Database templates come with a significant drawback: Quarkus is no longer able to perform https://quarkus.io/guides/qute-reference#typesafe_templates[type-safe] validation.
+
+The syntax validation is also delayed from build time to runtime but this is expected as templates can be created or edited at runtime.
+
+== Special thanks
+
+Thanks to Josejulio Martinez Magana and Martin Kouba for helping me during the implementation of the DB templates in our notifications service!

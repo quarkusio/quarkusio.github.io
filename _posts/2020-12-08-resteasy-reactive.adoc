@@ -1,0 +1,213 @@
+---
+layout: post
+title: Announcing RESTEasy Reactive
+date: 2020-12-07
+tags: reactive web rest resteasy
+synopsis: RESTEasy Reactive is ready to be tested
+author: geoand
+---
+
+It gives the Quarkus and RESTEasy teams great pleasure to announce that RESTEasy Reactive integration in Quarkus has landed in the main Quarkus repo footnote:disclaimer[Currently the main RESTEasy Reactive component resides at https://github.com/quarkusio/quarkus/tree/main/independent-projects/resteasy-reactive
+in the main Quarkus repository; the plan is however that once things settle, this code will move to https://github.com/resteasy/resteasy-reactive. This move should not affect users of the quarkus-resteasy-reactive extensions in any way, just a heads up if anyone reads this blog post in the future and can’t find it.] and will be part of the next Quarkus release 1.11.
+
+We are looking forward to everyone testing it and providing us as much feedback as possible.
+In typical Quarkus fashion, the project is consumable as a new set of extensions.
+
+== What is it?
+
+As you probably guessed from the name, this work is a *new JAX-RS implementation* written from the ground up to work on our common *Vert.x* layer and is thus fully *reactive*, while also being very *tightly integrated with Quarkus* and consequently moving a lot of framework specific work
+(like annotation scanning and metamodel generation) to *build time*.
+
+== Why should I care?
+
+The simplest answer is that you can continue to leverage the widely used and very powerful JAX-RS APIs to expose a REST layer for your application, while gaining a significant improvement in the maximum throughput the application can achieve. The application should also start slightly faster and consume a little less memory.
+
+Our benchmarks reveal that the measurable performance with this new extension is almost identical to what we would achieve using Quarkus' Reactive Routes API (which is a very interesting API in its own right, but is generally more low level - not to mention the fact that it's a new API developers would need to learn).
+
+Furthermore, when comparing our results to other competing enterprise Java frameworks that provide annotation based REST layers, Quarkus provided as much as double the throughput depending on the benchmark.
+
+== What other benefits are there?
+
+As if the familiar API and the much improved runtime characteristics of the new extension weren't enough, we have added some really exciting and convenient new features (which are not part of the JAX-RS spec) that have either been requested by the community,
+or are things we feel improve the developer experience and soften some of the spec’s rough edge.
+These new features are:
+
+Non-blocking by default::
+
+All endpoints are now running on the IO thread by default. You can use `@Blocking` to change that.
+
+Scoring system::
+
+On dev-mode startup, the application will show you a list of your endpoints, along with a performance score telling you why your endpoint is slower than an optimal version. This helps a lot in figuring out how to improve REST performance.
+
+New request/response filter design::
+
+JAX-RS filters require implementing an interface and injecting context objects as fields, which is costly and inflexible. Based on our success in the Quarkus build system, filters are now simply annotated methods and any parameter is automatically injected:
+
+[source, java]
+----
+public class CustomContainerRequestFilter {
+
+   @ServerRequestFilter
+   public void whatever(UriInfo uriInfo, HttpHeaders httpHeaders, ContainerRequestContext requestContext) {
+       String customHeaderValue = uriInfo.getPath() + "-" + httpHeaders.getHeaderString("some-input");
+       requestContext.getHeaders().putSingle("custom-header", customHeaderValue);
+   }
+}
+----
+
+Furthermore, if filters need to perform blocking operations, then they can return `Uni<Void>` and RESTEasy Reactive will not block the event-loop thread while executing the filter.
+
+Finally, although we haven’t done it yet, this approach could easily be extended to other types of JAX-RS Providers thus completely forgoing the need to use `@Context` in their code.
+
+New `*Param` annotations::
+
+These annotations are meant to be used instead of the JAX-RS `@PathParam`, `@QueryParam` etc. annotations, without having the need to specify a name.
+The reason we chose not to reuse the same annotation names is to avoid conflicting with either JAX-RS or other EE specs:
+
+[source, java]
+----
+@POST
+@Path("params/{p}")
+public String params(@RestPath String p,
+                    @RestQuery String q,
+                    @RestHeader int h,
+                    @RestForm String f,
+                    @RestMatrix String m,
+                    @RestCookie String c) {
+   return "params: p: " + p + ", q: " + q + ", h: " + h + ", f: " + f + ", m: " + m + ", c: " + c;
+}
+----
+
+Simpler parameter and context injection::
+
+With RESTEasy Reactive you don’t even need to use `@PathParam` or `@RestPath` if your parameter has the same name as a path parameter, and similarly you can skip `@Context` for all the known context types, which makes it even simpler:
+
+[source, java]
+----
+@POST
+@Path("params/{p}")
+public String params(String p, UriInfo info) {
+   return "params: p: " + p + ", info: " + info;
+}
+----
+
+New optimal message body reader / writer::
+
+If no filters and interceptors are invoked when an endpoint is serviced, you can use more efficient message body writers that directly write to vert.x and don’t require reflection and annotations:
+
+[source, java]
+----
+@Provider
+public class ServerVertxBufferMessageBodyWriter extends VertxBufferMessageBodyWriter
+       implements ServerMessageBodyWriter<Buffer> {
+
+   @Override
+   public boolean isWriteable(Class<?> type, ResteasyReactiveResourceInfo target, MediaType mediaType) {
+       return true;
+   }
+
+   @Override
+   public void writeResponse(Buffer buffer, ServerRequestContext context) {
+       context.serverResponse().end(buffer.getBytes());
+   }
+}
+
+----
+
+Default content types::
+
+Endpoints that return a String default to producing text/plain. We plan to do the same for JSON and other types.
+
+CDI Integration::
+
+All injections via JAX-RS’s @Context are delegated to Arc. This provides users with the benefits of build time injection that Arc brings to all other parts of Quarkus.
+
+Per-class Exception Mapper::
+
+In the JAX-RS specification there’s no way to handle exceptions differently for a specific JAX-RS Resource Class - all exception mapping is done in a global manner.
+
+In RESTEasy Reactive however you can simply do something like:
+
+[source, java]
+----
+@Path("first")
+public class FirstResource {
+
+   @GET
+   @Produces("text/plain")
+   public String throwsVariousExceptions(@RestQuery String name) {
+       if (name.startsWith("IllegalArgument")) {
+           throw new IllegalArgumentException();
+       } else if (name.startsWith("IllegalState")) {
+           throw new IllegalStateException("IllegalState");
+       } else if (name.startsWith("My")) {
+           throw new MyException();
+       }
+       throw new RuntimeException();
+   }
+
+   @ServerExceptionMapper({ IllegalStateException.class, IllegalArgumentException.class })
+   public Response handleIllegal() {
+       return Response.status(409).build();
+   }
+
+   @ServerExceptionMapper(MyException.class)
+   public Response handleMy(SimpleResourceInfo simplifiedResourceInfo, MyException myException,
+           ContainerRequestContext containerRequestContext, UriInfo uriInfo, HttpHeaders httpHeaders, Request request) {
+       return Response.status(410).entity(uriInfo.getPath() + "->" + simplifiedResourceInfo.getMethodName()).build();
+   }
+}
+----
+
+in order to customize the exception handling of certain Resource Classes.
+
+Also note that `@ServerExceptionMapper` can be used to handle exceptions in a global manner, just as JAX-RS does with `ExceptionMapper`.
+To do that, simply annotate a method that does not belong to a Resource class with `@ServerExceptionMapper`.
+
+== Do other extensions work with it?
+Absolutely!
+
+The extensions that integrate with the existing quarkus-resteasy extension also integrate with quarkus-resteasy-reactive extensions. So you can continue to use _CDI_, _Security_, _Metrics_, _JSON_, _Qute_, _Bean Validation_, _OpenAPI_  and enjoy a great out of the box and complete development experience.
+
+== How can I try it out?
+
+The project has landed in the Quarkus master branch, so if you’re eager to try it out, you'll have to build Quarkus from source by following https://github.com/quarkusio/quarkus/blob/master/CONTRIBUTING.md#building-master[this] and use the proper BOM and version following https://github.com/quarkusio/quarkus/blob/master/CONTRIBUTING.md#updating-the-version[this].
+
+Furthermore, you can also use Maven Snapshots (as Quarkus snapshot builds are uploaded to Sonatype once a day), by specifying version `999-SNAPSHOT` as the Quarkus version and using `quarkus-bom` instead of `quarkus-universe-bom` as the BOM.
+There are various ways to enable snapshot versions in Maven. https://stackoverflow.com/a/7717234/2504224[This] StackOverflow answer shows configuration that can be used either on a per project basis or globally.
+
+The available RESTEasy Reactive extensions are:
+
+* quarkus-resteasy-reactive
+* quarkus-resteasy-reactive-jackson
+* quarkus-resteasy-reactive-jsonb
+* quarkus-resteasy-reactive-qute
+
+These extensions are the equivalent to the existing _quarkus-resteasy_* extensions, so simply switching from _quarkus-resteasy-jackson_ to _quarkus-resteasy-reactive-jackson_ in your application should allow you to try RESTEasy Reactive with Jackson integration.
+
+Furthermore, the _quarkus-jaxrs-client_ extension can be used if you need to use the JAX-RS client (this is not the declarative MicroProfile REST Client, but the programmatic client specified by the JAX-RS spec).
+
+== What should I be careful of?
+
+* The first thing to note is that for the time being this set of extensions is currently considered experimental. Although the project passes almost the entirety of the JAX-RS TCK, it’s just the first release, so keep in mind that it might have more bugs than a typical battle hardened library, while some of the new APIs and SPIs might break.
+Despite this being a first release, we do envision this work becoming the default REST layer for Quarkus in the near future.
+
+* As mentioned in the new features section, requests are served on the event-loop threads by default. This ensures maximum throughput, but also means that no blocking work should be performed on these threads. If you use Blocking IO (for example by accessing a database with Hibernate Panache), be sure to use the `@Blocking` annotation on either the method or the class.
+This will ensure that the request will be served on a worker thread. It goes without saying that we are also very interested in hearing your feedback about this default.
+
+* There are no docs yet. Docs will be added before the formal 1.11 release and will be progressively enhanced.
+This email should contain all the information you need to get started, but should you run into any trouble, we are available to help on any of the usual channels (Zulip chat, mailing list, GitHub Issues, StackOverflow).
+
+== What JAX-RS features are missing?
+
+We decided to focus on what most users need from a modern REST layer instead of implementing every single feature required by the JAX-RS TCK.
+So in that vein, there is no XML support in RESTEasy Reactive, while various arcane features of the spec are also not supported (like _javax.activation.DataSource_, _javax.annotation.ManagedBean_, _javax.ws.rs.core.StreamingOutput_).
+
+Furthermore, worth noting is that the first release will not contain an implementation of the MicroProfile REST Client based on the new JAX-RS Client (for which there is a dedicated extension). This will most likely change in the near future.
+
+
+== What's next?
+Although the new extensions will be available with the regular _1.11_ release, we are considering doing a `1.11.0.Alpha1` release to make it as easy as possible for you to try out the new extensions and provide early feedback.
+
+We are very much looking forward to hearing your thoughts about and experience using RESTEasy Reactive in Quarkus and plan to put it to good use to further improve the project.

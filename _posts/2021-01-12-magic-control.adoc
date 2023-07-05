@@ -1,0 +1,318 @@
+---
+layout: post
+title: Bored with magic tricks?
+date: 2021-01-12
+tags: vert.x
+synopsis: How to control the amount of magic from Quarkus
+author: cescoffier
+---
+
+Just before my PTO, someone told me: '_I don't like magic._'
+In this context, _magic_ refers to the amount of hidden _stuff_ done by Quarkus under the hood for the sake of simplicity.
+It includes dependency injection, annotations, and so on.
+
+It's not the first time that I get that kind of comment, and coming from the Vert.x project, it makes sense.
+Vert.x has (almost) no magic, and for a good reason: too much magic can be terrible and make production tuning utterly expensive.
+Sometimes you want to have more control and avoid unexpected behaviors: execute the code you wrote, and nothing else.
+
+But magic is not inherently bad.
+Magic is power that can be used for good or for bad.
+After all, your application runs on a silicon with microcode magic powering an Operating System with abstraction magic powering the Java Virtual Machine with Just In Time magic.
+There is magic, it's just magic you have enough knowledge (or trust) of vs magic you don't.
+
+You may think that Quarkus has a lot of magic tricks.
+It is true in some sense but it is easily understood and comes with strong benefits in either memory optimization, startup time optimization or last but not least developer experience improvements.
+You can decide the amount of magic that you want and the amount of control you feel comfortable with.
+You don't have to use dependency injection or managed clients if you prefer doing things yourself.
+
+In this post, we will cover three different approaches to reducing the amount of magic.
+We will go from almost no magic to just enough to get a good developer experience.
+Examples from this blog post are available on https://github.com/cescoffier/quarkus-magic-control[GitHub].
+
+== The _almost no magic_ approach
+
+Quarkus applications are Java applications.
+So, somewhere there is a `public static void main(String... args)`.
+While you don't need to write that method when using Quarkus, it can still be convenient and give you more control about your application startup.
+It's also a good trick to start your Quarkus application directly from your IDE.
+
+As an example, we will implement a straightforward HTTP application. Nothing fancy:
+
+[source, java]
+----
+package me.escoffier.quarkus.nomagic;
+
+import io.quarkus.runtime.Quarkus;
+import io.quarkus.runtime.QuarkusApplication;
+import io.quarkus.runtime.annotations.QuarkusMain;
+import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpServer;
+import io.vertx.ext.web.Router;
+import org.eclipse.microprofile.config.ConfigProvider;
+
+@QuarkusMain
+public class Main implements QuarkusApplication {
+
+    public static void main(String... args) {
+        Quarkus.run(Main.class, args);
+    }
+
+    @Override
+    public int run(String... args) {
+        Vertx vertx = Vertx.vertx();
+        Router router = Router.router(vertx);
+
+        String message = ConfigProvider.getConfig().getValue("message", String.class);
+
+        router.get("/").handler(rc -> rc.response().end(message));
+        router.get("/bye").handler(rc -> {
+            rc.response().end("bye");
+            Quarkus.asyncExit();
+        });
+
+        HttpServer server = vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(8080);
+
+        Quarkus.waitForExit();
+
+        server.close();
+        return 0;
+    }
+}
+----
+
+The complete source code is available https://github.com/cescoffier/quarkus-magic-control/tree/main/no-magic-example[here].
+Don't expect much more; the application had only one Java class, but let's look into it.
+
+The `@QuarkusMain` indicates that Quarkus should use this class as the _main entry point_ of the application.
+The `run` method contains your application logic.
+We will come back to this logic later.
+First, look at the `public static void main(String... args)` method.
+It just starts the application.
+You can use this entry point directly from your IDE.
+Yes, there is still a bit of magic behind `Quarkus.run`; that's where the extension initialization happens - not unlike _any_ framework initialization including Vert.x.
+As this application does not use any extension, nothing much will happen.
+
+This application https://github.com/cescoffier/quarkus-magic-control/blob/main/no-magic-example/pom.xml#L17-L26[depends] directly on Vert.x Web and Vert.x Core.
+The only Quarkus dependency is Arc (not used directly but required):
+
+[source, xml]
+----
+<dependencies>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-arc</artifactId>
+    </dependency>
+
+    <dependency>
+        <groupId>io.vertx</groupId>
+        <artifactId>vertx-web</artifactId>
+        <version>3.9.5</version>
+    </dependency>
+</dependencies>
+----
+
+Let's go back to the `run` method.
+It contains the application logic, here, a dummy Vert.x application.
+It creates the `Vertx` instance, a `Router`, registers a few routes, and starts the HTTP server.
+Because we don't want the application to stop immediately, we _wait for exit_.
+The `/bye` request handler illustrates how you can programmatically trigger the application shutdown.
+
+This application has almost no magic, just a single annotation, and a regular Java entry point.
+You may wonder why not using a bare Java program?
+Even used that way, Quarkus provides benefits. For example, you can access the built-in configuration support as illustrated in the snippet:
+
+[source, java]
+----
+String message = ConfigProvider.getConfig().getValue("message", String.class);
+----
+
+The configuration is located in the `application.properties` file.
+
+This first approach has a few drawbacks.
+It does not benefit from the built-time processing of Quarkus.
+The logic executed at build time is packaged inside extensions, and in this case, we don't use extensions (except Arc).
+Another issue is that compiling this application to native will fail because extensions are also involved during the native compilation.
+Finally, the hot reload won't work, but you can directly restart the application from your IDE.
+
+== Using the managed Vert.x instance
+
+Quarkus uses Vert.x heavily.
+The `quarkus-vertx-core` extension manages the Vert.x instance used by Quarkus.
+You can use that instance directly and avoid creating the Vert.x instance.
+If you need to configure the instance, you can configure it from https://quarkus.io/guides/all-config#quarkus-vertx-core_quarkus-vertx-core-eclipse-vert.x-core[the `application.properties`].
+It also enables native packaging (as that extension contains the directive to compile Vert.x applications to native).
+
+In your pom.xml file, just add the following dependency:
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-vertx-core</artifactId>
+</dependency>
+----
+
+With this, the _run_ method becomes:
+
+[source, java]
+----
+@Override
+public int run(String... args) {
+    Vertx vertx = CDI.current().select(Vertx.class).get();
+    Router router = Router.router(vertx);
+
+    String message = ConfigProvider.getConfig().getValue("message", String.class);
+
+    router.get("/").handler(rc -> rc.response().end(message + " world!"));
+    router.get("/stop").handler(rc -> {
+        rc.response().end("bye");
+        Quarkus.asyncExit();
+    });
+
+    HttpServer server = vertx.createHttpServer()
+            .requestHandler(router)
+            .listen(8080);
+
+    Quarkus.waitForExit();
+
+    server.close();
+    return 0;
+}
+----
+
+Note how it retrieves the managed Vert.x instance.
+While you can use `@Inject`, you can also retrieve it programmatically, the rest of the code does not change.
+See? No magic for you!
+We can still start it from the IDE using the _main_ method.
+
+If you don't include the `quarkus-vertx-core` extension (or any extension depending on it), Quarkus won't create the Vert.x instance.
+
+Using extensions gives you some property wiring as well as the build time optimisations and native image compilation:
+
+[source, shell script]
+----
+> mvn package -Dnative
+...
+> ./target/managed-vertx-example-1.0-SNAPSHOT-runner
+----
+
+But, still no hot reload 😿.
+
+== Using the managed HTTP server
+
+Instead of using only the `quarkus-vertx-core` extension, we can choose to delegate the HTTP server to Quarkus.
+You may see that as a loss of control, but actually, we rarely do much around it, and again, you can configure it from the `application.properties` file if needed.
+
+Instead of ``quarkus-vertx-core`, use `quarkus-vertx-http`:
+
+[source, xml]
+----
+<dependencies>
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-vertx-http</artifactId>
+    </dependency>
+</dependencies>
+----
+
+No need to depend on Vert.x Web directly, it's included.
+
+You will still register your routes, but using a managed `Router`:
+
+[source, java]
+----
+@Override
+public int run(String... args) {
+    Router router = CDI.current().select(Router.class).get();
+
+    String message = ConfigProvider.getConfig().getValue("message", String.class);
+
+    router.get("/").handler(rc -> rc.response().end(message));
+    router.get("/bye").handler(rc -> {
+        rc.response().end("bye");
+        Quarkus.asyncExit();
+    });
+
+    Quarkus.waitForExit();
+    return 0;
+}
+----
+
+That approach enables the Quarkus hot reload as it intercepts the HTTP requests.
+You are still in control of everything related to your application logic.
+
+You can start the hot reload using:
+
+[source, shell script]
+----
+> mvn quarkus:dev
+----
+
+== The final _magic touch_
+
+The question, now, is how far are we from a _regular_ Quarkus application?
+Quite close, actually.
+The equivalent application using RESTEasy Reactive would be something like:
+
+[source, java]
+----
+@Path("/")
+public class MyResource {
+
+    @Inject @ConfigProperty("message") String message;
+
+    @GET
+    public String hello() {
+        return message;
+    }
+
+}
+----
+
+Unlike the previous approaches, this one leverages a declarative (annotation-based) model.
+Under the hood, it's not that different from the last approach.
+Quarkus registers a route (on the router), which then calls the `hello` method when a matching request is received.
+The router gets initialized during the `Quarkus.run` method.
+No need for the _main_ endpoint, but you can still use one, often convenient in IDEs.
+
+== Summary
+
+Our relation to magic depends on our background and experience.
+Quarkus lets you decide how much magic you accept.
+This post presented fours configurations, going from almost no magic to the _regular_ Quarkus code.
+Each approach has pros and cons:
+
+|===
+| |Control | Build time optimizations | Native executable | Hot Reload
+
+|_Almost no magic_
+|Full
+|🥵
+|🥵
+|🥵
+
+|Use the managed Vert.x instance
+|Everything but Vert.x
+|😀, for Vert.x
+|😀
+|🥵
+
+|Use the managed HTTP server
+|Everything but Vert.x and the HTTP server
+|😀, for Vert.x and HTTP
+|😀
+|😀
+
+|_Regular_ Quarkus
+|Endpoint managed by Quarkus
+|😀
+|😀
+|😀
+
+|===
+
+Pick the approach that fits your needs.
+Besides, most of Quarkus services are also available using a programmatic approach, as we have seen for configuration.
+So, if you prefer avoiding managed objects, feel free just to use the available APIs.

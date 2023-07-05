@@ -1,0 +1,209 @@
+---
+layout: post
+title: 'Solving problems with Quarkus extensions (2/n)'
+date: 2022-08-30
+tags: extensions development-tips
+synopsis: 'The unique build infrastructure of Quarkus allows you to solve complex issues in a very simple way by developing custom extensions.'
+author: gsmet
+---
+
+:imagesdir: /assets/images/posts/solving-problems-with-extensions-2
+
+We are all good: 2 posts make a series!
+
+If you haven't looked at the first post of this series, I invite you to link:/blog/solving-problems-with-extensions/[read it]!
+
+**Problem of the day:** A library is using the `@Inject` annotation to handle its internal injection and, when used on beans, that will conflict with the CDI injection we have in Quarkus.
+Leading to the impossibility for the CDI layer to inject these objects as they are not CDI beans.
+
+== Some context
+
+As for the first post of the series, this post is based on my work on https://github.com/quarkiverse/quarkus-github-app[the Quarkus GitHub App extension]
+that allows you to develop GitHub Apps based on Quarkus at light speed with very little boilerplate.
+
+The newest feature of this extension is the ability to easily develop comment-based commands in your GitHub apps.
+For instance, do something when a user posts a `@bot do-something` in a comment of a pull request.
+
+While it is possible to implement it all by yourself with the standard features of Quarkus GitHub App,
+we developed an additional extension to make things even easier.
+
+Implementing a comment-based command with this extension is as easy as:
+
+[source,java]
+----
+@Cli(name = "@bot", commands = { DoSomething.class }) 
+public class MyFirstCli {
+
+    @Command(name = "do-something") 
+    static class DoSomething implements Runnable { 
+
+        @Override
+        public void run() { 
+            // do something
+        }
+    }
+}
+----
+
+The `run()` method of the `DoSomething` class will be called any time a user posts `@bot do-something` as a comment in an issue or pull request.
+
+These are the basics but the extension has a ton of other features such as reaction-based feedback, scopes, permissions...
+
+This extension is based on the https://rvesse.github.io/airline/[Airline library].
+This library is designed to easily parse and execute command lines.
+While originally designed to develop CLI applications, it is a perfect fit for our usage.
+
+One problem that we have with this library is that it uses the `@Inject` annotation for injecting some objects into commands such as `GlobalMetadata`:
+
+[source,java]
+----
+@Command(name = "do-something") 
+static class DoSomething implements Runnable { 
+
+    @Inject
+    GlobalMetadata metadata;
+
+    @Override
+    public void run() { 
+        // do something
+    }
+}
+----
+
+This is a problem for us as this `@Inject` annotation is used by CDI injection and, in the context of our extension, the `@Command` classes are CDI beans.
+Thus, this particular `@Inject` annotation will also be interpreted by ArC, our CDI implementation, and ArC will try to inject `GlobalMetadata` as a CDI bean... and fail because it is not a CDI bean.
+
+Suffice to say it won't work very well and we need to fix it.
+
+[NOTE]
+====
+Not making `@Command` classes CDI beans is NOT an option as we want regular CDI injection to work.
+====
+
+== How can we work around this?
+
+Ideally, the Airline library wouldn't use the `@Inject` annotation for its internal purpose
+and the good news is, in the latest versions, the annotation used for injection can be specified.
+
+But for the sake of the exercise, let's stick to the previous Airline version.
+
+So now what?
+
+The set of classes the Airline library is susceptible to inject is limited:
+it is used to inject a limited number of classes and to handle composition (i.e. sharing components across several commands).
+
+For these use cases, we somehow need ArC to ignore the injection points.
+
+== AnnotationTransformers to the rescue
+
+If you are familiar with Quarkus, you are probably familiar with the notion of Jandex index.
+In Quarkus, we build indexes of the project annotations and these indexes are used by our core and extensions to find annotations (and more).
+
+ArC, our CDI implementation, is one of the components that consumes the Jandex indexes.
+
+Interestingly though, ArC does not consume the Jandex index as is:
+
+image::annotations-transformers.svg[]
+
+Annotations transformers can add, remove, update existing annotations before consumption by ArC.
+These are used by several features in Quarkus, for instance Hibernate Validator interceptor support.
+
+[IMPORTANT]
+====
+Annotations transformers do NOT modify the original classes, nor do they modify the Jandex indexes.
+
+Using annotations transfomers will solely impact ArC, our CDI implementation.
+====
+
+This behavior is of great interest to us:
+we could hide the annotations from ArC using an annotations transformer
+while keeping them available for Airline to consume them via reflection.
+
+Let's create our annotations transformer:
+
+[source,java]
+----
+public class HideAirlineInjectAnnotationsTransformer implements AnnotationsTransformer { <1>
+
+    private final IndexView index;
+
+    HideAirlineInjectAnnotationsTransformer(IndexView index) { <2>
+        this.index = index;
+    }
+
+    @Override
+    public boolean appliesTo(Kind kind) {
+        return Kind.FIELD == kind; <3>
+    }
+
+    @Override
+    public void transform(TransformationContext transformationContext) {
+        FieldInfo fieldInfo = transformationContext.getTarget().asField();
+
+        if (!fieldInfo.hasAnnotation(DotNames.INJECT)) { <4>
+            return;
+        }
+
+        if (fieldInfo.hasAnnotation(ARGUMENTS) ||
+                fieldInfo.hasAnnotation(OPTION) ||
+                GLOBAL_METADATA.equals(fieldInfo.type().name()) || <5>
+                COMMAND_GROUP_METADATA.equals(fieldInfo.type().name()) ||
+                COMMAND_METADATA.equals(fieldInfo.type().name()) ||
+                isComposition(fieldInfo)) { <6>
+            transformationContext.transform().remove(ai -> DotNames.INJECT.equals(ai.name())).done(); <7>
+        }
+    }
+
+    private boolean isComposition(FieldInfo fieldInfo) { <8>
+        Type fieldType = fieldInfo.type();
+
+        if (fieldType.kind() != Type.Kind.CLASS) {
+            return false;
+        }
+
+        ClassInfo fieldClass = index.getClassByName(fieldType.asClassType().name());
+
+        if (fieldClass == null) {
+            return false;
+        }
+
+        Set<DotName> fieldClassAnnotations = fieldClass.annotationsMap().keySet();
+
+        return fieldClassAnnotations.contains(ARGUMENTS) || fieldClassAnnotations.contains(OPTION);
+    }
+}
+----
+<1> Our class implements `AnnotationsTransformer`.
+<2> We inject the Jandex index in our transformer as we will need it to detect composition.
+<3> We are only interested in fields so let's apply our transformer to fields only.
+<4> If the field is not annotated with `@Inject`, it is of no interest to us.
+<5> If the field type is `GlobalMetadata`, `GroupMetadata` or `CommandMetadata`, we know it is the responsibility of Airline to inject it.
+<6> We are also detecting composition.
+<7> We remove the `@Inject` annotation from the transformed view visible to ArC.
+Make sure you don't forget to finalize the transformation with `.done()`.
+<8> For composition, we detect if the field is of a type that contains `@Arguments` or `@Option` annotations.
+
+Now that we have created our annotations transformer,
+we need to make sure Quarkus knows about it.
+
+As usual, for the Quarkus build process, you just need to produce a `BuildItem` to register the annotations transformer:
+
+[source,java]
+----
+@BuildStep
+public void beanConfig(CombinedIndexBuildItem index,
+        BuildProducer<AnnotationsTransformerBuildItem> annotationsTransformer) {
+    annotationsTransformer
+            .produce(new AnnotationsTransformerBuildItem(new HideAirlineInjectAnnotationsTransformer(index.getIndex())));
+}
+----
+
+And that's it, from now on, the `@Inject` annotations consumed by the Airline library will be hidden from ArC,
+while still being visible from the Airline library, which uses reflection.
+
+Regular CDI injection is still supported as only the `@Inject` annotations handled by Airline are hidden from ArC.
+
+== Conclusion
+
+Once again, we have seen how the unique build infrastructure of Quarkus can solve real life issues with very little boilerplate.
+And that with unified concepts that are very easy to grasp.
