@@ -1,4 +1,0 @@
----
-layout: components
-title: Components
----
