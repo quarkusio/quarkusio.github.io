@@ -1,0 +1,174 @@
+---
+layout: post
+title: 'On the Road to CDI Compatibility'
+date: 2023-07-12
+tags: arc cdi
+synopsis: 'Quarkus is now compatible with CDI Lite.'
+author: lthon
+---
+
+Ever since the very first days of Quarkus, the days that are now covered by the blissful fog of oblivion and the survivors only talk about them after a few pints of beer, dependency injection container was an integral part of the envisioned framework.
+And not just any dependency injection container -- a link:/blog/quarkus-dependency-injection/[CDI implementation], of all things.
+
+At the very beginning, the CDI implementation used was Weld.
+Very soon, the Masterminds and Deep Thoughts behind the CDI work in what eventually became Quarkus, Martin Kouba and Stuart Douglas, realized that Weld cannot possibly unlock the full potential that a build-time oriented framework conceals.
+Thus, ArC was born.
+
+When I first heard of ArC, I thought, surely that means _A reduced CDI_, especially with that capitalization!
+Alas, I was deeply mistaken.
+It is a reference to an activity that I could never possibly indulge in out of the simple concern for my health and safety: _arc welding_.
+(That indeed is a backreference to Weld. There are some clever people here!)
+
+== Arc Welding
+
+ArC started with one important architectural constraint that was significantly different to all other existing CDI implementations at that time: it ought to perform the heavy lifting during application build.
+Among others, this includes the entire bean discovery process.
+If you are familiar with AtInject and its various implementations, this concept doesn't come as a surprise.
+For example, Guice is a popular dependency injection container that does all the work at application runtime, while Dagger is a popular alternative that precomputes dependency wiring at build time.
+
+With CDI, the situation is not that simple.
+CDI 2.0, the latest version at that time, includes features that ultimately preclude running bean discovery at build time; most notably, the _Portable Extensions_ API.
+To be able to execute portable extensions, you need to have a running CDI container (to deliver events or use the `BeanManager` API), you need to be able to reflect on application classes (the `Annotated*` types directly expose `java.lang.reflect` types), and you need to support portable extension instances holding various kinds of state (including started threads or open sockets).
+
+There are also features that were challenging to implement, like efficient bean metadata storage and runtime access, or dynamic lookup, but those are _just work_.
+Portable Extensions were downright impossible.
+
+ArC made an obvious choice: it will not support Portable Extensions, it will not be a fully compatible implementation of CDI, and it will not be verified by the CDI TCK.
+This decision opened the door to pruning some ancient CDI features that have not been widely used or were deemed not important enough for contemporary software world: conversations, specialization, passivation, interceptors bound using the `@Interceptors` annotation, enablement using `beans.xml`, and so on.
+Some other features are not a good fit for the build-time approach either: the notion of explicit bean archives, `InterceptionFactory`, or some parts of the `BeanManager` API.
+This might sound like a long list, but as a matter of fact, the result was a perfectly "just enough" implementation of CDI that allowed running a huge number of existing CDI-based libraries and frameworks, after writing a Quarkus-specific integration.
+
+All was nice and rosy, pink unicorns happily roamed flowery meadows, double rainbows glowed on clear sunny skies, and developers developed mighty microservices all over the link:https://twitter.com/Grady_Booch/status/1154493591487537152[kuberspace]. Over time, some features that were originally omitted, such as decorators, were also implemented.
+
+Of course, some people tried to complain that Quarkus claims it implements CDI, while it really doesn't, because it doesn't pass the TCK, but we don't have to fuss over that.
+The absence of these features has been clearly documented, and majestic exclusion lists have been a noble tradition in the CDI world since the beginning of time anyway.
+
+== CDI Lite
+
+ArC has quite successfully proven that there indeed is a small seed hidden in CDI, waiting to be watered and manured, waiting to grow and blossom and show to the world that CDI need not be just "guiced"; it can also be "daggered".
+
+A small group of engineers convened in Red Hat, trying to contrive a diabolical plan: could this be made part of CDI proper?
+The idea was link:https://github.com/jakartaee/cdi/issues/425[discussed] externally and internally fairly extensively.
+Fortunately, CDI was conceived at Red Hat, so we had all the experts, and the link:https://www.cdi-spec.org/news/2020/03/09/CDI_for_the_future/[first concrete idea] of how this could be done was published relatively soon.
+
+A huge part of those discussions revolved around Portable Extensions.
+As mentioned earlier, they cannot be supported at build time, so we knew early on that we had to design a new extension API.
+(This is when yours truly enters the scene, not planning to leave until the curtain falls.)
+We made several prototypes of various aspects of the API, including a new language model, and eventually link:https://www.cdi-spec.org/news/2020/09/15/CDI_Lite_extension/[published a proposal] (beware, the article is now severely outdated!).
+We called it _Build Compatible Extensions_, to highlight the stark contrast with Portable Extensions: this API can be implemented both at build time and at runtime.
+
+Publishing that proposal had two effects.
+First, it has shown that communication is hard, online communication is harder and online communication in a non-native language is pretty darn painful.
+Second, it has shown serious interest from us in doing the necessary work.
+And it wasn't just us -- some Oracle people have also shown up, most notably Graeme Rocher of the Micronaut fame.
+Over the subsequent year, the Core CDI specification was link:https://www.theserverside.com/blog/Coffee-Talk-Java-News-Stories-and-Opinions/CDI-Full-vs-CDI-Lite-What-changed-in-Contexts-and-Dependency-Injection-40[refactored] into CDI Lite and CDI Full, the Build Compatible Extensions API was link:https://jakartaee.github.io/cdi/2021/12/03/you-know-build-compatible-extensions.html[incorporated] (and for that, I actually implemented two prototypes, one in ArC and the other as a Portable Extension for Weld), the CDI TCK was split to support testing only CDI Lite implementations, and so on.
+
+Finally, as part of Jakarta EE 10, CDI 4.0 was released, featuring the Lite specification, which became the cornerstone of Jakarta EE Core Profile, which in turn became the cornerstone of MicroProfile.
+
+End of story, go home? Not so fast.
+
+== Compatible Implementation
+
+Now that we have the CDI Lite specification, do we have any implementations?
+Of course, all existing implementations of CDI become CDI Full implementations relatively easily; the hardest part is implementing the new extension API, which is possible using a Portable Extension.
+But are there any _new_ implementations?
+Is ArC a CDI Lite implementation now?
+Is it verified by the TCK at last?
+
+We naturally intended for ArC to implement CDI Lite, but it wasn't just ArC.
+The link:https://projects.eclipse.org/projects/ee4j.odi[Eclipse Open DI] project also strives to become a CDI Lite implementation, and it is built on top of the Micronaut framework.
+I can't speak for that project, but I can say that working on the CDI Lite specification together with the talented people behind ODI was a great experience!
+
+Now, when it comes to ArC, more work obviously ensued.
+I fortunately already had an Arquillian adapter for ArC from the previous prototyping work (Arquillian is a testing framework the CDI TCK relies upon), and the other relevant TCKs are very easy to embed.
+It wasn't too hard to start running them: the AtInject TCK, the CDI Lang Model TCK and the CDI Lite TCK.
+We started running the TCKs with standalone ArC, to make the work easier and faster.
+The CDI Lang Model TCK was always passing, as I was developing the implementation together with the specification, and getting the AtInject TCK to pass did not require too much time (it was mostly about implementing a precise resolution of overriden methods).
+The CDI Lite TCK is clearly the most complex one; at the beginning, we had roughly 2/3 of the tests passing and the remaining 1/3 failing, for many different reasons.
+
+During the Quarkus 2.16 development cycle, I created an initial exclusion list and we started closing the gap.
+For a while, we had to work in an extra repository, until Quarkus moved from the `javax` dependencies to `jakarta`, but that was fairly simple to set up.
+The Arquillian adapter needed improvements to correctly implement the CDI type discovery rules (because ArC leaves most of type discovery to the integrator).
+Many validations were missing from ArC and we added those.
+We even implemented some more features.
+When standalone ArC was passing the TCKs, it didn't take much time to run them with full Quarkus too.
+Overall, this link:https://github.com/quarkusio/quarkus/issues/28558[took] 26 pull requests and 109 commits, over the course of four to five months.
+
+We unfortunately also had to create a _strict mode_.
+ArC has several usability improvements on top of the CDI specification, and a few of them go against the specification rules.
+We recommend users to use the default mode which includes these improvements, but we also want to have an option to turn those improvements off, for people who value specification compatibility more.
+
+And since we are lazy people, like all decent programmers, running the TCKs is automated as part of the Quarkus Maven build (which means they also run on all pull requests to Quarkus that touch ArC).
+If you want to try it yourself, it requires very little manual work.
+
+. Clone the Quarkus repository, if you don’t have it already:
++
+[source,bash]
+----
+git clone https://github.com/quarkusio/quarkus.git
+----
+. Build Quarkus:
++
+[source,bash]
+----
+cd quarkus
+mvn -Dquickly
+----
+. Run the AtInject TCK:
++
+[source,bash]
+----
+cd tcks/jakarta-atinject
+mvn clean verify
+----
+. Run the CDI Lang Model TCK:
++
+[source,bash]
+----
+cd ../jakarta-cdi-lang-model
+mvn clean verify
+----
+. Run the CDI Lite TCK:
++
+[source,bash]
+----
+cd ../jakarta-cdi
+mvn clean verify
+----
+
+If everything went fine, you should see the following outputs.
+
+For AtInject:
+
+[source]
+----
+Running io.quarkus.tck.atinject.AtInjectTest
+...
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+----
+
+For CDI Lang Model:
+
+[source]
+----
+Running io.quarkus.tck.cdi.lang.model.LangModelTest
+...
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+----
+
+For CDI Lite:
+
+[source]
+----
+Running TestSuite
+...
+Tests run: 717, Failures: 0, Errors: 0, Skipped: 0
+----
+
+And that's all, folks!
+
+It is my pleasure to announce that Quarkus 3.2 successfully passes the AtInject TCK, the CDI Lang Model TCK and the CDI Lite TCK and hence becomes a compatible implementation of CDI Lite.
+
+I would also like to extend my sincere gratitude to Martin Kouba and Matěj Novotný, our resident CDI gurus, for welcoming me and sharing with me their deep knowledge of the subject.
+I mostly just tried to not wreck their code.
+(Which, over time, also became my code, I guess. Whoops!)
