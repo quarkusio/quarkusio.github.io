@@ -51,3 +51,100 @@ Extensions.register do
     end
   end
 end
+
+
+### ALL CONFIG page processors
+
+# add show more 'button'
+doc_max_id = Array.new
+Extensions.register do
+  tree_processor do
+    process do |doc|
+      # skip 2.7 branch as following code is not backwards compatible
+      if !(doc.base_dir.include? '2.7')
+        row_id = 0
+        search_field_id = 0
+        doc.find_by context: :table do |table|
+          if (table.role && (table.role.include? 'configuration-reference'))
+            table.add_role 'configuration-reference-all-rows'
+            table.rows.body.each do |row|
+              if (row && row.size > 0 && row[0].inner_document)
+                row[0].inner_document.find_by role: 'description' do |desc|
+                  row_id += 1
+                  if (desc.blocks && desc.blocks.size && (desc.blocks.size > 1 || (desc.blocks.size == 1 && desc.blocks[0].content && !(desc.blocks[0].content.start_with? 'Environment variable: '))))
+                    # now we know description consist of more than one 'Environment variable' line
+                    desc.id = %(conf-collapsible-desc-#{row_id})
+                    desc.add_role 'description-collapsed'
+                    btnBlock = Block.new(desc.parent, :paragraph, source: %(<i class="fa fa-chevron-down"></i><span>Show more</span>))
+                    btnBlock.add_role 'description-decoration'
+                    # add show more 'button'
+                    row[0].inner_document.blocks.push(btnBlock)
+                  else
+                    desc.id = %(conf-non-collapsible-desc-#{row_id})
+                  end
+                end
+              end
+            end
+            if (table.role.include? 'searchable')
+              caption = (children = table.parent.blocks)[(children.index table)-1]
+              # create new caption with disabled search input
+              new_caption = Block.new(caption.parent, :paragraph, source: %(#{caption.content} <input type="search" id="config-search-#{search_field_id}" placeholder="FILTER CONFIGURATION" disabled>))
+              search_field_id += 1
+              # replace original caption with enhanced one
+              (children = caption.parent.blocks)[children.index caption] = new_caption
+            end
+          end
+        end
+        if row_id != 0
+          # collect row ids per document
+          doc_max_id.push(row_id)
+          doc.id = %(page-with-config-#{doc_max_id.size - 1})
+        end
+      end
+    end
+  end
+end
+
+# set CSS classes to rows with description
+Extensions.register do
+  postprocessor do
+    process do |doc, output|
+      if doc.id && (doc.id.start_with? 'page-with-config-')
+        doc_max_id_idx = doc.id.gsub('page-with-config-', '').to_i
+        for id in 1..doc_max_id[doc_max_id_idx] do
+          css_class = ''
+          if (id > 30)
+            css_class = ' row-hidden'
+          end
+          if (id.odd?)
+            css_class += ' odd'
+          end
+          desc_idx = output.index(%(id="conf-collapsible-desc-#{id}"), 0)
+          if (desc_idx)
+            # collapsible description
+            # set CSS classes for collapsible row
+            row_idx = output.rindex('<tr>', desc_idx)
+            if row_idx
+              output[row_idx..(row_idx + 3)] = %(<tr class="row-collapsible row-collapsed row-with-desc#{css_class}">)
+            else
+              # illegal state - we don't expect this to happen unless there are breaking changes in Asciidoctor
+              LoggerManager.logger.error(%(Failed to detect '<tr>' element on page #{doc.title}, show more button and config search won't work as expected))
+            end
+          else
+            # odd non-collapsible row with description
+            # add 'odd' CSS class
+            desc_idx = output.index(%(id="conf-non-collapsible-desc-#{id}"), 0)
+            row_idx = output.rindex('<tr>', desc_idx)
+            if row_idx
+              output[row_idx..(row_idx + 3)] = %(<tr class="#{css_class}">)
+            else
+              # illegal state - we don't expect this to happen unless there are breaking changes in Asciidoctor
+              LoggerManager.logger.error(%(Failed to detect '<tr>' element on page #{doc.title}, row background color won't be correct))
+            end
+          end
+        end
+      end
+      output
+    end
+  end
+end
