@@ -45,7 +45,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
   
         ./serve.sh
 
-   Or if you want it faster and okey to not have guides included use the following:
+   Or if you want it faster and okay to not have guides included use the following:
 
         ./serve-noguides.sh
 
