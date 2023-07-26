@@ -1,0 +1,2709 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="934" onload="init(evt)" viewBox="0 0 1200 934" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eef2ee" offset="5%" />
+		<stop stop-color="#e0ffe0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="934.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >mmap Flame Graph</text>
+<text id="details" x="10.00" y="917" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="917" > </text>
+<g id="frames">
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectWithoutAllocating (1 calls, 1.43%)</title><rect x="751.7" y="709" width="16.9" height="15.0" fill="rgb(0,234,151)" rx="2" ry="2" />
+<text  x="754.71" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::scanGreyObjects (1 calls, 1.43%)</title><rect x="431.4" y="373" width="16.9" height="15.0" fill="rgb(0,194,56)" rx="2" ry="2" />
+<text  x="434.43" y="383.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SecretKeysConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="517" width="16.8" height="15.0" fill="rgb(0,204,37)" rx="2" ry="2" />
+<text  x="451.29" y="527.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="60.6" y="229" width="16.8" height="15.0" fill="rgb(0,226,195)" rx="2" ry="2" />
+<text  x="63.57" y="239.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute0 (1 calls, 1.43%)</title><rect x="802.3" y="213" width="16.8" height="15.0" fill="rgb(0,234,163)" rx="2" ry="2" />
+<text  x="805.29" y="223.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="397.7" y="597" width="16.9" height="15.0" fill="rgb(0,219,181)" rx="2" ry="2" />
+<text  x="400.71" y="607.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::requestAlignedHeapChunk (1 calls, 1.43%)</title><rect x="751.7" y="421" width="16.9" height="15.0" fill="rgb(0,207,64)" rx="2" ry="2" />
+<text  x="754.71" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::getOrCreateMonitorFromObject (1 calls, 1.43%)</title><rect x="212.3" y="709" width="16.8" height="15.0" fill="rgb(0,223,68)" rx="2" ry="2" />
+<text  x="215.29" y="719.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="498.9" y="789" width="16.8" height="15.0" fill="rgb(0,211,69)" rx="2" ry="2" />
+<text  x="501.86" y="799.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigMappingProvider::additionalMappedProperties (1 calls, 1.43%)</title><rect x="465.1" y="677" width="16.9" height="15.0" fill="rgb(0,215,115)" rx="2" ry="2" />
+<text  x="468.14" y="687.5" ></text>
+</g>
+<g >
+<title>io.smallrye.context.SmallRyeContextManager$Builder::build (1 calls, 1.43%)</title><rect x="414.6" y="693" width="16.8" height="15.0" fill="rgb(0,197,127)" rx="2" ry="2" />
+<text  x="417.57" y="703.5" ></text>
+</g>
+<g >
+<title>io.quarkus.netty.runtime.NettyRecorder::eagerlyInitChannelId (1 calls, 1.43%)</title><rect x="128.0" y="709" width="16.9" height="15.0" fill="rgb(0,212,115)" rx="2" ry="2" />
+<text  x="131.00" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::PosixPlatformThreads_pthreadStartRoutine_38d96cbc1a188a6051c29be1299afe681d67942e (3 calls, 4.29%)</title><rect x="246.0" y="821" width="50.6" height="15.0" fill="rgb(0,219,117)" rx="2" ry="2" />
+<text  x="249.00" y="831.5" >com.o..</text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::startThread (2 calls, 2.86%)</title><rect x="77.4" y="517" width="33.7" height="15.0" fill="rgb(0,235,88)" rx="2" ry="2" />
+<text  x="80.43" y="527.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder::startServer (1 calls, 1.43%)</title><rect x="431.4" y="709" width="16.9" height="15.0" fill="rgb(0,207,149)" rx="2" ry="2" />
+<text  x="434.43" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="60.6" y="645" width="16.8" height="15.0" fill="rgb(0,194,122)" rx="2" ry="2" />
+<text  x="63.57" y="655.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigSources::getValue (1 calls, 1.43%)</title><rect x="448.3" y="501" width="16.8" height="15.0" fill="rgb(0,208,182)" rx="2" ry="2" />
+<text  x="451.29" y="511.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="111.1" y="501" width="16.9" height="15.0" fill="rgb(0,213,78)" rx="2" ry="2" />
+<text  x="114.14" y="511.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.linux.LinuxImageHeapProvider::initialize (1 calls, 1.43%)</title><rect x="482.0" y="773" width="16.9" height="15.0" fill="rgb(0,204,82)" rx="2" ry="2" />
+<text  x="485.00" y="783.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="144.9" y="341" width="16.8" height="15.0" fill="rgb(0,192,50)" rx="2" ry="2" />
+<text  x="147.86" y="351.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::pthreadStartRoutine (1 calls, 1.43%)</title><rect x="802.3" y="805" width="16.8" height="15.0" fill="rgb(0,220,204)" rx="2" ry="2" />
+<text  x="805.29" y="815.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="26.9" y="421" width="16.8" height="15.0" fill="rgb(0,206,67)" rx="2" ry="2" />
+<text  x="29.86" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="448.3" y="405" width="16.8" height="15.0" fill="rgb(0,192,16)" rx="2" ry="2" />
+<text  x="451.29" y="415.5" ></text>
+</g>
+<g >
+<title>java.util.HashMap::newNode (1 calls, 1.43%)</title><rect x="414.6" y="485" width="16.8" height="15.0" fill="rgb(0,204,123)" rx="2" ry="2" />
+<text  x="417.57" y="495.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="431.4" y="677" width="16.9" height="15.0" fill="rgb(0,219,142)" rx="2" ry="2" />
+<text  x="434.43" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::attachThread (6 calls, 8.57%)</title><rect x="296.6" y="805" width="101.1" height="15.0" fill="rgb(0,239,201)" rx="2" ry="2" />
+<text  x="299.57" y="815.5" >com.oracle.s..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="229.1" y="725" width="16.9" height="15.0" fill="rgb(0,220,36)" rx="2" ry="2" />
+<text  x="232.14" y="735.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="26.9" y="437" width="16.8" height="15.0" fill="rgb(0,221,85)" rx="2" ry="2" />
+<text  x="29.86" y="447.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl$CollectionVMOperation::operate (1 calls, 1.43%)</title><rect x="60.6" y="501" width="16.8" height="15.0" fill="rgb(0,212,35)" rx="2" ry="2" />
+<text  x="63.57" y="511.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.FastThreadLocalRunnable::run (1 calls, 1.43%)</title><rect x="802.3" y="757" width="16.8" height="15.0" fill="rgb(0,203,132)" rx="2" ry="2" />
+<text  x="805.29" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectImpl (1 calls, 1.43%)</title><rect x="246.0" y="549" width="16.9" height="15.0" fill="rgb(0,193,208)" rx="2" ry="2" />
+<text  x="249.00" y="559.5" ></text>
+</g>
+<g >
+<title>alloc_new_heap (6 calls, 8.57%)</title><rect x="296.6" y="725" width="101.1" height="15.0" fill="rgb(0,224,113)" rx="2" ry="2" />
+<text  x="299.57" y="735.5" >alloc_new_heap</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="448.3" y="389" width="16.8" height="15.0" fill="rgb(0,236,20)" rx="2" ry="2" />
+<text  x="451.29" y="399.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.AbstractEventExecutor::safeExecute (1 calls, 1.43%)</title><rect x="802.3" y="677" width="16.8" height="15.0" fill="rgb(0,226,171)" rx="2" ry="2" />
+<text  x="805.29" y="687.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.ContextInternal::dispatch (1 calls, 1.43%)</title><rect x="802.3" y="645" width="16.8" height="15.0" fill="rgb(0,235,163)" rx="2" ry="2" />
+<text  x="805.29" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="498.9" y="693" width="16.8" height="15.0" fill="rgb(0,204,16)" rx="2" ry="2" />
+<text  x="501.86" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scanGreyObjectsLoop (1 calls, 1.43%)</title><rect x="431.4" y="389" width="16.9" height="15.0" fill="rgb(0,195,73)" rx="2" ry="2" />
+<text  x="434.43" y="399.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.EnvConfigSource::getValue (1 calls, 1.43%)</title><rect x="144.9" y="437" width="16.8" height="15.0" fill="rgb(0,208,19)" rx="2" ry="2" />
+<text  x="147.86" y="447.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="751.7" y="389" width="16.9" height="15.0" fill="rgb(0,217,97)" rx="2" ry="2" />
+<text  x="754.71" y="399.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="751.7" y="373" width="16.9" height="15.0" fill="rgb(0,237,114)" rx="2" ry="2" />
+<text  x="754.71" y="383.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectImpl (1 calls, 1.43%)</title><rect x="60.6" y="469" width="16.8" height="15.0" fill="rgb(0,197,91)" rx="2" ry="2" />
+<text  x="63.57" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::slowPathMonitorEnter (1 calls, 1.43%)</title><rect x="212.3" y="757" width="16.8" height="15.0" fill="rgb(0,232,43)" rx="2" ry="2" />
+<text  x="215.29" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectWithoutAllocating (1 calls, 1.43%)</title><rect x="246.0" y="693" width="16.9" height="15.0" fill="rgb(0,217,179)" rx="2" ry="2" />
+<text  x="249.00" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="397.7" y="517" width="16.9" height="15.0" fill="rgb(0,204,143)" rx="2" ry="2" />
+<text  x="400.71" y="527.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.TCPServerBase::bind (1 calls, 1.43%)</title><rect x="802.3" y="517" width="16.8" height="15.0" fill="rgb(0,216,21)" rx="2" ry="2" />
+<text  x="805.29" y="527.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="43.7" y="581" width="16.9" height="15.0" fill="rgb(0,229,104)" rx="2" ry="2" />
+<text  x="46.71" y="591.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ExpressionConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="597" width="16.8" height="15.0" fill="rgb(0,211,195)" rx="2" ry="2" />
+<text  x="451.29" y="607.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::requestAlignedChunk (1 calls, 1.43%)</title><rect x="751.7" y="405" width="16.9" height="15.0" fill="rgb(0,202,0)" rx="2" ry="2" />
+<text  x="754.71" y="415.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="144.9" y="293" width="16.8" height="15.0" fill="rgb(0,227,33)" rx="2" ry="2" />
+<text  x="147.86" y="303.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.TCPServerBase::listen (1 calls, 1.43%)</title><rect x="802.3" y="501" width="16.8" height="15.0" fill="rgb(0,206,124)" rx="2" ry="2" />
+<text  x="805.29" y="511.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="414.6" y="389" width="16.8" height="15.0" fill="rgb(0,205,157)" rx="2" ry="2" />
+<text  x="417.57" y="399.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.Util_jdk_internal_misc_Signal::ensureInitialized (1 calls, 1.43%)</title><rect x="178.6" y="661" width="16.8" height="15.0" fill="rgb(0,223,89)" rx="2" ry="2" />
+<text  x="181.57" y="671.5" ></text>
+</g>
+<g >
+<title>init (1 calls, 1.43%)</title><rect x="515.7" y="821" width="16.9" height="15.0" fill="rgb(0,218,111)" rx="2" ry="2" />
+<text  x="518.71" y="831.5" ></text>
+</g>
+<g >
+<title>org.jboss.threads.EnhancedQueueExecutor::prestartCoreThread (1 calls, 1.43%)</title><rect x="43.7" y="677" width="16.9" height="15.0" fill="rgb(0,208,19)" rx="2" ry="2" />
+<text  x="46.71" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::setNativeName (3 calls, 4.29%)</title><rect x="751.7" y="773" width="50.6" height="15.0" fill="rgb(0,229,90)" rx="2" ry="2" />
+<text  x="754.71" y="783.5" >com.o..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="751.7" y="757" width="16.9" height="15.0" fill="rgb(0,233,61)" rx="2" ry="2" />
+<text  x="754.71" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::monitorEnter (1 calls, 1.43%)</title><rect x="498.9" y="757" width="16.8" height="15.0" fill="rgb(0,220,186)" rx="2" ry="2" />
+<text  x="501.86" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::pthreadStartRoutine (3 calls, 4.29%)</title><rect x="246.0" y="805" width="50.6" height="15.0" fill="rgb(0,227,194)" rx="2" ry="2" />
+<text  x="249.00" y="815.5" >com.o..</text>
+</g>
+<g >
+<title>io.quarkus.runtime.Quarkus::run (5 calls, 7.14%)</title><rect x="397.7" y="789" width="84.3" height="15.0" fill="rgb(0,230,179)" rx="2" ry="2" />
+<text  x="400.71" y="799.5" >io.quarku..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::createIsolate (1 calls, 1.43%)</title><rect x="482.0" y="805" width="16.9" height="15.0" fill="rgb(0,237,142)" rx="2" ry="2" />
+<text  x="485.00" y="815.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.VertxHttpProcessor$openSocket1866188241::deploy_0 (3 calls, 4.29%)</title><rect x="60.6" y="709" width="50.5" height="15.0" fill="rgb(0,231,150)" rx="2" ry="2" />
+<text  x="63.57" y="719.5" >io.qu..</text>
+</g>
+<g >
+<title>io.quarkus.runtime.Application::start (10 calls, 14.29%)</title><rect x="10.0" y="741" width="168.6" height="15.0" fill="rgb(0,192,156)" rx="2" ry="2" />
+<text  x="13.00" y="751.5" >io.quarkus.runtime.Ap..</text>
+</g>
+<g >
+<title>java.lang.StringLatin1::newString (1 calls, 1.43%)</title><rect x="161.7" y="613" width="16.9" height="15.0" fill="rgb(0,205,116)" rx="2" ry="2" />
+<text  x="164.71" y="623.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.EnvConfigSource::getValue (1 calls, 1.43%)</title><rect x="144.9" y="453" width="16.8" height="15.0" fill="rgb(0,224,179)" rx="2" ry="2" />
+<text  x="147.86" y="463.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectOperation (1 calls, 1.43%)</title><rect x="431.4" y="501" width="16.9" height="15.0" fill="rgb(0,209,129)" rx="2" ry="2" />
+<text  x="434.43" y="511.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="212.3" y="661" width="16.8" height="15.0" fill="rgb(0,205,88)" rx="2" ry="2" />
+<text  x="215.29" y="671.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ApplicationLifecycleManager::run (5 calls, 7.14%)</title><rect x="397.7" y="773" width="84.3" height="15.0" fill="rgb(0,239,15)" rx="2" ry="2" />
+<text  x="400.71" y="783.5" >io.quarku..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="498.9" y="661" width="16.8" height="15.0" fill="rgb(0,231,8)" rx="2" ry="2" />
+<text  x="501.86" y="671.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder::doServerStart (1 calls, 1.43%)</title><rect x="431.4" y="693" width="16.9" height="15.0" fill="rgb(0,202,82)" rx="2" ry="2" />
+<text  x="434.43" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.Util_jdk_internal_misc_Signal::numberFromName (1 calls, 1.43%)</title><rect x="178.6" y="677" width="16.8" height="15.0" fill="rgb(0,230,36)" rx="2" ry="2" />
+<text  x="181.57" y="687.5" ></text>
+</g>
+<g >
+<title>_dl_map_object_deps (7 calls, 10.00%)</title><rect x="1055.1" y="773" width="118.0" height="15.0" fill="rgb(0,217,200)" rx="2" ry="2" />
+<text  x="1058.14" y="783.5" >_dl_map_object..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="43.7" y="597" width="16.9" height="15.0" fill="rgb(0,223,27)" rx="2" ry="2" />
+<text  x="46.71" y="607.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.PropertyNamesConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="597" width="16.8" height="15.0" fill="rgb(0,212,143)" rx="2" ry="2" />
+<text  x="29.86" y="607.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="128.0" y="677" width="16.9" height="15.0" fill="rgb(0,201,107)" rx="2" ry="2" />
+<text  x="131.00" y="687.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.http.impl.HttpServerImpl::listen (1 calls, 1.43%)</title><rect x="802.3" y="565" width="16.8" height="15.0" fill="rgb(0,197,171)" rx="2" ry="2" />
+<text  x="805.29" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::cheneyScanFromDirtyRoots (1 calls, 1.43%)</title><rect x="431.4" y="421" width="16.9" height="15.0" fill="rgb(0,198,168)" rx="2" ry="2" />
+<text  x="434.43" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperation::execute (1 calls, 1.43%)</title><rect x="246.0" y="597" width="16.9" height="15.0" fill="rgb(0,225,145)" rx="2" ry="2" />
+<text  x="249.00" y="607.5" ></text>
+</g>
+<g >
+<title>start_thread (1 calls, 1.43%)</title><rect x="802.3" y="837" width="16.8" height="15.0" fill="rgb(0,210,130)" rx="2" ry="2" />
+<text  x="805.29" y="847.5" ></text>
+</g>
+<g >
+<title>init_tls (1 calls, 1.43%)</title><rect x="1173.1" y="773" width="16.9" height="15.0" fill="rgb(0,198,197)" rx="2" ry="2" />
+<text  x="1176.14" y="783.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ExpressionConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="581" width="16.8" height="15.0" fill="rgb(0,201,139)" rx="2" ry="2" />
+<text  x="147.86" y="591.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder::startServer (3 calls, 4.29%)</title><rect x="60.6" y="693" width="50.5" height="15.0" fill="rgb(0,231,32)" rx="2" ry="2" />
+<text  x="63.57" y="703.5" >io.qu..</text>
+</g>
+<g >
+<title>start_thread (6 calls, 8.57%)</title><rect x="296.6" y="837" width="101.1" height="15.0" fill="rgb(0,195,156)" rx="2" ry="2" />
+<text  x="299.57" y="847.5" >start_thread</text>
+</g>
+<g >
+<title>java.util.HashMap::put (1 calls, 1.43%)</title><rect x="26.9" y="501" width="16.8" height="15.0" fill="rgb(0,231,83)" rx="2" ry="2" />
+<text  x="29.86" y="511.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="581" width="16.8" height="15.0" fill="rgb(0,229,40)" rx="2" ry="2" />
+<text  x="29.86" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="414.6" y="421" width="16.8" height="15.0" fill="rgb(0,191,121)" rx="2" ry="2" />
+<text  x="417.57" y="431.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::initGroup$io$quarkus$runtime$logging$SyslogConfig (1 calls, 1.43%)</title><rect x="144.9" y="677" width="16.8" height="15.0" fill="rgb(0,208,57)" rx="2" ry="2" />
+<text  x="147.86" y="687.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="229.1" y="693" width="16.9" height="15.0" fill="rgb(0,223,172)" rx="2" ry="2" />
+<text  x="232.14" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="161.7" y="501" width="16.9" height="15.0" fill="rgb(0,196,163)" rx="2" ry="2" />
+<text  x="164.71" y="511.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="10.0" y="517" width="16.9" height="15.0" fill="rgb(0,211,154)" rx="2" ry="2" />
+<text  x="13.00" y="527.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="43.7" y="565" width="16.9" height="15.0" fill="rgb(0,208,78)" rx="2" ry="2" />
+<text  x="46.71" y="575.5" ></text>
+</g>
+<g >
+<title>sysmalloc_mmap.isra.0 (1 calls, 1.43%)</title><rect x="515.7" y="757" width="16.9" height="15.0" fill="rgb(0,220,77)" rx="2" ry="2" />
+<text  x="518.71" y="767.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.core.runtime.VertxCoreRecorder::initialize (1 calls, 1.43%)</title><rect x="111.1" y="645" width="16.9" height="15.0" fill="rgb(0,232,169)" rx="2" ry="2" />
+<text  x="114.14" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::executeAllQueuedVMOperations (1 calls, 1.43%)</title><rect x="60.6" y="549" width="16.8" height="15.0" fill="rgb(0,227,195)" rx="2" ry="2" />
+<text  x="63.57" y="559.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.http.impl.HttpServerImpl::listen (1 calls, 1.43%)</title><rect x="802.3" y="533" width="16.8" height="15.0" fill="rgb(0,238,138)" rx="2" ry="2" />
+<text  x="805.29" y="543.5" ></text>
+</g>
+<g >
+<title>__calloc (1 calls, 1.43%)</title><rect x="515.7" y="805" width="16.9" height="15.0" fill="rgb(0,208,93)" rx="2" ry="2" />
+<text  x="518.71" y="815.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::allocateInNewChunk (1 calls, 1.43%)</title><rect x="751.7" y="437" width="16.9" height="15.0" fill="rgb(0,217,185)" rx="2" ry="2" />
+<text  x="754.71" y="447.5" ></text>
+</g>
+<g >
+<title>java.util.Arrays::copyOfRange (1 calls, 1.43%)</title><rect x="161.7" y="597" width="16.9" height="15.0" fill="rgb(0,199,25)" rx="2" ry="2" />
+<text  x="164.71" y="607.5" ></text>
+</g>
+<g >
+<title>taskset (21 calls, 30.00%)</title><rect x="836.0" y="869" width="354.0" height="15.0" fill="rgb(0,216,193)" rx="2" ry="2" />
+<text  x="839.00" y="879.5" >taskset</text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="802.3" y="117" width="16.8" height="15.0" fill="rgb(0,217,145)" rx="2" ry="2" />
+<text  x="805.29" y="127.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="498.9" y="629" width="16.8" height="15.0" fill="rgb(0,191,172)" rx="2" ry="2" />
+<text  x="501.86" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectImpl (1 calls, 1.43%)</title><rect x="751.7" y="565" width="16.9" height="15.0" fill="rgb(0,223,113)" rx="2" ry="2" />
+<text  x="754.71" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::PosixPlatformThreads_pthreadStartRoutine_38d96cbc1a188a6051c29be1299afe681d67942e (6 calls, 8.57%)</title><rect x="296.6" y="821" width="101.1" height="15.0" fill="rgb(0,190,150)" rx="2" ry="2" />
+<text  x="299.57" y="831.5" >com.oracle.s..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="465.1" y="517" width="16.9" height="15.0" fill="rgb(0,208,53)" rx="2" ry="2" />
+<text  x="468.14" y="527.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="465.1" y="501" width="16.9" height="15.0" fill="rgb(0,220,21)" rx="2" ry="2" />
+<text  x="468.14" y="511.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="178.6" y="565" width="16.8" height="15.0" fill="rgb(0,218,100)" rx="2" ry="2" />
+<text  x="181.57" y="575.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.common.utils.StringUtil::replaceNonAlphanumericByUnderscores (1 calls, 1.43%)</title><rect x="397.7" y="613" width="16.9" height="15.0" fill="rgb(0,223,204)" rx="2" ry="2" />
+<text  x="400.71" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (2 calls, 2.86%)</title><rect x="768.6" y="677" width="33.7" height="15.0" fill="rgb(0,228,62)" rx="2" ry="2" />
+<text  x="771.57" y="687.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.JavaMainWrapper::runCore0 (11 calls, 15.71%)</title><rect x="10.0" y="789" width="185.4" height="15.0" fill="rgb(0,201,60)" rx="2" ry="2" />
+<text  x="13.00" y="799.5" >com.oracle.svm.core.Java..</text>
+</g>
+<g >
+<title>java.util.Timer::Timer (1 calls, 1.43%)</title><rect x="111.1" y="581" width="16.9" height="15.0" fill="rgb(0,191,9)" rx="2" ry="2" />
+<text  x="114.14" y="591.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="802.3" y="53" width="16.8" height="15.0" fill="rgb(0,219,38)" rx="2" ry="2" />
+<text  x="805.29" y="63.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="397.7" y="501" width="16.9" height="15.0" fill="rgb(0,206,26)" rx="2" ry="2" />
+<text  x="400.71" y="511.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GreyToBlackObjRefVisitor::visitObjectReferenceInline (1 calls, 1.43%)</title><rect x="751.7" y="453" width="16.9" height="15.0" fill="rgb(0,234,59)" rx="2" ry="2" />
+<text  x="754.71" y="463.5" ></text>
+</g>
+<g >
+<title>_dl_map_object (7 calls, 10.00%)</title><rect x="1055.1" y="725" width="118.0" height="15.0" fill="rgb(0,197,179)" rx="2" ry="2" />
+<text  x="1058.14" y="735.5" >_dl_map_object</text>
+</g>
+<g >
+<title>__libc_start_call_main (14 calls, 20.00%)</title><rect x="10.0" y="837" width="236.0" height="15.0" fill="rgb(0,191,63)" rx="2" ry="2" />
+<text  x="13.00" y="847.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>_dl_start (8 calls, 11.43%)</title><rect x="1055.1" y="837" width="134.9" height="15.0" fill="rgb(0,207,180)" rx="2" ry="2" />
+<text  x="1058.14" y="847.5" >_dl_start</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="26.9" y="373" width="16.8" height="15.0" fill="rgb(0,228,182)" rx="2" ry="2" />
+<text  x="29.86" y="383.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::JavaMainWrapper_run_5087f5482cc9a6abc971913ece43acb471d2631b (14 calls, 20.00%)</title><rect x="10.0" y="821" width="236.0" height="15.0" fill="rgb(0,222,104)" rx="2" ry="2" />
+<text  x="13.00" y="831.5" >com.oracle.svm.core.code.Isolat..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::initializeIsolate (2 calls, 2.86%)</title><rect x="212.3" y="789" width="33.7" height="15.0" fill="rgb(0,211,96)" rx="2" ry="2" />
+<text  x="215.29" y="799.5" >co..</text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.43%)</title><rect x="1173.1" y="741" width="16.9" height="15.0" fill="rgb(0,219,191)" rx="2" ry="2" />
+<text  x="1176.14" y="751.5" ></text>
+</g>
+<g >
+<title>__GI_setlocale (13 calls, 18.57%)</title><rect x="836.0" y="789" width="219.1" height="15.0" fill="rgb(0,215,188)" rx="2" ry="2" />
+<text  x="839.00" y="799.5" >__GI_setlocale</text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getValue (1 calls, 1.43%)</title><rect x="144.9" y="661" width="16.8" height="15.0" fill="rgb(0,213,168)" rx="2" ry="2" />
+<text  x="147.86" y="671.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::readConfig (2 calls, 2.86%)</title><rect x="448.3" y="725" width="33.7" height="15.0" fill="rgb(0,232,100)" rx="2" ry="2" />
+<text  x="451.29" y="735.5" >io..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::beforeThreadRun (3 calls, 4.29%)</title><rect x="246.0" y="773" width="50.6" height="15.0" fill="rgb(0,227,42)" rx="2" ry="2" />
+<text  x="249.00" y="783.5" >com.o..</text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.SmallRyeContextPropagationProcessor$build1300494616::deploy_0 (1 calls, 1.43%)</title><rect x="26.9" y="709" width="16.8" height="15.0" fill="rgb(0,237,91)" rx="2" ry="2" />
+<text  x="29.86" y="719.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder$WebDeploymentVerticle::start (1 calls, 1.43%)</title><rect x="802.3" y="597" width="16.8" height="15.0" fill="rgb(0,217,111)" rx="2" ry="2" />
+<text  x="805.29" y="607.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.VertxImpl::deployVerticle (2 calls, 2.86%)</title><rect x="77.4" y="661" width="33.7" height="15.0" fill="rgb(0,222,118)" rx="2" ry="2" />
+<text  x="80.43" y="671.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::initGroup$io$quarkus$runtime$logging$SyslogConfig (1 calls, 1.43%)</title><rect x="448.3" y="693" width="16.8" height="15.0" fill="rgb(0,196,106)" rx="2" ry="2" />
+<text  x="451.29" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::attachThread (1 calls, 1.43%)</title><rect x="819.1" y="805" width="16.9" height="15.0" fill="rgb(0,230,42)" rx="2" ry="2" />
+<text  x="822.14" y="815.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="60.6" y="261" width="16.8" height="15.0" fill="rgb(0,209,173)" rx="2" ry="2" />
+<text  x="63.57" y="271.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.NativeVMOperation::enqueue (1 calls, 1.43%)</title><rect x="751.7" y="693" width="16.9" height="15.0" fill="rgb(0,224,50)" rx="2" ry="2" />
+<text  x="754.71" y="703.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="229.1" y="757" width="16.9" height="15.0" fill="rgb(0,233,206)" rx="2" ry="2" />
+<text  x="232.14" y="767.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="229.1" y="709" width="16.9" height="15.0" fill="rgb(0,238,9)" rx="2" ry="2" />
+<text  x="232.14" y="719.5" ></text>
+</g>
+<g >
+<title>__gconv_read_conf (1 calls, 1.43%)</title><rect x="836.0" y="725" width="16.9" height="15.0" fill="rgb(0,197,34)" rx="2" ry="2" />
+<text  x="839.00" y="735.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="212.3" y="613" width="16.8" height="15.0" fill="rgb(0,208,60)" rx="2" ry="2" />
+<text  x="215.29" y="623.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ProfileConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="565" width="16.8" height="15.0" fill="rgb(0,226,208)" rx="2" ry="2" />
+<text  x="417.57" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectImpl (1 calls, 1.43%)</title><rect x="431.4" y="485" width="16.9" height="15.0" fill="rgb(0,227,69)" rx="2" ry="2" />
+<text  x="434.43" y="495.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scanGreyObjectsLoop (1 calls, 1.43%)</title><rect x="60.6" y="373" width="16.8" height="15.0" fill="rgb(0,191,45)" rx="2" ry="2" />
+<text  x="63.57" y="383.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="751.7" y="357" width="16.9" height="15.0" fill="rgb(0,233,29)" rx="2" ry="2" />
+<text  x="754.71" y="367.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectOnce (1 calls, 1.43%)</title><rect x="431.4" y="453" width="16.9" height="15.0" fill="rgb(0,200,162)" rx="2" ry="2" />
+<text  x="434.43" y="463.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigBuilder::build (1 calls, 1.43%)</title><rect x="161.7" y="693" width="16.9" height="15.0" fill="rgb(0,221,75)" rx="2" ry="2" />
+<text  x="164.71" y="703.5" ></text>
+</g>
+<g >
+<title>dl_main (8 calls, 11.43%)</title><rect x="1055.1" y="789" width="134.9" height="15.0" fill="rgb(0,212,0)" rx="2" ry="2" />
+<text  x="1058.14" y="799.5" >dl_main</text>
+</g>
+<g >
+<title>__pthread_create_2_1 (2 calls, 2.86%)</title><rect x="77.4" y="389" width="33.7" height="15.0" fill="rgb(0,193,52)" rx="2" ry="2" />
+<text  x="80.43" y="399.5" >__..</text>
+</g>
+<g >
+<title>io.vertx.core.impl.DeploymentManager::doDeploy (2 calls, 2.86%)</title><rect x="77.4" y="597" width="33.7" height="15.0" fill="rgb(0,198,7)" rx="2" ry="2" />
+<text  x="80.43" y="607.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.vertx.core.runtime.VertxCoreRecorder$VertxSupplier::get (1 calls, 1.43%)</title><rect x="111.1" y="661" width="16.9" height="15.0" fill="rgb(0,209,93)" rx="2" ry="2" />
+<text  x="114.14" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="43.7" y="613" width="16.9" height="15.0" fill="rgb(0,227,158)" rx="2" ry="2" />
+<text  x="46.71" y="623.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ExecutorRecorder::setupRunTime (1 calls, 1.43%)</title><rect x="43.7" y="693" width="16.9" height="15.0" fill="rgb(0,204,38)" rx="2" ry="2" />
+<text  x="46.71" y="703.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.ConfigGenerationBuildStep$checkForBuildTimeConfigChange1532146938::deploy (1 calls, 1.43%)</title><rect x="397.7" y="725" width="16.9" height="15.0" fill="rgb(0,202,195)" rx="2" ry="2" />
+<text  x="400.71" y="735.5" ></text>
+</g>
+<g >
+<title>_int_malloc (1 calls, 1.43%)</title><rect x="515.7" y="789" width="16.9" height="15.0" fill="rgb(0,211,70)" rx="2" ry="2" />
+<text  x="518.71" y="799.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.configuration.ConfigRecorder::handleConfigChange (1 calls, 1.43%)</title><rect x="10.0" y="677" width="16.9" height="15.0" fill="rgb(0,211,27)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="581" width="16.8" height="15.0" fill="rgb(0,233,78)" rx="2" ry="2" />
+<text  x="417.57" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="10.0" y="565" width="16.9" height="15.0" fill="rgb(0,194,109)" rx="2" ry="2" />
+<text  x="13.00" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="212.3" y="629" width="16.8" height="15.0" fill="rgb(0,238,11)" rx="2" ry="2" />
+<text  x="215.29" y="639.5" ></text>
+</g>
+<g >
+<title>start_thread (3 calls, 4.29%)</title><rect x="751.7" y="853" width="50.6" height="15.0" fill="rgb(0,209,207)" rx="2" ry="2" />
+<text  x="754.71" y="863.5" >start..</text>
+</g>
+<g >
+<title>[taskset] (13 calls, 18.57%)</title><rect x="836.0" y="805" width="219.1" height="15.0" fill="rgb(0,199,159)" rx="2" ry="2" />
+<text  x="839.00" y="815.5" >[taskset]</text>
+</g>
+<g >
+<title>_nl_load_locale (12 calls, 17.14%)</title><rect x="852.9" y="757" width="202.2" height="15.0" fill="rgb(0,201,199)" rx="2" ry="2" />
+<text  x="855.86" y="767.5" >_nl_load_locale</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::allocateInNewChunk (1 calls, 1.43%)</title><rect x="60.6" y="325" width="16.8" height="15.0" fill="rgb(0,233,93)" rx="2" ry="2" />
+<text  x="63.57" y="335.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="465.1" y="565" width="16.9" height="15.0" fill="rgb(0,225,17)" rx="2" ry="2" />
+<text  x="468.14" y="575.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigSources::getValue (1 calls, 1.43%)</title><rect x="144.9" y="485" width="16.8" height="15.0" fill="rgb(0,203,23)" rx="2" ry="2" />
+<text  x="147.86" y="495.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectImpl (1 calls, 1.43%)</title><rect x="60.6" y="453" width="16.8" height="15.0" fill="rgb(0,216,207)" rx="2" ry="2" />
+<text  x="63.57" y="463.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="246.0" y="741" width="16.9" height="15.0" fill="rgb(0,236,187)" rx="2" ry="2" />
+<text  x="249.00" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (2 calls, 2.86%)</title><rect x="768.6" y="629" width="33.7" height="15.0" fill="rgb(0,212,26)" rx="2" ry="2" />
+<text  x="771.57" y="639.5" >co..</text>
+</g>
+<g >
+<title>io.vertx.core.impl.VertxBuilder::vertx (1 calls, 1.43%)</title><rect x="111.1" y="629" width="16.9" height="15.0" fill="rgb(0,223,84)" rx="2" ry="2" />
+<text  x="114.14" y="639.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.EventLoopContext$$Lambda$1308/0x00000007c152e758::run (1 calls, 1.43%)</title><rect x="802.3" y="661" width="16.8" height="15.0" fill="rgb(0,201,51)" rx="2" ry="2" />
+<text  x="805.29" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="482.0" y="757" width="16.9" height="15.0" fill="rgb(0,209,185)" rx="2" ry="2" />
+<text  x="485.00" y="767.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute (2 calls, 2.86%)</title><rect x="77.4" y="565" width="33.7" height="15.0" fill="rgb(0,232,54)" rx="2" ry="2" />
+<text  x="80.43" y="575.5" >io..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::allocateInNewChunk (1 calls, 1.43%)</title><rect x="246.0" y="421" width="16.9" height="15.0" fill="rgb(0,209,118)" rx="2" ry="2" />
+<text  x="249.00" y="431.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getPropertyNames (1 calls, 1.43%)</title><rect x="26.9" y="629" width="16.8" height="15.0" fill="rgb(0,230,10)" rx="2" ry="2" />
+<text  x="29.86" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::setNativeName (3 calls, 4.29%)</title><rect x="246.0" y="757" width="50.6" height="15.0" fill="rgb(0,231,33)" rx="2" ry="2" />
+<text  x="249.00" y="767.5" >com.o..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1055.1" y="661" width="16.9" height="15.0" fill="rgb(0,224,94)" rx="2" ry="2" />
+<text  x="1058.14" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectImpl (1 calls, 1.43%)</title><rect x="751.7" y="549" width="16.9" height="15.0" fill="rgb(0,226,173)" rx="2" ry="2" />
+<text  x="754.71" y="559.5" ></text>
+</g>
+<g >
+<title>_start (14 calls, 20.00%)</title><rect x="515.7" y="853" width="236.0" height="15.0" fill="rgb(0,200,125)" rx="2" ry="2" />
+<text  x="518.71" y="863.5" >_start</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="532.6" y="661" width="16.8" height="15.0" fill="rgb(0,217,109)" rx="2" ry="2" />
+<text  x="535.57" y="671.5" ></text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.43%)</title><rect x="734.9" y="741" width="16.8" height="15.0" fill="rgb(0,205,178)" rx="2" ry="2" />
+<text  x="737.86" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (2 calls, 2.86%)</title><rect x="77.4" y="421" width="33.7" height="15.0" fill="rgb(0,221,158)" rx="2" ry="2" />
+<text  x="80.43" y="431.5" >co..</text>
+</g>
+<g >
+<title>_dl_start (13 calls, 18.57%)</title><rect x="532.6" y="837" width="219.1" height="15.0" fill="rgb(0,228,131)" rx="2" ry="2" />
+<text  x="535.57" y="847.5" >_dl_start</text>
+</g>
+<g >
+<title>dl_main (13 calls, 18.57%)</title><rect x="532.6" y="789" width="219.1" height="15.0" fill="rgb(0,218,36)" rx="2" ry="2" />
+<text  x="535.57" y="799.5" >dl_main</text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::PosixPlatformThreads_pthreadStartRoutine_38d96cbc1a188a6051c29be1299afe681d67942e (3 calls, 4.29%)</title><rect x="751.7" y="837" width="50.6" height="15.0" fill="rgb(0,229,160)" rx="2" ry="2" />
+<text  x="754.71" y="847.5" >com.o..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (2 calls, 2.86%)</title><rect x="768.6" y="693" width="33.7" height="15.0" fill="rgb(0,205,4)" rx="2" ry="2" />
+<text  x="771.57" y="703.5" >co..</text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getPropertyNames (1 calls, 1.43%)</title><rect x="414.6" y="645" width="16.8" height="15.0" fill="rgb(0,201,120)" rx="2" ry="2" />
+<text  x="417.57" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="246.0" y="341" width="16.9" height="15.0" fill="rgb(0,193,40)" rx="2" ry="2" />
+<text  x="249.00" y="351.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::getOrCreateMonitor (1 calls, 1.43%)</title><rect x="498.9" y="741" width="16.8" height="15.0" fill="rgb(0,196,97)" rx="2" ry="2" />
+<text  x="501.86" y="751.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.SingleThreadEventLoop::register (1 calls, 1.43%)</title><rect x="802.3" y="261" width="16.8" height="15.0" fill="rgb(0,221,81)" rx="2" ry="2" />
+<text  x="805.29" y="271.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::threadStartRoutine (1 calls, 1.43%)</title><rect x="802.3" y="789" width="16.8" height="15.0" fill="rgb(0,213,65)" rx="2" ry="2" />
+<text  x="805.29" y="799.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::PosixPlatformThreads_pthreadStartRoutine_38d96cbc1a188a6051c29be1299afe681d67942e (1 calls, 1.43%)</title><rect x="819.1" y="821" width="16.9" height="15.0" fill="rgb(0,231,88)" rx="2" ry="2" />
+<text  x="822.14" y="831.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.NativeVMOperation::enqueue (1 calls, 1.43%)</title><rect x="246.0" y="677" width="16.9" height="15.0" fill="rgb(0,207,133)" rx="2" ry="2" />
+<text  x="249.00" y="687.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.http.impl.HttpServerImpl::listen (1 calls, 1.43%)</title><rect x="802.3" y="549" width="16.8" height="15.0" fill="rgb(0,215,49)" rx="2" ry="2" />
+<text  x="805.29" y="559.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::initializeIsolate (1 calls, 1.43%)</title><rect x="498.9" y="805" width="16.8" height="15.0" fill="rgb(0,227,118)" rx="2" ry="2" />
+<text  x="501.86" y="815.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ProfileConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="549" width="16.8" height="15.0" fill="rgb(0,223,180)" rx="2" ry="2" />
+<text  x="29.86" y="559.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::initGroup$io$quarkus$runtime$logging$LogConfig (1 calls, 1.43%)</title><rect x="144.9" y="693" width="16.8" height="15.0" fill="rgb(0,234,204)" rx="2" ry="2" />
+<text  x="147.86" y="703.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="751.7" y="341" width="16.9" height="15.0" fill="rgb(0,216,129)" rx="2" ry="2" />
+<text  x="754.71" y="351.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.Quarkus::run (11 calls, 15.71%)</title><rect x="10.0" y="773" width="185.4" height="15.0" fill="rgb(0,196,167)" rx="2" ry="2" />
+<text  x="13.00" y="783.5" >io.quarkus.runtime.Quark..</text>
+</g>
+<g >
+<title>_dl_load_cache_lookup (1 calls, 1.43%)</title><rect x="1055.1" y="709" width="16.9" height="15.0" fill="rgb(0,204,192)" rx="2" ry="2" />
+<text  x="1058.14" y="719.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.future.PromiseImpl::addListener (1 calls, 1.43%)</title><rect x="802.3" y="469" width="16.8" height="15.0" fill="rgb(0,209,97)" rx="2" ry="2" />
+<text  x="805.29" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectImpl (1 calls, 1.43%)</title><rect x="246.0" y="533" width="16.9" height="15.0" fill="rgb(0,214,84)" rx="2" ry="2" />
+<text  x="249.00" y="543.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="549" width="16.8" height="15.0" fill="rgb(0,215,17)" rx="2" ry="2" />
+<text  x="417.57" y="559.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectImpl (1 calls, 1.43%)</title><rect x="431.4" y="469" width="16.9" height="15.0" fill="rgb(0,208,158)" rx="2" ry="2" />
+<text  x="434.43" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::walkStack (1 calls, 1.43%)</title><rect x="751.7" y="469" width="16.9" height="15.0" fill="rgb(0,224,156)" rx="2" ry="2" />
+<text  x="754.71" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="26.9" y="405" width="16.8" height="15.0" fill="rgb(0,210,128)" rx="2" ry="2" />
+<text  x="29.86" y="415.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.VertxHttpProcessor$preinitializeRouter1141331088::deploy_0 (1 calls, 1.43%)</title><rect x="111.1" y="709" width="16.9" height="15.0" fill="rgb(0,193,136)" rx="2" ry="2" />
+<text  x="114.14" y="719.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="246.0" y="325" width="16.9" height="15.0" fill="rgb(0,203,114)" rx="2" ry="2" />
+<text  x="249.00" y="335.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.JavaMainWrapper::runCore0 (5 calls, 7.14%)</title><rect x="397.7" y="805" width="84.3" height="15.0" fill="rgb(0,218,187)" rx="2" ry="2" />
+<text  x="400.71" y="815.5" >com.oracl..</text>
+</g>
+<g >
+<title>_dl_new_object (1 calls, 1.43%)</title><rect x="1156.3" y="693" width="16.8" height="15.0" fill="rgb(0,222,123)" rx="2" ry="2" />
+<text  x="1159.29" y="703.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::SmallRyeConfig (1 calls, 1.43%)</title><rect x="10.0" y="645" width="16.9" height="15.0" fill="rgb(0,225,29)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="448.3" y="373" width="16.8" height="15.0" fill="rgb(0,220,52)" rx="2" ry="2" />
+<text  x="451.29" y="383.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::run (1 calls, 1.43%)</title><rect x="802.3" y="773" width="16.8" height="15.0" fill="rgb(0,220,181)" rx="2" ry="2" />
+<text  x="805.29" y="783.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::slowPathMonitorEnter (1 calls, 1.43%)</title><rect x="498.9" y="773" width="16.8" height="15.0" fill="rgb(0,219,32)" rx="2" ry="2" />
+<text  x="501.86" y="783.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::attachUnattachedThread (1 calls, 1.43%)</title><rect x="819.1" y="789" width="16.9" height="15.0" fill="rgb(0,194,86)" rx="2" ry="2" />
+<text  x="822.14" y="799.5" ></text>
+</g>
+<g >
+<title>alloc_new_heap (1 calls, 1.43%)</title><rect x="819.1" y="725" width="16.9" height="15.0" fill="rgb(0,209,99)" rx="2" ry="2" />
+<text  x="822.14" y="735.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="128.0" y="645" width="16.9" height="15.0" fill="rgb(0,215,172)" rx="2" ry="2" />
+<text  x="131.00" y="655.5" ></text>
+</g>
+<g >
+<title>java.util.HashMap::put (1 calls, 1.43%)</title><rect x="414.6" y="517" width="16.8" height="15.0" fill="rgb(0,224,7)" rx="2" ry="2" />
+<text  x="417.57" y="527.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.ConfigGenerationBuildStep$checkForBuildTimeConfigChange1532146938::deploy_4 (1 calls, 1.43%)</title><rect x="397.7" y="709" width="16.9" height="15.0" fill="rgb(0,219,123)" rx="2" ry="2" />
+<text  x="400.71" y="719.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="111.1" y="485" width="16.9" height="15.0" fill="rgb(0,222,93)" rx="2" ry="2" />
+<text  x="114.14" y="495.5" ></text>
+</g>
+<g >
+<title>io.netty.bootstrap.AbstractBootstrap::bind (1 calls, 1.43%)</title><rect x="802.3" y="341" width="16.8" height="15.0" fill="rgb(0,239,84)" rx="2" ry="2" />
+<text  x="805.29" y="351.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::requestAlignedChunk (1 calls, 1.43%)</title><rect x="60.6" y="293" width="16.8" height="15.0" fill="rgb(0,218,183)" rx="2" ry="2" />
+<text  x="63.57" y="303.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 2.86%)</title><rect x="262.9" y="597" width="33.7" height="15.0" fill="rgb(0,226,36)" rx="2" ry="2" />
+<text  x="265.86" y="607.5" >__..</text>
+</g>
+<g >
+<title>io.vertx.core.impl.DeploymentManager::deployVerticle (2 calls, 2.86%)</title><rect x="77.4" y="629" width="33.7" height="15.0" fill="rgb(0,220,78)" rx="2" ry="2" />
+<text  x="80.43" y="639.5" >io..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectOperation (1 calls, 1.43%)</title><rect x="60.6" y="485" width="16.8" height="15.0" fill="rgb(0,201,60)" rx="2" ry="2" />
+<text  x="63.57" y="495.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="111.1" y="565" width="16.9" height="15.0" fill="rgb(0,208,122)" rx="2" ry="2" />
+<text  x="114.14" y="575.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder::initializeRouter (1 calls, 1.43%)</title><rect x="111.1" y="693" width="16.9" height="15.0" fill="rgb(0,197,67)" rx="2" ry="2" />
+<text  x="114.14" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::enqueueAndExecute (1 calls, 1.43%)</title><rect x="60.6" y="565" width="16.8" height="15.0" fill="rgb(0,191,146)" rx="2" ry="2" />
+<text  x="63.57" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GreyToBlackObjRefVisitor::visitObjectReferenceInline (1 calls, 1.43%)</title><rect x="246.0" y="437" width="16.9" height="15.0" fill="rgb(0,223,101)" rx="2" ry="2" />
+<text  x="249.00" y="447.5" ></text>
+</g>
+<g >
+<title>io.quarkus.smallrye.context.runtime.SmallRyeContextPropagationRecorder::configureRuntime (1 calls, 1.43%)</title><rect x="414.6" y="709" width="16.8" height="15.0" fill="rgb(0,202,97)" rx="2" ry="2" />
+<text  x="417.57" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="498.9" y="709" width="16.8" height="15.0" fill="rgb(0,234,82)" rx="2" ry="2" />
+<text  x="501.86" y="719.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (2 calls, 2.86%)</title><rect x="212.3" y="773" width="33.7" height="15.0" fill="rgb(0,196,29)" rx="2" ry="2" />
+<text  x="215.29" y="783.5" >ja..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="10.0" y="533" width="16.9" height="15.0" fill="rgb(0,198,136)" rx="2" ry="2" />
+<text  x="13.00" y="543.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.DeploymentManager$$Lambda$1297/0x00000007c152cd40::handle (1 calls, 1.43%)</title><rect x="802.3" y="629" width="16.8" height="15.0" fill="rgb(0,203,100)" rx="2" ry="2" />
+<text  x="805.29" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="414.6" y="469" width="16.8" height="15.0" fill="rgb(0,206,68)" rx="2" ry="2" />
+<text  x="417.57" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="246.0" y="373" width="16.9" height="15.0" fill="rgb(0,238,91)" rx="2" ry="2" />
+<text  x="249.00" y="383.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.ThreadPoolSetup$createExecutor2117483448::deploy_0 (1 calls, 1.43%)</title><rect x="43.7" y="709" width="16.9" height="15.0" fill="rgb(0,219,142)" rx="2" ry="2" />
+<text  x="46.71" y="719.5" ></text>
+</g>
+<g >
+<title>java.util.HashMap::putVal (1 calls, 1.43%)</title><rect x="414.6" y="501" width="16.8" height="15.0" fill="rgb(0,207,147)" rx="2" ry="2" />
+<text  x="417.57" y="511.5" ></text>
+</g>
+<g >
+<title>tcache_init.part.0 (1 calls, 1.43%)</title><rect x="819.1" y="757" width="16.9" height="15.0" fill="rgb(0,226,205)" rx="2" ry="2" />
+<text  x="822.14" y="767.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.EnvConfigSource::getValue (1 calls, 1.43%)</title><rect x="448.3" y="453" width="16.8" height="15.0" fill="rgb(0,237,45)" rx="2" ry="2" />
+<text  x="451.29" y="463.5" ></text>
+</g>
+<g >
+<title>_dl_load_cache_lookup (1 calls, 1.43%)</title><rect x="532.6" y="709" width="16.8" height="15.0" fill="rgb(0,225,163)" rx="2" ry="2" />
+<text  x="535.57" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="802.3" y="85" width="16.8" height="15.0" fill="rgb(0,237,194)" rx="2" ry="2" />
+<text  x="805.29" y="95.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::cheneyScanFromDirtyRoots (1 calls, 1.43%)</title><rect x="246.0" y="485" width="16.9" height="15.0" fill="rgb(0,233,89)" rx="2" ry="2" />
+<text  x="249.00" y="495.5" ></text>
+</g>
+<g >
+<title>openaux (7 calls, 10.00%)</title><rect x="1055.1" y="741" width="118.0" height="15.0" fill="rgb(0,238,89)" rx="2" ry="2" />
+<text  x="1058.14" y="751.5" >openaux</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="111.1" y="533" width="16.9" height="15.0" fill="rgb(0,216,148)" rx="2" ry="2" />
+<text  x="114.14" y="543.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.VertxHttpProcessor$openSocket1866188241::deploy_0 (1 calls, 1.43%)</title><rect x="431.4" y="725" width="16.9" height="15.0" fill="rgb(0,227,206)" rx="2" ry="2" />
+<text  x="434.43" y="735.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.future.FutureImpl::addListener (1 calls, 1.43%)</title><rect x="802.3" y="453" width="16.8" height="15.0" fill="rgb(0,190,4)" rx="2" ry="2" />
+<text  x="805.29" y="463.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl$CollectionVMOperation::operate (1 calls, 1.43%)</title><rect x="246.0" y="581" width="16.9" height="15.0" fill="rgb(0,205,47)" rx="2" ry="2" />
+<text  x="249.00" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="397.7" y="549" width="16.9" height="15.0" fill="rgb(0,202,167)" rx="2" ry="2" />
+<text  x="400.71" y="559.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scavenge (1 calls, 1.43%)</title><rect x="246.0" y="501" width="16.9" height="15.0" fill="rgb(0,193,11)" rx="2" ry="2" />
+<text  x="249.00" y="511.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::maybeCollectOnAllocation (1 calls, 1.43%)</title><rect x="246.0" y="709" width="16.9" height="15.0" fill="rgb(0,214,135)" rx="2" ry="2" />
+<text  x="249.00" y="719.5" ></text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.43%)</title><rect x="1156.3" y="677" width="16.8" height="15.0" fill="rgb(0,225,75)" rx="2" ry="2" />
+<text  x="1159.29" y="687.5" ></text>
+</g>
+<g >
+<title>_dl_map_object_deps (12 calls, 17.14%)</title><rect x="532.6" y="773" width="202.3" height="15.0" fill="rgb(0,236,68)" rx="2" ry="2" />
+<text  x="535.57" y="783.5" >_dl_map_object_deps</text>
+</g>
+<g >
+<title>io.smallrye.config.ProfileConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="565" width="16.8" height="15.0" fill="rgb(0,203,186)" rx="2" ry="2" />
+<text  x="451.29" y="575.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 2.86%)</title><rect x="768.6" y="613" width="33.7" height="15.0" fill="rgb(0,239,195)" rx="2" ry="2" />
+<text  x="771.57" y="623.5" >__..</text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::doStartThread (2 calls, 2.86%)</title><rect x="77.4" y="501" width="33.7" height="15.0" fill="rgb(0,221,163)" rx="2" ry="2" />
+<text  x="80.43" y="511.5" >io..</text>
+</g>
+<g >
+<title>io.vertx.core.impl.future.FutureBase::emitSuccess (1 calls, 1.43%)</title><rect x="802.3" y="437" width="16.8" height="15.0" fill="rgb(0,193,117)" rx="2" ry="2" />
+<text  x="805.29" y="447.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl::enqueue (1 calls, 1.43%)</title><rect x="751.7" y="677" width="16.9" height="15.0" fill="rgb(0,196,164)" rx="2" ry="2" />
+<text  x="754.71" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.JavaMainWrapper::doRun (7 calls, 10.00%)</title><rect x="397.7" y="821" width="118.0" height="15.0" fill="rgb(0,212,200)" rx="2" ry="2" />
+<text  x="400.71" y="831.5" >com.oracle.svm..</text>
+</g>
+<g >
+<title>tcache_init.part.0 (6 calls, 8.57%)</title><rect x="296.6" y="757" width="101.1" height="15.0" fill="rgb(0,192,66)" rx="2" ry="2" />
+<text  x="299.57" y="767.5" >tcache_init...</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::enqueueAndExecute (1 calls, 1.43%)</title><rect x="751.7" y="661" width="16.9" height="15.0" fill="rgb(0,198,69)" rx="2" ry="2" />
+<text  x="754.71" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="246.0" y="725" width="16.9" height="15.0" fill="rgb(0,219,52)" rx="2" ry="2" />
+<text  x="249.00" y="735.5" ></text>
+</g>
+<g >
+<title>java.util.Arrays::copyOfRange (2 calls, 2.86%)</title><rect x="262.9" y="709" width="33.7" height="15.0" fill="rgb(0,225,181)" rx="2" ry="2" />
+<text  x="265.86" y="719.5" >ja..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectOnce (1 calls, 1.43%)</title><rect x="751.7" y="533" width="16.9" height="15.0" fill="rgb(0,192,109)" rx="2" ry="2" />
+<text  x="754.71" y="543.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ExpressionConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="613" width="16.8" height="15.0" fill="rgb(0,220,32)" rx="2" ry="2" />
+<text  x="451.29" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (2 calls, 2.86%)</title><rect x="262.9" y="629" width="33.7" height="15.0" fill="rgb(0,190,54)" rx="2" ry="2" />
+<text  x="265.86" y="639.5" >co..</text>
+</g>
+<g >
+<title>io.netty.channel.MultithreadEventLoopGroup::register (1 calls, 1.43%)</title><rect x="802.3" y="293" width="16.8" height="15.0" fill="rgb(0,195,6)" rx="2" ry="2" />
+<text  x="805.29" y="303.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ApplicationLifecycleManager::handleSignal (1 calls, 1.43%)</title><rect x="178.6" y="709" width="16.8" height="15.0" fill="rgb(0,196,0)" rx="2" ry="2" />
+<text  x="181.57" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="431.4" y="261" width="16.9" height="15.0" fill="rgb(0,201,191)" rx="2" ry="2" />
+<text  x="434.43" y="271.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scavenge (1 calls, 1.43%)</title><rect x="60.6" y="421" width="16.8" height="15.0" fill="rgb(0,217,40)" rx="2" ry="2" />
+<text  x="63.57" y="431.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="43.7" y="645" width="16.9" height="15.0" fill="rgb(0,206,170)" rx="2" ry="2" />
+<text  x="46.71" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::maybeCollectOnAllocation (1 calls, 1.43%)</title><rect x="431.4" y="645" width="16.9" height="15.0" fill="rgb(0,202,84)" rx="2" ry="2" />
+<text  x="434.43" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scavenge (1 calls, 1.43%)</title><rect x="431.4" y="437" width="16.9" height="15.0" fill="rgb(0,225,18)" rx="2" ry="2" />
+<text  x="434.43" y="447.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectWithoutAllocating (1 calls, 1.43%)</title><rect x="431.4" y="629" width="16.9" height="15.0" fill="rgb(0,239,157)" rx="2" ry="2" />
+<text  x="434.43" y="639.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (6 calls, 8.57%)</title><rect x="296.6" y="709" width="101.1" height="15.0" fill="rgb(0,214,145)" rx="2" ry="2" />
+<text  x="299.57" y="719.5" >__GI___mmap64</text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::runAllTasks (1 calls, 1.43%)</title><rect x="802.3" y="693" width="16.8" height="15.0" fill="rgb(0,219,195)" rx="2" ry="2" />
+<text  x="805.29" y="703.5" ></text>
+</g>
+<g >
+<title>java.lang.StringLatin1::toUpperCase (1 calls, 1.43%)</title><rect x="448.3" y="421" width="16.8" height="15.0" fill="rgb(0,218,19)" rx="2" ry="2" />
+<text  x="451.29" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="397.7" y="533" width="16.9" height="15.0" fill="rgb(0,215,182)" rx="2" ry="2" />
+<text  x="400.71" y="543.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="431.4" y="245" width="16.9" height="15.0" fill="rgb(0,226,131)" rx="2" ry="2" />
+<text  x="434.43" y="255.5" ></text>
+</g>
+<g >
+<title>io.smallrye.context.SmallRyeContextManager$Builder::build (1 calls, 1.43%)</title><rect x="26.9" y="677" width="16.8" height="15.0" fill="rgb(0,226,4)" rx="2" ry="2" />
+<text  x="29.86" y="687.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ApplicationLifecycleManager::registerSignalHandlers (1 calls, 1.43%)</title><rect x="178.6" y="725" width="16.8" height="15.0" fill="rgb(0,237,24)" rx="2" ry="2" />
+<text  x="181.57" y="735.5" ></text>
+</g>
+<g >
+<title>__GI__dl_catch_exception (12 calls, 17.14%)</title><rect x="532.6" y="757" width="202.3" height="15.0" fill="rgb(0,217,35)" rx="2" ry="2" />
+<text  x="535.57" y="767.5" >__GI__dl_catch_exception</text>
+</g>
+<g >
+<title>com.oracle.svm.core.Isolates::create (1 calls, 1.43%)</title><rect x="195.4" y="773" width="16.9" height="15.0" fill="rgb(0,193,34)" rx="2" ry="2" />
+<text  x="198.43" y="783.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::blackenStackRoots (1 calls, 1.43%)</title><rect x="246.0" y="469" width="16.9" height="15.0" fill="rgb(0,204,178)" rx="2" ry="2" />
+<text  x="249.00" y="479.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::executeAllQueuedVMOperations (1 calls, 1.43%)</title><rect x="431.4" y="565" width="16.9" height="15.0" fill="rgb(0,195,151)" rx="2" ry="2" />
+<text  x="434.43" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::drain (1 calls, 1.43%)</title><rect x="431.4" y="549" width="16.9" height="15.0" fill="rgb(0,232,134)" rx="2" ry="2" />
+<text  x="434.43" y="559.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigValueConfigSourceWrapper::getConfigValue (1 calls, 1.43%)</title><rect x="144.9" y="469" width="16.8" height="15.0" fill="rgb(0,220,168)" rx="2" ry="2" />
+<text  x="147.86" y="479.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getConfigValue (1 calls, 1.43%)</title><rect x="448.3" y="661" width="16.8" height="15.0" fill="rgb(0,210,108)" rx="2" ry="2" />
+<text  x="451.29" y="671.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.VertxImpl::deployVerticle (2 calls, 2.86%)</title><rect x="77.4" y="645" width="33.7" height="15.0" fill="rgb(0,209,124)" rx="2" ry="2" />
+<text  x="80.43" y="655.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.runner.ApplicationImpl::doStart (10 calls, 14.29%)</title><rect x="10.0" y="725" width="168.6" height="15.0" fill="rgb(0,225,165)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" >io.quarkus.runner.App..</text>
+</g>
+<g >
+<title>io.smallrye.config.RelocateConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="517" width="16.8" height="15.0" fill="rgb(0,238,110)" rx="2" ry="2" />
+<text  x="147.86" y="527.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="448.3" y="325" width="16.8" height="15.0" fill="rgb(0,195,147)" rx="2" ry="2" />
+<text  x="451.29" y="335.5" ></text>
+</g>
+<g >
+<title>__gconv_compare_alias (1 calls, 1.43%)</title><rect x="836.0" y="757" width="16.9" height="15.0" fill="rgb(0,208,73)" rx="2" ry="2" />
+<text  x="839.00" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="161.7" y="549" width="16.9" height="15.0" fill="rgb(0,237,10)" rx="2" ry="2" />
+<text  x="164.71" y="559.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigMappingProvider::additionalMappedProperties (1 calls, 1.43%)</title><rect x="161.7" y="661" width="16.9" height="15.0" fill="rgb(0,202,130)" rx="2" ry="2" />
+<text  x="164.71" y="671.5" ></text>
+</g>
+<g >
+<title>_dl_map_object_from_fd (6 calls, 8.57%)</title><rect x="1072.0" y="709" width="101.1" height="15.0" fill="rgb(0,204,199)" rx="2" ry="2" />
+<text  x="1075.00" y="719.5" >_dl_map_obje..</text>
+</g>
+<g >
+<title>org.jboss.threads.EnhancedQueueExecutor::doStartThread (1 calls, 1.43%)</title><rect x="43.7" y="661" width="16.9" height="15.0" fill="rgb(0,233,195)" rx="2" ry="2" />
+<text  x="46.71" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="397.7" y="565" width="16.9" height="15.0" fill="rgb(0,219,57)" rx="2" ry="2" />
+<text  x="400.71" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="465.1" y="549" width="16.9" height="15.0" fill="rgb(0,213,16)" rx="2" ry="2" />
+<text  x="468.14" y="559.5" ></text>
+</g>
+<g >
+<title>arena_get2.part.0 (6 calls, 8.57%)</title><rect x="296.6" y="741" width="101.1" height="15.0" fill="rgb(0,218,19)" rx="2" ry="2" />
+<text  x="299.57" y="751.5" >arena_get2.p..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scanGreyObjects (1 calls, 1.43%)</title><rect x="431.4" y="405" width="16.9" height="15.0" fill="rgb(0,220,139)" rx="2" ry="2" />
+<text  x="434.43" y="415.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::executeAllQueuedVMOperations (1 calls, 1.43%)</title><rect x="246.0" y="629" width="16.9" height="15.0" fill="rgb(0,210,2)" rx="2" ry="2" />
+<text  x="249.00" y="639.5" ></text>
+</g>
+<g >
+<title>all (70 calls, 100%)</title><rect x="10.0" y="885" width="1180.0" height="15.0" fill="rgb(0,191,143)" rx="2" ry="2" />
+<text  x="13.00" y="895.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scanGreyObjects (1 calls, 1.43%)</title><rect x="60.6" y="389" width="16.8" height="15.0" fill="rgb(0,239,118)" rx="2" ry="2" />
+<text  x="63.57" y="399.5" ></text>
+</g>
+<g >
+<title>__clone3 (6 calls, 8.57%)</title><rect x="296.6" y="853" width="101.1" height="15.0" fill="rgb(0,197,32)" rx="2" ry="2" />
+<text  x="299.57" y="863.5" >__clone3</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="802.3" y="69" width="16.8" height="15.0" fill="rgb(0,213,134)" rx="2" ry="2" />
+<text  x="805.29" y="79.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.ThreadPerTaskExecutor::execute (1 calls, 1.43%)</title><rect x="802.3" y="133" width="16.8" height="15.0" fill="rgb(0,200,88)" rx="2" ry="2" />
+<text  x="805.29" y="143.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="10.0" y="549" width="16.9" height="15.0" fill="rgb(0,216,4)" rx="2" ry="2" />
+<text  x="13.00" y="559.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigMappingProvider::mapConfiguration (1 calls, 1.43%)</title><rect x="161.7" y="677" width="16.9" height="15.0" fill="rgb(0,206,57)" rx="2" ry="2" />
+<text  x="164.71" y="687.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_read_whole_file (1 calls, 1.43%)</title><rect x="1055.1" y="693" width="16.9" height="15.0" fill="rgb(0,215,103)" rx="2" ry="2" />
+<text  x="1058.14" y="703.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor$4::run (1 calls, 1.43%)</title><rect x="802.3" y="725" width="16.8" height="15.0" fill="rgb(0,206,161)" rx="2" ry="2" />
+<text  x="805.29" y="735.5" ></text>
+</g>
+<g >
+<title>_nl_find_locale (13 calls, 18.57%)</title><rect x="836.0" y="773" width="219.1" height="15.0" fill="rgb(0,192,84)" rx="2" ry="2" />
+<text  x="839.00" y="783.5" >_nl_find_locale</text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 2.86%)</title><rect x="77.4" y="373" width="33.7" height="15.0" fill="rgb(0,220,123)" rx="2" ry="2" />
+<text  x="80.43" y="383.5" >__..</text>
+</g>
+<g >
+<title>java.lang.StringLatin1::toUpperCase (1 calls, 1.43%)</title><rect x="144.9" y="405" width="16.8" height="15.0" fill="rgb(0,203,104)" rx="2" ry="2" />
+<text  x="147.86" y="415.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.TCPServerBase::lambda$listen$2 (1 calls, 1.43%)</title><rect x="802.3" y="389" width="16.8" height="15.0" fill="rgb(0,226,99)" rx="2" ry="2" />
+<text  x="805.29" y="399.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (12 calls, 17.14%)</title><rect x="852.9" y="741" width="202.2" height="15.0" fill="rgb(0,217,7)" rx="2" ry="2" />
+<text  x="855.86" y="751.5" >__GI___mmap64</text>
+</g>
+<g >
+<title>io.smallrye.config.common.utils.StringUtil::replaceNonAlphanumericByUnderscores (1 calls, 1.43%)</title><rect x="465.1" y="661" width="16.9" height="15.0" fill="rgb(0,236,115)" rx="2" ry="2" />
+<text  x="468.14" y="671.5" ></text>
+</g>
+<g >
+<title>java.lang.String::toUpperCase (1 calls, 1.43%)</title><rect x="448.3" y="437" width="16.8" height="15.0" fill="rgb(0,204,63)" rx="2" ry="2" />
+<text  x="451.29" y="447.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.AbstractChannel$AbstractUnsafe::register (1 calls, 1.43%)</title><rect x="802.3" y="245" width="16.8" height="15.0" fill="rgb(0,236,27)" rx="2" ry="2" />
+<text  x="805.29" y="255.5" ></text>
+</g>
+<g >
+<title>__libc_start_call_main (13 calls, 18.57%)</title><rect x="836.0" y="821" width="219.1" height="15.0" fill="rgb(0,236,167)" rx="2" ry="2" />
+<text  x="839.00" y="831.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="60.6" y="245" width="16.8" height="15.0" fill="rgb(0,232,136)" rx="2" ry="2" />
+<text  x="63.57" y="255.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (2 calls, 2.86%)</title><rect x="768.6" y="661" width="33.7" height="15.0" fill="rgb(0,207,144)" rx="2" ry="2" />
+<text  x="771.57" y="671.5" >co..</text>
+</g>
+<g >
+<title>_dl_map_object (12 calls, 17.14%)</title><rect x="532.6" y="725" width="202.3" height="15.0" fill="rgb(0,236,107)" rx="2" ry="2" />
+<text  x="535.57" y="735.5" >_dl_map_object</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="178.6" y="597" width="16.8" height="15.0" fill="rgb(0,198,54)" rx="2" ry="2" />
+<text  x="181.57" y="607.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="43.7" y="629" width="16.9" height="15.0" fill="rgb(0,205,141)" rx="2" ry="2" />
+<text  x="46.71" y="639.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder::doServerStart (3 calls, 4.29%)</title><rect x="60.6" y="677" width="50.5" height="15.0" fill="rgb(0,209,88)" rx="2" ry="2" />
+<text  x="63.57" y="687.5" >io.qu..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="26.9" y="389" width="16.8" height="15.0" fill="rgb(0,217,46)" rx="2" ry="2" />
+<text  x="29.86" y="399.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectOperation (1 calls, 1.43%)</title><rect x="751.7" y="581" width="16.9" height="15.0" fill="rgb(0,222,51)" rx="2" ry="2" />
+<text  x="754.71" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="178.6" y="613" width="16.8" height="15.0" fill="rgb(0,201,40)" rx="2" ry="2" />
+<text  x="181.57" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="10.0" y="501" width="16.9" height="15.0" fill="rgb(0,222,75)" rx="2" ry="2" />
+<text  x="13.00" y="511.5" ></text>
+</g>
+<g >
+<title>java.lang.String::substring (2 calls, 2.86%)</title><rect x="768.6" y="757" width="33.7" height="15.0" fill="rgb(0,225,173)" rx="2" ry="2" />
+<text  x="771.57" y="767.5" >ja..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="465.1" y="581" width="16.9" height="15.0" fill="rgb(0,192,9)" rx="2" ry="2" />
+<text  x="468.14" y="591.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ApplicationLifecycleManager::registerHooks (1 calls, 1.43%)</title><rect x="178.6" y="741" width="16.8" height="15.0" fill="rgb(0,190,112)" rx="2" ry="2" />
+<text  x="181.57" y="751.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigBuilder::build (1 calls, 1.43%)</title><rect x="10.0" y="661" width="16.9" height="15.0" fill="rgb(0,197,31)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.EnvConfigSource::getValue (1 calls, 1.43%)</title><rect x="448.3" y="469" width="16.8" height="15.0" fill="rgb(0,238,11)" rx="2" ry="2" />
+<text  x="451.29" y="479.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="128.0" y="693" width="16.9" height="15.0" fill="rgb(0,223,142)" rx="2" ry="2" />
+<text  x="131.00" y="703.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="802.3" y="101" width="16.8" height="15.0" fill="rgb(0,237,23)" rx="2" ry="2" />
+<text  x="805.29" y="111.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="836.0" y="693" width="16.9" height="15.0" fill="rgb(0,209,58)" rx="2" ry="2" />
+<text  x="839.00" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectOnce (1 calls, 1.43%)</title><rect x="60.6" y="437" width="16.8" height="15.0" fill="rgb(0,190,70)" rx="2" ry="2" />
+<text  x="63.57" y="447.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.ApplicationLifecycleManager::run (11 calls, 15.71%)</title><rect x="10.0" y="757" width="185.4" height="15.0" fill="rgb(0,198,193)" rx="2" ry="2" />
+<text  x="13.00" y="767.5" >io.quarkus.runtime.Appli..</text>
+</g>
+<g >
+<title>_dl_sysdep_start (13 calls, 18.57%)</title><rect x="532.6" y="805" width="219.1" height="15.0" fill="rgb(0,221,174)" rx="2" ry="2" />
+<text  x="535.57" y="815.5" >_dl_sysdep_start</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1156.3" y="645" width="16.8" height="15.0" fill="rgb(0,219,1)" rx="2" ry="2" />
+<text  x="1159.29" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::drain (1 calls, 1.43%)</title><rect x="751.7" y="629" width="16.9" height="15.0" fill="rgb(0,225,20)" rx="2" ry="2" />
+<text  x="754.71" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="246.0" y="357" width="16.9" height="15.0" fill="rgb(0,198,208)" rx="2" ry="2" />
+<text  x="249.00" y="367.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="734.9" y="709" width="16.8" height="15.0" fill="rgb(0,198,4)" rx="2" ry="2" />
+<text  x="737.86" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::maybeCollectOnAllocation (1 calls, 1.43%)</title><rect x="60.6" y="629" width="16.8" height="15.0" fill="rgb(0,210,120)" rx="2" ry="2" />
+<text  x="63.57" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperation::execute (1 calls, 1.43%)</title><rect x="751.7" y="613" width="16.9" height="15.0" fill="rgb(0,193,178)" rx="2" ry="2" />
+<text  x="754.71" y="623.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.nio.NioEventLoop::run (1 calls, 1.43%)</title><rect x="802.3" y="709" width="16.8" height="15.0" fill="rgb(0,218,71)" rx="2" ry="2" />
+<text  x="805.29" y="719.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="482.0" y="741" width="16.9" height="15.0" fill="rgb(0,213,161)" rx="2" ry="2" />
+<text  x="485.00" y="751.5" ></text>
+</g>
+<g >
+<title>jdk.internal.misc.Signal::Signal (1 calls, 1.43%)</title><rect x="178.6" y="693" width="16.8" height="15.0" fill="rgb(0,222,129)" rx="2" ry="2" />
+<text  x="181.57" y="703.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.btc.BlockedThreadChecker::BlockedThreadChecker (1 calls, 1.43%)</title><rect x="111.1" y="597" width="16.9" height="15.0" fill="rgb(0,221,180)" rx="2" ry="2" />
+<text  x="114.14" y="607.5" ></text>
+</g>
+<g >
+<title>io.netty.bootstrap.AbstractBootstrap::initAndRegister (1 calls, 1.43%)</title><rect x="802.3" y="309" width="16.8" height="15.0" fill="rgb(0,230,166)" rx="2" ry="2" />
+<text  x="805.29" y="319.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::createIsolate (1 calls, 1.43%)</title><rect x="195.4" y="789" width="16.9" height="15.0" fill="rgb(0,234,68)" rx="2" ry="2" />
+<text  x="198.43" y="799.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl::enqueue (1 calls, 1.43%)</title><rect x="246.0" y="661" width="16.9" height="15.0" fill="rgb(0,222,185)" rx="2" ry="2" />
+<text  x="249.00" y="671.5" ></text>
+</g>
+<g >
+<title>getting-started (47 calls, 67.14%)</title><rect x="10.0" y="869" width="792.3" height="15.0" fill="rgb(0,204,117)" rx="2" ry="2" />
+<text  x="13.00" y="879.5" >getting-started</text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="212.3" y="645" width="16.8" height="15.0" fill="rgb(0,195,117)" rx="2" ry="2" />
+<text  x="215.29" y="655.5" ></text>
+</g>
+<g >
+<title>java.util.HashMap::putVal (1 calls, 1.43%)</title><rect x="26.9" y="485" width="16.8" height="15.0" fill="rgb(0,237,203)" rx="2" ry="2" />
+<text  x="29.86" y="495.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigSourceInterceptorContext::proceed (1 calls, 1.43%)</title><rect x="144.9" y="565" width="16.8" height="15.0" fill="rgb(0,228,123)" rx="2" ry="2" />
+<text  x="147.86" y="575.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute (2 calls, 2.86%)</title><rect x="77.4" y="533" width="33.7" height="15.0" fill="rgb(0,225,185)" rx="2" ry="2" />
+<text  x="80.43" y="543.5" >io..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="718.0" y="661" width="16.9" height="15.0" fill="rgb(0,199,176)" rx="2" ry="2" />
+<text  x="721.00" y="671.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="532.6" y="677" width="16.8" height="15.0" fill="rgb(0,215,143)" rx="2" ry="2" />
+<text  x="535.57" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.linux.LinuxImageHeapProvider::initialize (1 calls, 1.43%)</title><rect x="195.4" y="757" width="16.9" height="15.0" fill="rgb(0,225,93)" rx="2" ry="2" />
+<text  x="198.43" y="767.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.RelocateConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="533" width="16.8" height="15.0" fill="rgb(0,223,81)" rx="2" ry="2" />
+<text  x="147.86" y="543.5" ></text>
+</g>
+<g >
+<title>ntloop-thread-0 (2 calls, 2.86%)</title><rect x="802.3" y="869" width="33.7" height="15.0" fill="rgb(0,216,82)" rx="2" ry="2" />
+<text  x="805.29" y="879.5" >nt..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1055.1" y="677" width="16.9" height="15.0" fill="rgb(0,191,86)" rx="2" ry="2" />
+<text  x="1058.14" y="687.5" ></text>
+</g>
+<g >
+<title>java.lang.String::substring (2 calls, 2.86%)</title><rect x="262.9" y="741" width="33.7" height="15.0" fill="rgb(0,216,159)" rx="2" ry="2" />
+<text  x="265.86" y="751.5" >ja..</text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.AsyncResolveConnectHelper::lambda$doBind$2 (1 calls, 1.43%)</title><rect x="802.3" y="357" width="16.8" height="15.0" fill="rgb(0,199,2)" rx="2" ry="2" />
+<text  x="805.29" y="367.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::pthreadStartRoutine (3 calls, 4.29%)</title><rect x="751.7" y="821" width="50.6" height="15.0" fill="rgb(0,218,115)" rx="2" ry="2" />
+<text  x="754.71" y="831.5" >com.o..</text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getConfigValue (1 calls, 1.43%)</title><rect x="144.9" y="645" width="16.8" height="15.0" fill="rgb(0,212,152)" rx="2" ry="2" />
+<text  x="147.86" y="655.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.EventLoopContext::runOnContext (2 calls, 2.86%)</title><rect x="77.4" y="581" width="33.7" height="15.0" fill="rgb(0,200,153)" rx="2" ry="2" />
+<text  x="80.43" y="591.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.ConfigGenerationBuildStep$checkForBuildTimeConfigChange1532146938::deploy (1 calls, 1.43%)</title><rect x="10.0" y="709" width="16.9" height="15.0" fill="rgb(0,215,173)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="161.7" y="485" width="16.9" height="15.0" fill="rgb(0,220,17)" rx="2" ry="2" />
+<text  x="164.71" y="495.5" ></text>
+</g>
+<g >
+<title>io.smallrye.context.impl.DefaultValues::DefaultValues (1 calls, 1.43%)</title><rect x="414.6" y="661" width="16.8" height="15.0" fill="rgb(0,206,47)" rx="2" ry="2" />
+<text  x="417.57" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="465.1" y="533" width="16.9" height="15.0" fill="rgb(0,197,70)" rx="2" ry="2" />
+<text  x="468.14" y="543.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.SingleThreadEventLoop::register (1 calls, 1.43%)</title><rect x="802.3" y="277" width="16.8" height="15.0" fill="rgb(0,225,103)" rx="2" ry="2" />
+<text  x="805.29" y="287.5" ></text>
+</g>
+<g >
+<title>io.smallrye.context.SmallRyeContextManager::SmallRyeContextManager (1 calls, 1.43%)</title><rect x="414.6" y="677" width="16.8" height="15.0" fill="rgb(0,215,17)" rx="2" ry="2" />
+<text  x="417.57" y="687.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ExpressionConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="597" width="16.8" height="15.0" fill="rgb(0,214,11)" rx="2" ry="2" />
+<text  x="147.86" y="607.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.PropertyNamesConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="629" width="16.8" height="15.0" fill="rgb(0,205,193)" rx="2" ry="2" />
+<text  x="147.86" y="639.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.Application::start (5 calls, 7.14%)</title><rect x="397.7" y="757" width="84.3" height="15.0" fill="rgb(0,239,184)" rx="2" ry="2" />
+<text  x="400.71" y="767.5" >io.quarku..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl::enqueue (1 calls, 1.43%)</title><rect x="431.4" y="597" width="16.9" height="15.0" fill="rgb(0,229,146)" rx="2" ry="2" />
+<text  x="434.43" y="607.5" ></text>
+</g>
+<g >
+<title>_dl_map_object_from_fd (11 calls, 15.71%)</title><rect x="549.4" y="709" width="185.5" height="15.0" fill="rgb(0,201,117)" rx="2" ry="2" />
+<text  x="552.43" y="719.5" >_dl_map_object_from_fd</text>
+</g>
+<g >
+<title>__mmap64 (10 calls, 14.29%)</title><rect x="549.4" y="677" width="168.6" height="15.0" fill="rgb(0,235,179)" rx="2" ry="2" />
+<text  x="552.43" y="687.5" >__mmap64</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="498.9" y="677" width="16.8" height="15.0" fill="rgb(0,224,71)" rx="2" ry="2" />
+<text  x="501.86" y="687.5" ></text>
+</g>
+<g >
+<title>[taskset] (13 calls, 18.57%)</title><rect x="836.0" y="853" width="219.1" height="15.0" fill="rgb(0,196,3)" rx="2" ry="2" />
+<text  x="839.00" y="863.5" >[taskset]</text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources::ConfigSources (1 calls, 1.43%)</title><rect x="397.7" y="645" width="16.9" height="15.0" fill="rgb(0,214,180)" rx="2" ry="2" />
+<text  x="400.71" y="655.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.SmallRyeContextPropagationProcessor$build1300494616::deploy_0 (1 calls, 1.43%)</title><rect x="414.6" y="725" width="16.8" height="15.0" fill="rgb(0,219,157)" rx="2" ry="2" />
+<text  x="417.57" y="735.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="128.0" y="629" width="16.9" height="15.0" fill="rgb(0,237,101)" rx="2" ry="2" />
+<text  x="131.00" y="639.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.common.utils.StringUtil::replaceNonAlphanumericByUnderscores (1 calls, 1.43%)</title><rect x="161.7" y="645" width="16.9" height="15.0" fill="rgb(0,223,118)" rx="2" ry="2" />
+<text  x="164.71" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (1 calls, 1.43%)</title><rect x="111.1" y="517" width="16.9" height="15.0" fill="rgb(0,236,49)" rx="2" ry="2" />
+<text  x="114.14" y="527.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (2 calls, 2.86%)</title><rect x="77.4" y="437" width="33.7" height="15.0" fill="rgb(0,203,63)" rx="2" ry="2" />
+<text  x="80.43" y="447.5" >ja..</text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigSourceInterceptorContext::proceed (1 calls, 1.43%)</title><rect x="448.3" y="581" width="16.8" height="15.0" fill="rgb(0,221,19)" rx="2" ry="2" />
+<text  x="451.29" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::requestAlignedHeapChunk (1 calls, 1.43%)</title><rect x="246.0" y="405" width="16.9" height="15.0" fill="rgb(0,220,125)" rx="2" ry="2" />
+<text  x="249.00" y="415.5" ></text>
+</g>
+<g >
+<title>__mmap64 (5 calls, 7.14%)</title><rect x="1072.0" y="677" width="84.3" height="15.0" fill="rgb(0,236,201)" rx="2" ry="2" />
+<text  x="1075.00" y="687.5" >__mmap64</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="734.9" y="725" width="16.8" height="15.0" fill="rgb(0,197,42)" rx="2" ry="2" />
+<text  x="737.86" y="735.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources$PropertyNames::get (1 calls, 1.43%)</title><rect x="26.9" y="613" width="16.8" height="15.0" fill="rgb(0,213,194)" rx="2" ry="2" />
+<text  x="29.86" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GreyObjectsWalker::walkGreyObjects (1 calls, 1.43%)</title><rect x="431.4" y="357" width="16.9" height="15.0" fill="rgb(0,226,34)" rx="2" ry="2" />
+<text  x="434.43" y="367.5" ></text>
+</g>
+<g >
+<title>java.util.Arrays::copyOfRange (1 calls, 1.43%)</title><rect x="465.1" y="613" width="16.9" height="15.0" fill="rgb(0,230,176)" rx="2" ry="2" />
+<text  x="468.14" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (2 calls, 2.86%)</title><rect x="262.9" y="677" width="33.7" height="15.0" fill="rgb(0,216,66)" rx="2" ry="2" />
+<text  x="265.86" y="687.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="26.9" y="453" width="16.8" height="15.0" fill="rgb(0,228,205)" rx="2" ry="2" />
+<text  x="29.86" y="463.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="229.1" y="741" width="16.9" height="15.0" fill="rgb(0,194,142)" rx="2" ry="2" />
+<text  x="232.14" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::threadStartRoutine (3 calls, 4.29%)</title><rect x="751.7" y="805" width="50.6" height="15.0" fill="rgb(0,210,12)" rx="2" ry="2" />
+<text  x="754.71" y="815.5" >com.o..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (2 calls, 2.86%)</title><rect x="262.9" y="693" width="33.7" height="15.0" fill="rgb(0,222,189)" rx="2" ry="2" />
+<text  x="265.86" y="703.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="498.9" y="645" width="16.8" height="15.0" fill="rgb(0,223,77)" rx="2" ry="2" />
+<text  x="501.86" y="655.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="128.0" y="613" width="16.9" height="15.0" fill="rgb(0,234,156)" rx="2" ry="2" />
+<text  x="131.00" y="623.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="515.7" y="741" width="16.9" height="15.0" fill="rgb(0,219,149)" rx="2" ry="2" />
+<text  x="518.71" y="751.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::doStartThread (1 calls, 1.43%)</title><rect x="802.3" y="165" width="16.8" height="15.0" fill="rgb(0,226,208)" rx="2" ry="2" />
+<text  x="805.29" y="175.5" ></text>
+</g>
+<g >
+<title>java.lang.StringLatin1::newString (2 calls, 2.86%)</title><rect x="768.6" y="741" width="33.7" height="15.0" fill="rgb(0,212,16)" rx="2" ry="2" />
+<text  x="771.57" y="751.5" >ja..</text>
+</g>
+<g >
+<title>__clone3 (1 calls, 1.43%)</title><rect x="819.1" y="853" width="16.9" height="15.0" fill="rgb(0,206,17)" rx="2" ry="2" />
+<text  x="822.14" y="863.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::getOrCreateMonitor (1 calls, 1.43%)</title><rect x="212.3" y="725" width="16.8" height="15.0" fill="rgb(0,222,153)" rx="2" ry="2" />
+<text  x="215.29" y="735.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (2 calls, 2.86%)</title><rect x="768.6" y="645" width="33.7" height="15.0" fill="rgb(0,199,34)" rx="2" ry="2" />
+<text  x="771.57" y="655.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="431.4" y="293" width="16.9" height="15.0" fill="rgb(0,219,130)" rx="2" ry="2" />
+<text  x="434.43" y="303.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources::generateDottedProperties (1 calls, 1.43%)</title><rect x="397.7" y="629" width="16.9" height="15.0" fill="rgb(0,215,80)" rx="2" ry="2" />
+<text  x="400.71" y="639.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (2 calls, 2.86%)</title><rect x="77.4" y="453" width="33.7" height="15.0" fill="rgb(0,211,138)" rx="2" ry="2" />
+<text  x="80.43" y="463.5" >ja..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectWithoutAllocating (1 calls, 1.43%)</title><rect x="60.6" y="613" width="16.8" height="15.0" fill="rgb(0,223,115)" rx="2" ry="2" />
+<text  x="63.57" y="623.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.FallbackConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="613" width="16.8" height="15.0" fill="rgb(0,193,174)" rx="2" ry="2" />
+<text  x="147.86" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::PosixPlatformThreads_pthreadStartRoutine_38d96cbc1a188a6051c29be1299afe681d67942e (1 calls, 1.43%)</title><rect x="802.3" y="821" width="16.8" height="15.0" fill="rgb(0,205,1)" rx="2" ry="2" />
+<text  x="805.29" y="831.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.PropertyNamesConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="645" width="16.8" height="15.0" fill="rgb(0,236,9)" rx="2" ry="2" />
+<text  x="451.29" y="655.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::startThread (1 calls, 1.43%)</title><rect x="802.3" y="181" width="16.8" height="15.0" fill="rgb(0,197,66)" rx="2" ry="2" />
+<text  x="805.29" y="191.5" ></text>
+</g>
+<g >
+<title>io.netty.util.internal.ThreadExecutorMap$1::execute (1 calls, 1.43%)</title><rect x="802.3" y="149" width="16.8" height="15.0" fill="rgb(0,199,199)" rx="2" ry="2" />
+<text  x="805.29" y="159.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.VertxImpl::VertxImpl (1 calls, 1.43%)</title><rect x="111.1" y="613" width="16.9" height="15.0" fill="rgb(0,205,170)" rx="2" ry="2" />
+<text  x="114.14" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::cheneyScanFromDirtyRoots (1 calls, 1.43%)</title><rect x="751.7" y="501" width="16.9" height="15.0" fill="rgb(0,191,135)" rx="2" ry="2" />
+<text  x="754.71" y="511.5" ></text>
+</g>
+<g >
+<title>openaux (12 calls, 17.14%)</title><rect x="532.6" y="741" width="202.3" height="15.0" fill="rgb(0,236,193)" rx="2" ry="2" />
+<text  x="535.57" y="751.5" >openaux</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::requestAlignedHeapChunk (1 calls, 1.43%)</title><rect x="60.6" y="309" width="16.8" height="15.0" fill="rgb(0,223,189)" rx="2" ry="2" />
+<text  x="63.57" y="319.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::blackenStackRoots (1 calls, 1.43%)</title><rect x="751.7" y="485" width="16.9" height="15.0" fill="rgb(0,204,60)" rx="2" ry="2" />
+<text  x="754.71" y="495.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute (1 calls, 1.43%)</title><rect x="802.3" y="229" width="16.8" height="15.0" fill="rgb(0,201,27)" rx="2" ry="2" />
+<text  x="805.29" y="239.5" ></text>
+</g>
+<g >
+<title>_dl_allocate_tls_storage (1 calls, 1.43%)</title><rect x="734.9" y="757" width="16.8" height="15.0" fill="rgb(0,209,17)" rx="2" ry="2" />
+<text  x="737.86" y="767.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="212.3" y="677" width="16.8" height="15.0" fill="rgb(0,232,128)" rx="2" ry="2" />
+<text  x="215.29" y="687.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.FallbackConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="629" width="16.8" height="15.0" fill="rgb(0,217,119)" rx="2" ry="2" />
+<text  x="451.29" y="639.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (2 calls, 2.86%)</title><rect x="262.9" y="645" width="33.7" height="15.0" fill="rgb(0,208,62)" rx="2" ry="2" />
+<text  x="265.86" y="655.5" >co..</text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="565" width="16.8" height="15.0" fill="rgb(0,193,71)" rx="2" ry="2" />
+<text  x="29.86" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::requestAlignedHeapChunk (1 calls, 1.43%)</title><rect x="431.4" y="325" width="16.9" height="15.0" fill="rgb(0,221,200)" rx="2" ry="2" />
+<text  x="434.43" y="335.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.DeploymentManager::lambda$doDeploy$5 (1 calls, 1.43%)</title><rect x="802.3" y="613" width="16.8" height="15.0" fill="rgb(0,194,21)" rx="2" ry="2" />
+<text  x="805.29" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="751.7" y="741" width="16.9" height="15.0" fill="rgb(0,235,114)" rx="2" ry="2" />
+<text  x="754.71" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.NativeVMOperation::enqueue (1 calls, 1.43%)</title><rect x="60.6" y="597" width="16.8" height="15.0" fill="rgb(0,225,164)" rx="2" ry="2" />
+<text  x="63.57" y="607.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.common.utils.StringUtil::replaceNonAlphanumericByUnderscores (1 calls, 1.43%)</title><rect x="10.0" y="597" width="16.9" height="15.0" fill="rgb(0,200,79)" rx="2" ry="2" />
+<text  x="13.00" y="607.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SecretKeysConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="501" width="16.8" height="15.0" fill="rgb(0,207,31)" rx="2" ry="2" />
+<text  x="147.86" y="511.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="195.4" y="725" width="16.9" height="15.0" fill="rgb(0,226,208)" rx="2" ry="2" />
+<text  x="198.43" y="735.5" ></text>
+</g>
+<g >
+<title>io.smallrye.context.SmallRyeContextManager::SmallRyeContextManager (1 calls, 1.43%)</title><rect x="26.9" y="661" width="16.8" height="15.0" fill="rgb(0,197,164)" rx="2" ry="2" />
+<text  x="29.86" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::collectOperation (1 calls, 1.43%)</title><rect x="246.0" y="565" width="16.9" height="15.0" fill="rgb(0,191,130)" rx="2" ry="2" />
+<text  x="249.00" y="575.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::doCollectOnce (1 calls, 1.43%)</title><rect x="246.0" y="517" width="16.9" height="15.0" fill="rgb(0,225,83)" rx="2" ry="2" />
+<text  x="249.00" y="527.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="161.7" y="581" width="16.9" height="15.0" fill="rgb(0,206,60)" rx="2" ry="2" />
+<text  x="164.71" y="591.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_read_whole_file (1 calls, 1.43%)</title><rect x="532.6" y="693" width="16.8" height="15.0" fill="rgb(0,228,75)" rx="2" ry="2" />
+<text  x="535.57" y="703.5" ></text>
+</g>
+<g >
+<title>io.quarkus.smallrye.context.runtime.SmallRyeContextPropagationRecorder::configureRuntime (1 calls, 1.43%)</title><rect x="26.9" y="693" width="16.8" height="15.0" fill="rgb(0,197,33)" rx="2" ry="2" />
+<text  x="29.86" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::requestAlignedChunk (1 calls, 1.43%)</title><rect x="431.4" y="309" width="16.9" height="15.0" fill="rgb(0,197,189)" rx="2" ry="2" />
+<text  x="434.43" y="319.5" ></text>
+</g>
+<g >
+<title>start_thread (3 calls, 4.29%)</title><rect x="246.0" y="837" width="50.6" height="15.0" fill="rgb(0,220,96)" rx="2" ry="2" />
+<text  x="249.00" y="847.5" >start..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::scanGreyObjects (1 calls, 1.43%)</title><rect x="60.6" y="357" width="16.8" height="15.0" fill="rgb(0,209,116)" rx="2" ry="2" />
+<text  x="63.57" y="367.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.RelocateConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="533" width="16.8" height="15.0" fill="rgb(0,232,67)" rx="2" ry="2" />
+<text  x="451.29" y="543.5" ></text>
+</g>
+<g >
+<title>io.quarkus.vertx.http.runtime.VertxHttpRecorder$WebDeploymentVerticle::setupTcpHttpServer (1 calls, 1.43%)</title><rect x="802.3" y="581" width="16.8" height="15.0" fill="rgb(0,217,164)" rx="2" ry="2" />
+<text  x="805.29" y="591.5" ></text>
+</g>
+<g >
+<title>__calloc (6 calls, 8.57%)</title><rect x="296.6" y="773" width="101.1" height="15.0" fill="rgb(0,233,61)" rx="2" ry="2" />
+<text  x="299.57" y="783.5" >__calloc</text>
+</g>
+<g >
+<title>io.smallrye.context.impl.DefaultValues::DefaultValues (1 calls, 1.43%)</title><rect x="26.9" y="645" width="16.8" height="15.0" fill="rgb(0,216,97)" rx="2" ry="2" />
+<text  x="29.86" y="655.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.RelocateConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="448.3" y="549" width="16.8" height="15.0" fill="rgb(0,217,81)" rx="2" ry="2" />
+<text  x="451.29" y="559.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources::ConfigSources (1 calls, 1.43%)</title><rect x="10.0" y="629" width="16.9" height="15.0" fill="rgb(0,218,22)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1173.1" y="725" width="16.9" height="15.0" fill="rgb(0,216,200)" rx="2" ry="2" />
+<text  x="1176.14" y="735.5" ></text>
+</g>
+<g >
+<title>java.util.HashMap::newNode (1 calls, 1.43%)</title><rect x="26.9" y="469" width="16.8" height="15.0" fill="rgb(0,207,34)" rx="2" ry="2" />
+<text  x="29.86" y="479.5" ></text>
+</g>
+<g >
+<title>java.lang.String::toUpperCase (1 calls, 1.43%)</title><rect x="144.9" y="421" width="16.8" height="15.0" fill="rgb(0,209,68)" rx="2" ry="2" />
+<text  x="147.86" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::scavenge (1 calls, 1.43%)</title><rect x="751.7" y="517" width="16.9" height="15.0" fill="rgb(0,195,53)" rx="2" ry="2" />
+<text  x="754.71" y="527.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (1 calls, 1.43%)</title><rect x="144.9" y="357" width="16.8" height="15.0" fill="rgb(0,224,125)" rx="2" ry="2" />
+<text  x="147.86" y="367.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="10.0" y="485" width="16.9" height="15.0" fill="rgb(0,193,53)" rx="2" ry="2" />
+<text  x="13.00" y="495.5" ></text>
+</g>
+<g >
+<title>io.netty.bootstrap.AbstractBootstrap::doBind (1 calls, 1.43%)</title><rect x="802.3" y="325" width="16.8" height="15.0" fill="rgb(0,200,124)" rx="2" ry="2" />
+<text  x="805.29" y="335.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.TCPServerBase$$Lambda$1421/0x00000007c1586088::handle (1 calls, 1.43%)</title><rect x="802.3" y="405" width="16.8" height="15.0" fill="rgb(0,236,110)" rx="2" ry="2" />
+<text  x="805.29" y="415.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ProfileConfigSourceInterceptor::getValue (1 calls, 1.43%)</title><rect x="144.9" y="549" width="16.8" height="15.0" fill="rgb(0,197,188)" rx="2" ry="2" />
+<text  x="147.86" y="559.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="819.1" y="709" width="16.9" height="15.0" fill="rgb(0,221,36)" rx="2" ry="2" />
+<text  x="822.14" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="448.3" y="357" width="16.8" height="15.0" fill="rgb(0,208,160)" rx="2" ry="2" />
+<text  x="451.29" y="367.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.graal.snippets.CEntryPointSnippets::attachUnattachedThread (6 calls, 8.57%)</title><rect x="296.6" y="789" width="101.1" height="15.0" fill="rgb(0,208,183)" rx="2" ry="2" />
+<text  x="299.57" y="799.5" >com.oracle.s..</text>
+</g>
+<g >
+<title>__GI__dl_catch_exception (7 calls, 10.00%)</title><rect x="1055.1" y="757" width="118.0" height="15.0" fill="rgb(0,236,182)" rx="2" ry="2" />
+<text  x="1058.14" y="767.5" >__GI__dl_catch..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="397.7" y="581" width="16.9" height="15.0" fill="rgb(0,204,201)" rx="2" ry="2" />
+<text  x="400.71" y="591.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::getValue (1 calls, 1.43%)</title><rect x="448.3" y="677" width="16.8" height="15.0" fill="rgb(0,210,3)" rx="2" ry="2" />
+<text  x="451.29" y="687.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources$PropertyNames::get (1 calls, 1.43%)</title><rect x="414.6" y="629" width="16.8" height="15.0" fill="rgb(0,195,8)" rx="2" ry="2" />
+<text  x="417.57" y="639.5" ></text>
+</g>
+<g >
+<title>__libc_start_main_alias_2 (13 calls, 18.57%)</title><rect x="836.0" y="837" width="219.1" height="15.0" fill="rgb(0,219,49)" rx="2" ry="2" />
+<text  x="839.00" y="847.5" >__libc_start_main_alias_2</text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="597" width="16.8" height="15.0" fill="rgb(0,232,205)" rx="2" ry="2" />
+<text  x="417.57" y="607.5" ></text>
+</g>
+<g >
+<title>start_thread (1 calls, 1.43%)</title><rect x="819.1" y="837" width="16.9" height="15.0" fill="rgb(0,210,180)" rx="2" ry="2" />
+<text  x="822.14" y="847.5" ></text>
+</g>
+<g >
+<title>__mmap64 (5 calls, 7.14%)</title><rect x="1072.0" y="693" width="84.3" height="15.0" fill="rgb(0,227,45)" rx="2" ry="2" />
+<text  x="1075.00" y="703.5" >__mmap64</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl::enqueue (1 calls, 1.43%)</title><rect x="60.6" y="581" width="16.8" height="15.0" fill="rgb(0,219,154)" rx="2" ry="2" />
+<text  x="63.57" y="591.5" ></text>
+</g>
+<g >
+<title>io.netty.util.internal.ThreadExecutorMap$2::run (1 calls, 1.43%)</title><rect x="802.3" y="741" width="16.8" height="15.0" fill="rgb(0,220,185)" rx="2" ry="2" />
+<text  x="805.29" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (2 calls, 2.86%)</title><rect x="262.9" y="613" width="33.7" height="15.0" fill="rgb(0,232,194)" rx="2" ry="2" />
+<text  x="265.86" y="623.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::walkStack (1 calls, 1.43%)</title><rect x="246.0" y="453" width="16.9" height="15.0" fill="rgb(0,217,109)" rx="2" ry="2" />
+<text  x="249.00" y="463.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="448.3" y="309" width="16.8" height="15.0" fill="rgb(0,221,43)" rx="2" ry="2" />
+<text  x="451.29" y="319.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl$CollectionVMOperation::operate (1 calls, 1.43%)</title><rect x="431.4" y="517" width="16.9" height="15.0" fill="rgb(0,224,201)" rx="2" ry="2" />
+<text  x="434.43" y="527.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start (1 calls, 1.43%)</title><rect x="178.6" y="645" width="16.8" height="15.0" fill="rgb(0,205,23)" rx="2" ry="2" />
+<text  x="181.57" y="655.5" ></text>
+</g>
+<g >
+<title>__mmap64 (10 calls, 14.29%)</title><rect x="549.4" y="693" width="168.6" height="15.0" fill="rgb(0,211,130)" rx="2" ry="2" />
+<text  x="552.43" y="703.5" >__mmap64</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (2 calls, 2.86%)</title><rect x="768.6" y="709" width="33.7" height="15.0" fill="rgb(0,205,58)" rx="2" ry="2" />
+<text  x="771.57" y="719.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::reserve (1 calls, 1.43%)</title><rect x="414.6" y="405" width="16.8" height="15.0" fill="rgb(0,193,16)" rx="2" ry="2" />
+<text  x="417.57" y="415.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="60.6" y="661" width="16.8" height="15.0" fill="rgb(0,231,122)" rx="2" ry="2" />
+<text  x="63.57" y="671.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.43%)</title><rect x="178.6" y="581" width="16.8" height="15.0" fill="rgb(0,219,30)" rx="2" ry="2" />
+<text  x="181.57" y="591.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigBuilder::build (1 calls, 1.43%)</title><rect x="465.1" y="709" width="16.9" height="15.0" fill="rgb(0,197,194)" rx="2" ry="2" />
+<text  x="468.14" y="719.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::mapFile (1 calls, 1.43%)</title><rect x="195.4" y="741" width="16.9" height="15.0" fill="rgb(0,210,7)" rx="2" ry="2" />
+<text  x="198.43" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.code.IsolateEnterStub::JavaMainWrapper_run_5087f5482cc9a6abc971913ece43acb471d2631b (7 calls, 10.00%)</title><rect x="397.7" y="837" width="118.0" height="15.0" fill="rgb(0,201,92)" rx="2" ry="2" />
+<text  x="400.71" y="847.5" >com.oracle.svm..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::startThread (1 calls, 1.43%)</title><rect x="128.0" y="661" width="16.9" height="15.0" fill="rgb(0,236,145)" rx="2" ry="2" />
+<text  x="131.00" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="60.6" y="277" width="16.8" height="15.0" fill="rgb(0,195,62)" rx="2" ry="2" />
+<text  x="63.57" y="287.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::doStartThread (2 calls, 2.86%)</title><rect x="77.4" y="405" width="33.7" height="15.0" fill="rgb(0,201,181)" rx="2" ry="2" />
+<text  x="80.43" y="415.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::executeAllQueuedVMOperations (1 calls, 1.43%)</title><rect x="751.7" y="645" width="16.9" height="15.0" fill="rgb(0,210,121)" rx="2" ry="2" />
+<text  x="754.71" y="655.5" ></text>
+</g>
+<g >
+<title>_dl_start_final (13 calls, 18.57%)</title><rect x="532.6" y="821" width="219.1" height="15.0" fill="rgb(0,219,109)" rx="2" ry="2" />
+<text  x="535.57" y="831.5" >_dl_start_final</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::cheneyScanFromDirtyRoots (1 calls, 1.43%)</title><rect x="60.6" y="405" width="16.8" height="15.0" fill="rgb(0,223,1)" rx="2" ry="2" />
+<text  x="63.57" y="415.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperation::execute (1 calls, 1.43%)</title><rect x="431.4" y="533" width="16.9" height="15.0" fill="rgb(0,239,71)" rx="2" ry="2" />
+<text  x="434.43" y="543.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="718.0" y="645" width="16.9" height="15.0" fill="rgb(0,227,174)" rx="2" ry="2" />
+<text  x="721.00" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.PosixVirtualMemoryProvider::commit (1 calls, 1.43%)</title><rect x="144.9" y="309" width="16.8" height="15.0" fill="rgb(0,196,98)" rx="2" ry="2" />
+<text  x="147.86" y="319.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="431.4" y="661" width="16.9" height="15.0" fill="rgb(0,237,56)" rx="2" ry="2" />
+<text  x="434.43" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="414.6" y="437" width="16.8" height="15.0" fill="rgb(0,197,179)" rx="2" ry="2" />
+<text  x="417.57" y="447.5" ></text>
+</g>
+<g >
+<title>arena_get2.part.0 (1 calls, 1.43%)</title><rect x="819.1" y="741" width="16.9" height="15.0" fill="rgb(0,224,97)" rx="2" ry="2" />
+<text  x="822.14" y="751.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstance (1 calls, 1.43%)</title><rect x="212.3" y="693" width="16.8" height="15.0" fill="rgb(0,203,172)" rx="2" ry="2" />
+<text  x="215.29" y="703.5" ></text>
+</g>
+<g >
+<title>__gconv_load_cache (1 calls, 1.43%)</title><rect x="836.0" y="709" width="16.9" height="15.0" fill="rgb(0,207,171)" rx="2" ry="2" />
+<text  x="839.00" y="719.5" ></text>
+</g>
+<g >
+<title>java.lang.StringBuilder::toString (1 calls, 1.43%)</title><rect x="465.1" y="645" width="16.9" height="15.0" fill="rgb(0,226,85)" rx="2" ry="2" />
+<text  x="468.14" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="465.1" y="597" width="16.9" height="15.0" fill="rgb(0,213,39)" rx="2" ry="2" />
+<text  x="468.14" y="607.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.configuration.ConfigRecorder::handleConfigChange (1 calls, 1.43%)</title><rect x="397.7" y="693" width="16.9" height="15.0" fill="rgb(0,213,151)" rx="2" ry="2" />
+<text  x="400.71" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.posix.thread.PosixPlatformThreads::beforeThreadRun (3 calls, 4.29%)</title><rect x="751.7" y="789" width="50.6" height="15.0" fill="rgb(0,225,131)" rx="2" ry="2" />
+<text  x="754.71" y="799.5" >com.o..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="144.9" y="389" width="16.8" height="15.0" fill="rgb(0,208,103)" rx="2" ry="2" />
+<text  x="147.86" y="399.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1156.3" y="661" width="16.8" height="15.0" fill="rgb(0,225,83)" rx="2" ry="2" />
+<text  x="1159.29" y="671.5" ></text>
+</g>
+<g >
+<title>sysmalloc (1 calls, 1.43%)</title><rect x="515.7" y="773" width="16.9" height="15.0" fill="rgb(0,190,179)" rx="2" ry="2" />
+<text  x="518.71" y="783.5" ></text>
+</g>
+<g >
+<title>java.lang.StringLatin1::newString (1 calls, 1.43%)</title><rect x="465.1" y="629" width="16.9" height="15.0" fill="rgb(0,203,196)" rx="2" ry="2" />
+<text  x="468.14" y="639.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.future.FutureImpl::onComplete (1 calls, 1.43%)</title><rect x="802.3" y="485" width="16.8" height="15.0" fill="rgb(0,190,52)" rx="2" ry="2" />
+<text  x="805.29" y="495.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.net.impl.AsyncResolveConnectHelper::doBind (1 calls, 1.43%)</title><rect x="802.3" y="373" width="16.8" height="15.0" fill="rgb(0,198,135)" rx="2" ry="2" />
+<text  x="805.29" y="383.5" ></text>
+</g>
+<g >
+<title>_dl_start_final (8 calls, 11.43%)</title><rect x="1055.1" y="821" width="134.9" height="15.0" fill="rgb(0,193,118)" rx="2" ry="2" />
+<text  x="1058.14" y="831.5" >_dl_start_final</text>
+</g>
+<g >
+<title>java.lang.StringBuilder::toString (1 calls, 1.43%)</title><rect x="161.7" y="629" width="16.9" height="15.0" fill="rgb(0,227,149)" rx="2" ry="2" />
+<text  x="164.71" y="639.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.ThreadPerTaskExecutor::execute (2 calls, 2.86%)</title><rect x="77.4" y="469" width="33.7" height="15.0" fill="rgb(0,190,163)" rx="2" ry="2" />
+<text  x="80.43" y="479.5" >io..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.NativeVMOperation::enqueue (1 calls, 1.43%)</title><rect x="431.4" y="613" width="16.9" height="15.0" fill="rgb(0,226,105)" rx="2" ry="2" />
+<text  x="434.43" y="623.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute0 (2 calls, 2.86%)</title><rect x="77.4" y="549" width="33.7" height="15.0" fill="rgb(0,191,131)" rx="2" ry="2" />
+<text  x="80.43" y="559.5" >io..</text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigMappingProvider::mapConfiguration (1 calls, 1.43%)</title><rect x="465.1" y="693" width="16.9" height="15.0" fill="rgb(0,191,71)" rx="2" ry="2" />
+<text  x="468.14" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::monitorEnter (1 calls, 1.43%)</title><rect x="212.3" y="741" width="16.8" height="15.0" fill="rgb(0,198,105)" rx="2" ry="2" />
+<text  x="215.29" y="751.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::readConfig (2 calls, 2.86%)</title><rect x="144.9" y="709" width="33.7" height="15.0" fill="rgb(0,198,117)" rx="2" ry="2" />
+<text  x="147.86" y="719.5" >io..</text>
+</g>
+<g >
+<title>io.quarkus.vertx.core.runtime.VertxCoreRecorder$VertxSupplier::get (1 calls, 1.43%)</title><rect x="111.1" y="677" width="16.9" height="15.0" fill="rgb(0,230,29)" rx="2" ry="2" />
+<text  x="114.14" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="161.7" y="565" width="16.9" height="15.0" fill="rgb(0,229,189)" rx="2" ry="2" />
+<text  x="164.71" y="575.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 calls, 1.43%)</title><rect x="802.3" y="853" width="16.8" height="15.0" fill="rgb(0,222,51)" rx="2" ry="2" />
+<text  x="805.29" y="863.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject (1 calls, 1.43%)</title><rect x="144.9" y="373" width="16.8" height="15.0" fill="rgb(0,200,106)" rx="2" ry="2" />
+<text  x="147.86" y="383.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="533" width="16.8" height="15.0" fill="rgb(0,197,69)" rx="2" ry="2" />
+<text  x="417.57" y="543.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor::execute (1 calls, 1.43%)</title><rect x="802.3" y="197" width="16.8" height="15.0" fill="rgb(0,212,70)" rx="2" ry="2" />
+<text  x="805.29" y="207.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.monitor.MultiThreadedMonitorSupport::getOrCreateMonitorFromObject (1 calls, 1.43%)</title><rect x="498.9" y="725" width="16.8" height="15.0" fill="rgb(0,232,205)" rx="2" ry="2" />
+<text  x="501.86" y="735.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="178.6" y="629" width="16.8" height="15.0" fill="rgb(0,207,203)" rx="2" ry="2" />
+<text  x="181.57" y="639.5" ></text>
+</g>
+<g >
+<title>_start (8 calls, 11.43%)</title><rect x="1055.1" y="853" width="134.9" height="15.0" fill="rgb(0,225,167)" rx="2" ry="2" />
+<text  x="1058.14" y="863.5" >_start</text>
+</g>
+<g >
+<title>[unknown] (17 calls, 24.29%)</title><rect x="10.0" y="853" width="286.6" height="15.0" fill="rgb(0,206,134)" rx="2" ry="2" />
+<text  x="13.00" y="863.5" >[unknown]</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::enqueueAndExecute (1 calls, 1.43%)</title><rect x="431.4" y="581" width="16.9" height="15.0" fill="rgb(0,202,47)" rx="2" ry="2" />
+<text  x="434.43" y="591.5" ></text>
+</g>
+<g >
+<title>__pthread_once_slow (1 calls, 1.43%)</title><rect x="836.0" y="741" width="16.9" height="15.0" fill="rgb(0,217,34)" rx="2" ry="2" />
+<text  x="839.00" y="751.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig::SmallRyeConfig (1 calls, 1.43%)</title><rect x="397.7" y="661" width="16.9" height="15.0" fill="rgb(0,212,208)" rx="2" ry="2" />
+<text  x="400.71" y="671.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl$CollectionVMOperation::operate (1 calls, 1.43%)</title><rect x="751.7" y="597" width="16.9" height="15.0" fill="rgb(0,195,92)" rx="2" ry="2" />
+<text  x="754.71" y="607.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.PlatformThreads::threadStartRoutine (3 calls, 4.29%)</title><rect x="246.0" y="789" width="50.6" height="15.0" fill="rgb(0,199,6)" rx="2" ry="2" />
+<text  x="249.00" y="799.5" >com.o..</text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="533" width="16.8" height="15.0" fill="rgb(0,217,53)" rx="2" ry="2" />
+<text  x="29.86" y="543.5" ></text>
+</g>
+<g >
+<title>java.lang.StringLatin1::newString (2 calls, 2.86%)</title><rect x="262.9" y="725" width="33.7" height="15.0" fill="rgb(0,237,39)" rx="2" ry="2" />
+<text  x="265.86" y="735.5" >ja..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::drain (1 calls, 1.43%)</title><rect x="60.6" y="533" width="16.8" height="15.0" fill="rgb(0,211,118)" rx="2" ry="2" />
+<text  x="63.57" y="543.5" ></text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.43%)</title><rect x="718.0" y="677" width="16.9" height="15.0" fill="rgb(0,225,2)" rx="2" ry="2" />
+<text  x="721.00" y="687.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="161.7" y="517" width="16.9" height="15.0" fill="rgb(0,199,127)" rx="2" ry="2" />
+<text  x="164.71" y="527.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperation::execute (1 calls, 1.43%)</title><rect x="60.6" y="517" width="16.8" height="15.0" fill="rgb(0,210,16)" rx="2" ry="2" />
+<text  x="63.57" y="527.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GreyObjectsWalker::walkGreyObjects (1 calls, 1.43%)</title><rect x="60.6" y="341" width="16.8" height="15.0" fill="rgb(0,232,108)" rx="2" ry="2" />
+<text  x="63.57" y="351.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::enqueueAndExecute (1 calls, 1.43%)</title><rect x="246.0" y="645" width="16.9" height="15.0" fill="rgb(0,206,76)" rx="2" ry="2" />
+<text  x="249.00" y="655.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.thread.VMOperationControl$WorkQueues::drain (1 calls, 1.43%)</title><rect x="246.0" y="613" width="16.9" height="15.0" fill="rgb(0,237,28)" rx="2" ry="2" />
+<text  x="249.00" y="623.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.HeapChunkProvider::produceAlignedChunk (1 calls, 1.43%)</title><rect x="161.7" y="533" width="16.9" height="15.0" fill="rgb(0,200,50)" rx="2" ry="2" />
+<text  x="164.71" y="543.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArray (1 calls, 1.43%)</title><rect x="10.0" y="581" width="16.9" height="15.0" fill="rgb(0,211,147)" rx="2" ry="2" />
+<text  x="13.00" y="591.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewInstanceWithoutAllocating (1 calls, 1.43%)</title><rect x="414.6" y="453" width="16.8" height="15.0" fill="rgb(0,219,119)" rx="2" ry="2" />
+<text  x="417.57" y="463.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="144.9" y="325" width="16.8" height="15.0" fill="rgb(0,209,166)" rx="2" ry="2" />
+<text  x="147.86" y="335.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread::start0 (1 calls, 1.43%)</title><rect x="111.1" y="549" width="16.9" height="15.0" fill="rgb(0,239,73)" rx="2" ry="2" />
+<text  x="114.14" y="559.5" ></text>
+</g>
+<g >
+<title>init_tls (1 calls, 1.43%)</title><rect x="734.9" y="773" width="16.8" height="15.0" fill="rgb(0,203,9)" rx="2" ry="2" />
+<text  x="737.86" y="783.5" ></text>
+</g>
+<g >
+<title>io.quarkus.runtime.generated.Config::initGroup$io$quarkus$runtime$logging$LogConfig (1 calls, 1.43%)</title><rect x="448.3" y="709" width="16.8" height="15.0" fill="rgb(0,236,61)" rx="2" ry="2" />
+<text  x="451.29" y="719.5" ></text>
+</g>
+<g >
+<title>__calloc (1 calls, 1.43%)</title><rect x="819.1" y="773" width="16.9" height="15.0" fill="rgb(0,220,22)" rx="2" ry="2" />
+<text  x="822.14" y="783.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.PropertyNamesConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="414.6" y="613" width="16.8" height="15.0" fill="rgb(0,235,124)" rx="2" ry="2" />
+<text  x="417.57" y="623.5" ></text>
+</g>
+<g >
+<title>java.util.Arrays::copyOfRange (2 calls, 2.86%)</title><rect x="768.6" y="725" width="33.7" height="15.0" fill="rgb(0,212,115)" rx="2" ry="2" />
+<text  x="771.57" y="735.5" >ja..</text>
+</g>
+<g >
+<title>io.quarkus.runner.ApplicationImpl::doStart (5 calls, 7.14%)</title><rect x="397.7" y="741" width="84.3" height="15.0" fill="rgb(0,195,91)" rx="2" ry="2" />
+<text  x="400.71" y="751.5" >io.quarku..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.43%)</title><rect x="802.3" y="37" width="16.8" height="15.0" fill="rgb(0,205,165)" rx="2" ry="2" />
+<text  x="805.29" y="47.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.ThreadLocalAllocation::slowPathNewArrayLikeObject0 (2 calls, 2.86%)</title><rect x="262.9" y="661" width="33.7" height="15.0" fill="rgb(0,196,16)" rx="2" ry="2" />
+<text  x="265.86" y="671.5" >co..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.OldGeneration::requestAlignedChunk (1 calls, 1.43%)</title><rect x="246.0" y="389" width="16.9" height="15.0" fill="rgb(0,234,185)" rx="2" ry="2" />
+<text  x="249.00" y="399.5" ></text>
+</g>
+<g >
+<title>_dl_allocate_tls_storage (1 calls, 1.43%)</title><rect x="1173.1" y="757" width="16.9" height="15.0" fill="rgb(0,210,170)" rx="2" ry="2" />
+<text  x="1176.14" y="767.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfig$ConfigSources::generateDottedProperties (1 calls, 1.43%)</title><rect x="10.0" y="613" width="16.9" height="15.0" fill="rgb(0,231,149)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.DeploymentManager::doDeploy (2 calls, 2.86%)</title><rect x="77.4" y="613" width="33.7" height="15.0" fill="rgb(0,197,48)" rx="2" ry="2" />
+<text  x="80.43" y="623.5" >io..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.GCImpl::maybeCollectOnAllocation (1 calls, 1.43%)</title><rect x="751.7" y="725" width="16.9" height="15.0" fill="rgb(0,213,17)" rx="2" ry="2" />
+<text  x="754.71" y="735.5" ></text>
+</g>
+<g >
+<title>_dl_new_object (1 calls, 1.43%)</title><rect x="718.0" y="693" width="16.9" height="15.0" fill="rgb(0,222,90)" rx="2" ry="2" />
+<text  x="721.00" y="703.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.genscavenge.Space::allocateInNewChunk (1 calls, 1.43%)</title><rect x="431.4" y="341" width="16.9" height="15.0" fill="rgb(0,202,102)" rx="2" ry="2" />
+<text  x="434.43" y="351.5" ></text>
+</g>
+<g >
+<title>io.quarkus.deployment.steps.ConfigGenerationBuildStep$checkForBuildTimeConfigChange1532146938::deploy_4 (1 calls, 1.43%)</title><rect x="10.0" y="693" width="16.9" height="15.0" fill="rgb(0,195,57)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.ConfigValueConfigSourceWrapper::getConfigValue (1 calls, 1.43%)</title><rect x="448.3" y="485" width="16.8" height="15.0" fill="rgb(0,226,209)" rx="2" ry="2" />
+<text  x="451.29" y="495.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="431.4" y="277" width="16.9" height="15.0" fill="rgb(0,229,83)" rx="2" ry="2" />
+<text  x="434.43" y="287.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.SmallRyeConfigBuilder::build (1 calls, 1.43%)</title><rect x="397.7" y="677" width="16.9" height="15.0" fill="rgb(0,190,201)" rx="2" ry="2" />
+<text  x="400.71" y="687.5" ></text>
+</g>
+<g >
+<title>io.netty.util.internal.ThreadExecutorMap$1::execute (2 calls, 2.86%)</title><rect x="77.4" y="485" width="33.7" height="15.0" fill="rgb(0,199,106)" rx="2" ry="2" />
+<text  x="80.43" y="495.5" >io..</text>
+</g>
+<g >
+<title>__libc_start_call_main (7 calls, 10.00%)</title><rect x="397.7" y="853" width="118.0" height="15.0" fill="rgb(0,199,2)" rx="2" ry="2" />
+<text  x="400.71" y="863.5" >__libc_start_c..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.JavaMainWrapper::doRun (14 calls, 20.00%)</title><rect x="10.0" y="805" width="236.0" height="15.0" fill="rgb(0,199,23)" rx="2" ry="2" />
+<text  x="13.00" y="815.5" >com.oracle.svm.core.JavaMainWra..</text>
+</g>
+<g >
+<title>com.oracle.svm.core.os.AbstractCommittedMemoryProvider::allocate (1 calls, 1.43%)</title><rect x="448.3" y="341" width="16.8" height="15.0" fill="rgb(0,233,207)" rx="2" ry="2" />
+<text  x="451.29" y="351.5" ></text>
+</g>
+<g >
+<title>io.smallrye.config.AbstractMappingConfigSourceInterceptor::iterateNames (1 calls, 1.43%)</title><rect x="26.9" y="517" width="16.8" height="15.0" fill="rgb(0,191,47)" rx="2" ry="2" />
+<text  x="29.86" y="527.5" ></text>
+</g>
+<g >
+<title>__libc_start_main_alias_2 (1 calls, 1.43%)</title><rect x="515.7" y="837" width="16.9" height="15.0" fill="rgb(0,229,92)" rx="2" ry="2" />
+<text  x="518.71" y="847.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.43%)</title><rect x="1173.1" y="709" width="16.9" height="15.0" fill="rgb(0,211,208)" rx="2" ry="2" />
+<text  x="1176.14" y="719.5" ></text>
+</g>
+<g >
+<title>io.vertx.core.impl.future.FutureImpl$3::onSuccess (1 calls, 1.43%)</title><rect x="802.3" y="421" width="16.8" height="15.0" fill="rgb(0,220,94)" rx="2" ry="2" />
+<text  x="805.29" y="431.5" ></text>
+</g>
+<g >
+<title>com.oracle.svm.core.Isolates::create (1 calls, 1.43%)</title><rect x="482.0" y="789" width="16.9" height="15.0" fill="rgb(0,200,105)" rx="2" ry="2" />
+<text  x="485.00" y="799.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_start (8 calls, 11.43%)</title><rect x="1055.1" y="805" width="134.9" height="15.0" fill="rgb(0,224,58)" rx="2" ry="2" />
+<text  x="1058.14" y="815.5" >_dl_sysdep_start</text>
+</g>
+</g>
+</svg>

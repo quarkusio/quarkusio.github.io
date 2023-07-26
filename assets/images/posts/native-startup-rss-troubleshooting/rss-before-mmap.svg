@@ -1,0 +1,1925 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="806" onload="init(evt)" viewBox="0 0 1200 806" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eef2ee" offset="5%" />
+		<stop stop-color="#e0ffe0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="806.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >mmap Flame Graph</text>
+<text id="details" x="10.00" y="789" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="789" > </text>
+<g id="frames">
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="778.8" y="245" width="35.7" height="15.0" fill="rgb(0,237,84)" rx="2" ry="2" />
+<text  x="781.79" y="255.5" >OSC..</text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (1 calls, 1.52%)</title><rect x="331.8" y="421" width="17.9" height="15.0" fill="rgb(0,239,0)" rx="2" ry="2" />
+<text  x="334.82" y="431.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_execute_b9fc33f6cf952ec696d6a219f6499740711801a6 (1 calls, 1.52%)</title><rect x="760.9" y="213" width="17.9" height="15.0" fill="rgb(0,231,127)" rx="2" ry="2" />
+<text  x="763.91" y="223.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="725.2" y="549" width="17.8" height="15.0" fill="rgb(0,214,36)" rx="2" ry="2" />
+<text  x="728.15" y="559.5" ></text>
+</g>
+<g >
+<title>AbstractBootstrap_doBind_c3a3bee3b44cc1c9da39956938d960925685a098 (1 calls, 1.52%)</title><rect x="760.9" y="309" width="17.9" height="15.0" fill="rgb(0,225,142)" rx="2" ry="2" />
+<text  x="763.91" y="319.5" ></text>
+</g>
+<g >
+<title>VertxCoreRecorder$VertxSupplier_get_ad6de8dda214b81feb5c157bb64f41c2109a30fb (1 calls, 1.52%)</title><rect x="331.8" y="565" width="17.9" height="15.0" fill="rgb(0,218,138)" rx="2" ry="2" />
+<text  x="334.82" y="575.5" ></text>
+</g>
+<g >
+<title>__pthread_once_slow (1 calls, 1.52%)</title><rect x="814.5" y="613" width="17.9" height="15.0" fill="rgb(0,237,2)" rx="2" ry="2" />
+<text  x="817.55" y="623.5" ></text>
+</g>
+<g >
+<title>__mmap64 (5 calls, 7.58%)</title><rect x="1064.8" y="565" width="89.4" height="15.0" fill="rgb(0,232,100)" rx="2" ry="2" />
+<text  x="1067.85" y="575.5" >__mmap64</text>
+</g>
+<g >
+<title>AsyncResolveConnectHelper_doBind_7ad6ce589640fd95744756b96d027680cfbcb444 (1 calls, 1.52%)</title><rect x="760.9" y="373" width="17.9" height="15.0" fill="rgb(0,190,166)" rx="2" ry="2" />
+<text  x="763.91" y="383.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (2 calls, 3.03%)</title><rect x="635.8" y="485" width="35.7" height="15.0" fill="rgb(0,221,122)" rx="2" ry="2" />
+<text  x="638.76" y="495.5" >Mma..</text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.52%)</title><rect x="170.9" y="501" width="17.9" height="15.0" fill="rgb(0,211,92)" rx="2" ry="2" />
+<text  x="173.91" y="511.5" ></text>
+</g>
+<g >
+<title>ExpressionConfigSourceInterceptor_getValue_d059467bdb370d413efc7b1ecd1f44d97f1b0080 (2 calls, 3.03%)</title><rect x="188.8" y="453" width="35.7" height="15.0" fill="rgb(0,229,158)" rx="2" ry="2" />
+<text  x="191.79" y="463.5" >Exp..</text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="469" width="35.7" height="15.0" fill="rgb(0,198,103)" rx="2" ry="2" />
+<text  x="191.79" y="479.5" >Sma..</text>
+</g>
+<g >
+<title>EventLoopContext_runOnContext_1032f3075a9010887ecdd3fdc7989166bf814f22 (2 calls, 3.03%)</title><rect x="296.1" y="469" width="35.7" height="15.0" fill="rgb(0,227,115)" rx="2" ry="2" />
+<text  x="299.06" y="479.5" >Eve..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArrayWithoutAllocating_8145f66af737ef111395a70e26cdbc5d55538ef0 (6 calls, 9.09%)</title><rect x="600.0" y="549" width="107.3" height="15.0" fill="rgb(0,233,27)" rx="2" ry="2" />
+<text  x="603.00" y="559.5" >ThreadLocalAl..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="796.7" y="229" width="17.8" height="15.0" fill="rgb(0,233,16)" rx="2" ry="2" />
+<text  x="799.67" y="239.5" ></text>
+</g>
+<g >
+<title>__libc_start_main_alias_2 (13 calls, 19.70%)</title><rect x="814.5" y="709" width="232.5" height="15.0" fill="rgb(0,218,83)" rx="2" ry="2" />
+<text  x="817.55" y="719.5" >__libc_start_main_alias_2</text>
+</g>
+<g >
+<title>SubstrateUtil_getArgs_f6fae271ffcd8e6b44e2cae17002cdf03d056e58 (2 calls, 3.03%)</title><rect x="135.2" y="677" width="35.7" height="15.0" fill="rgb(0,228,187)" rx="2" ry="2" />
+<text  x="138.15" y="687.5" >Sub..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (2 calls, 3.03%)</title><rect x="671.5" y="485" width="35.8" height="15.0" fill="rgb(0,239,183)" rx="2" ry="2" />
+<text  x="674.52" y="495.5" >Mma..</text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (1 calls, 1.52%)</title><rect x="224.5" y="597" width="17.9" height="15.0" fill="rgb(0,190,12)" rx="2" ry="2" />
+<text  x="227.55" y="607.5" ></text>
+</g>
+<g >
+<title>__GI__dl_catch_exception (7 calls, 10.61%)</title><rect x="1047.0" y="629" width="125.1" height="15.0" fill="rgb(0,195,196)" rx="2" ry="2" />
+<text  x="1049.97" y="639.5" >__GI__dl_catch_..</text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.52%)</title><rect x="1172.1" y="613" width="17.9" height="15.0" fill="rgb(0,199,50)" rx="2" ry="2" />
+<text  x="1175.12" y="623.5" ></text>
+</g>
+<g >
+<title>IsolateEnterStub_PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df_06195ea7c1ac11d884862c6f069b026336aa4f8c (3 calls, 4.55%)</title><rect x="760.9" y="709" width="53.6" height="15.0" fill="rgb(0,195,68)" rx="2" ry="2" />
+<text  x="763.91" y="719.5" >Isola..</text>
+</g>
+<g >
+<title>CEntryPointSnippets_attachThread_299a3505abe96864afd07f8f20f652a19cd12ea9 (5 calls, 7.58%)</title><rect x="10.0" y="677" width="89.4" height="15.0" fill="rgb(0,212,2)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" >CEntryPoin..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="99.4" y="613" width="17.9" height="15.0" fill="rgb(0,228,203)" rx="2" ry="2" />
+<text  x="102.39" y="623.5" ></text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.52%)</title><rect x="1154.2" y="549" width="17.9" height="15.0" fill="rgb(0,216,92)" rx="2" ry="2" />
+<text  x="1157.24" y="559.5" ></text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="188.8" y="133" width="17.9" height="15.0" fill="rgb(0,197,153)" rx="2" ry="2" />
+<text  x="191.79" y="143.5" ></text>
+</g>
+<g >
+<title>_dl_new_object (1 calls, 1.52%)</title><rect x="1154.2" y="565" width="17.9" height="15.0" fill="rgb(0,238,206)" rx="2" ry="2" />
+<text  x="1157.24" y="575.5" ></text>
+</g>
+<g >
+<title>Space_requestAlignedHeapChunk_664fbe45b761d6496517c904ebbbb67fbf4aabed (2 calls, 3.03%)</title><rect x="600.0" y="197" width="35.8" height="15.0" fill="rgb(0,237,179)" rx="2" ry="2" />
+<text  x="603.00" y="207.5" >Spa..</text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (1 calls, 1.52%)</title><rect x="760.9" y="85" width="17.9" height="15.0" fill="rgb(0,225,41)" rx="2" ry="2" />
+<text  x="763.91" y="95.5" ></text>
+</g>
+<g >
+<title>ThreadPoolSetup$createExecutor2117483448_deploy_f9479af82f7f0fd79ace5aa5809546392e8c1ded (1 calls, 1.52%)</title><rect x="278.2" y="629" width="17.9" height="15.0" fill="rgb(0,190,30)" rx="2" ry="2" />
+<text  x="281.18" y="639.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 3.03%)</title><rect x="635.8" y="469" width="35.7" height="15.0" fill="rgb(0,193,192)" rx="2" ry="2" />
+<text  x="638.76" y="479.5" >__G..</text>
+</g>
+<g >
+<title>Application_start_9a0b63742d6e66c1b5dc0121670fdf46106d2d88 (9 calls, 13.64%)</title><rect x="188.8" y="661" width="160.9" height="15.0" fill="rgb(0,219,193)" rx="2" ry="2" />
+<text  x="191.79" y="671.5" >Application_start_9a..</text>
+</g>
+<g >
+<title>VertxHttpProcessor$preinitializeRouter1141331088_deploy_3b2f5507ea83b0332da36f2bdf7801b77279fa8e (1 calls, 1.52%)</title><rect x="331.8" y="629" width="17.9" height="15.0" fill="rgb(0,207,30)" rx="2" ry="2" />
+<text  x="334.82" y="639.5" ></text>
+</g>
+<g >
+<title>CEntryPointSnippets_attachUnattachedThread_624b0c1d4e08bdf4608c1290142e118ef51d6192 (1 calls, 1.52%)</title><rect x="743.0" y="661" width="17.9" height="15.0" fill="rgb(0,210,201)" rx="2" ry="2" />
+<text  x="746.03" y="671.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="206.7" y="117" width="17.8" height="15.0" fill="rgb(0,200,127)" rx="2" ry="2" />
+<text  x="209.67" y="127.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="260.3" y="389" width="17.9" height="15.0" fill="rgb(0,212,43)" rx="2" ry="2" />
+<text  x="263.30" y="399.5" ></text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (1 calls, 1.52%)</title><rect x="331.8" y="453" width="17.9" height="15.0" fill="rgb(0,231,19)" rx="2" ry="2" />
+<text  x="334.82" y="463.5" ></text>
+</g>
+<g >
+<title>VertxHttpRecorder_initializeRouter_931d9cc504c3f3ebb7166418f3971225ab19f602 (1 calls, 1.52%)</title><rect x="331.8" y="597" width="17.9" height="15.0" fill="rgb(0,215,148)" rx="2" ry="2" />
+<text  x="334.82" y="607.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="533" width="35.7" height="15.0" fill="rgb(0,198,10)" rx="2" ry="2" />
+<text  x="191.79" y="543.5" >Sma..</text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (1 calls, 1.52%)</title><rect x="331.8" y="469" width="17.9" height="15.0" fill="rgb(0,190,6)" rx="2" ry="2" />
+<text  x="334.82" y="479.5" ></text>
+</g>
+<g >
+<title>FallbackConfigSourceInterceptor_getValue_77c8f4fc110ff802fda002270b6dac666c352ef2 (2 calls, 3.03%)</title><rect x="188.8" y="485" width="35.7" height="15.0" fill="rgb(0,200,66)" rx="2" ry="2" />
+<text  x="191.79" y="495.5" >Fal..</text>
+</g>
+<g >
+<title>__mmap64 (10 calls, 15.15%)</title><rect x="385.5" y="565" width="178.7" height="15.0" fill="rgb(0,223,29)" rx="2" ry="2" />
+<text  x="388.45" y="575.5" >__mmap64</text>
+</g>
+<g >
+<title>AsyncResolveConnectHelper$$Lambda$9e3aaa2587a65a1c9df7e6cf9f0bee04b5d64144_handle_d9b1fc6e9310cc7a39ccc35ca2343a188dbc468c (1 calls, 1.52%)</title><rect x="760.9" y="357" width="17.9" height="15.0" fill="rgb(0,220,91)" rx="2" ry="2" />
+<text  x="763.91" y="367.5" ></text>
+</g>
+<g >
+<title>ExpressionConfigSourceInterceptor_getValue_0fb9adb096a14215d8e02d9f3bb6e67f517b169e (2 calls, 3.03%)</title><rect x="188.8" y="437" width="35.7" height="15.0" fill="rgb(0,235,207)" rx="2" ry="2" />
+<text  x="191.79" y="447.5" >Exp..</text>
+</g>
+<g >
+<title>_dl_map_object_deps (7 calls, 10.61%)</title><rect x="1047.0" y="645" width="125.1" height="15.0" fill="rgb(0,196,16)" rx="2" ry="2" />
+<text  x="1049.97" y="655.5" >_dl_map_object_..</text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (1 calls, 1.52%)</title><rect x="170.9" y="549" width="17.9" height="15.0" fill="rgb(0,213,109)" rx="2" ry="2" />
+<text  x="173.91" y="559.5" ></text>
+</g>
+<g >
+<title>IsolateEnterStub_JavaMainWrapper_run_5087f5482cc9a6abc971913ece43acb471d2631b_a61fe6c26e84dd4037e4629852b5488bfcc16e7e (14 calls, 21.21%)</title><rect x="99.4" y="709" width="250.3" height="15.0" fill="rgb(0,237,98)" rx="2" ry="2" />
+<text  x="102.39" y="719.5" >IsolateEnterStub_JavaMainWrapper_..</text>
+</g>
+<g >
+<title>SingleThreadEventLoop_register_5afe6a5f0bdbfb428044efc33b8cef370d7b7d28 (1 calls, 1.52%)</title><rect x="760.9" y="261" width="17.9" height="15.0" fill="rgb(0,235,14)" rx="2" ry="2" />
+<text  x="763.91" y="271.5" ></text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstanceWithoutAllocating_c1e47c63f179ee3cf26bd8b9e5c51627b678a880 (2 calls, 3.03%)</title><rect x="707.3" y="613" width="35.7" height="15.0" fill="rgb(0,190,82)" rx="2" ry="2" />
+<text  x="710.27" y="623.5" >Thr..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="564.2" y="533" width="17.9" height="15.0" fill="rgb(0,203,13)" rx="2" ry="2" />
+<text  x="567.24" y="543.5" ></text>
+</g>
+<g >
+<title>AsyncResolveConnectHelper_lambda$doBind$2_45696421cd48d34c4a2e1e372d79251e6cae38f7 (1 calls, 1.52%)</title><rect x="760.9" y="341" width="17.9" height="15.0" fill="rgb(0,216,197)" rx="2" ry="2" />
+<text  x="763.91" y="351.5" ></text>
+</g>
+<g >
+<title>DeploymentManager_doDeploy_28a24e5825cfa179a86ccb09c95909cc881c7940 (2 calls, 3.03%)</title><rect x="296.1" y="485" width="35.7" height="15.0" fill="rgb(0,205,149)" rx="2" ry="2" />
+<text  x="299.06" y="495.5" >Dep..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (2 calls, 3.03%)</title><rect x="671.5" y="501" width="35.8" height="15.0" fill="rgb(0,214,175)" rx="2" ry="2" />
+<text  x="674.52" y="511.5" >Pos..</text>
+</g>
+<g >
+<title>HashMap_newNode_69629eeece52599241f7d930d59ec6c80269ccd0 (2 calls, 3.03%)</title><rect x="242.4" y="485" width="35.8" height="15.0" fill="rgb(0,221,36)" rx="2" ry="2" />
+<text  x="245.42" y="495.5" >Has..</text>
+</g>
+<g >
+<title>StringUtil_replaceNonAlphanumericByUnderscores_9d3a0b84d0d3d2ed8827df28de055ce84c7423f4 (2 calls, 3.03%)</title><rect x="188.8" y="213" width="35.7" height="15.0" fill="rgb(0,193,63)" rx="2" ry="2" />
+<text  x="191.79" y="223.5" >Str..</text>
+</g>
+<g >
+<title>JavaThreads_threadStartRoutine_241bd8ce6d5858d439c83fac40308278d1b55d23 (8 calls, 12.12%)</title><rect x="600.0" y="677" width="143.0" height="15.0" fill="rgb(0,199,11)" rx="2" ry="2" />
+<text  x="603.00" y="687.5" >JavaThreads_thread..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="242.4" y="437" width="35.8" height="15.0" fill="rgb(0,206,34)" rx="2" ry="2" />
+<text  x="245.42" y="447.5" >Hea..</text>
+</g>
+<g >
+<title>ConfigValueConfigSourceWrapper_getConfigValue_22547015811a89d3a8167bb59da895feec96784a (2 calls, 3.03%)</title><rect x="188.8" y="261" width="35.7" height="15.0" fill="rgb(0,222,103)" rx="2" ry="2" />
+<text  x="191.79" y="271.5" >Con..</text>
+</g>
+<g >
+<title>_dl_map_object (7 calls, 10.61%)</title><rect x="1047.0" y="597" width="125.1" height="15.0" fill="rgb(0,203,191)" rx="2" ry="2" />
+<text  x="1049.97" y="607.5" >_dl_map_object</text>
+</g>
+<g >
+<title>Arrays_copyOfRange_289badfd980998aad0ada38eb3a926841af70498 (6 calls, 9.09%)</title><rect x="600.0" y="581" width="107.3" height="15.0" fill="rgb(0,203,201)" rx="2" ry="2" />
+<text  x="603.00" y="591.5" >Arrays_copyOf..</text>
+</g>
+<g >
+<title>ApplicationLifecycleManager_registerHooks_3256e3821a222c06029792f79dcc716b4f3f295e (1 calls, 1.52%)</title><rect x="170.9" y="661" width="17.9" height="15.0" fill="rgb(0,201,17)" rx="2" ry="2" />
+<text  x="173.91" y="671.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="153.0" y="581" width="17.9" height="15.0" fill="rgb(0,225,123)" rx="2" ry="2" />
+<text  x="156.03" y="591.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="170.9" y="485" width="17.9" height="15.0" fill="rgb(0,191,29)" rx="2" ry="2" />
+<text  x="173.91" y="495.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="117.3" y="629" width="17.9" height="15.0" fill="rgb(0,230,92)" rx="2" ry="2" />
+<text  x="120.27" y="639.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1047.0" y="533" width="17.8" height="15.0" fill="rgb(0,231,80)" rx="2" ry="2" />
+<text  x="1049.97" y="543.5" ></text>
+</g>
+<g >
+<title>JavaThreads_threadStartRoutine_241bd8ce6d5858d439c83fac40308278d1b55d23 (3 calls, 4.55%)</title><rect x="760.9" y="677" width="53.6" height="15.0" fill="rgb(0,221,158)" rx="2" ry="2" />
+<text  x="763.91" y="687.5" >JavaT..</text>
+</g>
+<g >
+<title>PooledByteBufAllocator_constructor_3f22fd13fc11f1a9f2781e94e3855aa075af6d9f (2 calls, 3.03%)</title><rect x="778.8" y="325" width="35.7" height="15.0" fill="rgb(0,231,48)" rx="2" ry="2" />
+<text  x="781.79" y="335.5" >Poo..</text>
+</g>
+<g >
+<title>getting-started (41 calls, 62.12%)</title><rect x="10.0" y="741" width="733.0" height="15.0" fill="rgb(0,211,194)" rx="2" ry="2" />
+<text  x="13.00" y="751.5" >getting-started</text>
+</g>
+<g >
+<title>_dl_map_object_from_fd (11 calls, 16.67%)</title><rect x="385.5" y="581" width="196.6" height="15.0" fill="rgb(0,212,206)" rx="2" ry="2" />
+<text  x="388.45" y="591.5" >_dl_map_object_from_fd</text>
+</g>
+<g >
+<title>ThreadPerTaskExecutor_execute_9afc5d4473f674f08e02dd448b4e6a6247aa748d (1 calls, 1.52%)</title><rect x="760.9" y="133" width="17.9" height="15.0" fill="rgb(0,234,117)" rx="2" ry="2" />
+<text  x="763.91" y="143.5" ></text>
+</g>
+<g >
+<title>_dl_map_object_deps (12 calls, 18.18%)</title><rect x="367.6" y="645" width="214.5" height="15.0" fill="rgb(0,208,10)" rx="2" ry="2" />
+<text  x="370.58" y="655.5" >_dl_map_object_deps</text>
+</g>
+<g >
+<title>__libc_start_main_alias_2 (1 calls, 1.52%)</title><rect x="349.7" y="709" width="17.9" height="15.0" fill="rgb(0,230,170)" rx="2" ry="2" />
+<text  x="352.70" y="719.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 3.03%)</title><rect x="296.1" y="277" width="35.7" height="15.0" fill="rgb(0,199,37)" rx="2" ry="2" />
+<text  x="299.06" y="287.5" >__G..</text>
+</g>
+<g >
+<title>DeploymentManager_lambda$doDeploy$5_c3cad315748fdf4e2680e0fb8aa9d13885437e92 (3 calls, 4.55%)</title><rect x="760.9" y="501" width="53.6" height="15.0" fill="rgb(0,203,146)" rx="2" ry="2" />
+<text  x="763.91" y="511.5" >Deplo..</text>
+</g>
+<g >
+<title>VertxHttpRecorder_startServer_c11f0a68def0b12024624749d87e838bcfaba8d2 (2 calls, 3.03%)</title><rect x="296.1" y="597" width="35.7" height="15.0" fill="rgb(0,198,154)" rx="2" ry="2" />
+<text  x="299.06" y="607.5" >Ver..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="260.3" y="373" width="17.9" height="15.0" fill="rgb(0,220,162)" rx="2" ry="2" />
+<text  x="263.30" y="383.5" ></text>
+</g>
+<g >
+<title>__gconv_compare_alias (1 calls, 1.52%)</title><rect x="814.5" y="629" width="17.9" height="15.0" fill="rgb(0,193,143)" rx="2" ry="2" />
+<text  x="817.55" y="639.5" ></text>
+</g>
+<g >
+<title>LibC_calloc_26e415d3df30ea8a0d396c16a76c094eab69107f (1 calls, 1.52%)</title><rect x="743.0" y="629" width="17.9" height="15.0" fill="rgb(0,190,30)" rx="2" ry="2" />
+<text  x="746.03" y="639.5" ></text>
+</g>
+<g >
+<title>VMOperation_execute_58740434efda785fa124068a49feed361ad4a2b9 (2 calls, 3.03%)</title><rect x="600.0" y="421" width="35.8" height="15.0" fill="rgb(0,214,102)" rx="2" ry="2" />
+<text  x="603.00" y="431.5" >VMO..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="778.8" y="213" width="17.9" height="15.0" fill="rgb(0,200,155)" rx="2" ry="2" />
+<text  x="781.79" y="223.5" ></text>
+</g>
+<g >
+<title>Util_jdk_internal_misc_Signal_numberFromName_257dc6c5c8627af5f0f57acdcb97e9f521a527a2 (1 calls, 1.52%)</title><rect x="170.9" y="597" width="17.9" height="15.0" fill="rgb(0,217,47)" rx="2" ry="2" />
+<text  x="173.91" y="607.5" ></text>
+</g>
+<g >
+<title>init (1 calls, 1.52%)</title><rect x="349.7" y="693" width="17.9" height="15.0" fill="rgb(0,233,149)" rx="2" ry="2" />
+<text  x="352.70" y="703.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="242.4" y="373" width="17.9" height="15.0" fill="rgb(0,215,151)" rx="2" ry="2" />
+<text  x="245.42" y="383.5" ></text>
+</g>
+<g >
+<title>_dl_allocate_tls_storage (1 calls, 1.52%)</title><rect x="1172.1" y="629" width="17.9" height="15.0" fill="rgb(0,203,80)" rx="2" ry="2" />
+<text  x="1175.12" y="639.5" ></text>
+</g>
+<g >
+<title>__libc_start_call_main (13 calls, 19.70%)</title><rect x="814.5" y="693" width="232.5" height="15.0" fill="rgb(0,232,72)" rx="2" ry="2" />
+<text  x="817.55" y="703.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArray_846db6d88ea2f5c90935fae3e872715327297019 (2 calls, 3.03%)</title><rect x="135.2" y="661" width="35.7" height="15.0" fill="rgb(0,198,117)" rx="2" ry="2" />
+<text  x="138.15" y="671.5" >Thr..</text>
+</g>
+<g >
+<title>HttpServerImpl_listen_d9b91b05e4c62ba86d1c6c677d62e3d6683eb08b (3 calls, 4.55%)</title><rect x="760.9" y="453" width="53.6" height="15.0" fill="rgb(0,216,121)" rx="2" ry="2" />
+<text  x="763.91" y="463.5" >HttpS..</text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="421" width="35.7" height="15.0" fill="rgb(0,237,194)" rx="2" ry="2" />
+<text  x="191.79" y="431.5" >Sma..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="707.3" y="549" width="17.9" height="15.0" fill="rgb(0,227,74)" rx="2" ry="2" />
+<text  x="710.27" y="559.5" ></text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="206.7" y="133" width="17.8" height="15.0" fill="rgb(0,193,106)" rx="2" ry="2" />
+<text  x="209.67" y="143.5" ></text>
+</g>
+<g >
+<title>_int_malloc (1 calls, 1.52%)</title><rect x="349.7" y="661" width="17.9" height="15.0" fill="rgb(0,221,51)" rx="2" ry="2" />
+<text  x="352.70" y="671.5" ></text>
+</g>
+<g >
+<title>PosixJavaThreads_beforeThreadRun_74270183030d3cf183dcaf07b8ca65494761107e (8 calls, 12.12%)</title><rect x="600.0" y="661" width="143.0" height="15.0" fill="rgb(0,197,122)" rx="2" ry="2" />
+<text  x="603.00" y="671.5" >PosixJavaThreads_b..</text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (1 calls, 1.52%)</title><rect x="224.5" y="581" width="17.9" height="15.0" fill="rgb(0,234,203)" rx="2" ry="2" />
+<text  x="227.55" y="591.5" ></text>
+</g>
+<g >
+<title>AbstractBootstrap_bind_cf33b91758814366a89aea2b02102ce3fd07ee90 (1 calls, 1.52%)</title><rect x="760.9" y="325" width="17.9" height="15.0" fill="rgb(0,193,204)" rx="2" ry="2" />
+<text  x="763.91" y="335.5" ></text>
+</g>
+<g >
+<title>arena_get2.part.0 (1 calls, 1.52%)</title><rect x="743.0" y="581" width="17.9" height="15.0" fill="rgb(0,218,145)" rx="2" ry="2" />
+<text  x="746.03" y="591.5" ></text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (2 calls, 3.03%)</title><rect x="296.1" y="325" width="35.7" height="15.0" fill="rgb(0,214,113)" rx="2" ry="2" />
+<text  x="299.06" y="335.5" >Jav..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArray_846db6d88ea2f5c90935fae3e872715327297019 (6 calls, 9.09%)</title><rect x="600.0" y="565" width="107.3" height="15.0" fill="rgb(0,195,175)" rx="2" ry="2" />
+<text  x="603.00" y="575.5" >ThreadLocalAl..</text>
+</g>
+<g >
+<title>__pthread_create_2_1 (2 calls, 3.03%)</title><rect x="296.1" y="293" width="35.7" height="15.0" fill="rgb(0,196,90)" rx="2" ry="2" />
+<text  x="299.06" y="303.5" >__p..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="153.0" y="565" width="17.9" height="15.0" fill="rgb(0,233,21)" rx="2" ry="2" />
+<text  x="156.03" y="575.5" ></text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="617.9" y="133" width="17.9" height="15.0" fill="rgb(0,229,199)" rx="2" ry="2" />
+<text  x="620.88" y="143.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="582.1" y="581" width="17.9" height="15.0" fill="rgb(0,196,118)" rx="2" ry="2" />
+<text  x="585.12" y="591.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="796.7" y="197" width="17.8" height="15.0" fill="rgb(0,208,132)" rx="2" ry="2" />
+<text  x="799.67" y="207.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_start (8 calls, 12.12%)</title><rect x="1047.0" y="677" width="143.0" height="15.0" fill="rgb(0,225,40)" rx="2" ry="2" />
+<text  x="1049.97" y="687.5" >_dl_sysdep_start</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1047.0" y="549" width="17.8" height="15.0" fill="rgb(0,214,82)" rx="2" ry="2" />
+<text  x="1049.97" y="559.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="99.4" y="629" width="17.9" height="15.0" fill="rgb(0,215,154)" rx="2" ry="2" />
+<text  x="102.39" y="639.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSources_getValue_6668d76a1874d12db43e16a478f2e990bc881124 (2 calls, 3.03%)</title><rect x="188.8" y="277" width="35.7" height="15.0" fill="rgb(0,199,199)" rx="2" ry="2" />
+<text  x="191.79" y="287.5" >Sma..</text>
+</g>
+<g >
+<title>MultithreadEventLoopGroup_register_fd4c37abee3f65cb2af35ac95f2607dbcee6680a (1 calls, 1.52%)</title><rect x="760.9" y="277" width="17.9" height="15.0" fill="rgb(0,208,110)" rx="2" ry="2" />
+<text  x="763.91" y="287.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="117.3" y="613" width="17.9" height="15.0" fill="rgb(0,198,82)" rx="2" ry="2" />
+<text  x="120.27" y="623.5" ></text>
+</g>
+<g >
+<title>Signal_constructor_60a62d7149ff3de284594cf331f58867c340f7eb (1 calls, 1.52%)</title><rect x="170.9" y="613" width="17.9" height="15.0" fill="rgb(0,199,85)" rx="2" ry="2" />
+<text  x="173.91" y="623.5" ></text>
+</g>
+<g >
+<title>_dl_start (8 calls, 12.12%)</title><rect x="1047.0" y="709" width="143.0" height="15.0" fill="rgb(0,210,98)" rx="2" ry="2" />
+<text  x="1049.97" y="719.5" >_dl_start</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="778.8" y="197" width="17.9" height="15.0" fill="rgb(0,190,48)" rx="2" ry="2" />
+<text  x="781.79" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="349.7" y="613" width="17.9" height="15.0" fill="rgb(0,206,182)" rx="2" ry="2" />
+<text  x="352.70" y="623.5" ></text>
+</g>
+<g >
+<title>Isolates_create_bd9eb61e462f7604853e049bb166554887fccbb1 (2 calls, 3.03%)</title><rect x="99.4" y="677" width="35.8" height="15.0" fill="rgb(0,233,52)" rx="2" ry="2" />
+<text  x="102.39" y="687.5" >Iso..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstanceWithoutAllocating_c1e47c63f179ee3cf26bd8b9e5c51627b678a880 (2 calls, 3.03%)</title><rect x="242.4" y="453" width="35.8" height="15.0" fill="rgb(0,213,18)" rx="2" ry="2" />
+<text  x="245.42" y="463.5" >Thr..</text>
+</g>
+<g >
+<title>_dl_new_object (1 calls, 1.52%)</title><rect x="564.2" y="565" width="17.9" height="15.0" fill="rgb(0,218,25)" rx="2" ry="2" />
+<text  x="567.24" y="575.5" ></text>
+</g>
+<g >
+<title>Util_jdk_internal_misc_Signal_ensureInitialized_53febb8b3e5fc79af77081d05747146a8b79cec7 (1 calls, 1.52%)</title><rect x="170.9" y="581" width="17.9" height="15.0" fill="rgb(0,204,8)" rx="2" ry="2" />
+<text  x="173.91" y="591.5" ></text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstance_39ae850940ab632d109995344de15fd9d3b31d84 (2 calls, 3.03%)</title><rect x="778.8" y="293" width="35.7" height="15.0" fill="rgb(0,224,123)" rx="2" ry="2" />
+<text  x="781.79" y="303.5" >Thr..</text>
+</g>
+<g >
+<title>PoolArena_constructor_036fbd96da5ca1cc5502d05f6478a3da24cb1397 (2 calls, 3.03%)</title><rect x="778.8" y="309" width="35.7" height="15.0" fill="rgb(0,191,43)" rx="2" ry="2" />
+<text  x="781.79" y="319.5" >Poo..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="707.3" y="533" width="17.9" height="15.0" fill="rgb(0,225,47)" rx="2" ry="2" />
+<text  x="710.27" y="543.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfig_getConfigValue_569f20ce8b3333cb757d80fcec9592fc9cf0bcdf (2 calls, 3.03%)</title><rect x="188.8" y="549" width="35.7" height="15.0" fill="rgb(0,224,156)" rx="2" ry="2" />
+<text  x="191.79" y="559.5" >Sma..</text>
+</g>
+<g >
+<title>ApplicationLifecycleManager_handleSignal_2991df02b29d6c42394345fa6d98aecaf5c20818 (1 calls, 1.52%)</title><rect x="170.9" y="629" width="17.9" height="15.0" fill="rgb(0,233,73)" rx="2" ry="2" />
+<text  x="173.91" y="639.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (2 calls, 3.03%)</title><rect x="671.5" y="469" width="35.8" height="15.0" fill="rgb(0,233,51)" rx="2" ry="2" />
+<text  x="674.52" y="479.5" >__G..</text>
+</g>
+<g >
+<title>VertxHttpRecorder$WebDeploymentVerticle_start_01a41ea9c67d11e527dffa634dae100703480447 (3 calls, 4.55%)</title><rect x="760.9" y="485" width="53.6" height="15.0" fill="rgb(0,230,91)" rx="2" ry="2" />
+<text  x="763.91" y="495.5" >Vertx..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="331.8" y="389" width="17.9" height="15.0" fill="rgb(0,227,106)" rx="2" ry="2" />
+<text  x="334.82" y="399.5" ></text>
+</g>
+<g >
+<title>HashMap_putVal_a317b593f5b45ff42b9d347eb7a723ace4668094 (2 calls, 3.03%)</title><rect x="242.4" y="501" width="35.8" height="15.0" fill="rgb(0,231,66)" rx="2" ry="2" />
+<text  x="245.42" y="511.5" >Has..</text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (2 calls, 3.03%)</title><rect x="296.1" y="341" width="35.7" height="15.0" fill="rgb(0,198,144)" rx="2" ry="2" />
+<text  x="299.06" y="351.5" >Thr..</text>
+</g>
+<g >
+<title>Thread_run_857ee078f8137062fcf27275732adf5c4870652a (3 calls, 4.55%)</title><rect x="760.9" y="661" width="53.6" height="15.0" fill="rgb(0,235,77)" rx="2" ry="2" />
+<text  x="763.91" y="671.5" >Threa..</text>
+</g>
+<g >
+<title>String_substring_c83e66efbd7d8e3b7e280667e83636fafaa06780 (6 calls, 9.09%)</title><rect x="600.0" y="613" width="107.3" height="15.0" fill="rgb(0,203,128)" rx="2" ry="2" />
+<text  x="603.00" y="623.5" >String_substr..</text>
+</g>
+<g >
+<title>StringLatin1_newString_737b8b7723fc21def120d47219c87491aa1f9ab3 (6 calls, 9.09%)</title><rect x="600.0" y="597" width="107.3" height="15.0" fill="rgb(0,190,188)" rx="2" ry="2" />
+<text  x="603.00" y="607.5" >StringLatin1_..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="117.3" y="645" width="17.9" height="15.0" fill="rgb(0,237,8)" rx="2" ry="2" />
+<text  x="120.27" y="655.5" ></text>
+</g>
+<g >
+<title>_dl_map_object (12 calls, 18.18%)</title><rect x="367.6" y="597" width="214.5" height="15.0" fill="rgb(0,192,124)" rx="2" ry="2" />
+<text  x="370.58" y="607.5" >_dl_map_object</text>
+</g>
+<g >
+<title>LinuxImageHeapProvider_initialize_1238cf7c6e2d500f51283e57bfa8766238b6ecf8 (2 calls, 3.03%)</title><rect x="99.4" y="661" width="35.8" height="15.0" fill="rgb(0,231,121)" rx="2" ry="2" />
+<text  x="102.39" y="671.5" >Lin..</text>
+</g>
+<g >
+<title>NioEventLoop_run_be89580b4d16514bef6e948913d2ed21c5e4f679 (3 calls, 4.55%)</title><rect x="760.9" y="597" width="53.6" height="15.0" fill="rgb(0,210,39)" rx="2" ry="2" />
+<text  x="763.91" y="607.5" >NioEv..</text>
+</g>
+<g >
+<title>CEntryPointSnippets_attachUnattachedThread_624b0c1d4e08bdf4608c1290142e118ef51d6192 (5 calls, 7.58%)</title><rect x="10.0" y="661" width="89.4" height="15.0" fill="rgb(0,200,17)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" >CEntryPoin..</text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (2 calls, 3.03%)</title><rect x="296.1" y="357" width="35.7" height="15.0" fill="rgb(0,216,156)" rx="2" ry="2" />
+<text  x="299.06" y="367.5" >Thr..</text>
+</g>
+<g >
+<title>ProfileConfigSourceInterceptor_getValue_b4b1ea17dbff0ff8314aecd68422315fcb60e0da (2 calls, 3.03%)</title><rect x="188.8" y="405" width="35.7" height="15.0" fill="rgb(0,195,97)" rx="2" ry="2" />
+<text  x="191.79" y="415.5" >Pro..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="278.2" y="453" width="17.9" height="15.0" fill="rgb(0,199,169)" rx="2" ry="2" />
+<text  x="281.18" y="463.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="389" width="35.7" height="15.0" fill="rgb(0,218,68)" rx="2" ry="2" />
+<text  x="191.79" y="399.5" >Sma..</text>
+</g>
+<g >
+<title>EventLoopContext$$Lambda$f3e5438d051bbe4aa3e7be27f77209dc22fa157e_run_644dc9664c2a1b8c119ae5c8de1bfaba1798b10e (3 calls, 4.55%)</title><rect x="760.9" y="549" width="53.6" height="15.0" fill="rgb(0,239,37)" rx="2" ry="2" />
+<text  x="763.91" y="559.5" >Event..</text>
+</g>
+<g >
+<title>ConfigDiagnostic_unknownProperties_fc6ab77a97fc1dd56fa0d390984c15fd84e4f226 (2 calls, 3.03%)</title><rect x="242.4" y="597" width="35.8" height="15.0" fill="rgb(0,200,207)" rx="2" ry="2" />
+<text  x="245.42" y="607.5" >Con..</text>
+</g>
+<g >
+<title>VertxCoreRecorder_initialize_48e4f58a461abde1ae74d26423a5a8ada77d2a60 (1 calls, 1.52%)</title><rect x="331.8" y="549" width="17.9" height="15.0" fill="rgb(0,208,35)" rx="2" ry="2" />
+<text  x="334.82" y="559.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="814.5" y="565" width="17.9" height="15.0" fill="rgb(0,198,10)" rx="2" ry="2" />
+<text  x="817.55" y="575.5" ></text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="600.0" y="117" width="17.9" height="15.0" fill="rgb(0,204,70)" rx="2" ry="2" />
+<text  x="603.00" y="127.5" ></text>
+</g>
+<g >
+<title>Timer_constructor_c8fc8f27b82fa623f0088317b12656b061899830 (1 calls, 1.52%)</title><rect x="331.8" y="485" width="17.9" height="15.0" fill="rgb(0,202,180)" rx="2" ry="2" />
+<text  x="334.82" y="495.5" ></text>
+</g>
+<g >
+<title>Space_allocateMemory_a3354663a92077d9ee8f859e6d17c4bbfcdb880f (2 calls, 3.03%)</title><rect x="600.0" y="213" width="35.8" height="15.0" fill="rgb(0,230,196)" rx="2" ry="2" />
+<text  x="603.00" y="223.5" >Spa..</text>
+</g>
+<g >
+<title>ThreadExecutorMap$1_execute_82a130cdd46546392da3ffac84de8c998f29d43c (1 calls, 1.52%)</title><rect x="760.9" y="149" width="17.9" height="15.0" fill="rgb(0,233,143)" rx="2" ry="2" />
+<text  x="763.91" y="159.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="564.2" y="517" width="17.9" height="15.0" fill="rgb(0,224,26)" rx="2" ry="2" />
+<text  x="567.24" y="527.5" ></text>
+</g>
+<g >
+<title>PooledByteBufAllocator_&lt;clinit&gt;_21f234826cd9f3a4b36f743cf0eab78640b3f2fc (2 calls, 3.03%)</title><rect x="778.8" y="341" width="35.7" height="15.0" fill="rgb(0,225,139)" rx="2" ry="2" />
+<text  x="781.79" y="351.5" >Poo..</text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.52%)</title><rect x="224.5" y="533" width="17.9" height="15.0" fill="rgb(0,198,142)" rx="2" ry="2" />
+<text  x="227.55" y="543.5" ></text>
+</g>
+<g >
+<title>_dl_start_final (13 calls, 19.70%)</title><rect x="367.6" y="693" width="232.4" height="15.0" fill="rgb(0,206,196)" rx="2" ry="2" />
+<text  x="370.58" y="703.5" >_dl_start_final</text>
+</g>
+<g >
+<title>__GI___mmap64 (12 calls, 18.18%)</title><rect x="832.4" y="613" width="214.6" height="15.0" fill="rgb(0,235,188)" rx="2" ry="2" />
+<text  x="835.42" y="623.5" >__GI___mmap64</text>
+</g>
+<g >
+<title>start_thread (8 calls, 12.12%)</title><rect x="600.0" y="725" width="143.0" height="15.0" fill="rgb(0,234,85)" rx="2" ry="2" />
+<text  x="603.00" y="735.5" >start_thread</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1172.1" y="597" width="17.9" height="15.0" fill="rgb(0,206,6)" rx="2" ry="2" />
+<text  x="1175.12" y="607.5" ></text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (2 calls, 3.03%)</title><rect x="296.1" y="309" width="35.7" height="15.0" fill="rgb(0,191,49)" rx="2" ry="2" />
+<text  x="299.06" y="319.5" >Pos..</text>
+</g>
+<g >
+<title>__calloc (1 calls, 1.52%)</title><rect x="349.7" y="677" width="17.9" height="15.0" fill="rgb(0,222,185)" rx="2" ry="2" />
+<text  x="352.70" y="687.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_read_whole_file (1 calls, 1.52%)</title><rect x="367.6" y="565" width="17.9" height="15.0" fill="rgb(0,192,169)" rx="2" ry="2" />
+<text  x="370.58" y="575.5" ></text>
+</g>
+<g >
+<title>NettyRecorder_eagerlyInitChannelId_a548a18f15e5487cdad763d221bb9ce925b725c0 (1 calls, 1.52%)</title><rect x="224.5" y="613" width="17.9" height="15.0" fill="rgb(0,198,42)" rx="2" ry="2" />
+<text  x="227.55" y="623.5" ></text>
+</g>
+<g >
+<title>NativeVMOperation_enqueue_049b944802b20d390256d99e8e68888be24b8a3b (2 calls, 3.03%)</title><rect x="600.0" y="501" width="35.8" height="15.0" fill="rgb(0,206,99)" rx="2" ry="2" />
+<text  x="603.00" y="511.5" >Nat..</text>
+</g>
+<g >
+<title>start_thread (1 calls, 1.52%)</title><rect x="743.0" y="709" width="17.9" height="15.0" fill="rgb(0,192,32)" rx="2" ry="2" />
+<text  x="746.03" y="719.5" ></text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="600.0" y="149" width="35.8" height="15.0" fill="rgb(0,235,142)" rx="2" ry="2" />
+<text  x="603.00" y="159.5" >OSC..</text>
+</g>
+<g >
+<title>SingleThreadEventExecutor$4_run_1b47df7867e302a2fb7f28d7657a73e92f89d91f (3 calls, 4.55%)</title><rect x="760.9" y="613" width="53.6" height="15.0" fill="rgb(0,205,50)" rx="2" ry="2" />
+<text  x="763.91" y="623.5" >Singl..</text>
+</g>
+<g >
+<title>EnvConfigSource_getValue_6dbcfa20f77a71e1a5614810e140d641d2403400 (2 calls, 3.03%)</title><rect x="188.8" y="245" width="35.7" height="15.0" fill="rgb(0,205,117)" rx="2" ry="2" />
+<text  x="191.79" y="255.5" >Env..</text>
+</g>
+<g >
+<title>VertxImpl_constructor_775d041b08f67497d294acf44ec22a5d77cc1fc8 (1 calls, 1.52%)</title><rect x="331.8" y="517" width="17.9" height="15.0" fill="rgb(0,228,63)" rx="2" ry="2" />
+<text  x="334.82" y="527.5" ></text>
+</g>
+<g >
+<title>_dl_allocate_tls_storage (1 calls, 1.52%)</title><rect x="582.1" y="629" width="17.9" height="15.0" fill="rgb(0,234,36)" rx="2" ry="2" />
+<text  x="585.12" y="639.5" ></text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="260.3" y="405" width="17.9" height="15.0" fill="rgb(0,204,111)" rx="2" ry="2" />
+<text  x="263.30" y="415.5" ></text>
+</g>
+<g >
+<title>[taskset] (13 calls, 19.70%)</title><rect x="814.5" y="677" width="232.5" height="15.0" fill="rgb(0,202,55)" rx="2" ry="2" />
+<text  x="817.55" y="687.5" >[taskset]</text>
+</g>
+<g >
+<title>start_thread (3 calls, 4.55%)</title><rect x="760.9" y="725" width="53.6" height="15.0" fill="rgb(0,233,27)" rx="2" ry="2" />
+<text  x="763.91" y="735.5" >start..</text>
+</g>
+<g >
+<title>EnhancedQueueExecutor_prestartAllCoreThreads_dea6928d33d3fa2f285c128952c1705288eb67c3 (1 calls, 1.52%)</title><rect x="278.2" y="581" width="17.9" height="15.0" fill="rgb(0,225,65)" rx="2" ry="2" />
+<text  x="281.18" y="591.5" ></text>
+</g>
+<g >
+<title>ClassInitializationInfo_initialize_2fab2a9469a0ef812c52b0ce6061de6c2c8b76f9 (2 calls, 3.03%)</title><rect x="778.8" y="373" width="35.7" height="15.0" fill="rgb(0,235,137)" rx="2" ry="2" />
+<text  x="781.79" y="383.5" >Cla..</text>
+</g>
+<g >
+<title>init_tls (1 calls, 1.52%)</title><rect x="1172.1" y="645" width="17.9" height="15.0" fill="rgb(0,222,15)" rx="2" ry="2" />
+<text  x="1175.12" y="655.5" ></text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="778.8" y="261" width="35.7" height="15.0" fill="rgb(0,234,10)" rx="2" ry="2" />
+<text  x="781.79" y="271.5" >Hea..</text>
+</g>
+<g >
+<title>SingleThreadEventLoop_register_88fc66a4f35dbd2e961527d6fd9c79ffeb87e5f9 (1 calls, 1.52%)</title><rect x="760.9" y="245" width="17.9" height="15.0" fill="rgb(0,210,116)" rx="2" ry="2" />
+<text  x="763.91" y="255.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_execute_ae2480551d18263655f927040d2e4463ae8e5bf2 (1 calls, 1.52%)</title><rect x="760.9" y="197" width="17.9" height="15.0" fill="rgb(0,193,197)" rx="2" ry="2" />
+<text  x="763.91" y="207.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_read_whole_file (1 calls, 1.52%)</title><rect x="1047.0" y="565" width="17.8" height="15.0" fill="rgb(0,232,167)" rx="2" ry="2" />
+<text  x="1049.97" y="575.5" ></text>
+</g>
+<g >
+<title>__calloc (1 calls, 1.52%)</title><rect x="743.0" y="613" width="17.9" height="15.0" fill="rgb(0,225,122)" rx="2" ry="2" />
+<text  x="746.03" y="623.5" ></text>
+</g>
+<g >
+<title>EnhancedQueueExecutor_doStartThread_0e432adc4b8710a87ac7a61d389f1f07c0e0bc63 (1 calls, 1.52%)</title><rect x="278.2" y="549" width="17.9" height="15.0" fill="rgb(0,228,199)" rx="2" ry="2" />
+<text  x="281.18" y="559.5" ></text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="600.0" y="133" width="17.9" height="15.0" fill="rgb(0,239,139)" rx="2" ry="2" />
+<text  x="603.00" y="143.5" ></text>
+</g>
+<g >
+<title>ConfigRecorder_handleConfigChange_ac5c0756da479fc38f7438b8b0e9c7439be8ee28 (2 calls, 3.03%)</title><rect x="188.8" y="597" width="35.7" height="15.0" fill="rgb(0,205,18)" rx="2" ry="2" />
+<text  x="191.79" y="607.5" >Con..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArrayWithoutAllocating_8145f66af737ef111395a70e26cdbc5d55538ef0 (2 calls, 3.03%)</title><rect x="135.2" y="645" width="35.7" height="15.0" fill="rgb(0,202,19)" rx="2" ry="2" />
+<text  x="138.15" y="655.5" >Thr..</text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_execute_b9fc33f6cf952ec696d6a219f6499740711801a6 (2 calls, 3.03%)</title><rect x="296.1" y="453" width="35.7" height="15.0" fill="rgb(0,207,172)" rx="2" ry="2" />
+<text  x="299.06" y="463.5" >Sin..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="188.8" y="165" width="35.7" height="15.0" fill="rgb(0,214,119)" rx="2" ry="2" />
+<text  x="191.79" y="175.5" >Hea..</text>
+</g>
+<g >
+<title>GCImpl_cheneyScanFromDirtyRoots_38e2f549830d39bed60fc139ea601adffadffc8a (2 calls, 3.03%)</title><rect x="600.0" y="309" width="35.8" height="15.0" fill="rgb(0,197,70)" rx="2" ry="2" />
+<text  x="603.00" y="319.5" >GCI..</text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_startThread_01a2f6913975a9e3a694adc6e29d550c50d76f00 (1 calls, 1.52%)</title><rect x="760.9" y="181" width="17.9" height="15.0" fill="rgb(0,226,141)" rx="2" ry="2" />
+<text  x="763.91" y="191.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_startThread_01a2f6913975a9e3a694adc6e29d550c50d76f00 (2 calls, 3.03%)</title><rect x="296.1" y="421" width="35.7" height="15.0" fill="rgb(0,205,149)" rx="2" ry="2" />
+<text  x="299.06" y="431.5" >Sin..</text>
+</g>
+<g >
+<title>DeploymentManager_deployVerticle_8f348e5595b996709d456a4d080275d9279aea32 (2 calls, 3.03%)</title><rect x="296.1" y="517" width="35.7" height="15.0" fill="rgb(0,198,202)" rx="2" ry="2" />
+<text  x="299.06" y="527.5" >Dep..</text>
+</g>
+<g >
+<title>VertxHttpRecorder$WebDeploymentVerticle_setupTcpHttpServer_9628d2555bc571703a294132046d9520baa719ce (3 calls, 4.55%)</title><rect x="760.9" y="469" width="53.6" height="15.0" fill="rgb(0,207,61)" rx="2" ry="2" />
+<text  x="763.91" y="479.5" >Vertx..</text>
+</g>
+<g >
+<title>GCImpl_collectImpl_af095920dbe6b2b45d9952e011246050fab95516 (2 calls, 3.03%)</title><rect x="600.0" y="373" width="35.8" height="15.0" fill="rgb(0,204,166)" rx="2" ry="2" />
+<text  x="603.00" y="383.5" >GCI..</text>
+</g>
+<g >
+<title>sysmalloc (1 calls, 1.52%)</title><rect x="349.7" y="645" width="17.9" height="15.0" fill="rgb(0,236,170)" rx="2" ry="2" />
+<text  x="352.70" y="655.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.52%)</title><rect x="331.8" y="405" width="17.9" height="15.0" fill="rgb(0,234,120)" rx="2" ry="2" />
+<text  x="334.82" y="415.5" ></text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArrayWithoutAllocating_8145f66af737ef111395a70e26cdbc5d55538ef0 (2 calls, 3.03%)</title><rect x="188.8" y="181" width="35.7" height="15.0" fill="rgb(0,224,134)" rx="2" ry="2" />
+<text  x="191.79" y="191.5" >Thr..</text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="501" width="35.7" height="15.0" fill="rgb(0,234,127)" rx="2" ry="2" />
+<text  x="191.79" y="511.5" >Sma..</text>
+</g>
+<g >
+<title>__gconv_read_conf (1 calls, 1.52%)</title><rect x="814.5" y="597" width="17.9" height="15.0" fill="rgb(0,211,49)" rx="2" ry="2" />
+<text  x="817.55" y="607.5" ></text>
+</g>
+<g >
+<title>_start (14 calls, 21.21%)</title><rect x="349.7" y="725" width="250.3" height="15.0" fill="rgb(0,207,146)" rx="2" ry="2" />
+<text  x="352.70" y="735.5" >_start</text>
+</g>
+<g >
+<title>IsolateEnterStub_PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df_06195ea7c1ac11d884862c6f069b026336aa4f8c (1 calls, 1.52%)</title><rect x="743.0" y="693" width="17.9" height="15.0" fill="rgb(0,205,39)" rx="2" ry="2" />
+<text  x="746.03" y="703.5" ></text>
+</g>
+<g >
+<title>VertxImpl_deployVerticle_fcea789add9d3b31e6ff08796618671d34deb721 (2 calls, 3.03%)</title><rect x="296.1" y="565" width="35.7" height="15.0" fill="rgb(0,225,160)" rx="2" ry="2" />
+<text  x="299.06" y="575.5" >Ver..</text>
+</g>
+<g >
+<title>CEntryPointSnippets_attachThread_299a3505abe96864afd07f8f20f652a19cd12ea9 (1 calls, 1.52%)</title><rect x="743.0" y="677" width="17.9" height="15.0" fill="rgb(0,228,92)" rx="2" ry="2" />
+<text  x="746.03" y="687.5" ></text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="707.3" y="581" width="35.7" height="15.0" fill="rgb(0,193,174)" rx="2" ry="2" />
+<text  x="710.27" y="591.5" >OSC..</text>
+</g>
+<g >
+<title>NettyProcessor$eagerlyInitClass1832577802_deploy_344dc3eb714285c3849e8a1b23676cce11d5a4c6 (1 calls, 1.52%)</title><rect x="224.5" y="629" width="17.9" height="15.0" fill="rgb(0,230,169)" rx="2" ry="2" />
+<text  x="227.55" y="639.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="367.6" y="533" width="17.9" height="15.0" fill="rgb(0,210,13)" rx="2" ry="2" />
+<text  x="370.58" y="543.5" ></text>
+</g>
+<g >
+<title>VertxHttpProcessor$openSocket1866188241_deploy_7b07d97e327c2c1535eef8489b04526037b1f0ff (2 calls, 3.03%)</title><rect x="296.1" y="629" width="35.7" height="15.0" fill="rgb(0,202,169)" rx="2" ry="2" />
+<text  x="299.06" y="639.5" >Ver..</text>
+</g>
+<g >
+<title>GCImpl_doCollectOnce_b497b60e1b6c478646e130874225bfe62a9553d1 (2 calls, 3.03%)</title><rect x="600.0" y="341" width="35.8" height="15.0" fill="rgb(0,202,99)" rx="2" ry="2" />
+<text  x="603.00" y="351.5" >GCI..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstanceWithoutAllocating_c1e47c63f179ee3cf26bd8b9e5c51627b678a880 (2 calls, 3.03%)</title><rect x="778.8" y="277" width="35.7" height="15.0" fill="rgb(0,194,85)" rx="2" ry="2" />
+<text  x="781.79" y="287.5" >Thr..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="725.2" y="533" width="17.8" height="15.0" fill="rgb(0,203,34)" rx="2" ry="2" />
+<text  x="728.15" y="543.5" ></text>
+</g>
+<g >
+<title>LibC_calloc_26e415d3df30ea8a0d396c16a76c094eab69107f (5 calls, 7.58%)</title><rect x="10.0" y="629" width="89.4" height="15.0" fill="rgb(0,232,112)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" >LibC_callo..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="242.4" y="405" width="17.9" height="15.0" fill="rgb(0,224,82)" rx="2" ry="2" />
+<text  x="245.42" y="415.5" ></text>
+</g>
+<g >
+<title>ClassInitializationInfo_invokeClassInitializer_bbe695b1135def8c02910dab61e8f305ee37d4f1 (2 calls, 3.03%)</title><rect x="778.8" y="357" width="35.7" height="15.0" fill="rgb(0,197,24)" rx="2" ry="2" />
+<text  x="781.79" y="367.5" >Cla..</text>
+</g>
+<g >
+<title>AbstractBootstrap_initAndRegister_0b2999c5ad02108021e0a03685795e5c16450acf (1 calls, 1.52%)</title><rect x="760.9" y="293" width="17.9" height="15.0" fill="rgb(0,228,88)" rx="2" ry="2" />
+<text  x="763.91" y="303.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_doStartThread_f74c626e81f588e0747a3e04c8bdb98bee0cbdb6 (1 calls, 1.52%)</title><rect x="760.9" y="165" width="17.9" height="15.0" fill="rgb(0,210,180)" rx="2" ry="2" />
+<text  x="763.91" y="175.5" ></text>
+</g>
+<g >
+<title>EnvConfigSource_getValue_9938158b97c1d30ab3c303c522d4abce1693941e (2 calls, 3.03%)</title><rect x="188.8" y="229" width="35.7" height="15.0" fill="rgb(0,216,124)" rx="2" ry="2" />
+<text  x="191.79" y="239.5" >Env..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (4 calls, 6.06%)</title><rect x="635.8" y="533" width="71.5" height="15.0" fill="rgb(0,233,142)" rx="2" ry="2" />
+<text  x="638.76" y="543.5" >HeapChun..</text>
+</g>
+<g >
+<title>VMOperationControl$WorkQueues_drain_0f0481fc351b0ba4ff533185117d85969237dbbf (2 calls, 3.03%)</title><rect x="600.0" y="437" width="35.8" height="15.0" fill="rgb(0,205,104)" rx="2" ry="2" />
+<text  x="603.00" y="447.5" >VMO..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="600.0" y="101" width="17.9" height="15.0" fill="rgb(0,196,92)" rx="2" ry="2" />
+<text  x="603.00" y="111.5" ></text>
+</g>
+<g >
+<title>VertxImpl_deployVerticle_097940d891a15e3dd0d5dcf2f21cd8dece35a792 (2 calls, 3.03%)</title><rect x="296.1" y="533" width="35.7" height="15.0" fill="rgb(0,196,84)" rx="2" ry="2" />
+<text  x="299.06" y="543.5" >Ver..</text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (4 calls, 6.06%)</title><rect x="635.8" y="517" width="71.5" height="15.0" fill="rgb(0,213,36)" rx="2" ry="2" />
+<text  x="638.76" y="527.5" >OSCommit..</text>
+</g>
+<g >
+<title>ThreadPerTaskExecutor_execute_9afc5d4473f674f08e02dd448b4e6a6247aa748d (2 calls, 3.03%)</title><rect x="296.1" y="373" width="35.7" height="15.0" fill="rgb(0,237,116)" rx="2" ry="2" />
+<text  x="299.06" y="383.5" >Thr..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="617.9" y="101" width="17.9" height="15.0" fill="rgb(0,193,19)" rx="2" ry="2" />
+<text  x="620.88" y="111.5" ></text>
+</g>
+<g >
+<title>VertxHttpProcessor$preinitializeRouter1141331088_deploy_0_04f518fcb19517993a4ab43510a8b1bf5082b981 (1 calls, 1.52%)</title><rect x="331.8" y="613" width="17.9" height="15.0" fill="rgb(0,209,114)" rx="2" ry="2" />
+<text  x="334.82" y="623.5" ></text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (1 calls, 1.52%)</title><rect x="170.9" y="533" width="17.9" height="15.0" fill="rgb(0,237,104)" rx="2" ry="2" />
+<text  x="173.91" y="543.5" ></text>
+</g>
+<g >
+<title>ExecutorRecorder_setupRunTime_a6a7378f1a5cb00c3af097811513a7d18ddc8fe9 (1 calls, 1.52%)</title><rect x="278.2" y="597" width="17.9" height="15.0" fill="rgb(0,210,17)" rx="2" ry="2" />
+<text  x="281.18" y="607.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="325" width="35.7" height="15.0" fill="rgb(0,231,34)" rx="2" ry="2" />
+<text  x="191.79" y="335.5" >Sma..</text>
+</g>
+<g >
+<title>__GI__dl_catch_exception (12 calls, 18.18%)</title><rect x="367.6" y="629" width="214.5" height="15.0" fill="rgb(0,223,134)" rx="2" ry="2" />
+<text  x="370.58" y="639.5" >__GI__dl_catch_exception</text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (1 calls, 1.52%)</title><rect x="331.8" y="437" width="17.9" height="15.0" fill="rgb(0,237,4)" rx="2" ry="2" />
+<text  x="334.82" y="447.5" ></text>
+</g>
+<g >
+<title>__clone3 (1 calls, 1.52%)</title><rect x="743.0" y="725" width="17.9" height="15.0" fill="rgb(0,198,184)" rx="2" ry="2" />
+<text  x="746.03" y="735.5" ></text>
+</g>
+<g >
+<title>RuntimeConfigSetup_deploy_0bfe7d83c88b46dc17fe6227fdffdafda9750fef (2 calls, 3.03%)</title><rect x="242.4" y="629" width="35.8" height="15.0" fill="rgb(0,208,123)" rx="2" ry="2" />
+<text  x="245.42" y="639.5" >Run..</text>
+</g>
+<g >
+<title>VMThreads_allocateIsolateThread_b8a2bf631a4044b3866927885f0df40426ce7112 (5 calls, 7.58%)</title><rect x="10.0" y="645" width="89.4" height="15.0" fill="rgb(0,194,114)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" >VMThreads_..</text>
+</g>
+<g >
+<title>OldGeneration_requestAlignedChunk_3fd6a43e2d512dbd2f1f088774ca02d53d32261b (2 calls, 3.03%)</title><rect x="600.0" y="181" width="35.8" height="15.0" fill="rgb(0,234,61)" rx="2" ry="2" />
+<text  x="603.00" y="191.5" >Old..</text>
+</g>
+<g >
+<title>PropertyNamesConfigSourceInterceptor_getValue_11640ac94f79b85a3285676ef33b9850d23385d8 (2 calls, 3.03%)</title><rect x="188.8" y="517" width="35.7" height="15.0" fill="rgb(0,211,118)" rx="2" ry="2" />
+<text  x="191.79" y="527.5" >Pro..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_mapFile_7890244617ef635a20a89c202d99e33b3f4ce3b3 (1 calls, 1.52%)</title><rect x="99.4" y="645" width="17.9" height="15.0" fill="rgb(0,237,143)" rx="2" ry="2" />
+<text  x="102.39" y="655.5" ></text>
+</g>
+<g >
+<title>ApplicationImpl_doStart_e1afde9430e67b7c57499ed67ff5f64600d056ec (9 calls, 13.64%)</title><rect x="188.8" y="645" width="160.9" height="15.0" fill="rgb(0,194,151)" rx="2" ry="2" />
+<text  x="191.79" y="655.5" >ApplicationImpl_doSt..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewArray_846db6d88ea2f5c90935fae3e872715327297019 (2 calls, 3.03%)</title><rect x="188.8" y="197" width="35.7" height="15.0" fill="rgb(0,199,48)" rx="2" ry="2" />
+<text  x="191.79" y="207.5" >Thr..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="206.7" y="101" width="17.8" height="15.0" fill="rgb(0,202,154)" rx="2" ry="2" />
+<text  x="209.67" y="111.5" ></text>
+</g>
+<g >
+<title>VMOperationControl$WorkQueues_executeAllQueuedVMOperations_f857a99d4236077ebd4579d580c21458b5ca3ea1 (2 calls, 3.03%)</title><rect x="600.0" y="453" width="35.8" height="15.0" fill="rgb(0,206,166)" rx="2" ry="2" />
+<text  x="603.00" y="463.5" >VMO..</text>
+</g>
+<g >
+<title>VertxCoreRecorder$VertxSupplier_get_9cc8afdf967b204fbc01652d0c347eb980314ecb (1 calls, 1.52%)</title><rect x="331.8" y="581" width="17.9" height="15.0" fill="rgb(0,200,122)" rx="2" ry="2" />
+<text  x="334.82" y="591.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_execute_ae2480551d18263655f927040d2e4463ae8e5bf2 (2 calls, 3.03%)</title><rect x="296.1" y="437" width="35.7" height="15.0" fill="rgb(0,237,23)" rx="2" ry="2" />
+<text  x="299.06" y="447.5" >Sin..</text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.52%)</title><rect x="760.9" y="53" width="17.9" height="15.0" fill="rgb(0,225,130)" rx="2" ry="2" />
+<text  x="763.91" y="63.5" ></text>
+</g>
+<g >
+<title>GCImpl_blackenStackRoots_964d54ceed9615ae9d746e9fd2655a6addccbc88 (2 calls, 3.03%)</title><rect x="600.0" y="293" width="35.8" height="15.0" fill="rgb(0,211,38)" rx="2" ry="2" />
+<text  x="603.00" y="303.5" >GCI..</text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="188.8" y="149" width="35.7" height="15.0" fill="rgb(0,214,100)" rx="2" ry="2" />
+<text  x="191.79" y="159.5" >OSC..</text>
+</g>
+<g >
+<title>Quarkus_run_264e1542aba49a980676e2116b6211b2dc545762 (10 calls, 15.15%)</title><rect x="170.9" y="693" width="178.8" height="15.0" fill="rgb(0,226,96)" rx="2" ry="2" />
+<text  x="173.91" y="703.5" >Quarkus_run_264e1542aba..</text>
+</g>
+<g >
+<title>[taskset] (13 calls, 19.70%)</title><rect x="814.5" y="725" width="232.5" height="15.0" fill="rgb(0,206,177)" rx="2" ry="2" />
+<text  x="817.55" y="735.5" >[taskset]</text>
+</g>
+<g >
+<title>Config_readConfig_0fc4ca3fa22e5add0bb8873830d4bade6f5e9a82 (2 calls, 3.03%)</title><rect x="242.4" y="613" width="35.8" height="15.0" fill="rgb(0,217,142)" rx="2" ry="2" />
+<text  x="245.42" y="623.5" >Con..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="707.3" y="597" width="35.7" height="15.0" fill="rgb(0,192,139)" rx="2" ry="2" />
+<text  x="710.27" y="607.5" >Hea..</text>
+</g>
+<g >
+<title>alloc_new_heap (1 calls, 1.52%)</title><rect x="743.0" y="565" width="17.9" height="15.0" fill="rgb(0,220,132)" rx="2" ry="2" />
+<text  x="746.03" y="575.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfig_getValue_9cb077a2a71dbfc081933ac8549b7809e12df99d (2 calls, 3.03%)</title><rect x="188.8" y="565" width="35.7" height="15.0" fill="rgb(0,208,156)" rx="2" ry="2" />
+<text  x="191.79" y="575.5" >Sma..</text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="293" width="35.7" height="15.0" fill="rgb(0,210,72)" rx="2" ry="2" />
+<text  x="191.79" y="303.5" >Sma..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="778.8" y="229" width="17.9" height="15.0" fill="rgb(0,232,40)" rx="2" ry="2" />
+<text  x="781.79" y="239.5" ></text>
+</g>
+<g >
+<title>tcache_init.part.0 (1 calls, 1.52%)</title><rect x="743.0" y="597" width="17.9" height="15.0" fill="rgb(0,217,19)" rx="2" ry="2" />
+<text  x="746.03" y="607.5" ></text>
+</g>
+<g >
+<title>alloc_new_heap (5 calls, 7.58%)</title><rect x="10.0" y="565" width="89.4" height="15.0" fill="rgb(0,239,145)" rx="2" ry="2" />
+<text  x="13.00" y="575.5" >alloc_new_..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="725.2" y="565" width="17.8" height="15.0" fill="rgb(0,195,99)" rx="2" ry="2" />
+<text  x="728.15" y="575.5" ></text>
+</g>
+<g >
+<title>GCImpl$CollectionVMOperation_operate_66fd1b21148832fcbb89249bb3bb3d2b830eaf79 (2 calls, 3.03%)</title><rect x="600.0" y="405" width="35.8" height="15.0" fill="rgb(0,200,143)" rx="2" ry="2" />
+<text  x="603.00" y="415.5" >GCI..</text>
+</g>
+<g >
+<title>tcache_init.part.0 (5 calls, 7.58%)</title><rect x="10.0" y="597" width="89.4" height="15.0" fill="rgb(0,207,68)" rx="2" ry="2" />
+<text  x="13.00" y="607.5" >tcache_ini..</text>
+</g>
+<g >
+<title>ApplicationLifecycleManager_registerSignalHandlers_7612f57f5cd0493903af446b810dd1f94cb230f3 (1 calls, 1.52%)</title><rect x="170.9" y="645" width="17.9" height="15.0" fill="rgb(0,195,140)" rx="2" ry="2" />
+<text  x="173.91" y="655.5" ></text>
+</g>
+<g >
+<title>PosixJavaThreads_setNativeName_ad1428f6ffd25a626f703670d3ed7e20656291a9 (8 calls, 12.12%)</title><rect x="600.0" y="645" width="143.0" height="15.0" fill="rgb(0,214,86)" rx="2" ry="2" />
+<text  x="603.00" y="655.5" >PosixJavaThreads_s..</text>
+</g>
+<g >
+<title>HashMap_put_984cd2450422ab28c8fd057c8fadb18b9b383f84 (2 calls, 3.03%)</title><rect x="242.4" y="517" width="35.8" height="15.0" fill="rgb(0,232,209)" rx="2" ry="2" />
+<text  x="245.42" y="527.5" >Has..</text>
+</g>
+<g >
+<title>_nl_load_locale (12 calls, 18.18%)</title><rect x="832.4" y="629" width="214.6" height="15.0" fill="rgb(0,238,209)" rx="2" ry="2" />
+<text  x="835.42" y="639.5" >_nl_load_locale</text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.52%)</title><rect x="582.1" y="613" width="17.9" height="15.0" fill="rgb(0,233,187)" rx="2" ry="2" />
+<text  x="585.12" y="623.5" ></text>
+</g>
+<g >
+<title>HashSet_add_9f7cdf8ef4a7e8a4b5ed241c402a396637e23061 (2 calls, 3.03%)</title><rect x="242.4" y="533" width="35.8" height="15.0" fill="rgb(0,190,30)" rx="2" ry="2" />
+<text  x="245.42" y="543.5" >Has..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="600.0" y="165" width="35.8" height="15.0" fill="rgb(0,224,129)" rx="2" ry="2" />
+<text  x="603.00" y="175.5" >Hea..</text>
+</g>
+<g >
+<title>CodeReferenceMapDecoder_walkOffsetsFromPointer_b35d1f7830794bc7e62eb1f6b467829a79909ed1 (2 calls, 3.03%)</title><rect x="600.0" y="261" width="35.8" height="15.0" fill="rgb(0,190,85)" rx="2" ry="2" />
+<text  x="603.00" y="271.5" >Cod..</text>
+</g>
+<g >
+<title>AbstractEventExecutor_safeExecute_48c5811cdd8968be97028bc79c80e772e065c655 (3 calls, 4.55%)</title><rect x="760.9" y="565" width="53.6" height="15.0" fill="rgb(0,204,57)" rx="2" ry="2" />
+<text  x="763.91" y="575.5" >Abstr..</text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (1 calls, 1.52%)</title><rect x="278.2" y="517" width="17.9" height="15.0" fill="rgb(0,209,89)" rx="2" ry="2" />
+<text  x="281.18" y="527.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1154.2" y="533" width="17.9" height="15.0" fill="rgb(0,216,25)" rx="2" ry="2" />
+<text  x="1157.24" y="543.5" ></text>
+</g>
+<g >
+<title>Thread_start0_1ac299bac29d78e193ed792d1de667f50cd6b267 (1 calls, 1.52%)</title><rect x="760.9" y="101" width="17.9" height="15.0" fill="rgb(0,198,125)" rx="2" ry="2" />
+<text  x="763.91" y="111.5" ></text>
+</g>
+<g >
+<title>_start (8 calls, 12.12%)</title><rect x="1047.0" y="725" width="143.0" height="15.0" fill="rgb(0,233,107)" rx="2" ry="2" />
+<text  x="1049.97" y="735.5" >_start</text>
+</g>
+<g >
+<title>EnhancedQueueExecutor_prestartCoreThread_aa7309ee4ca8a4fe1b5fc213face4945e7be2ca6 (1 calls, 1.52%)</title><rect x="278.2" y="565" width="17.9" height="15.0" fill="rgb(0,230,61)" rx="2" ry="2" />
+<text  x="281.18" y="575.5" ></text>
+</g>
+<g >
+<title>Space_promoteAlignedObject_cb95d74a650777bd35eea89a4355cba8889524b5 (2 calls, 3.03%)</title><rect x="600.0" y="245" width="35.8" height="15.0" fill="rgb(0,199,191)" rx="2" ry="2" />
+<text  x="603.00" y="255.5" >Spa..</text>
+</g>
+<g >
+<title>IsolateEnterStub_PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df_06195ea7c1ac11d884862c6f069b026336aa4f8c (5 calls, 7.58%)</title><rect x="10.0" y="693" width="89.4" height="15.0" fill="rgb(0,195,29)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" >IsolateEnt..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="135.2" y="597" width="17.8" height="15.0" fill="rgb(0,224,46)" rx="2" ry="2" />
+<text  x="138.15" y="607.5" ></text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (1 calls, 1.52%)</title><rect x="278.2" y="485" width="17.9" height="15.0" fill="rgb(0,194,52)" rx="2" ry="2" />
+<text  x="281.18" y="495.5" ></text>
+</g>
+<g >
+<title>start_thread (5 calls, 7.58%)</title><rect x="10.0" y="709" width="89.4" height="15.0" fill="rgb(0,232,88)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" >start_thread</text>
+</g>
+<g >
+<title>_dl_start_final (8 calls, 12.12%)</title><rect x="1047.0" y="693" width="143.0" height="15.0" fill="rgb(0,233,160)" rx="2" ry="2" />
+<text  x="1049.97" y="703.5" >_dl_start_final</text>
+</g>
+<g >
+<title>__libc_start_call_main (14 calls, 21.21%)</title><rect x="99.4" y="725" width="250.3" height="15.0" fill="rgb(0,195,56)" rx="2" ry="2" />
+<text  x="102.39" y="735.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>VertxBuilder_vertx_96fbf1a3cb1f742947b0ca876c6065e325fb888f (1 calls, 1.52%)</title><rect x="331.8" y="533" width="17.9" height="15.0" fill="rgb(0,231,99)" rx="2" ry="2" />
+<text  x="334.82" y="543.5" ></text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstance_39ae850940ab632d109995344de15fd9d3b31d84 (2 calls, 3.03%)</title><rect x="242.4" y="469" width="35.8" height="15.0" fill="rgb(0,197,60)" rx="2" ry="2" />
+<text  x="245.42" y="479.5" >Thr..</text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (1 calls, 1.52%)</title><rect x="278.2" y="533" width="17.9" height="15.0" fill="rgb(0,231,167)" rx="2" ry="2" />
+<text  x="281.18" y="543.5" ></text>
+</g>
+<g >
+<title>GCImpl_walkStack_db4fc1334f940e49aed72298697727fa7c734a34 (2 calls, 3.03%)</title><rect x="600.0" y="277" width="35.8" height="15.0" fill="rgb(0,207,126)" rx="2" ry="2" />
+<text  x="603.00" y="287.5" >GCI..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="135.2" y="565" width="17.8" height="15.0" fill="rgb(0,210,194)" rx="2" ry="2" />
+<text  x="138.15" y="575.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_proceed_9c964787d99e4f1963ca2bbf11023dd470a97678 (2 calls, 3.03%)</title><rect x="188.8" y="357" width="35.7" height="15.0" fill="rgb(0,205,60)" rx="2" ry="2" />
+<text  x="191.79" y="367.5" >Sma..</text>
+</g>
+<g >
+<title>ThreadLocalAllocation_slowPathNewInstance_39ae850940ab632d109995344de15fd9d3b31d84 (2 calls, 3.03%)</title><rect x="707.3" y="629" width="35.7" height="15.0" fill="rgb(0,195,11)" rx="2" ry="2" />
+<text  x="710.27" y="639.5" >Thr..</text>
+</g>
+<g >
+<title>__GI___mmap64 (5 calls, 7.58%)</title><rect x="10.0" y="549" width="89.4" height="15.0" fill="rgb(0,216,201)" rx="2" ry="2" />
+<text  x="13.00" y="559.5" >__GI___mma..</text>
+</g>
+<g >
+<title>PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df (3 calls, 4.55%)</title><rect x="760.9" y="693" width="53.6" height="15.0" fill="rgb(0,217,160)" rx="2" ry="2" />
+<text  x="763.91" y="703.5" >Posix..</text>
+</g>
+<g >
+<title>__minimal_malloc (1 calls, 1.52%)</title><rect x="564.2" y="549" width="17.9" height="15.0" fill="rgb(0,234,91)" rx="2" ry="2" />
+<text  x="567.24" y="559.5" ></text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_doStartThread_f74c626e81f588e0747a3e04c8bdb98bee0cbdb6 (2 calls, 3.03%)</title><rect x="296.1" y="405" width="35.7" height="15.0" fill="rgb(0,216,108)" rx="2" ry="2" />
+<text  x="299.06" y="415.5" >Sin..</text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="135.2" y="613" width="35.7" height="15.0" fill="rgb(0,222,168)" rx="2" ry="2" />
+<text  x="138.15" y="623.5" >OSC..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="224.5" y="517" width="17.9" height="15.0" fill="rgb(0,197,133)" rx="2" ry="2" />
+<text  x="227.55" y="527.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="743.0" y="549" width="17.9" height="15.0" fill="rgb(0,217,192)" rx="2" ry="2" />
+<text  x="746.03" y="559.5" ></text>
+</g>
+<g >
+<title>_dl_load_cache_lookup (1 calls, 1.52%)</title><rect x="367.6" y="581" width="17.9" height="15.0" fill="rgb(0,218,42)" rx="2" ry="2" />
+<text  x="370.58" y="591.5" ></text>
+</g>
+<g >
+<title>VertxHttpProcessor$openSocket1866188241_deploy_0_f62af8cc66423d57d1e40c5a1ec11136d1b717ee (2 calls, 3.03%)</title><rect x="296.1" y="613" width="35.7" height="15.0" fill="rgb(0,217,39)" rx="2" ry="2" />
+<text  x="299.06" y="623.5" >Ver..</text>
+</g>
+<g >
+<title>arena_get2.part.0 (5 calls, 7.58%)</title><rect x="10.0" y="581" width="89.4" height="15.0" fill="rgb(0,212,46)" rx="2" ry="2" />
+<text  x="13.00" y="591.5" >arena_get2..</text>
+</g>
+<g >
+<title>DeploymentManager$$Lambda$2780e112bbbc503323919310b7eba5d4bd5972e7_handle_46ed4864dbed50147dc1770382bbc2cd6058e622 (3 calls, 4.55%)</title><rect x="760.9" y="517" width="53.6" height="15.0" fill="rgb(0,225,178)" rx="2" ry="2" />
+<text  x="763.91" y="527.5" >Deplo..</text>
+</g>
+<g >
+<title>__clone3 (5 calls, 7.58%)</title><rect x="10.0" y="725" width="89.4" height="15.0" fill="rgb(0,190,171)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" >__clone3</text>
+</g>
+<g >
+<title>VMOperationControl$WorkQueues_enqueueAndExecute_ab94e6b59bf62abe2fd68824c94f4e3e89ee1fec (2 calls, 3.03%)</title><rect x="600.0" y="469" width="35.8" height="15.0" fill="rgb(0,212,147)" rx="2" ry="2" />
+<text  x="603.00" y="479.5" >VMO..</text>
+</g>
+<g >
+<title>_nl_find_locale (13 calls, 19.70%)</title><rect x="814.5" y="645" width="232.5" height="15.0" fill="rgb(0,238,209)" rx="2" ry="2" />
+<text  x="817.55" y="655.5" >_nl_find_locale</text>
+</g>
+<g >
+<title>String_substring_4989a637ecbe1eecc1c126665598175df66fa98b (6 calls, 9.09%)</title><rect x="600.0" y="629" width="107.3" height="15.0" fill="rgb(0,191,143)" rx="2" ry="2" />
+<text  x="603.00" y="639.5" >String_substr..</text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (1 calls, 1.52%)</title><rect x="224.5" y="565" width="17.9" height="15.0" fill="rgb(0,207,138)" rx="2" ry="2" />
+<text  x="227.55" y="575.5" ></text>
+</g>
+<g >
+<title>AbstractContext_dispatch_2e4239181cf36b3eb1bade1eb323527ec6d95b1b (3 calls, 4.55%)</title><rect x="760.9" y="533" width="53.6" height="15.0" fill="rgb(0,199,143)" rx="2" ry="2" />
+<text  x="763.91" y="543.5" >Abstr..</text>
+</g>
+<g >
+<title>ApplicationLifecycleManager_run_dbf144db2a98237beac0f2d82fb961c3bd6ed251 (10 calls, 15.15%)</title><rect x="170.9" y="677" width="178.8" height="15.0" fill="rgb(0,203,23)" rx="2" ry="2" />
+<text  x="173.91" y="687.5" >ApplicationLifecycleMan..</text>
+</g>
+<g >
+<title>openaux (12 calls, 18.18%)</title><rect x="367.6" y="613" width="214.5" height="15.0" fill="rgb(0,211,49)" rx="2" ry="2" />
+<text  x="370.58" y="623.5" >openaux</text>
+</g>
+<g >
+<title>VertxHttpRecorder_doServerStart_5a2b82f625f728fe2208f2246f8f2a6468c96864 (2 calls, 3.03%)</title><rect x="296.1" y="581" width="35.7" height="15.0" fill="rgb(0,213,130)" rx="2" ry="2" />
+<text  x="299.06" y="591.5" >Ver..</text>
+</g>
+<g >
+<title>GCImpl_doCollectImpl_fbd075fd8f6a582cb98120cb239cf3c0b6b9e194 (2 calls, 3.03%)</title><rect x="600.0" y="357" width="35.8" height="15.0" fill="rgb(0,218,173)" rx="2" ry="2" />
+<text  x="603.00" y="367.5" >GCI..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="617.9" y="117" width="17.9" height="15.0" fill="rgb(0,214,96)" rx="2" ry="2" />
+<text  x="620.88" y="127.5" ></text>
+</g>
+<g >
+<title>CEntryPointSnippets_initializeIsolate_e333d82bd35783c8b613a55bbbd43b638369c0b3 (2 calls, 3.03%)</title><rect x="135.2" y="693" width="35.7" height="15.0" fill="rgb(0,229,145)" rx="2" ry="2" />
+<text  x="138.15" y="703.5" >CEn..</text>
+</g>
+<g >
+<title>_dl_start (13 calls, 19.70%)</title><rect x="367.6" y="709" width="232.4" height="15.0" fill="rgb(0,233,57)" rx="2" ry="2" />
+<text  x="370.58" y="719.5" >_dl_start</text>
+</g>
+<g >
+<title>AbstractChannel$AbstractUnsafe_register_2744d84bbc7e889a989d147a043d0f7a3a80eed2 (1 calls, 1.52%)</title><rect x="760.9" y="229" width="17.9" height="15.0" fill="rgb(0,233,152)" rx="2" ry="2" />
+<text  x="763.91" y="239.5" ></text>
+</g>
+<g >
+<title>Space_copyAlignedObject_d7891d8a99bfb98b789c1e3e8204582e0467ac4a (2 calls, 3.03%)</title><rect x="600.0" y="229" width="35.8" height="15.0" fill="rgb(0,220,30)" rx="2" ry="2" />
+<text  x="603.00" y="239.5" >Spa..</text>
+</g>
+<g >
+<title>PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df (8 calls, 12.12%)</title><rect x="600.0" y="693" width="143.0" height="15.0" fill="rgb(0,230,13)" rx="2" ry="2" />
+<text  x="603.00" y="703.5" >PosixJavaThreads_p..</text>
+</g>
+<g >
+<title>VMOperationControl_enqueue_03e7b9db64ca751377c28fff6e469d5ec4037d0d (2 calls, 3.03%)</title><rect x="600.0" y="485" width="35.8" height="15.0" fill="rgb(0,202,189)" rx="2" ry="2" />
+<text  x="603.00" y="495.5" >VMO..</text>
+</g>
+<g >
+<title>sysmalloc_mmap.isra.0 (1 calls, 1.52%)</title><rect x="349.7" y="629" width="17.9" height="15.0" fill="rgb(0,206,147)" rx="2" ry="2" />
+<text  x="352.70" y="639.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1172.1" y="581" width="17.9" height="15.0" fill="rgb(0,208,98)" rx="2" ry="2" />
+<text  x="1175.12" y="591.5" ></text>
+</g>
+<g >
+<title>__calloc (5 calls, 7.58%)</title><rect x="10.0" y="613" width="89.4" height="15.0" fill="rgb(0,214,41)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" >__calloc</text>
+</g>
+<g >
+<title>__gconv_load_cache (1 calls, 1.52%)</title><rect x="814.5" y="581" width="17.9" height="15.0" fill="rgb(0,239,17)" rx="2" ry="2" />
+<text  x="817.55" y="591.5" ></text>
+</g>
+<g >
+<title>RelocateConfigSourceInterceptor_getValue_46ef945cb9eeb44c725f2a6dd4a5647d07ee31d6 (2 calls, 3.03%)</title><rect x="188.8" y="373" width="35.7" height="15.0" fill="rgb(0,218,49)" rx="2" ry="2" />
+<text  x="191.79" y="383.5" >Rel..</text>
+</g>
+<g >
+<title>TCPServerBase_bind_93cece6990dad3f066ca37fea036b01ccf96de1d (3 calls, 4.55%)</title><rect x="760.9" y="405" width="53.6" height="15.0" fill="rgb(0,211,90)" rx="2" ry="2" />
+<text  x="763.91" y="415.5" >TCPSe..</text>
+</g>
+<g >
+<title>SmallRyeConfig_getOptionalValue_e1e497b08e076b8e6ebb5d3d4107169c901d9ebe (2 calls, 3.03%)</title><rect x="188.8" y="581" width="35.7" height="15.0" fill="rgb(0,206,38)" rx="2" ry="2" />
+<text  x="191.79" y="591.5" >Sma..</text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="760.9" y="37" width="17.9" height="15.0" fill="rgb(0,219,33)" rx="2" ry="2" />
+<text  x="763.91" y="47.5" ></text>
+</g>
+<g >
+<title>OSCommittedMemoryProvider_allocate_f8d80d596cf0c26612afa4c08c54998e761aa867 (2 calls, 3.03%)</title><rect x="242.4" y="421" width="35.8" height="15.0" fill="rgb(0,231,174)" rx="2" ry="2" />
+<text  x="245.42" y="431.5" >OSC..</text>
+</g>
+<g >
+<title>GCImpl_maybeCollectOnAllocation_2f1035515c6a41b10122086ba472b562d017fbcf (2 calls, 3.03%)</title><rect x="600.0" y="533" width="35.8" height="15.0" fill="rgb(0,229,138)" rx="2" ry="2" />
+<text  x="603.00" y="543.5" >GCI..</text>
+</g>
+<g >
+<title>FastThreadLocalRunnable_run_0329ad2c5210a091812879bcecd155c58e561e60 (3 calls, 4.55%)</title><rect x="760.9" y="645" width="53.6" height="15.0" fill="rgb(0,234,68)" rx="2" ry="2" />
+<text  x="763.91" y="655.5" >FastT..</text>
+</g>
+<g >
+<title>PropertyNamesConfigSourceInterceptor_iterateNames_0ff8b371f735957a7adeea77cbb04fbd359d0605 (2 calls, 3.03%)</title><rect x="242.4" y="549" width="35.8" height="15.0" fill="rgb(0,194,78)" rx="2" ry="2" />
+<text  x="245.42" y="559.5" >Pro..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_reserve_b6c76ffcfaac89204e3ddd5f1a5cd110a1860862 (1 calls, 1.52%)</title><rect x="153.0" y="597" width="17.9" height="15.0" fill="rgb(0,204,198)" rx="2" ry="2" />
+<text  x="156.03" y="607.5" ></text>
+</g>
+<g >
+<title>init_tls (1 calls, 1.52%)</title><rect x="582.1" y="645" width="17.9" height="15.0" fill="rgb(0,228,175)" rx="2" ry="2" />
+<text  x="585.12" y="655.5" ></text>
+</g>
+<g >
+<title>GCImpl_collectWithoutAllocating_7b5a2f4b33834a1092beae4b5758ad4f755a6f25 (2 calls, 3.03%)</title><rect x="600.0" y="517" width="35.8" height="15.0" fill="rgb(0,235,140)" rx="2" ry="2" />
+<text  x="603.00" y="527.5" >GCI..</text>
+</g>
+<g >
+<title>SingleThreadEventExecutor_runAllTasks_1c632c8f112449f5c5cb92250f70fa224c43b8f9 (3 calls, 4.55%)</title><rect x="760.9" y="581" width="53.6" height="15.0" fill="rgb(0,196,51)" rx="2" ry="2" />
+<text  x="763.91" y="591.5" >Singl..</text>
+</g>
+<g >
+<title>ConfigGenerationBuildStep$checkForBuildTimeConfigChange930460376_deploy_0_9510400b1d8917c5a64cf12ce2224bf2ca96bb02 (2 calls, 3.03%)</title><rect x="188.8" y="613" width="35.7" height="15.0" fill="rgb(0,237,13)" rx="2" ry="2" />
+<text  x="191.79" y="623.5" >Con..</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (1 calls, 1.52%)</title><rect x="707.3" y="565" width="17.9" height="15.0" fill="rgb(0,221,115)" rx="2" ry="2" />
+<text  x="710.27" y="575.5" ></text>
+</g>
+<g >
+<title>__GI_setlocale (13 calls, 19.70%)</title><rect x="814.5" y="661" width="232.5" height="15.0" fill="rgb(0,218,69)" rx="2" ry="2" />
+<text  x="817.55" y="671.5" >__GI_setlocale</text>
+</g>
+<g >
+<title>SecretKeysConfigSourceInterceptor_getValue_2f1acdd85e1e4c32b6f312616d8bb729e3ca09a7 (2 calls, 3.03%)</title><rect x="188.8" y="309" width="35.7" height="15.0" fill="rgb(0,214,6)" rx="2" ry="2" />
+<text  x="191.79" y="319.5" >Sec..</text>
+</g>
+<g >
+<title>HttpServerImpl_listen_1d9a00c8033b9574391a09fa7bd965d1ff7f1675 (3 calls, 4.55%)</title><rect x="760.9" y="421" width="53.6" height="15.0" fill="rgb(0,224,155)" rx="2" ry="2" />
+<text  x="763.91" y="431.5" >HttpS..</text>
+</g>
+<g >
+<title>dl_main (8 calls, 12.12%)</title><rect x="1047.0" y="661" width="143.0" height="15.0" fill="rgb(0,202,65)" rx="2" ry="2" />
+<text  x="1049.97" y="671.5" >dl_main</text>
+</g>
+<g >
+<title>SmallRyeConfig_getPropertyNames_709096a2192676960e831259cdf710785f5d892e (2 calls, 3.03%)</title><rect x="242.4" y="581" width="35.8" height="15.0" fill="rgb(0,233,132)" rx="2" ry="2" />
+<text  x="245.42" y="591.5" >Sma..</text>
+</g>
+<g >
+<title>HttpServerImpl_listen_924344dca4d1462c93ec93b2d8a5621ac5568922 (3 calls, 4.55%)</title><rect x="760.9" y="437" width="53.6" height="15.0" fill="rgb(0,213,180)" rx="2" ry="2" />
+<text  x="763.91" y="447.5" >HttpS..</text>
+</g>
+<g >
+<title>HeapChunkProvider_produceAlignedChunk_151eeb69b2ff04e5a10d422de20e777d95b68672 (2 calls, 3.03%)</title><rect x="135.2" y="629" width="35.7" height="15.0" fill="rgb(0,195,197)" rx="2" ry="2" />
+<text  x="138.15" y="639.5" >Hea..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="188.8" y="117" width="17.9" height="15.0" fill="rgb(0,205,62)" rx="2" ry="2" />
+<text  x="191.79" y="127.5" ></text>
+</g>
+<g >
+<title>dl_main (13 calls, 19.70%)</title><rect x="367.6" y="661" width="232.4" height="15.0" fill="rgb(0,239,86)" rx="2" ry="2" />
+<text  x="370.58" y="671.5" >dl_main</text>
+</g>
+<g >
+<title>taskset (21 calls, 31.82%)</title><rect x="814.5" y="741" width="375.5" height="15.0" fill="rgb(0,192,58)" rx="2" ry="2" />
+<text  x="817.55" y="751.5" >taskset</text>
+</g>
+<g >
+<title>all (66 calls, 100%)</title><rect x="10.0" y="757" width="1180.0" height="15.0" fill="rgb(0,226,8)" rx="2" ry="2" />
+<text  x="13.00" y="767.5" ></text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (1 calls, 1.52%)</title><rect x="760.9" y="117" width="17.9" height="15.0" fill="rgb(0,237,6)" rx="2" ry="2" />
+<text  x="763.91" y="127.5" ></text>
+</g>
+<g >
+<title>JavaThreads_startThread_4a48623aeb6d5a9f3cf7f8dabdba7ffbb99828ba (1 calls, 1.52%)</title><rect x="278.2" y="501" width="17.9" height="15.0" fill="rgb(0,215,47)" rx="2" ry="2" />
+<text  x="281.18" y="511.5" ></text>
+</g>
+<g >
+<title>ntloop-thread-1 (4 calls, 6.06%)</title><rect x="743.0" y="741" width="71.5" height="15.0" fill="rgb(0,237,111)" rx="2" ry="2" />
+<text  x="746.03" y="751.5" >ntloop-t..</text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (1 calls, 1.52%)</title><rect x="170.9" y="517" width="17.9" height="15.0" fill="rgb(0,197,141)" rx="2" ry="2" />
+<text  x="173.91" y="527.5" ></text>
+</g>
+<g >
+<title>_dl_sysdep_start (13 calls, 19.70%)</title><rect x="367.6" y="677" width="232.4" height="15.0" fill="rgb(0,228,149)" rx="2" ry="2" />
+<text  x="370.58" y="687.5" >_dl_sysdep_start</text>
+</g>
+<g >
+<title>IsolateEnterStub_PosixJavaThreads_pthreadStartRoutine_e1f4a8c0039f8337338252cd8734f63a79b5e3df_06195ea7c1ac11d884862c6f069b026336aa4f8c (8 calls, 12.12%)</title><rect x="600.0" y="709" width="143.0" height="15.0" fill="rgb(0,233,40)" rx="2" ry="2" />
+<text  x="603.00" y="719.5" >IsolateEnterStub_P..</text>
+</g>
+<g >
+<title>__mmap64 (10 calls, 15.15%)</title><rect x="385.5" y="549" width="178.7" height="15.0" fill="rgb(0,219,159)" rx="2" ry="2" />
+<text  x="388.45" y="559.5" >__mmap64</text>
+</g>
+<g >
+<title>VertxImpl_deployVerticle_b3ce74c752ac28ceba0a6a5f10e8c73f24f312fb (2 calls, 3.03%)</title><rect x="296.1" y="549" width="35.7" height="15.0" fill="rgb(0,224,12)" rx="2" ry="2" />
+<text  x="299.06" y="559.5" >Ver..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="796.7" y="213" width="17.8" height="15.0" fill="rgb(0,196,146)" rx="2" ry="2" />
+<text  x="799.67" y="223.5" ></text>
+</g>
+<g >
+<title>DeploymentManager_doDeploy_13ca90eebffa21856f602fd4ed6b030ab866132b (2 calls, 3.03%)</title><rect x="296.1" y="501" width="35.7" height="15.0" fill="rgb(0,207,169)" rx="2" ry="2" />
+<text  x="299.06" y="511.5" >Dep..</text>
+</g>
+<g >
+<title>openaux (7 calls, 10.61%)</title><rect x="1047.0" y="613" width="125.1" height="15.0" fill="rgb(0,217,96)" rx="2" ry="2" />
+<text  x="1049.97" y="623.5" >openaux</text>
+</g>
+<g >
+<title>PosixVirtualMemoryProvider_commit_9aa7fc44c70177db46488e00268c856970d185aa (2 calls, 3.03%)</title><rect x="635.8" y="501" width="35.7" height="15.0" fill="rgb(0,207,202)" rx="2" ry="2" />
+<text  x="638.76" y="511.5" >Pos..</text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (1 calls, 1.52%)</title><rect x="760.9" y="69" width="17.9" height="15.0" fill="rgb(0,190,58)" rx="2" ry="2" />
+<text  x="763.91" y="79.5" ></text>
+</g>
+<g >
+<title>__GI___mmap64 (1 calls, 1.52%)</title><rect x="188.8" y="101" width="17.9" height="15.0" fill="rgb(0,203,5)" rx="2" ry="2" />
+<text  x="191.79" y="111.5" ></text>
+</g>
+<g >
+<title>PosixJavaThreads_doStartThread_d86493a94746fb837887c6a0e52e99e18ac5be71 (1 calls, 1.52%)</title><rect x="224.5" y="549" width="17.9" height="15.0" fill="rgb(0,197,174)" rx="2" ry="2" />
+<text  x="227.55" y="559.5" ></text>
+</g>
+<g >
+<title>ConfigGenerationBuildStep$checkForBuildTimeConfigChange930460376_deploy_a6d15ff8f875aaea3aec8a49e3771b3bdf10037b (2 calls, 3.03%)</title><rect x="188.8" y="629" width="35.7" height="15.0" fill="rgb(0,208,129)" rx="2" ry="2" />
+<text  x="191.79" y="639.5" >Con..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="582.1" y="597" width="17.9" height="15.0" fill="rgb(0,199,207)" rx="2" ry="2" />
+<text  x="585.12" y="607.5" ></text>
+</g>
+<g >
+<title>Thread_start_d043f016dd75eb113f895de55f2e129bad1ee51a (1 calls, 1.52%)</title><rect x="170.9" y="565" width="17.9" height="15.0" fill="rgb(0,205,163)" rx="2" ry="2" />
+<text  x="173.91" y="575.5" ></text>
+</g>
+<g >
+<title>ThreadExecutorMap$1_execute_82a130cdd46546392da3ffac84de8c998f29d43c (2 calls, 3.03%)</title><rect x="296.1" y="389" width="35.7" height="15.0" fill="rgb(0,202,15)" rx="2" ry="2" />
+<text  x="299.06" y="399.5" >Thr..</text>
+</g>
+<g >
+<title>CEntryPointSnippets_createIsolate_f1111fe1c782eae0d0e674e1aba1dff3bc5e04ea (2 calls, 3.03%)</title><rect x="99.4" y="693" width="35.8" height="15.0" fill="rgb(0,193,92)" rx="2" ry="2" />
+<text  x="102.39" y="703.5" >CEn..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="135.2" y="581" width="17.8" height="15.0" fill="rgb(0,204,201)" rx="2" ry="2" />
+<text  x="138.15" y="591.5" ></text>
+</g>
+<g >
+<title>__mmap64 (5 calls, 7.58%)</title><rect x="1064.8" y="549" width="89.4" height="15.0" fill="rgb(0,190,70)" rx="2" ry="2" />
+<text  x="1067.85" y="559.5" >__mmap64</text>
+</g>
+<g >
+<title>TCPServerBase_listen_9f83e836379aee95093813ab858887554dc49ea8 (3 calls, 4.55%)</title><rect x="760.9" y="389" width="53.6" height="15.0" fill="rgb(0,210,186)" rx="2" ry="2" />
+<text  x="763.91" y="399.5" >TCPSe..</text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="367.6" y="549" width="17.9" height="15.0" fill="rgb(0,220,147)" rx="2" ry="2" />
+<text  x="370.58" y="559.5" ></text>
+</g>
+<g >
+<title>GCImpl_collectOperation_ed357ac3395b351b396449f161fbdf4e10072716 (2 calls, 3.03%)</title><rect x="600.0" y="389" width="35.8" height="15.0" fill="rgb(0,210,0)" rx="2" ry="2" />
+<text  x="603.00" y="399.5" >GCI..</text>
+</g>
+<g >
+<title>_dl_map_object_from_fd (6 calls, 9.09%)</title><rect x="1064.8" y="581" width="107.3" height="15.0" fill="rgb(0,209,152)" rx="2" ry="2" />
+<text  x="1067.85" y="591.5" >_dl_map_objec..</text>
+</g>
+<g >
+<title>ThreadPoolSetup$createExecutor2117483448_deploy_0_3dd9cc2582a27d4a6d2852c6124e8496e7871598 (1 calls, 1.52%)</title><rect x="278.2" y="613" width="17.9" height="15.0" fill="rgb(0,209,162)" rx="2" ry="2" />
+<text  x="281.18" y="623.5" ></text>
+</g>
+<g >
+<title>__mmap64 (1 calls, 1.52%)</title><rect x="1154.2" y="517" width="17.9" height="15.0" fill="rgb(0,219,209)" rx="2" ry="2" />
+<text  x="1157.24" y="527.5" ></text>
+</g>
+<g >
+<title>__pthread_create_2_1 (1 calls, 1.52%)</title><rect x="278.2" y="469" width="17.9" height="15.0" fill="rgb(0,232,120)" rx="2" ry="2" />
+<text  x="281.18" y="479.5" ></text>
+</g>
+<g >
+<title>_dl_load_cache_lookup (1 calls, 1.52%)</title><rect x="1047.0" y="581" width="17.8" height="15.0" fill="rgb(0,194,139)" rx="2" ry="2" />
+<text  x="1049.97" y="591.5" ></text>
+</g>
+<g >
+<title>VMThreads_allocateIsolateThread_b8a2bf631a4044b3866927885f0df40426ce7112 (1 calls, 1.52%)</title><rect x="743.0" y="645" width="17.9" height="15.0" fill="rgb(0,232,48)" rx="2" ry="2" />
+<text  x="746.03" y="655.5" ></text>
+</g>
+<g >
+<title>GCImpl_scavenge_b7271340e4da983a7681bb635dfa2dfffa6ce7ba (2 calls, 3.03%)</title><rect x="600.0" y="325" width="35.8" height="15.0" fill="rgb(0,205,77)" rx="2" ry="2" />
+<text  x="603.00" y="335.5" >GCI..</text>
+</g>
+<g >
+<title>Mman$NoTransitions_mmap_ad3e6292a0b9b003af70a93872953b6914241246 (1 calls, 1.52%)</title><rect x="242.4" y="389" width="17.9" height="15.0" fill="rgb(0,210,152)" rx="2" ry="2" />
+<text  x="245.42" y="399.5" ></text>
+</g>
+<g >
+<title>BlockedThreadChecker_constructor_aebdc0b7f679dd8ad2be8107ade750d1995b9918 (1 calls, 1.52%)</title><rect x="331.8" y="501" width="17.9" height="15.0" fill="rgb(0,209,32)" rx="2" ry="2" />
+<text  x="334.82" y="511.5" ></text>
+</g>
+<g >
+<title>SmallRyeConfigSourceInterceptorContext_iterateNames_9f81ee375be20a850a9e38787c01c629ae5d16c3 (2 calls, 3.03%)</title><rect x="242.4" y="565" width="35.8" height="15.0" fill="rgb(0,217,111)" rx="2" ry="2" />
+<text  x="245.42" y="575.5" >Sma..</text>
+</g>
+<g >
+<title>RelocateConfigSourceInterceptor_getValue_46ef945cb9eeb44c725f2a6dd4a5647d07ee31d6 (2 calls, 3.03%)</title><rect x="188.8" y="341" width="35.7" height="15.0" fill="rgb(0,190,75)" rx="2" ry="2" />
+<text  x="191.79" y="351.5" >Rel..</text>
+</g>
+<g >
+<title>ThreadExecutorMap$2_run_66c8943ee6536a10df07f979fb6cd278adcf96bc (3 calls, 4.55%)</title><rect x="760.9" y="629" width="53.6" height="15.0" fill="rgb(0,205,4)" rx="2" ry="2" />
+<text  x="763.91" y="639.5" >Threa..</text>
+</g>
+</g>
+</svg>
