@@ -469,15 +469,15 @@ link:https://datatracker.ietf.org/doc/html/rfc7636[Proof Key for Code Exchange] 
 While PKCE is of primary importance to public OpenID Connect clients, such as SPA scripts running in a browser, it can also provide an extra level of protection to Quarkus OIDC `web-app` applications. 
 With PKCE, Quarkus OIDC `web-app` applications are confidential OpenID Connect clients capable of securely storing the client secret and using it to exchange the code for the tokens.
 
-You can enable `PKCE` for your OIDC `web-app` endpoint with a `quarkus.oidc.authentication.pkce-required` property and a 32-character secret, as shown in the following example:
+You can enable `PKCE` for your OIDC `web-app` endpoint with a `quarkus.oidc.authentication.pkce-required` property and a 32-character secret which is required to encrypt the PKCE code verifier in the state cookie, as shown in the following example:
 
 [source, properties]
 ----
 quarkus.oidc.authentication.pkce-required=true
-quarkus.oidc.authentication.pkce-secret=eUk1p7UB3nFiXZGUXi0uph1Y9p34YhBU
+quarkus.oidc.authentication.state-secret=eUk1p7UB3nFiXZGUXi0uph1Y9p34YhBU
 ----
 
-If you already have a 32-characters client secret then you do not need to set the  `quarkus.oidc.authentication.pkce-secret` property unless you prefer to use a different secret key.
+If you already have a 32-characters client secret then you do not need to set the  `quarkus.oidc.authentication.pkce-secret` property unless you prefer to use a different secret key. This secret will be auto-generated if it is not configured and if the fallback to the client secret is not possible in case of the client secret being less than 16 characters long.
 
 The secret key is required for encrypting a randomly generated `PKCE` `code_verifier` while the user is being redirected with the `code_challenge` query parameter to an OIDC provider to authenticate.
 The `code_verifier` is decrypted when the user is redirected back to Quarkus and sent to the token endpoint alongside the `code`, client secret, and other parameters to complete the code exchange. 
@@ -791,7 +791,7 @@ public class ServiceResource {
 [[oidc-session]]
 ====== Using `OidcSession` for local logout
 
-`io.quarkus.oidc.OidcSession` is a wrapper around the current `IdToken`, which can help to perform a xref:local-logout[Local logout], retrieve the current session's tenant identifier, and check when the session will expire. 
+`io.quarkus.oidc.OidcSession` is a wrapper around the current `IdToken`, which can help to perform a xref:local-logout[Local logout], retrieve the current session's tenant identifier, and check when the session will expire.
 More useful methods will be added to it over time.
 [[session-management]]
 
@@ -1072,8 +1072,33 @@ You can check if implementing single-page applications (SPAs) the way it is sugg
 If you prefer to use SPAs and JavaScript APIs such as `Fetch` or `XMLHttpRequest`(XHR) with Quarkus web applications, be aware that OpenID Connect providers might not support cross-origin resource sharing (CORS) for authorization endpoints where the users are authenticated after a redirect from Quarkus. 
 This will lead to authentication failures if the Quarkus application and the OpenID Connect provider are hosted on different HTTP domains, ports, or both.
 
-In such cases, set the `quarkus.oidc.authentication.java-script-auto-redirect` property to `false`, which will instruct Quarkus to return a `499` status code and a `WWW-Authenticate` header with the `OIDC` value. 
-You must also update the browser script to set the `X-Requested-With` header with the `JavaScript` value and reload the last requested page in case of a `499` status code.
+In such cases, set the `quarkus.oidc.authentication.java-script-auto-redirect` property to `false`, which will instruct Quarkus to return a `499` status code and a `WWW-Authenticate` header with the `OIDC` value.
+
+The browser script must set a header to identify the current request as a JavaScript request for `499` status code to be returned when `quarkus.oidc.authentication.java-script-auto-redirect` property is set to `false`.
+
+If the script engine sets an engine-specific request header itself, then you can register a custom `quarkus.oidc.JavaScriptRequestChecker` bean, which will inform Quarkus if the current request is a JavaScript request. For example, if the JavaScript engine sets a header such as `HX-Request: true` then you can have it checked like this:
+
+[source,java]
+----
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.oidc.JavaScriptRequestChecker;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class CustomJavaScriptRequestChecker implements JavaScriptRequestChecker {
+
+    @Override
+    public boolean isJavaScriptRequest(RoutingContext context) {
+        return "true".equals(context.request().getHeader("HX-Request"));
+    }
+}
+----
+
+and reload the last requested page in case of a `499` status code.
+
+Otherwise you must also update the browser script to set the `X-Requested-With` header with the `JavaScript` value and reload the last requested page in case of a `499` status code.
+
 For example:
 
 [source,javascript]
