@@ -1,0 +1,593 @@
+---
+layout: post
+title: 'Secure Quarkus endpoints with OIDC and Auth0'
+date: 2023-09-07
+tags: extension oidc security auth0 development-tips
+synopsis: 'Explain how to use OIDC and Auth0 to secure Quarkus endpoints'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/oidc-auth0
+
+https://quarkus.io/guides/security-architecture[Quarkus Security] provides comprehensive OpenId Connect (OIDC) and OAuth2 support with its `quarkus-oidc` extension, supporting both https://quarkus.io/guides/security-oidc-code-flow-authentication[Authorization code flow] and https://quarkus.io/guides/security-oidc-bearer-token-authentication[Bearer token] authentication mechanisms.
+
+Well-known OIDC providers such as `Keycloak`, `Okta`, `Auth0`, `Azure`, and many https://quarkus.io/guides/security-openid-connect-providers[social providers] can be configured with ease.
+
+In this blog post we will show how `Auth0` can be used to secure your Quarkus endpoints.
+
+== Create Auth0 application
+
+Start with creating an `Auth0` application in the `Auth0` dashboard, for example, lets create a `QuarkusAuth0` web application:
+
+image::auth0-create-application.png[Create Auth0 application]
+
+`Auth0` will create it and generate the client id and secret and show its HTTPS-based domain:
+
+image::auth0-created-application.png[Created Auth0 application]
+
+You will use these 3 properties to configure Quarkus at the next step.
+
+Next, add users to this application by selecting the `Users` option in the application's dashboard, for example:
+
+image::auth0-add-user.png[Add Auth0 application users]
+
+Now that the initial `Auth0` application setup has been completed, you are ready to start creating and configuring a Quarkus endpoint. We will be updating the `Auth0` application configuration along the way as necessary.
+
+== Create Quarkus application
+
+Use the following Maven command to create a Quarkus REST application which can be secured with its OIDC extension.
+
+[source,bash]
+----
+$ mvn io.quarkus.platform:quarkus-maven-plugin:3.3.2:create \
+    -DprojectGroupId=org.acme \
+    -DprojectArtifactId=quarkus-auth0 \
+    -Dextensions='resteasy-reactive,oidc'
+cd quarkus-auth0
+----
+
+Create the application workspace and import it into your favourite IDE, you'll have a `GreetingResource` JAX-RS resource that will need to be secured:
+
+[source,java]
+----
+package org.acme;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @GET
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello from RestEasy Reactive";
+    }
+}
+----
+
+Request that only authenticated users can access the `/hello` endpoint and have the current user's name returned instead:
+
+[source,java]
+----
+package org.acme;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.oidc.IdToken;
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @Inject
+    @IdToken
+    JsonWebToken idToken;
+	
+    @GET
+    @Authenticated
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello, " + idToken.getName();
+    }
+}
+----
+
+Here we have added `io.quarkus.security.Authenticated` annotation to the `hello()` method and updated its implementation to use an injected `IdToken` `JsonWebToken` (JWT) to return the user's name. The reason we qualify an injected `JsonWebToken` as `IdToken` is because it represents a user authentication in the OIDC Authorization code flow, while an access token is used by Quarkus to access downstream services on behalf of the currently authenticated user. We will talk about using the access tokens later in this blog post.
+
+Create the Quarkus configuration in `application.properties` by using the properties from the created `Auth0` application:
+
+[source,configuration]
+----
+# Make sure the application domain is prefixed with 'https://'
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+quarkus.oidc.application-type=web-app
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+----
+
+Here, you have configured Quarkus to use the created `Auth0` application's domain, client id and secret. `quarkus.oidc.application-type=web-app` is an indication to Quarkus that the OIDC Authorization code flow must be used (we'll consider the alternatives later in this post).
+
+Note that you will use Quarkus `devmode` to test the endpoint so the endpoint address will be `http://localhost:8080/hello`. You need to register this address as an allowed callback URL in your `Auth0` application:
+
+image::auth0-allowed-callback.png[Auth0 allowed callback URL]
+
+This means that you will access the Quarkus `http://localhost:8080/hello` endpoint from the browser and `Auth0` will redirect you back to the same address after the authentication has been completed.
+
+[NOTE]
+====
+Quarkus also allows to configure the callback path with the `quarkus.oidc.authentication.redirect-path` property. Why you do not have to configure a callback path for this Quarkus application ? By default, Quarkus will use the current request path as the callback path which is why you don't have to configure `quarkus.oidc.authentication.redirect-path=/hello`.
+
+In production, your application will most likely have a larger URL space, with many more endpoint addresses available. In such cases you would configure Quarkus with a dedicated callback (redirect) path, for example, `quarkus.oidc.authentication.redirect-path=/authenticated-welcome` and register this URL in the provider's dashboard as `Auth0` will not allow an open ended list of redirect URLs. Quarkus will call the `/authenticated-welcome` after completing the Authorization code flow and creating the session cookie - and now your application can let users access other parts of the secured application without requiring the user to reauthenticate.
+====
+
+Now you are ready to start testing the endpoint.
+
+== Test Quarkus endpoint - first try
+
+Start Quarkus in `devmode`:
+
+[source,bash]
+----
+$ mvn quarkus:dev
+----
+
+This is the only time you are expected to start Quarkus manually in devmode. All the configuration and code updates in the follow up sections will be recoznized by Quarkus without having to restart it manually.
+
+Open the browser and access `http://localhost:8080/hello`, you will be redirected to `Auth0` where you will login:
+
+image::auth0-login.png[Auth0 Login]
+
+and authorize the `QuarkusAuth0` application to access your account:
+
+image::auth0-authorize.png[Auth0 Authorize]
+
+and finally you will be redirected back to the Quarkus endpoint and get a response, `Hello, auth0|60e5a305e8da5a006aef5471`.
+
+This is not the current user's name though, so why is this strange sequence returned ?
+
+Lets use https://quarkus.io/guides/security-openid-connect-dev-services#dev-ui-all-oidc-providers[Quarkus OIDC Dev UI console] to find out.
+
+== Looking at Auth0 tokens in OIDC DevUI
+
+Quarkus provides a great https://quarkus.io/guides/dev-ui-v2[DevUI] experience. In particular, it offers an out of the box support for developing and testing OIDC endpoints with a Keycloak container, https://quarkus.io/guides/security-openid-connect-dev-services#dev-services-for-keycloak[DevService for Keycloak] which is launched when the OIDC provider's address is not already configured with `quarkus.oidc.auth-server-url`.
+
+However, Quarkus users can continue using OIDC DevUI when the provider is already configured. Lets check it right now.
+
+First though, make sure you change your Quarkus application to have a `hybrid` application type, instead of the current `web-app`:
+
+[source,configuration]
+----
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+# Changed from 'web-app' to 'hybrid'
+quarkus.oidc.application-type=hybrid
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+----
+
+The reason it was changed to `hybrid` is because OIDC Dev UI currently supports an `SPA` mode only, i.e, it itself, using its own Java Script, authenticates users to the OIDC provider, and uses the access token as a `Bearer` token to access the Quarkus endpoint as a service.
+
+Typically, Quarkus has to be configured with `quarkus.oidc.application-type=service` to support `Bearer` token authentication but it also supports a `hybrid` application type which means it can support both the Authorization code flow and Bearer token flows at the same time.
+
+The other thing you need to do is to configure the Auth0 application to allow the callbacks to OIDC Dev UI, its URL format is  `http://localhost:8080/q/dev-ui/io.quarkus.quarkus-oidc/${provider-name}-provider` where in this case the `${provider-name}` is `auth0`:
+
+image::auth0-allowed-callbacks.png[Auth0 Allowed Callbacks]
+
+Now you are ready to use OIDC Dev UI with Auth0, open `http://localhost:8080/q/dev/` in the browser and you will find an OpenId Connect provider pointing to an `Auth0` provider SPA:
+
+image::auth0-devui.png[Auth0 DevUI]
+
+Click on the provider link and press `Login into Single Page Application`:
+
+image::auth0-devui-login-to-spa.png[Auth0 DevUI Login to SPA]
+
+You will be redirected to `Auth0`, where you will login and be redirected to the OIDC Dev UI Dashboard:
+
+image::auth0-devui-dashboard-without-name.png[Auth0 DevUI Dashboard Without Name]
+
+Here you can look at both ID and access tokens in the encoded and decoded formats, copy them to the clipboard or use them to test the service endpoint. We will test the endpoint later but for now lets check the ID token:
+
+image::auth0-idtoken-without-name.png[Auth0 IdToken without name]
+
+As you can see it does not have any claim representing a user name but if you check its `sub` (subject) claim you will see its value matches what you got in the response when you accessed the Quarkus endpoint directly from the browser, `auth0|60e5a305e8da5a006aef5471`.
+
+Lets fix it by configuring Quarkus to request a standard OIDC `profile` scope during the authentication process which should result in the ID token including more information:
+
+[source,configuration]
+----
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+quarkus.oidc.application-type=hybrid
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+# Request 'profile' scope in addition to the default 'openid' scope
+quarkus.oidc.authentication.scopes=profile
+----
+
+Go back to `http://localhost:8080/q/dev/`, repeat the process of logging in to `Auth0` and check the ID token again, now you should see the ID token containing the `name` claim:
+
+image::auth0-idtoken-with-name.png[Auth0 IdToken with name]
+
+You should get the name when you access the Quarkus endpoint directly from the browser. Clear the browser cookie cache just in case, access `http://localhost:8080/hello` and yet again, you get `Hello, auth0|60e5a305e8da5a006aef5471` returned. Hmm, what is wrong ?
+
+The answer lies with the specifics of the `org.eclipse.microprofile.jwt.JsonWebToken#getName()` implementation, which, according to the https://github.com/eclipse/microprofile-jwt-auth[MicroProfile MP JWT RBAC  specification], checks an MP JWT specific `upn` claim, trying `preferred_username` next and finally `sub` which explains why you get the `Hello, auth0|60e5a305e8da5a006aef5471` answer even with the ID token containing the `name` claim. We can fix it easily by changing the endpoint `hello()` method's implementation to return a specific claim value:
+
+[source,java]
+----
+package org.acme;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.oidc.IdToken;
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @Inject
+    @IdToken
+    JsonWebToken idToken;
+	
+    @GET
+    @Authenticated
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello, " + idToken.getClaim("name");
+    }
+}
+----
+
+Now clear the browser cache again, access access `http://localhost:8080/hello` and finally you get the the user name, for example, `Hello, Sergey Beryozkin`.
+
+== Logout support
+
+Now that you have the users signing in to Quarkus with the help from `Auth0`, you will likely would like to support a user initiated logout. Quarkus supports https://quarkus.io/guides/security-oidc-code-flow-authentication#logout-and-expiration[RP-initiated and other standard OIDC logout mechanisms, as well as the local session logout].
+
+Currently, `Auth0` does not support the standard `RP-initiated logout` and does not provide the end session URL in its discoverable metadata, but it offers its own logout mechanism which works pretty much the same as the standard one. With Quarkus OIDC it is easy to support. We need to configure manually the end session URL, and have Quarkus include a `client-id` in the logout request:
+
+[source,configuration]
+----
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+quarkus.oidc.application-type=hybrid
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+quarkus.oidc.authentication.scopes=openid,profile
+
+# Auth0 does not include the end sessiion URL in its metadata, so complement it with the manual configuration
+quarkus.oidc.end-session-path=v2/logout
+
+# Auth0 will not recognize the 'post_logout_redirect_uri' query parameter so make sure it is named as 'returnTo'
+quarkus.oidc.logout.post-logout-uri-param=returnTo
+# Include the client-id in the logout request
+quarkus.oidc.logout.extra-params.client_id=${quarkus.oidc.client-id}
+
+# Authenticated requests to this path will be treated as RP-inititated logout requests
+quarkus.oidc.logout.path=/logout
+# This is a public resource to where the logout user should be returned to
+quarkus.oidc.logout.post-logout-path=/hello/post-logout
+
+# Make sure the /logout path is protected:
+quarkus.http.auth.permission.authenticated.paths=/logout
+quarkus.http.auth.permission.authenticated.policy=authenticated
+----
+
+Here we have customized the `Auth0` end session URL and indicated to Quarkus that the `http://localhost:8080/logout` requests must trigger the user logout. The interesting thing about the `/logout` path is that it is `virtual`, it is not supported by any method in our JAX-RS endpoint, so for Quarkus OIDC to be able to react to `/logout` requests we attach an `authenticated` https://quarkus.io/guides/security-authorize-web-endpoints-reference#authorization-using-configuration[HTTP security policy] to this path directly in the configuration.
+
+We also have configured Quarkus to return the logged out user to the public `/hello/post-logout` resource, with this path included in the logout request as the `Auth0` specific `returnTo` query parameter. And finally, the Quarkus application's `client-id` is included in the logout URL as well.
+
+Finally, the endpoint has been updated to accept the post logout redirects:
+
+[source,java]
+----
+package org.acme;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.oidc.IdToken;
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @Inject
+    @IdToken
+    JsonWebToken idToken;
+	
+    @GET
+    @Authenticated
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello, " + idToken.getClaim("name");
+    }
+    
+    @GET
+    @Path("post-logout")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String postLogout() {
+        return "You were logged out";
+    }
+}
+----
+
+Note the addition of the public `/hello/post-logout` resource method.
+
+Before we test the logout, make sure the `Auth0` application is configured to allow this post logout redirect back to Quarkus after the user has been logged out:
+
+image::auth0-allowed-logout.png[Auth0 Allowed Logout].
+
+Now, clear the browser cookie cache, login to Quarkus by accessing `http://localhost:8080/hello`, get the user name returned, and go to `http://localhost:8080/logout`. You'll get the `You were logged out` message in the browser.
+
+Next, go to the Dev UI, `http://localhost:8080/q/dev/`, login to `Auth0` from the Dev UI SPA and notice you can now logout from the OIDC Dev UI too, see the symbol representing the logout next to the `Logged in as Sergey Beryozkin` text :
+
+image::auth0-devui-dashboard-with-name.png[Auth0 Dashboard with name and Logout].
+
+For the logout to work from OIDC DevUI, the `Auth0` application's list of allowed logout callbacks have to be updated to include the OIDC DevUI endpoint:
+
+image::auth0-allowed-logouts.png[Auth0 Allowed Logouts].
+
+Now logout directly from OIDC Dev UI and login as a new user - add more users to the registered `Auth0` application to confirm.
+
+== Role Based Access Control
+
+We have confirmed that the Quarkus endpoint can be accessed by users who have authenticated with the help of `Auth0`.
+
+The next step is to introduce Role Based Access Control (RBAC) to have users in a specific role only, such as `admin`, be able to access the endpoint.
+
+Auth0 tokens do not include any claims containing roles by default, so first you need to customize the `Login` flow of the `Auth0` application with a custom action which will add the roles. Select `Actions/Flows/Login` in the `Auth0` dashboard, choose `Add Action/Build Custom`, name it as `AddRoleClaim`:
+
+image::auth0-add-role-action.png[Auth0 Add Role Action]
+
+And add the following action script to it:
+
+[source,javascript]
+----
+exports.onExecutePostLogin = async (event, api) => {
+  const namespace = 'https://quarkus-security.com';
+  if (event.authorization) {
+    api.idToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+    api.accessToken.setCustomClaim(`${namespace}/roles`, event.authorization.roles);
+  }
+};
+----
+
+Note a custom Auth0 claim has to be namespace qualified, so the claim which will contain roles will be named as "https://quarkus-security.com/roles". Have a look at the ID token content we analyzed in the previous sections, you will see how this claim is represented.
+
+The `Auth0` Login Flow diagramm should look like this now:
+
+image::auth0-login-flow.png[Auth0 Login Flow]
+
+Now you need to add a role such as `admin` to the users registered in the `Auth0` application.
+
+Create an `admin` role:
+
+image::auth0-create-role.png[Auth0 Create Role]
+
+and add it to the registered user:
+
+image::auth0-add-role-to-user.png[Auth0 Add Role to User]
+
+Next, update the Quarkus endpoint to require that only users with the `admin` role can access the endpoint:
+
+[source,java]
+----
+package org.acme;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.oidc.IdToken;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @Inject
+    @IdToken
+    JsonWebToken idToken;
+	
+    @GET
+    @RolesAllowed("admin")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello, " + idToken.getClaim("name");
+    }
+    
+    @GET
+    @Path("post-logout")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String postLogout() {
+        return "You were logged out";
+    }
+}
+----
+
+Open `http://localhost:8080/hello`, authenticate to `Auth0` and get `403`. The reason you get `403` is because Quarkus OIDC does not know which claim in the `Auth0` tokens represents the roles information, by default a `groups` claim is checked, while `Auth0` tokens are now expected to have an "https://quarkus-security.com/roles" claim.
+
+We can fix it by telling Quarkus OIDC which claim must be checked to enforce RBAC:
+
+[source,configuration]
+----
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+quarkus.oidc.application-type=hybrid
+quarkus.oidc.authentication.scopes=profile
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+
+// Point to the custom roles claim
+quarkus.oidc.roles.role-claim-path="https://quarkus-security.com/roles"
+
+// Logout
+quarkus.oidc.end-session-path=v2/logout
+quarkus.oidc.logout.post-logout-uri-param=returnTo
+quarkus.oidc.logout.extra-params.client_id=${quarkus.oidc.client-id}
+quarkus.oidc.logout.path=/logout
+quarkus.oidc.logout.post-logout-path=/hello/post-logout
+quarkus.http.auth.permission.authenticated.paths=/logout
+quarkus.http.auth.permission.authenticated.policy=authenticated
+----
+
+Here we have pointed out to the custom role with `quarkus.oidc.roles.role-claim-path="https://quarkus-security.com/roles"`. The path to the roles claim is in double quotes because the claim is namespace qualified.
+
+Now, clear the browser cookie cache just in case, open `http://localhost:8080/hello` again, authenticate to `Auth0` and get an expected user name.
+
+== Access Quarkus with Auth0 access tokens
+
+So far we have only tested the Quarkus endpoint using OIDC Authorization code flow. In this flow you use the browser to access the Quarkus endpoint, Quarkus itself manages the authorization code flow, you are redirected to Auth0, login, are redirected back to Quarkus, Quarkus completes the flow by exchanging the code for the ID, access, and refresh tokens, and works with the ID token representing the successful user authentication. The access token is not relevant at the moment. As mentioned earlier, in the authorization code flow, Quarkus will only use the access token to access downstream services on behalf of the currently authenticated user.
+
+Lets imagine though our Quarkus endpoint is the reciepient of the `Bearer` access token: it may be the other Quarkus endpoint which is propagating it to this endpoint or it can be SPA which uses the access token to access the Quarkus endpoint. And Quarkus OIDC DevUI SPA which we already used to analyze the ID token fits perfectly for using the access token available to SPA to test the Quarkus endpoint.
+
+Lets go again to `http://localhost:8080/q/dev`, select the `OpenId Connect` card, login to Auth0, and check the Access token content:
+
+image::auth0-devui-accesstoken.png[Auth0 DevUI Access Token]
+
+The access token, as opposed to the ID token we looked at earlier, can not be decoded. This is because the access token is in `JWE` (encrypted) as opposed to `JWS` (signed) format. We can see from the decoded token headers that it has been encrypted directly with the secret key known to `Auth0` only, and therefore its content can not be decoded. From the Quarkus's perspective this access token is an `opaque` one, Quarkus can not use public `Auth0` asymmetric verification keys to verify it.
+
+For Quarkus be able to accept such access tokens, one of the two options should be available.
+The first option is to introspect the opaque token remotely using a provider's introspection endpoint. Token introspection is typically supported at the `OAuth2` level, and since `OIDC` is built on top of `OAuth2`, some OIDC providers such as Keycloak support the token introspection as well. However, `Auth0` does not support the token introspection, you can check it by looking at the publicly available `Auth0` metadata, add `/.well-known/openid-configuration` to the address of your configured `Auth0` provider, and open the resulting URL, `https://dev-3ve0cgn7.us.auth0.com/.well-known/openid-configuration`, in the browser. You will see that `Auth0` does not have an introspection endpoint:
+
+image::auth0-well-known-config.png[Auth0 Well Known Config]
+
+Therefore the other option, indirect access token verification, where the access token is used to acquire `UserInfo` from `Auth0` can be used to accept and verify opaque `Auth0` tokens. This option works because OIDC providers have to verify access tokens before they can issue `UserInfo` and `Auth0` has a `UserInfo` endpoint.
+
+So lets configure Quarkus to request that the access tokens must be verified by using them to acquite `UserInfo`:
+
+[source,configuration]
+----
+quarkus.oidc.auth-server-url=https://dev-3ve0cgn7.us.auth0.com
+quarkus.oidc.application-type=hybrid
+quarkus.oidc.authentication.scopes=profile
+quarkus.oidc.client-id=sKQu1dXjHB6r0sra0Y1YCqBZKWXqCkly
+quarkus.oidc.credentials.secret=${client-secret}
+
+// Point to the custom roles claim
+quarkus.oidc.roles.role-claim-path="https://quarkus-security.com/roles"
+
+// Logout
+quarkus.oidc.end-session-path=v2/logout
+quarkus.oidc.logout.post-logout-uri-param=returnTo
+quarkus.oidc.logout.extra-params.client_id=${quarkus.oidc.client-id}
+quarkus.oidc.logout.path=/logout
+quarkus.oidc.logout.post-logout-path=/hello/post-logout
+quarkus.http.auth.permission.authenticated.paths=/logout
+quarkus.http.auth.permission.authenticated.policy=authenticated
+
+// Verify access tokens indirectly by using them to request UserInfo
+quarkus.oidc.token.verify-access-token-with-user-info=true
+----
+
+and update the endpoint code to expect `UserInfo` as opposed to `ID token`:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.oidc.UserInfo;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class GreetingResource {
+
+    @Inject
+    UserInfo userInfo;
+	
+    @GET
+    @RolesAllowed("admin")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello, " + userInfo.getName();
+    }
+    
+    @GET
+    @Path("post-logout")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String postLogout() {
+        return "You were logged out";
+    }
+}
+----
+
+This code will now work both for the Authorization code and Bearer access token flows.
+
+Let's go to the OIDC Dev UI where we looked at the access token, enter `/hello` as the `Service Address` in the `Test Service` area and press `With Access Token` and you will get `200`:
+
+image::auth0-devui-test-accesstoken-200.png[Auth0 Dev UI Test Access token].
+
+To make sure it does work, update the test endpoint to allow a `user` role only with `@RolesAllowed("user")`. Try to access the endpoint from OIDC Dev UI again, and you will get `403`.
+
+When verifying the opaque access token indirecly, by using it to request `UserInfo`, Quarkus will use `UserInfo` as the source of the roles information, if any. As it happens, `Auth0` includes the custom role claim we created earlier in the `UserInfo` response as well.
+
+[NOTE]
+====
+You can use SwaggerUI or GraphQL from OIDC DevUI for testing the service, instead of manually entering the service path to test.
+For example, if you add
+```
+<dependency>
+   <groupId>io.quarkus</groupId>
+   <artifactId>quarkus-smallrye-openapi</artifactId>
+</dependency>
+```
+
+to your application's pom then you will see a Swagger link in OIDC Dev UI:
+
+image::auth0-devui-testservice-swagger.png[Auth0 Dev UI Test with Swagger].
+
+Click on the Swagger link and start testing the service.
+====
+
+== Propagate Auth0 access tokens
+
+Now that we have managed to use OIDC Authorization code flow and ID token as well as Bearer access token to access the Quarkus endpoint, the next typical task is to propagate the current `Auth0` access token to access the downstream service on behalf of the currently authenticated user.
+
+In fact, the last code example, showing the injected `UserInfo`, is a concrete example of the access token propagation, in this case, Quarkus propagates the `Auth0` access token to the `Auth0` `UserInfo` endpoint to acquire `UserInfo`. Quarkus does it without users having to do anything themselves.
+
+But what about propagating access tokens to some custom services ? It is very easy to achieve in Quarkus, both for the Authorization code and Bearer token flows. All you need to do is to create a Reactive REST Client interface for calling the service requiring a Bearer token access and annotate it with `@AccessToken`, for example:
+
+[source,java]
+----
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import io.quarkus.oidc.token.propagation.AccessToken;
+
+@RegisterRestClient
+@AccessToken
+@Path("/")
+public interface DownstreamServiceExpectingAuth0AccessToken {
+
+    @GET
+    String getUserName();
+}
+----
+
+and the access token either arriving to the current endpoint as the `Auth0` Bearer access token or acquired by Quarkus after completing the `Auth0` Authorization code flow, will be propagated to the target service. This is as easy as it can get.
+
+== Troubleshooting
+
+The steps described in this blog post should work exactly as they are described. The only thing you may have to do when trying different steps is to clear the browser cookies. Please get in touch with the Quarkus team for more help.
+
+== Conclusion
+
+In this blog post we have looked at how Quarkus endpoints can be secured with Quarkus OIDC (`quarkus-oidc`) extension and Auth0, using both Authorization code and Bearer token authentication flows. `Auth0` logout and custom role claims can be easily supported. Using Quarkus devmode, and OIDC DevUI to visualize and test Auth0 tokens provides for a good dev experience. Enjoy !
