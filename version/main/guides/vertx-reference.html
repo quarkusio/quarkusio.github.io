@@ -215,6 +215,7 @@
 <li><a href="#native-macos-transport">Native macOS transport</a></li>
 </ul>
 </li>
+<li><a href="#use-a-vert-x-context-aware-scheduler">Use a Vert.x context-aware scheduler</a></li>
 <li><a href="#use-a-unix-domain-socket">Use a Unix domain socket</a></li>
 <li><a href="#use-io_uring">Use io_uring</a></li>
 <li><a href="#deploy-on-read-only-environments">Deploy on read-only environments</a></li>
@@ -2807,6 +2808,78 @@ In <code>application.properties</code> add:</p>
 <pre>quarkus.http.so-reuse-port=true</pre>
 </div>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="use-a-vert-x-context-aware-scheduler"><a class="anchor" href="#use-a-vert-x-context-aware-scheduler"></a>Use a Vert.x context-aware scheduler</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Some Mutiny operators need to schedule work on an executor thread pool.
+A good example is <code>.onItem().delayIt().by(Duration.ofMillis(10)</code> as it needs such an executor to delay emissions.</p>
+</div>
+<div class="paragraph">
+<p>The default executor is returned by <code>io.smallrye.mutiny.infrastructure.Infrastructure</code> and it is already configured and managed by Quarkus.</p>
+</div>
+<div class="paragraph">
+<p>That being said, there are cases where you need to make sure that an operation is run on a Vert.x (duplicated) context and not just on any random thread.</p>
+</div>
+<div class="paragraph">
+<p>The <code>io.smallrye.mutiny.vertx.core.ContextAwareScheduler</code> interface offers an API to obtain context-aware schedulers.
+Such a scheduler is configured with:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>a delegate <code>ScheduledExecutorService</code> of your choice (hint: you can reuse <code>Infrastructure.getDefaultWorkerPool()</code>), and</p>
+</li>
+<li>
+<p>a context fetching strategy among:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>an explicit <code>Context</code>, or</p>
+</li>
+<li>
+<p>calling <code>Vertx::getOrCreateContext()</code> either on the current thread or later when the scheduling request happens, or</p>
+</li>
+<li>
+<p>calling <code>Vertx::currentContext()</code>, which fails if the current thread is not a Vert.x thread.</p>
+</li>
+</ul>
+</div>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>Here is a sample where <code>ContextAwareScheduler</code> is used:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">class MyVerticle extends AbstractVerticle {
+
+    @Override
+    public Uni&lt;Void&gt; asyncStart() {
+        vertx.getOrCreateContext().put("foo", "bar");
+
+        var delegate = Infrastructure.getDefaultWorkerPool();
+        var scheduler = ContextAwareScheduler.delegatingTo(delegate)
+            .withCurrentContext();
+
+        return Uni.createFrom().voidItem()
+                .onItem().delayIt().onExecutor(scheduler).by(Duration.ofMillis(10))
+                .onItem().invoke(() -&gt; {
+                    // Prints "bar"
+                    var ctx = vertx.getOrCreateContext();
+                    System.out.println(ctx.get("foo"));
+                });
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>In this example a scheduler is created by capturing the context of the Vert.x event-loop that calls <code>asyncStart()</code>.
+The <code>delayIt</code> operator uses that scheduler, and we can check that the context that we get in <code>invoke</code> is a Vert.x duplicated context where the data for key <code>"foo"</code> has been propagated.</p>
 </div>
 </div>
 </div>
