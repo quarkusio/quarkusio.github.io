@@ -1,0 +1,175 @@
+---
+layout: post
+title: 'Observability in Quarkus 3'
+date: 2023-09-20
+tags: observability micrometer opentelemetry metrics tracing
+synopsis: 'What has changed in Observability on Quarkus from version 3.0 to 3.3.'
+author: brunobat
+---
+
+== Observability in Quarkus
+
+Observability on a software system can be described as the capability to allow a human to ask and answer questions.
+To enable developers and support engineers in understanding how their applications behave, Quarkus 3.3 includes many improvements to its main observability related extensions:
+
+* https://quarkus.io/guides/opentelemetry[`quarkus-opentelemetry`] (tracing)
+* https://quarkus.io/guides/telemetry-micrometer[`quarkus-micrometer`] (metrics)
+
+== OpenTelemetry
+
+https://opentelemetry.io/docs/concepts/signals/traces/[OpenTelemetry tracing] is used to understand the flow of requests as they traverse through multiple services.
+
+The `quarkus-opentelemetry` extension already had a major upgrade on https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0#opentelemetry[Quarkus 3.0], where the configurations aligned with the ones used by the OpenTelemetry (OTel) community. This made available many configurations that were not previously available in Quarkus. Other improvements include:
+
+* The OpenTelemetry extension can be used in dev mode and now reloads properly.
+* OTel Service Provider Interface (SPI) hooks for Sampler and SpanExporter were made available along with the existing user implementations with CDI for many OTel classes: `IdGenerator`, Resource attributes, `Sampler` and `SpanProcessor`.
+* At the same time, the JDBC tracing activation was made simpler, just requiring the use of a property:
+```[source, application.properties]
+quarkus.datasource.jdbc.telemetry=true
+```
+
+On https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.3#opentelemetry-otel[Quarkus 3.3] many improvements were made to the `quarkus-opentelemetry` extension. The most impactful ones are
+
+=== Removal of the OkHttp dependency
+
+In previous versions of the Quarkus exporter used the upstream OTel libraries and leveraged the OkHttp library to send the spans to the OTel Collector. This unnecessary dependency was removed and replaced by Quarkus specific Vert.x GRPC and HTTP clients. As previously, the exporter continues to be automatically wired with CDI, that’s why the `quarkus.otel.traces.exporter` property defaults to `cdi` on Quarkus 3+.
+
+=== Exporter support fot the HTTP protocol
+
+Up until Quarkus 3.2, the OTel exporter could only use the GRPC protocol, while Quarkus now supports HTTP as well. To use the new HTTP protocol, the `quarkus.otel.exporter.otlp.traces.protocol` property must be set to `http/protobuf`. The `quarkus.otel.traces.exporter.endpoint` property must also be set to the OTel Collector HTTP endpoint. Here's an example when using 4318, the default HTTP port on the OTel Collector:
+```[source, application.properties]
+quarkus.otel.exporter.otlp.traces.protocol=http/protobuf
+quarkus.otel.exporter.otlp.endpoint=http://localhost:4318
+```
+
+=== Exporters support TLS
+
+Both GRPC and HTTP exporters now support Transport Layer Security (TLS) and custom certificates.
+
+Like the other rest clients in Quarkus, the exporter's certificate verification will also be disabled if you set:
+```[source, application.properties]
+quarkus.tls.trust-all=true
+```
+[WARNING]
+====
+This setting should not be used in production as it will disable any kind of SSL verification.
+====
+
+=== Customise the propagation header
+
+We added a way to customise the propagation header.
+
+You can create a CDI bean implementing the `TextMapPropagatorCustomizer` interface.
+
+This can be used to restrict propagation of OpenTelemetry trace headers and prevent potentially sensitive data to be sent to third party systems.
+
+This is an example of a customizer that removes the Baggage header:
+```[source, java]
+@Singleton
+public static class TestTextMapPropagatorCustomizer implements TextMapPropagatorCustomizer {
+    @Override
+    public TextMapPropagator customize(Context context) {
+        TextMapPropagator propagator = context.propagator();
+        if (propagator instanceof W3CBaggagePropagator) {
+            return TextMapPropagator.noop();
+        }
+        return propagator;
+    }
+}
+```
+
+=== Identify the user in the spans
+
+Valuable debugging information about the user related to each span can be added by setting:
+```[source, application.properties]
+quarkus.otel.traces.eusp.enabled=true
+```
+The user’s ID and roles will be added to the span attributes, if available.
+
+=== Hardening
+
+Many bug fixes and small improvements were made to the extension, including:
+
+* Reduce the memory allocation needed to report spans.
+* Fix the `http.route` span attribute value in some cases.
+* Properly report of the `service.name` value. The value can be set in 3 different properties, from higher to lower priority:
+1. `quarkus.otel.service.name`
+2. `quarkus.otel.resource.attributes`
+3. `quarkus.application.name`
+* Exception's stack traces are now reported in the span attributes.
+
+=== OpenTelemetry upgrades.
+
+OTel moves fast! Since working on Quarkus 3.0 we have performed 7 version upgrades, moving `opentelemetry-java` from version 1.21.0 to 1.28.0.
+
+== Micrometer
+
+Metrics in Quarkus are based on the https://micrometer.io/[Micrometer library]. Data can be exported directly to Prometheus with the `quarkus-micrometer-registry-prometheus extension`. If you want to send data to an OTel Collector, you can use the https://docs.quarkiverse.io/quarkus-micrometer-registry/dev/micrometer-registry-otlp.html[`quarkus-micrometer-registry-otlp`] Quarkiverse extension, among https://docs.quarkiverse.io/quarkus-micrometer-registry/dev/index.html[other options].
+
+These were some of the recent improvements to the `quarkus-micrometer` extension:
+
+=== Netty allocator metrics
+
+The extension will now provide Netty allocation metrics by default. Netty uses  memory allocators to pool the memory buffers for reuse. These metrics will give you a deeper understanding of the memory usage of your application. Direct and Heap memory usage will be reported.
+
+To disable these metrics, please set:
+```[source, application.properties]
+quarkus.micrometer.binder.netty.enabled=false
+```
+
+=== Custom tags with HTTP server data
+
+Customise emitted tags by creating a CDI bean implementing the `HttpServerMetricsTagsContributor` interface. This allows user code to compute arbitrary tags based on the details of HTTP requests. This is an implementation example were the `Foo` header value is used to set the `foo` tag.
+
+```[source, java]
+@Singleton
+public class HeaderTag implements HttpServerMetricsTagsContributor {
+
+    @Override
+    public Tags contribute(Context context) {
+        String headerValue = context.request().getHeader("Foo");
+        String value = "UNSET";
+        if ((headerValue != null) && !headerValue.isEmpty()) {
+            value = headerValue;
+        }
+        return Tags.of("foo", value);
+    }
+}
+```
+[WARNING]
+====
+Only set tags with low cardinality values, meaning that the number of possible different values is low. For example, a tag with the HTTP method is a good candidate, but a tag with the HTTP full path is not.
+====
+
+=== Use `MeterRegistryCustomizer` for arbitrary customizations to meter registries
+
+By providing CDI beans that implement `io.quarkus.micrometer.runtime.MeterRegistryCustomizer`, the user code can change the configuration of any `MeterRegistry` that has been activated.
+Unless an implementation is annotated with `@io.quarkus.micrometer.runtime.MeterRegistryCustomizerConstraint`, the customization applies to all `MeterRegistry` instances.
+
+This is a method example with a customizer that sets the `foo` tag oo all metrics:
+```[source, java]
+@Produces
+@Singleton
+public MeterRegistryCustomizer customizeAllRegistries() {
+    return new MeterRegistryCustomizer() {
+        @Override
+        public void customize(MeterRegistry registry) {
+            registry.config()
+                    .meterFilter(MeterFilter.commonTags(List.of(
+                            Tag.of("foo", "foo-value"))));
+        }
+    };
+}
+```
+
+and emitted metrics by implementing `MeterRegistryCustomizer`.
+
+=== Hardening
+
+Some small bug fixes and other features like:
+
+* Auth failures will now populate the metrics URI tag.
+
+== Conclusion
+
+Quarkus observability extensions have now improved across the board. We currently recommend using OpenTelemetry for tracing and Micrometer for metrics and export all the data using OTel's OTLP protocol to the OpenTelemetry Collector. This will allow you to use the best of both worlds.
