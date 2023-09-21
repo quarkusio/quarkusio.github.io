@@ -95,6 +95,7 @@ There are separate repositories for community driven localized versions of quark
 - [ja.quarkus.io](https://github.com/quarkusio/ja.quarkus.io) for Japanese
 - [cn.quarkus.io](https://github.com/quarkusio/cn.quarkus.io) for Chinese (simplified)
 - [es.quarkus.io](https://github.com/quarkusio/es.quarkus.io) for Spanish
+- [pt.quarkus.io](https://github.com/quarkusio/pt.quarkus.io) for Brazilian Portuguese
 
 If you want to contribute to those efforts read the README in those projects. If you would like to
 start another translation, please open an issue in this main repo.
