@@ -3124,11 +3124,14 @@ public class BeverageProcessor {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTest
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.awaitility.Awaitility.await;
+
+@QuarkusTest
 @QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
 class BaristaTest {
 
     @Inject
+    @Connector("smallrye-in-memory")
     InMemoryConnector connector; <i class="conum" data-value="1"></i><b>(1)</b>
 
     @Test
@@ -3177,6 +3180,92 @@ The application will process this message and send a message to <code>beverages<
 <tr>
 <td><i class="conum" data-value="5"></i><b>5</b></td>
 <td>Use the <code>received</code> method on <code>beverages</code> channel to check the messages produced by the application.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>If your Kafka consumer is batch based, you will need to send a batch of messages to the channel as by creating them manually.</p>
+</div>
+<div class="paragraph">
+<p>For instance:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class BeverageProcessor {
+
+    @Incoming("orders")
+    CompletionStage&lt;Void&gt; process(KafkaRecordBatch&lt;String, Order&gt; orders) {
+        System.out.println("Order received " + orders.getPayload().size());
+        return orders.ack();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.awaitility.Awaitility.await;
+
+@QuarkusTest
+@QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
+class BaristaTest {
+
+    @Inject
+    @Connector("smallrye-in-memory")
+
+    InMemoryConnector connector;
+
+    @Test
+    void testProcessOrder() {
+        InMemorySource&lt;IncomingKafkaRecordBatch&lt;String, Order&gt;&gt; ordersIn = connector.source("orders");
+        var committed = new AtomicBoolean(false);  <i class="conum" data-value="1"></i><b>(1)</b>
+        var commitHandler = new KafkaCommitHandler() {
+            @Override
+            public &lt;K, V&gt; Uni&lt;Void&gt; handle(IncomingKafkaRecord&lt;K, V&gt; record) {
+                committed.set(true);  <i class="conum" data-value="2"></i><b>(2)</b>
+                return null;
+            }
+        };
+        var failureHandler = new KafkaFailureHandler() {
+            @Override
+            public &lt;K, V&gt; Uni&lt;Void&gt; handle(IncomingKafkaRecord&lt;K, V&gt; record, Throwable reason, Metadata metadata) {
+                return null;
+            }
+        };
+
+        Order order = new Order();
+        order.setProduct("coffee");
+        order.setName("Coffee lover");
+        order.setOrderId("1234");
+        var record = new ConsumerRecord&lt;&gt;("topic", 0, 0, "key", order);
+        var records = new ConsumerRecords&lt;&gt;(Map.of(new TopicPartition("topic", 1), List.of(record)));
+        var batch = new IncomingKafkaRecordBatch&lt;&gt;(
+            records, "kafka", 0, commitHandler, failureHandler, false, false);  <i class="conum" data-value="3"></i><b>(3)</b>
+
+        ordersIn.send(batch);
+
+        await().until(committed::get);  <i class="conum" data-value="4"></i><b>(4)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Create an <code>AtomicBoolean</code> to track if the batch has been committed.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Update <code>committed</code> when the batch is committed.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Create a <code>IncomingKafkaRecordBatch</code> with a single record.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Wait until the batch is committed.</td>
 </tr>
 </table>
 </div>
