@@ -1,0 +1,180 @@
+---
+layout: post
+title: 'Writing CRUD applications using virtual threads'
+date: 2023-09-25
+tags: virtual-threads reactive crud database
+synopsis: 'Describe how you can implement a CRUD / RESTFul application using virtual threads and Quarkus.'
+author: cescoffier
+---
+:imagesdir: /assets/images/posts/virtual-threads
+
+Last week, we published a video demonstrating the creation of a CRUD application using virtual threads in Quarkus. It's as simple as adding the `@RunOnVirtualThread` annotation on your HTTP resource (or your controller class if you use the Spring compatibility layer).
+
++++
+<iframe style="margin-left: auto; margin-right: auto; display: block;" width="560" height="315" src="https://www.youtube.com/embed/sJ49s7ctpf8?si=XfBB10eabMzGQCKz" title="Writing CRUD applications using virtual threads" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
++++
+
+This companion post explains how it works behind the scenes.
+
+== The code
+The application is a simple implementation of the https://todobackend.com/[Todo Backend].
+The complete code of this post is available https://github.com/quarkusio/virtual-threads-demos/tree/main/crud-example[here].
+
+The important part is the https://github.com/quarkusio/virtual-threads-demos/blob/main/crud-example/src/main/java/org/acme/crud/TodoResource.java[TodoResource.java]:
+
+[source, java]
+----
+package org.acme.crud;
+
+import io.quarkus.logging.Log;
+import io.quarkus.panache.common.Sort;
+
+import io.smallrye.common.annotation.NonBlocking;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+import jakarta.transaction.Transactional;
+import jakarta.validation.Valid;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
+import java.util.List;
+
+
+@Path("/api")
+@RunOnVirtualThread
+public class TodoResource {
+
+    /**
+     * Just print on which thread the method is invoked.    
+     */
+    private void log() {
+        Log.infof("Called on %s", Thread.currentThread());
+    }
+
+    @GET
+    public List<Todo> getAll() {
+        log();
+        return Todo.listAll(Sort.by("order"));
+    }
+
+    @GET
+    @Path("/{id}")
+    public Todo getOne(@PathParam("id") Long id) {
+        log();
+        Todo entity = Todo.findById(id);
+        if (entity == null) {
+            throw new WebApplicationException("Todo with id of " + id + " does not exist.", 
+                Status.NOT_FOUND);
+        }
+        return entity;
+    }
+
+    @POST
+    @Transactional
+    public Response create(@Valid Todo item) {
+        log();
+        item.persist();
+        return Response.status(Status.CREATED).entity(item).build();
+    }
+
+    @PATCH
+    @Path("/{id}")
+    @Transactional
+    public Response update(@Valid Todo todo, @PathParam("id") Long id) {
+        log();
+        Todo entity = Todo.findById(id);
+        entity.id = id;
+        entity.completed = todo.completed;
+        entity.order = todo.order;
+        entity.title = todo.title;
+        entity.url = todo.url;
+        return Response.ok(entity).build();
+    }
+
+    @DELETE
+    @Transactional
+    public Response deleteCompleted() {
+        log();
+        Todo.deleteCompleted();
+        return Response.noContent().build();
+    }
+
+    @DELETE
+    @Transactional
+    @Path("/{id}")
+    public Response deleteOne(@PathParam("id") Long id) {
+        log();
+        Todo entity = Todo.findById(id);
+        if (entity == null) {
+            throw new WebApplicationException("Todo with id of " + id + " does not exist.", 
+                Status.NOT_FOUND);
+        }
+        entity.delete();
+        return Response.noContent().build();
+    }
+
+}
+----
+
+The application uses:
+
+- RESTEasy Reactive - the recommended REST stack for Quarkus. It supports virtual threads.
+- Hibernate Validation - to validate the Todos created by the user.
+- Hibernate ORM with Panache - to interact with the database.
+- The Argroal connection pool - to manage and recycle database connections.
+- The Narayana transaction manager - to run our code inside transactions.
+- The PostgreSQL driver - as we use a PostgreSQL database
+
+The code is similar to a regular implementation of a CRUD service with Quarkus, except for https://github.com/quarkusio/virtual-threads-demos/blob/main/crud-example/src/main/java/org/acme/crud/TodoResource.java#L22[one line].
+We added the `@RunOnVirtualThread` annotation on the resource class (line 17).
+It instructs Quarkus to invoke these methods on virtual threads instead of regular platform threads (learn more about the difference in the https://quarkus.io/blog/virtual-thread-1/[previous blog post]), including `@Transactional` methods.
+
+### The threading model
+
+As we have seen in the code, the development model is synchronous.
+The interactions with the database uses blocking APIs: you wait for the replies. 
+That's where virtual thread introduces their magic. 
+Instead of blocking a platform thread, it only blocks the virtual threads:
+
+image::crud-database.png[Threading model of the application,400,float="right",align="center"]
+
+Thus, when another request comes, the carrier thread can handle it. 
+It radically reduces the number of platform threads required when there are many concurrent requests. 
+As a result, the number of worker threads, generally used when using a synchronous and blocking development model, is not the bottleneck anymore.
+
+However, that's not because you use virtual threads that your application has no more concurrency limit. 
+There is a new bottleneck: the **database connection pool**.
+When you interact with the database, you ask for a connection to the connection pool (Agroal in our case).
+The number of connections is not infinite (20 by default). 
+Once all the connections are used, you must wait until another processing completes and releases its connection.
+You can still handle many requests concurrently, but they will wait for database connections to be available, reducing the response time.
+
+### A note about pinning
+
+As the https://quarkus.io/blog/virtual-thread-1/[previous blog post] described, pinning happens when the virtual thread cannot be unmounted from the carrier thread. 
+In this case, blocking the virtual thread also blocks the carrier thread:
+
+image::pinning.png[Pinning of the carrier thread,400,float="right",align="center"]
+
+Fortunately, in this application, there is no pinning. 
+The PostgreSQL driver is one of the only JDBC drivers that does not pin.
+If you plan to use another database, check first.
+We will be discussing how to detect pinning in the next post.
+Quarkus, Narayana and Hibernate have been patched to avoid the pinning. 
+
+Pinning is one of many problems that can arise. 
+The application will suffer from the default object pooling mechanism used by Jackson.
+Fortunately, we contributed an SPI to https://github.com/FasterXML/jackson-core/pull/1064[Jackson] that will allow us to remove this allocation hog. 
+
+## Conclusion
+
+This post explains implementing a CRUD application using virtual threads in Quarkus.
+You can now use an imperative development model without compromising the application's concurrency.
+It's as simple as using RESTEasy Reactive and adding one annotation: `@RunOnVirtualThread` on your resource.
+
+We tailored Quarkus and upstream projects (such as Hibernate, Narayana, SmallRye Mutiny, etc.) to become virtual-thread-friendly.
+As we will see in other posts, most Quarkus extensions are ready to be used with virtual threads.
+
+That said, while virtual threads increase the concurrency, you will likely hit other bottlenecks, such as the number of database connections managed in the pool.
+
+In the next post and video, we will see how to test our application and detect pinning.
+ 

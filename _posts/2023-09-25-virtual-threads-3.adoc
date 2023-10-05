@@ -1,0 +1,151 @@
+---
+layout: post
+title: 'Testing virtual thread applications'
+date: 2023-10-02
+tags: virtual threads, reactive, test
+synopsis: 'How to detect pinning while running tests.'
+author: cescoffier
+---
+:imagesdir: /assets/images/posts/virtual-threads
+
+https://quarkus.io/blog/virtual-threads-2/[In a previous post], we have seen how to implement a CRUD application using virtual threads in Quarkus. 
+The following video shows how to test this application and, specifically, how to detect pinning.
+
++++
+<iframe style="margin-left: auto; margin-right: auto; display: block;" width="560" height="315" src="https://www.youtube.com/embed/GOHAEh3Ujh8?si=t8n8jLek0X7JC4MR" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
++++
+
+The complete code of the application and the tests are available in the https://github.com/quarkusio/virtual-threads-demos/tree/main/crud-example[virtual threads demos repository].
+
+## Pinning and Monopolization
+
+Virtual threads combine an imperative development model with a reactive execution mode.
+It may provide a simple way to increase the concurrency of an application. 
+However, this might not always be the case.
+
+As described in https://quarkus.io/blog/virtual-thread-1/[another blog post], there are a few limitations, including monopolizing and pinning carrier threads. 
+When this happens, the application's performance can drastically decrease and increase memory usage. 
+Pinning for a short period can be tolerated, but it can be dramatic under load.
+
+While, at the moment, there are no reliable ways to detect monopolization, there are mechanisms to detect pinning.
+
+## Printing stack traces when a carrier thread gets pinned
+
+Suppose you have your application, and your code base contains tests.
+You can configure Surefire (or the plugin you use to execute your tests) to dump a stack trace as soon as a virtual thread is going to pin the carrier thread (instead of being unmounted smoothly). 
+You must set the `jdk.tracePinnedThreads` system property to achieve this.
+For the Surefire Maven plugin, add the `argLine` parameter to the configuration:
+
+[source, xml]
+----
+<argLine>-Djdk.tracePinnedThreads</argLine>
+----
+
+With this configuration, when, while running your test, a carrier thread is pinned, the stack trace is dumped in the console:
+
+[source,text]
+----
+2023-09-15 07:51:18,312 INFO  [org.acm.cru.TodoResource] (quarkus-virtual-thread-0) Called on VirtualThread[#140,quarkus-virtual-thread-0]/runnable@ForkJoinPool-1-worker-1
+Thread[#141,ForkJoinPool-1-worker-1,5,CarrierThreads]
+    java.base/java.lang.VirtualThread$VThreadContinuation.onPinned(VirtualThread.java:185)
+    java.base/jdk.internal.vm.Continuation.onPinned0(Continuation.java:393)
+    java.base/java.lang.VirtualThread.parkNanos(VirtualThread.java:631)
+    java.base/java.lang.VirtualThread.sleepNanos(VirtualThread.java:803)
+    java.base/java.lang.Thread.sleep(Thread.java:507)
+    org.acme.crud.TodoResource.pinTheCarrierThread(TodoResource.java:93) <== monitors:1
+    org.acme.crud.TodoResource.getAll(TodoResource.java:32)
+    org.acme.crud.TodoResource$quarkusrestinvoker$getAll_0e9c86666ef01bafda5560c4bf86952c6cf09993.invoke(Unknown Source)
+    org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)
+    io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)
+    org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)
+    io.quarkus.virtual.threads.ContextPreservingExecutorService$1.run(ContextPreservingExecutorService.java:36)
+    java.base/java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(ThreadPerTaskExecutor.java:314)
+    java.base/java.lang.VirtualThread.run(VirtualThread.java:311)
+----
+
+Analyzing the application logs will tell you whether your application is pinning. 
+Furthermore, a closer look at the stack trace will give you the reason.
+In our example, the `pinTheCarrierThread` method is taking a lock. 
+This is indicated by the `monitors:1` text:
+
+[source, text]
+----
+    org.acme.crud.TodoResource.pinTheCarrierThread(TodoResource.java:93) <== monitors:1
+----
+
+This approach can also be used in production (so, not only in tests).
+You can also determine how long the carrier thread was blocked by correlating the pinned stack trace with other log events (like what happened just after in the same thread).
+
+## Failing tests
+
+Dumping the stack trace may not be very convenient when your logs are already long.
+Fortunately, we released a small Junit 5 extension that allows you to fail the tests when pinning is detected. 
+It's advantageous when you integrate a third-party library, and you need to know how virtual-thread-friendly it is (to decide between regular worker threads and virtual threads) 
+
+The loom-unit Junit5 extension is currently a separated project. 
+We are integrating it into the Quarkus test framework (under the `junit5-virtual-threads` name), so some of the steps mentioned below won't be necessary anymore or will be changed slightly.
+
+To use this extension, make sure you have the loom-unit extension in your project:
+
+[source, xml]
+----
+<dependency>
+    <groupId>me.escoffier.loom</groupId> <!-- Will become io.quarkus.junit5 -->
+    <artifactId>loom-unit</artifactId>   <!-- Will become junit5-virtual-threads -->
+    <version>0.3.0</version>             <!-- Will become unnecessary --> 
+    <scope>test</scope>
+</dependency>
+----
+
+Then, in your test,  use `@ExtendWith` to enable the extension:
+
+[source, java]
+----
+@QuarkusTest
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@ExtendWith(LoomUnitExtension.class) // <--- Enable the extension (will become @VirtualThreadUnit)
+@ShouldNotPin  // <--- Detect pinning
+class TodoResourceTest {
+    // ...
+}
+----
+
+Finally, use the `@ShouldNotPin` annotation to indicate to fail the test if any of the methods of the test case pins the carrier thread.
+You can also use the `@ShouldNotPin` annotation on methods.
+
+If, during the execution of a test, a pinning event is captured, the test fails. 
+The stack trace of the event is attached to the test failure:
+
+[source, text]
+----
+java.lang.AssertionError: The test testInitialItems() was expected to NOT pin the carrier thread, but we collected 1 event(s)
+* Pinning event captured: 
+	java.lang.VirtualThread.parkOnCarrierThread(java.lang.VirtualThread.java:687)
+	java.lang.VirtualThread.parkNanos(java.lang.VirtualThread.java:646)
+	java.lang.VirtualThread.sleepNanos(java.lang.VirtualThread.java:803)
+	java.lang.Thread.sleep(java.lang.Thread.java:507)
+	org.acme.crud.TodoResource.pinTheCarrierThread(org.acme.crud.TodoResource.java:93)
+	org.acme.crud.TodoResource.getAll(org.acme.crud.TodoResource.java:32)
+	org.acme.crud.TodoResource$quarkusrestinvoker$getAll_0e9c86666ef01bafda5560c4bf86952c6cf09993.invoke(org.acme.crud.TodoResource$quarkusrestinvoker$getAll_0e9c86666ef01bafda5560c4bf86952c6cf09993.java:-1)
+	org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(org.jboss.resteasy.reactive.server.handlers.InvocationHandler.java:29)
+	io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.java:141)
+	org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.java:147)
+	io.quarkus.virtual.threads.ContextPreservingExecutorService$1.run(io.quarkus.virtual.threads.ContextPreservingExecutorService$1.java:36)
+	java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.java:314)
+	java.lang.VirtualThread.runWith(java.lang.VirtualThread.java:341)
+	java.lang.VirtualThread.run(java.lang.VirtualThread.java:311)
+	java.lang.VirtualThread$VThreadContinuation$1.run(java.lang.VirtualThread$VThreadContinuation$1.java:192)
+	jdk.internal.vm.Continuation.enter0(jdk.internal.vm.Continuation.java:320)
+	jdk.internal.vm.Continuation.enter(jdk.internal.vm.Continuation.java:312)
+	jdk.internal.vm.Continuation.enterSpecial(jdk.internal.vm.Continuation.java:-1)
+----
+
+Find more about the loom-unit extension on https://github.com/cescoffier/loom-unit[the project repository] or its https://github.com/quarkusio/quarkus/tree/main/independent-projects/junit5-virtual-threads[Quarkus sibling].
+
+## Summary
+
+This blog explains how you can detect pinning events while running your tests.
+First, you can dump the stack trace in the log. 
+Second, you can use the `@ShouldNotPin` annotation to fail the tests if a pinning event is captured.
+Thanks to this https://github.com/quarkusio/quarkus/pull/35992[PR], the loom-unit extension will be integrated into the `@QuarkusTest` to provide a simpler developer experience.
+It will be part of Quarkus in the next release (3.5.x).

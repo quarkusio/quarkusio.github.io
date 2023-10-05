@@ -675,7 +675,7 @@ public void consume(List<Double> prices) {
 }
 ----
 
-The incoming method can also receive `Message<List<Payload>>`, `KafkaRecordBatch<Key, Payload>` `ConsumerRecords<Key, Payload>` types.
+The incoming method can also receive `Message<List<Payload>>`, `KafkaRecordBatch<Key, Payload>`, and `ConsumerRecords<Key, Payload>` types.
 They give access to record details such as offset or timestamp:
 
 [source, java]
@@ -1244,6 +1244,66 @@ public class MultipleConsumer {
 Reciprocally, multiple producers on the same channel can be merged by setting `mp.messaging.incoming.$channel.merge=true`.
 On the `@Incoming` methods, you can control how multiple channels are merged using the `@Merge` annotation.
 ====
+
+Repeating the `@Outgoing` annotation on outbound or processing methods allows another way of dispatching messages to multiple outgoing channels:
+
+[source, java]
+----
+import java.util.Random;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+@ApplicationScoped
+public class MultipleProducers {
+
+    private final Random random = new Random();
+
+    @Outgoing("generated")
+    @Outgoing("generated-2")
+    double priceBroadcast() {
+        return random.nextDouble();
+    }
+
+}
+----
+
+In the previous example generated price will be broadcast to both outbound channels.
+The following example selectively sends messages to multiple outgoing channels using the `Targeted` container object,
+containing key as channel name and value as message payload.
+
+[source, java]
+----
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+import io.smallrye.reactive.messaging.Targeted;
+
+@ApplicationScoped
+public class TargetedProducers {
+
+    @Incoming("in")
+    @Outgoing("out1")
+    @Outgoing("out2")
+    @Outgoing("out3")
+    public Targeted process(double price) {
+        Targeted targeted = Targeted.of("out1", "Price: " + price,
+                "out2", "Quote: " + price);
+        if (price > 90.0) {
+            return targeted.with("out3", price);
+        }
+        return targeted;
+    }
+
+}
+----
+
+Note that xref:serialization-autodetection[the auto-detection for Kafka serializers] doesn't work for signatures using the `Targeted`.
+
+For more details on using multiple outgoings, please refer to the http://smallrye.io/smallrye-reactive-messaging/4.10.0/concepts/outgoings/[SmallRye Reactive Messaging documentation].
 
 === Kafka Transactions
 
@@ -2017,11 +2077,14 @@ Create a Quarkus Test using the test resource created above:
 
 [source, java]
 ----
+import static org.awaitility.Awaitility.await;
+
 @QuarkusTest
 @QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
 class BaristaTest {
 
     @Inject
+    @Connector("smallrye-in-memory")
     InMemoryConnector connector; // <1>
 
     @Test
@@ -2053,6 +2116,74 @@ class BaristaTest {
 <4> Use the `send` method to send a message to the `orders` channel.
 The application will process this message and send a message to `beverages` channel.
 <5> Use the `received` method on `beverages` channel to check the messages produced by the application.
+
+If your Kafka consumer is batch based, you will need to send a batch of messages to the channel as by creating them manually.
+
+For instance:
+
+[source, java]
+----
+@ApplicationScoped
+public class BeverageProcessor {
+
+    @Incoming("orders")
+    CompletionStage<Void> process(KafkaRecordBatch<String, Order> orders) {
+        System.out.println("Order received " + orders.getPayload().size());
+        return orders.ack();
+    }
+}
+----
+
+[source, java]
+----
+import static org.awaitility.Awaitility.await;
+
+@QuarkusTest
+@QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
+class BaristaTest {
+
+    @Inject
+    @Connector("smallrye-in-memory")
+
+    InMemoryConnector connector;
+
+    @Test
+    void testProcessOrder() {
+        InMemorySource<IncomingKafkaRecordBatch<String, Order>> ordersIn = connector.source("orders");
+        var committed = new AtomicBoolean(false);  // <1>
+        var commitHandler = new KafkaCommitHandler() {
+            @Override
+            public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record) {
+                committed.set(true);  // <2>
+                return null;
+            }
+        };
+        var failureHandler = new KafkaFailureHandler() {
+            @Override
+            public <K, V> Uni<Void> handle(IncomingKafkaRecord<K, V> record, Throwable reason, Metadata metadata) {
+                return null;
+            }
+        };
+
+        Order order = new Order();
+        order.setProduct("coffee");
+        order.setName("Coffee lover");
+        order.setOrderId("1234");
+        var record = new ConsumerRecord<>("topic", 0, 0, "key", order);
+        var records = new ConsumerRecords<>(Map.of(new TopicPartition("topic", 1), List.of(record)));
+        var batch = new IncomingKafkaRecordBatch<>(
+            records, "kafka", 0, commitHandler, failureHandler, false, false);  // <3>
+
+        ordersIn.send(batch);
+
+        await().until(committed::get);  // <4>
+    }
+}
+----
+<1> Create an `AtomicBoolean` to track if the batch has been committed.
+<2> Update `committed` when the batch is committed.
+<3> Create a `IncomingKafkaRecordBatch` with a single record.
+<4> Wait until the batch is committed.
 
 [IMPORTANT]
 ====
@@ -2190,7 +2321,7 @@ See the xref:quarkus-reactive-architecture.adoc[Quarkus Reactive Architecture do
 
 == Channel Decorators
 
-SmallRye Reactive Messaging supports decorating incoming and outgoing channels for implementing cross-cutting concerns such as monitoring, tracing or message interception. For more information on implementing decorators and message interceptors see the http://smallrye.io/smallrye-reactive-messaging/3.19.1/concepts/decorators/[SmallRye Reactive Messaging documentation].
+SmallRye Reactive Messaging supports decorating incoming and outgoing channels for implementing cross-cutting concerns such as monitoring, tracing or message interception. For more information on implementing decorators and message interceptors see the http://smallrye.io/smallrye-reactive-messaging/latest/concepts/decorators/[SmallRye Reactive Messaging documentation].
 
 [[kafka-configuration]]
 == Configuration Reference

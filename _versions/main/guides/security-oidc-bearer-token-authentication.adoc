@@ -96,6 +96,7 @@ The current tenant's discovered link:https://openid.net/specs/openid-connect-dis
 
 The default tenant's `OidcConfigurationMetadata` is injected if the endpoint is public.
 
+[[token-claims-and-security-identity-roles]]
 === Token Claims And SecurityIdentity Roles
 
 SecurityIdentity roles can be mapped from the verified JWT access tokens as follows:
@@ -111,6 +112,50 @@ If the token is opaque (binary) then a `scope` property from the remote token in
 If UserInfo is the source of the roles then set `quarkus.oidc.authentication.user-info-required=true` and `quarkus.oidc.roles.source=userinfo`, and if needed, `quarkus.oidc.roles.role-claim-path`.
 
 Additionally, a custom `SecurityIdentityAugmentor` can also be used to add the roles as documented in xref:security-customization.adoc#security-identity-customization[Security Identity Customization].
+
+[[token-scopes-and-security-identity-permissions]]
+=== Token scopes And SecurityIdentity permissions
+
+SecurityIdentity permissions are mapped in the form of the `io.quarkus.security.StringPermission` from the scope parameter of the xref:token-claims-and-security-identity-roles[source of the roles], using the same claim separator.
+
+[source, java]
+----
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import org.eclipse.microprofile.jwt.Claims;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.security.PermissionsAllowed;
+
+@Path("/service")
+public class ProtectedResource {
+
+    @Inject
+    JsonWebToken accessToken;
+
+    @PermissionsAllowed("email") <1>
+    @GET
+    @Path("/email")
+    public Boolean isUserEmailAddressVerifiedByUser() {
+        return accessToken.getClaim(Claims.email_verified.name());
+    }
+
+    @PermissionsAllowed("orders_read") <2>
+    @GET
+    @Path("/order")
+    public List<Order> listOrders() {
+        return List.of(new Order(1));
+    }
+
+}
+----
+<1> Only requests with OpenID Connect scope `email` are going to be granted access.
+<2> The read access is limited to the client requests with scope `orders_read`.
+
+Please refer to the Permission annotation section of the xref:security-authorize-web-endpoints-reference.adoc#permission-annotation[Authorization of web endpoints]
+guide for more information about the `io.quarkus.security.PermissionsAllowed` annotation.
 
 [[token-verification-introspection]]
 === Token Verification And Introspection
@@ -469,6 +514,70 @@ public class CustomOidcWireMockStubTest {
     }
 }
 ----
+
+[[integration-testing-oidc-test-client]]
+=== OidcTestClient
+
+If you work with SaaS OIDC providers such as `Auth0` and would like to run tests against the test (development) domain or prefer to run tests against a remote Keycloak test realm, when you already have `quarkus.oidc.auth-server-url` configured, you can use `OidcTestClient`.
+
+For example, lets assume you have the following configuration:
+
+[source,properties]
+----
+%test.quarkus.oidc.auth-server-url=https://dev-123456.eu.auth0.com/
+%test.quarkus.oidc.client-id=test-auth0-client
+%test.quarkus.oidc.credentials.secret=secret
+----
+
+Start with addding the same dependency as in the xref:integration-testing-wiremock[Wiremock] section, `quarkus-test-oidc-server`.
+
+Next, write the test code like this:
+
+[source, java]
+----
+package org.acme;
+
+import org.junit.jupiter.api.AfterAll;
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.CoreMatchers.is;
+
+import java.util.Map;
+
+import org.junit.jupiter.api.Test;
+
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.oidc.client.OidcTestClient;
+
+@QuarkusTest
+public class GreetingResourceTest {
+
+    static OidcTestClient oidcTestClient = new OidcTestClient();
+
+    @AfterAll
+    public static void close() {
+        client.close();
+    }
+
+    @Test
+    public void testHelloEndpoint() {
+        given()
+          .auth().oauth2(getAccessToken("alice", "alice"))
+          .when().get("/hello")
+          .then()
+             .statusCode(200)
+             .body(is("Hello, Alice"));
+    }
+
+    private String getAccessToken(String name, String secret) {
+        return oidcTestClient.getAccessToken(name, secret,
+            Map.of("audience", "https://dev-123456.eu.auth0.com/api/v2/",
+	           "scope", "profile"));
+    }
+}
+----
+
+This test code acquires a token using a `password` grant from the test `Auth0` domain which has an application with the client id `test-auth0-client` registered, and which has a user `alice` with a password `alice` created. The test `Auth0` application must have the `password` grant enabled for a test like this one to work. This example code also shows how to pass additional parameters. For `Auth0`, these are the `audience` and `scope` parameters.
+
 
 [[integration-testing-keycloak-devservices]]
 ==== Dev Services for Keycloak

@@ -147,7 +147,7 @@ For each of them, the object stored in the `ThreadLocal` is created (often large
 This problem leads to high memory usage.
 Unfortunately, it requires sophisticated code changes in the libraries themselves.
 
-=== Use @RunVirtualThread with RESTEasy Reactive
+=== Use @RunOnVirtualThread with RESTEasy Reactive
 
 This section shows a brief example of using the link:{runonvthread}[@RunOnVirtualThread] annotation.
 It also explains the various development and execution models offered by Quarkus.
@@ -296,7 +296,7 @@ Note that all three models can be used in a single application.
 
 == Use virtual thread friendly clients
 
-As mentioned in the href:why-not[Why not run everything on virtual threads?] section, the Java ecosystem is not entirely ready for virtual threads.
+As mentioned in the xref:why-not[Why not run everything on virtual threads?] section, the Java ecosystem is not entirely ready for virtual threads.
 So, you need to be careful, especially when using a libraries doing I/O.
 
 Fortunately, Quarkus provides a massive ecosystem that is ready to be used in virtual threads.
@@ -375,7 +375,7 @@ mvn package
 
 === Using a local GraalVM installation
 
-To compile a Quarkus applications leveraging `@RunOnVirtualThreads` into native executable, you must be sure to use a GraalVM / Mandrel `native-image` supporting virtual threads, so providing at least Java 19+.
+To compile a Quarkus applications leveraging `@RunOnVirtualThread` into native executable, you must be sure to use a GraalVM / Mandrel `native-image` supporting virtual threads, so providing at least Java 19+.
 
 Then, until Java 21, you need to add the following property to your `application.properties` file:
 
@@ -462,6 +462,73 @@ quarkus.virtual-threads.name-prefix=
 
 ----
 
+== Testing virtual thread applications
+
+As mentioned above, virtual threads have a few limitations that can drastically affect your application performance and memory usage.
+The _junit5-virtual-threads_ extension provides a way to detect pinned carrier threads while running your tests.
+Thus, you can eliminate one of the most prominent limitations or be aware of the problem.
+
+To enable this detection:
+
+* 1) Add the `junit5-virtual-threads` dependency to your project:
+[source, xml]
+----
+<dependency>
+    <groupId>io.quarkus.junit5</groupId>
+    <artifactId>junit5-virtual-threads</artifactId>
+    <scope>test</scope>
+</dependency>
+----
+
+* 2) In your test case, add the `io.quarkus.test.junit5.virtual.VirtualThreadUnit`  and `io.quarkus.test.junit.virtual.ShouldNotPin` annotations:
+[source, java]
+----
+@QuarkusTest
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@VirtualThreadUnit // Use the extension
+@ShouldNotPin // Detect pinned carrier thread
+class TodoResourceTest {
+    // ...
+}
+----
+
+When you run your test (remember to use Java 21+), Quarkus detects pinned carrier threads.
+When it happens, the test fails.
+
+The `@ShouldNotPin` can also be used on methods directly.
+
+The _junit5-virtual-threads_ also provides a `@ShouldPin` annotation for cases where pinning is unavoidable.
+The following snippet demonstrates the `@ShouldPin` annotation usage and the possibility to inject a `ThreadPinnedEvents` instance in your test to verify when the carrier thread was pinned manually.
+
+[source, java]
+----
+@VirtualThreadUnit // Use the extension
+public class LoomUnitExampleTest {
+
+    CodeUnderTest codeUnderTest = new CodeUnderTest();
+
+    @Test
+    @ShouldNotPin
+    public void testThatShouldNotPin() {
+        // ...
+    }
+
+    @Test
+    @ShouldPin(atMost = 1)
+    public void testThatShouldPinAtMostOnce() {
+        codeUnderTest.pin();
+    }
+
+    @Test
+    public void testThatShouldNotPin(ThreadPinnedEvents events) { // Inject an object to check the pin events
+        Assertions.assertTrue(events.getEvents().isEmpty());
+        codeUnderTest.pin();
+        await().until(() -> events.getEvents().size() > 0);
+        Assertions.assertEquals(events.getEvents().size(), 1);
+    }
+
+}
+----
 
 == Additional references
 
