@@ -10,11 +10,8 @@ include::_attributes.adoc[]
 :numbered:
 :sectnums:
 :sectnumlevels: 4
-
-:numbered:
-:sectnums:
-:sectnumlevels: 4
-
+:topics: http,web,webjars,vertx,servlet,undertow
+:extensions: io.quarkus:quarkus-vertx-http
 
 This document explains various HTTP features that you can use in Quarkus.
 
@@ -186,7 +183,7 @@ As with the certificate/key file combination, Quarkus will first try to resolve 
 
 Add the following property to your `application.properties`:
 
-[source,bash]
+[source,properties]
 ----
 quarkus.http.ssl.certificate.key-store-file=/path/to/keystore
 ----
@@ -310,9 +307,8 @@ quarkus.http.handle-100-continue-automatically=true
 
 == HTTP/2 Support
 
-HTTP/2 is enabled by default, and will be used by browsers if SSL is in use on JDK11 or higher. JDK8 does not support
-ALPN so cannot be used to run HTTP/2 over SSL. Even if SSL is not in use HTTP/2 via cleartext upgrade is supported,
-and may be used by non-browser clients.
+HTTP/2 is enabled by default, and will be used by browsers if SSL is in use. Even if SSL is not in use
+HTTP/2 via cleartext upgrade is supported, and may be used by non-browser clients.
 
 If you want to disable HTTP/2 you can set:
 
@@ -393,6 +389,44 @@ It is important that you enable all origins only for the dev profile, allowing a
 == HTTP Limits Configuration
 
 include::{generated-dir}/config/quarkus-vertx-http-config-group-server-limits-config.adoc[leveloffset=+1, opts=optional]
+
+== Configure traffic shaping
+
+Traffic shaping allows you to limit the bandwidth across all channels (i.e. connections), regardless of the number of open channels.
+This can be useful when you want to control the overall network traffic to prevent congestion or prioritize certain types of traffic.
+
+To enable traffic shaping, add the following property in your application configuration:
+
+
+[source, properties]
+----
+quarkus.http.traffic-shaping.enabled=true # Required to enable traffic shaping
+----
+
+The traffic shaping allows you to configure various parameters, such as write and read limitations (in bytes per  second), check interval (the delay between two computations of the bandwidth), and maximum time to wait:
+
+[source, properties]
+----
+quarkus.http.traffic-shaping.enabled=true # Required to enable traffic shaping
+quarkus.http.traffic-shaping.check-interval=30s
+quarkus.http.traffic-shaping.outbound-global-bandwidth=1M
+quarkus.http.traffic-shaping.inbound-global-bandwidth=1M
+quarkus.http.traffic-shaping.max-delay=10s
+----
+
+The check interval represents the period at which the traffic is computed, and a higher interval may result in
+ less precise traffic shaping.
+Despite 0 being accepted (no accounting), it is recommended to set a positive value for the check interval, even if it is high since the precision of the traffic shaping depends on the period where the traffic is computed.
+In this case, a suggested value is something close to 5 or 10 minutes.
+
+ The `outbound-global-bandwidth` and `inbound-global-bandwidth` parameters represent the maximum number of bytes per second for write and read operations, respectively.
+You shall also consider to have object size in read or write operations relatively adapted to the bandwidth you required.
+For instance having 10 MB objects for 10KB/s will lead to burst effect, while having 100 KB objects for 1 MB/s should be smoothly handle by the traffic shaping.
+
+Additionally, you can set the maximum time to wait (`max-delay`), which specifies an upper bound for time shaping.
+By default, it is set to 15 seconds.
+It must be less than the HTTP timeout.
+When one of the threshold is reached, no write happens for that period of time.
 
 == Configuring HTTP Access Logs
 
@@ -556,3 +590,30 @@ link:https://undertow.io/undertow-docs/undertow-docs-2.0.0/index.html#predicates
 === web.xml
 
 If you are using a `web.xml` file as your configuration file, you can place it in the `src/main/resources/META-INF` directory.
+
+=== Built-in route order values
+
+Route order values are the values that are specified via Vert.x route `io.vertx.ext.web.Route.order(int)` function.
+
+Quarkus registers a couple of routes with specific order values.
+The constants are defined in the `io.quarkus.vertx.http.runtime.RouteConstants` class and listed in the table below.
+A custom route should define the order of value 20000 or higher so that it does not interfere with the functionality provided by Quarkus and extensions.
+
+Route order constants defined in `io.quarkus.vertx.http.runtime.RouteConstants` and known extensions:
+
+[cols="1,1,3"]
+|===
+| Route order value| Constant name| Origin
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_ACCESS_LOG_HANDLER` | Access-log handler, if enabled in the configuration.
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_RECORD_START_TIME` | Handler adding the start-time, if enabled in the configuration.
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_HOT_REPLACEMENT` | -replacement body handler.
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_BODY_HANDLER_MANAGEMENT` | Body handler for the management router.
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_HEADERS` | Handlers that add headers specified in the configuration.
+| `Integer.MIN_VALUE` | `ROUTE_ORDER_CORS_MANAGEMENT` | CORS-Origin handler of the management router.
+| `Integer.MIN_VALUE + 1` | `ROUTE_ORDER_BODY_HANDLER` | Body handler.
+| `-2` | `ROUTE_ORDER_UPLOAD_LIMIT` | Route that enforces the upload body size limit.
+| `0` | `ROUTE_ORDER_COMPRESSION` | Compression handler.
+| `1000` | `ROUTE_ORDER_BEFORE_DEFAULT` | Route with priority over the default route (add an offset from this value).
+| `10000` | `ROUTE_ORDER_DEFAULT` | Default route order (i.e. Static Resources, Servlet).
+| `20000` | `ROUTE_ORDER_AFTER_DEFAULT` | Route without priority over the default route (add an offset from this value)
+|===
