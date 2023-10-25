@@ -237,7 +237,7 @@ For a quick start take a look at <a href="kafka-reactive-getting-started">Gettin
 <div class="listingblock primary asciidoc-tabs-sync-cli">
 <div class="title">CLI</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus extension add 'smallrye-reactive-messaging-kafka'</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus extension add smallrye-reactive-messaging-kafka</code></pre>
 </div>
 </div>
 <div class="listingblock secondary asciidoc-tabs-sync-maven">
@@ -1170,7 +1170,7 @@ public void consume(List&lt;Double&gt; prices) {
 </div>
 </div>
 <div class="paragraph">
-<p>The incoming method can also receive <code>Message&lt;List&lt;Payload&gt;&gt;</code>, <code>KafkaRecordBatch&lt;Key, Payload&gt;</code> <code>ConsumerRecords&lt;Key, Payload&gt;</code> types.
+<p>The incoming method can also receive <code>Message&lt;List&lt;Payload&gt;&gt;</code>, <code>KafkaRecordBatch&lt;Key, Payload&gt;</code>, and <code>ConsumerRecords&lt;Key, Payload&gt;</code> types.
 They give access to record details such as offset or timestamp:</p>
 </div>
 <div class="listingblock">
@@ -1919,6 +1919,70 @@ On the <code>@Incoming</code> methods, you can control how multiple channels are
 </td>
 </tr>
 </table>
+</div>
+<div class="paragraph">
+<p>Repeating the <code>@Outgoing</code> annotation on outbound or processing methods allows another way of dispatching messages to multiple outgoing channels:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.util.Random;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+@ApplicationScoped
+public class MultipleProducers {
+
+    private final Random random = new Random();
+
+    @Outgoing("generated")
+    @Outgoing("generated-2")
+    double priceBroadcast() {
+        return random.nextDouble();
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>In the previous example generated price will be broadcast to both outbound channels.
+The following example selectively sends messages to multiple outgoing channels using the <code>Targeted</code> container object,
+containing key as channel name and value as message payload.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+import io.smallrye.reactive.messaging.Targeted;
+
+@ApplicationScoped
+public class TargetedProducers {
+
+    @Incoming("in")
+    @Outgoing("out1")
+    @Outgoing("out2")
+    @Outgoing("out3")
+    public Targeted process(double price) {
+        Targeted targeted = Targeted.of("out1", "Price: " + price,
+                "out2", "Quote: " + price);
+        if (price &gt; 90.0) {
+            return targeted.with("out3", price);
+        }
+        return targeted;
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Note that <a href="#serialization-autodetection">the auto-detection for Kafka serializers</a> doesn&#8217;t work for signatures using the <code>Targeted</code>.</p>
+</div>
+<div class="paragraph">
+<p>For more details on using multiple outgoings, please refer to the <a href="http://smallrye.io/smallrye-reactive-messaging/4.10.0/concepts/outgoings/">SmallRye Reactive Messaging documentation</a>.</p>
 </div>
 </div>
 <div class="sect2">
@@ -3020,11 +3084,14 @@ public class BeverageProcessor {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTest
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.awaitility.Awaitility.await;
+
+@QuarkusTest
 @QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
 class BaristaTest {
 
     @Inject
+    @Connector("smallrye-in-memory")
     InMemoryConnector connector; <i class="conum" data-value="1"></i><b>(1)</b>
 
     @Test
@@ -3073,6 +3140,92 @@ The application will process this message and send a message to <code>beverages<
 <tr>
 <td><i class="conum" data-value="5"></i><b>5</b></td>
 <td>Use the <code>received</code> method on <code>beverages</code> channel to check the messages produced by the application.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>If your Kafka consumer is batch based, you will need to send a batch of messages to the channel as by creating them manually.</p>
+</div>
+<div class="paragraph">
+<p>For instance:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class BeverageProcessor {
+
+    @Incoming("orders")
+    CompletionStage&lt;Void&gt; process(KafkaRecordBatch&lt;String, Order&gt; orders) {
+        System.out.println("Order received " + orders.getPayload().size());
+        return orders.ack();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static org.awaitility.Awaitility.await;
+
+@QuarkusTest
+@QuarkusTestResource(KafkaTestResourceLifecycleManager.class)
+class BaristaTest {
+
+    @Inject
+    @Connector("smallrye-in-memory")
+
+    InMemoryConnector connector;
+
+    @Test
+    void testProcessOrder() {
+        InMemorySource&lt;IncomingKafkaRecordBatch&lt;String, Order&gt;&gt; ordersIn = connector.source("orders");
+        var committed = new AtomicBoolean(false);  <i class="conum" data-value="1"></i><b>(1)</b>
+        var commitHandler = new KafkaCommitHandler() {
+            @Override
+            public &lt;K, V&gt; Uni&lt;Void&gt; handle(IncomingKafkaRecord&lt;K, V&gt; record) {
+                committed.set(true);  <i class="conum" data-value="2"></i><b>(2)</b>
+                return null;
+            }
+        };
+        var failureHandler = new KafkaFailureHandler() {
+            @Override
+            public &lt;K, V&gt; Uni&lt;Void&gt; handle(IncomingKafkaRecord&lt;K, V&gt; record, Throwable reason, Metadata metadata) {
+                return null;
+            }
+        };
+
+        Order order = new Order();
+        order.setProduct("coffee");
+        order.setName("Coffee lover");
+        order.setOrderId("1234");
+        var record = new ConsumerRecord&lt;&gt;("topic", 0, 0, "key", order);
+        var records = new ConsumerRecords&lt;&gt;(Map.of(new TopicPartition("topic", 1), List.of(record)));
+        var batch = new IncomingKafkaRecordBatch&lt;&gt;(
+            records, "kafka", 0, commitHandler, failureHandler, false, false);  <i class="conum" data-value="3"></i><b>(3)</b>
+
+        ordersIn.send(batch);
+
+        await().until(committed::get);  <i class="conum" data-value="4"></i><b>(4)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Create an <code>AtomicBoolean</code> to track if the batch has been committed.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Update <code>committed</code> when the batch is committed.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Create a <code>IncomingKafkaRecordBatch</code> with a single record.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Wait until the batch is committed.</td>
 </tr>
 </table>
 </div>
@@ -3494,7 +3647,7 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 <h2 id="channel-decorators"><a class="anchor" href="#channel-decorators"></a>22. Channel Decorators</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>SmallRye Reactive Messaging supports decorating incoming and outgoing channels for implementing cross-cutting concerns such as monitoring, tracing or message interception. For more information on implementing decorators and message interceptors see the <a href="http://smallrye.io/smallrye-reactive-messaging/3.19.1/concepts/decorators/">SmallRye Reactive Messaging documentation</a>.</p>
+<p>SmallRye Reactive Messaging supports decorating incoming and outgoing channels for implementing cross-cutting concerns such as monitoring, tracing or message interception. For more information on implementing decorators and message interceptors see the <a href="http://smallrye.io/smallrye-reactive-messaging/latest/concepts/decorators/">SmallRye Reactive Messaging documentation</a>.</p>
 </div>
 </div>
 </div>
