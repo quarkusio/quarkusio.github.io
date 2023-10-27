@@ -1377,6 +1377,131 @@ quarkus.oidc.token.audience=${quarkus.oidc.client-id}</code></pre>
 </div>
 </div>
 <div class="sect1">
+<h2 id="authentication-after-http-request-has-completed"><a class="anchor" href="#authentication-after-http-request-has-completed"></a>Authentication after HTTP request has completed</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Sometimes, <code>SecurityIdentity</code> for a given token must be created when there is no active HTTP request context.
+The <code>quarkus-oidc</code> extension provides <code>io.quarkus.oidc.TenantIdentityProvider</code> to convert a token to a <code>SecurityIdentity</code> instance.
+For example, one situation when you must verify the token after HTTP request has completed is when you are
+processing messages with the <a href="vertx#event-bus">Vert.x event bus</a>.
+In the example below, the 'product-order' message is consumed within different CDI request context, therefore
+an injected <code>SecurityIdentity</code> would not correctly represent the verified identity and be anonymous.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.quickstart.oidc;
+
+import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import io.vertx.core.eventbus.EventBus;
+
+@Path("order")
+public class OrderResource {
+
+    @Inject
+    EventBus eventBus;
+
+    @POST
+    public void order(String product, @HeaderParam(AUTHORIZATION) String bearer) {
+        String rawToken = bearer.substring("Bearer ".length()); <i class="conum" data-value="1"></i><b>(1)</b>
+        eventBus.publish("product-order", new Product(product, 1, rawToken));
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>At this point, token is not verified when proactive authentication is disabled.</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.quickstart.oidc;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import io.quarkus.oidc.AccessTokenCredential;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.TenantIdentityProvider;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.vertx.ConsumeEvent;
+import io.smallrye.common.annotation.Blocking;
+
+@ApplicationScoped
+public class OrderService {
+
+    @TenantFeature("tenantId")
+    @Inject
+    TenantIdentityProvider identityProvider;
+
+    @Inject
+    TenantIdentityProvider defaultIdentityProvider; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @Blocking
+    @ConsumeEvent("product-order")
+    void processOrder(Product product) {
+        String rawToken = product.customerAccessToken;
+        AccessTokenCredential token = new AccessTokenCredential(rawToken);
+        SecurityIdentity = identityProvider.authenticate(token).await().indefinitely(); <i class="conum" data-value="2"></i><b>(2)</b>
+        ...
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>For default tenant, the <code>TenantFeature</code> qualifier is optional.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Executes token verification and converts the token to a <code>SecurityIdentity</code>.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>When the provider is used during an HTTP request, the tenant configuration can be resolved as described in
+the <a href="security-openid-connect-multitenancy">Using OpenID Connect Multi-Tenancy</a> guide.
+However, when there is no active HTTP request, you need to select tenant explicitly with the <code>io.quarkus.oidc.TenantFeature</code> qualifier.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><a href="security-openid-connect-multitenancy#tenant-config-resolver">Dynamic tenant configuration resolution</a> is currently not supported.
+Authentication that requires dynamic tenant will fail.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="references"><a class="anchor" href="#references"></a>References</h2>
 <div class="sectionbody">
 <div class="ulist">
@@ -1420,6 +1545,9 @@ quarkus.oidc.token.audience=${quarkus.oidc.client-id}</code></pre>
 <li>
 <p><a href="security-keycloak-admin-client">Quarkus Keycloak Admin Client</a></p>
 </li>
+<li>
+<p><a href="security-openid-connect-multitenancy">Using OpenID Connect Multi-Tenancy</a></p>
+</li>
 </ul>
 </div>
 </div>
@@ -1449,6 +1577,7 @@ quarkus.oidc.token.audience=${quarkus.oidc.client-id}</code></pre>
 <li><a href="#how-to-use-client-id-property">How to use 'client-id' property</a></li>
 </ul>
 </li>
+<li><a href="#authentication-after-http-request-has-completed">Authentication after HTTP request has completed</a></li>
 <li><a href="#references">References</a></li>
 </ul></div>
   </div>
