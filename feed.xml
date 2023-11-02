@@ -5,7 +5,608 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Thu, 02 Nov 2023 03:04:05 +0000</lastBuildDate>
+        <lastBuildDate>Thu, 02 Nov 2023 08:46:30 +0000</lastBuildDate>
+        
+        <item>
+            <title>Exploring why native executables produced with Mandrel 23.0 are bigger than those produced with Mandrel 22.3</title>
+            <link>
+                https://quarkus.io/blog/mandrel-23-0-image-size-increase/
+            </link>
+            <description>
+                &lt;p&gt;Starting with Quarkus 3.2 the default Mandrel version was updated from 22.3 to 23.0.&lt;/p&gt;
+
+&lt;p&gt;This update brought a number of bugfixes as well as new features like:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;Better support for profiling and debugging using &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;perf&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;gdb&lt;/code&gt;.&lt;/li&gt;
+  &lt;li&gt;Finer control over the monitoring features included in the native executable.&lt;/li&gt;
+  &lt;li&gt;Support for more JFR events.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;However, it also brought an unwanted side effect.
+The native executables produced with Mandrel 23.0 are bigger than the ones produced with Mandrel 22.3.
+To better understand why that happens we perform a thorough analysis to attribute the size increase to specific changes in Mandrel’s code base.&lt;/p&gt;
+
+&lt;h2 id=&quot;tldr&quot;&gt;TL;DR&lt;/h2&gt;
+
+&lt;p&gt;According to our analysis the binary size increase is attributed to three distinct changes, all of which are well justified:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;&lt;a href=&quot;https://github.com/oracle/graal/pull/5156&quot;&gt;Skipping constant folding of reflection methods with side effects&lt;/a&gt;.&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://github.com/oracle/graal/pull/5330&quot;&gt;Reducing the number of stores that are executed by the serial GC write barriers to improve performance by reducing the number of cache misses&lt;/a&gt;.&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://github.com/oracle/graal/commit/4de58f1b3c484213951622c03d74f3435a20c4ef#diff-991a434bbfc9a6af5514e4609380d5fbfe7618585d5b1b3f11fa2a7431ca7ab0L1388-R1388&quot;&gt;Enabling code alignment to compensate for the performance penalty of Intel’s jump conditional code erratum&lt;/a&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h2 id=&quot;better-understanding-what-is-different-between-the-generated-native-executables&quot;&gt;Better understanding what is different between the generated native executables&lt;/h2&gt;
+
+&lt;p&gt;The first step in our analysis is to understand where the binary size increase comes from.
+Usually such an increase is attributed to one of the following:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;More code being generated, due to more code becoming reachable.&lt;/li&gt;
+  &lt;li&gt;More code being generated, due to more aggressive inlining.&lt;/li&gt;
+  &lt;li&gt;More data being stored in the image heap, due to more objects being reachable.&lt;/li&gt;
+  &lt;li&gt;More data being stored in the image heap, due to more types being registered for reflection thus requiring more code metadata to be stored.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;To perform the analysis we use the &lt;a href=&quot;https://github.com/quarkus-qe/quarkus-startstop&quot;&gt;Quarkus startstop test&lt;/a&gt; (specifically commit &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;a8bae846881607e376c7c8a96116b6b50ee50b70&lt;/code&gt;) which generates, starts, tests, and stops small Quarkus applications and measures various time-related metrics (e.g. time-to-first-OK-request) and memory usage.
+We get the test with:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;git clone https://github.com/quarkus-qe/quarkus-startstop
+&lt;span class=&quot;nb&quot;&gt;cd &lt;/span&gt;quarkus-startstop
+git checkout a8bae846881607e376c7c8a96116b6b50ee50b70
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;and build it with:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;mvn clean package &lt;span class=&quot;nt&quot;&gt;-Pnative&lt;/span&gt; &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.version&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;3.2.6.Final&lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.builder-image&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-17
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;changing the builder image tag to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;22.3-java17&lt;/code&gt; for building with Mandrel 22.3.&lt;/p&gt;
+
+&lt;p&gt;Looking at the build output (generated by Quarkus in &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;target/my-app-native-image-sources/my-app-build-output-stats.json&lt;/code&gt;) the main differences between the two builds are in the following metrics:&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;Mandrel version&lt;/th&gt;
+      &lt;th&gt;22.3.3.1&lt;/th&gt;
+      &lt;th&gt;23.0.1.2&lt;/th&gt;
+      &lt;th&gt;Increase %&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Image Heap Size&lt;/td&gt;
+      &lt;td&gt;28807168&lt;/td&gt;
+      &lt;td&gt;29499392&lt;/td&gt;
+      &lt;td&gt;2.4&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Image Code Area&lt;/td&gt;
+      &lt;td&gt;27680208&lt;/td&gt;
+      &lt;td&gt;29625424&lt;/td&gt;
+      &lt;td&gt;7&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Total Image Size&lt;/td&gt;
+      &lt;td&gt;56826648&lt;/td&gt;
+      &lt;td&gt;59467728&lt;/td&gt;
+      &lt;td&gt;4.6&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Classes registered for reflection&lt;/td&gt;
+      &lt;td&gt;645&lt;/td&gt;
+      &lt;td&gt;4317&lt;/td&gt;
+      &lt;td&gt;570&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Hinting that any of the reasons 1-4 mentioned above is possible.&lt;/p&gt;
+
+&lt;h3 id=&quot;dashboards&quot;&gt;Dashboards&lt;/h3&gt;
+
+&lt;p&gt;GraalVM and Mandrel provide the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;-H:+DashboardAll&lt;/code&gt; and &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;-H:+DashboardJson&lt;/code&gt; flags that can be used to generate dashboards that contain more information about the generated native executable.
+The resulting dashboard contains a number of metrics and looks like this:&lt;/p&gt;
+
+&lt;div class=&quot;language-json highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;points-to&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;type-flows&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;err&quot;&gt;...&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;},&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;code-breakdown&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;code-size&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+        &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;name&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;s2&quot;&gt;&quot;io.smallrye.mutiny.CompositeException.getFirstOrFail(Throwable[]) Throwable&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+        &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;size&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;575&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;},&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;err&quot;&gt;...&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;},&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;heap-breakdown&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;heap-size&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+        &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;name&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;s2&quot;&gt;&quot;Lio/vertx/core/impl/VerticleManager$$Lambda$bf09d38f5d19578a0d041ffd0a524c1cbe1843df;&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+        &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;size&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;24&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+        &lt;/span&gt;&lt;span class=&quot;nl&quot;&gt;&quot;count&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;&lt;span class=&quot;w&quot;&gt; &lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;},&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+      &lt;/span&gt;&lt;span class=&quot;err&quot;&gt;...&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+    &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+  &lt;/span&gt;&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;w&quot;&gt;
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Using the aforementioned flags we generate dashboards using both Mandrel 22.3 and 23.0 and compare the results.&lt;/p&gt;
+
+&lt;p&gt;To generate the dashboards using Mandrel 23.0 we use the following command:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;mvn package &lt;span class=&quot;nt&quot;&gt;-Pnative&lt;/span&gt; &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.version&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;3.2.6.Final &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.builder-image&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-17 &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.additional-build-args&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;-H&lt;/span&gt;:+DashboardAll,-H:+DashboardJson,-H:DashboardDump&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;path/to/23.0.dashboard.json
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Similarly to generate the dashboards using Mandrel 22.3 we use the following command:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;mvn package &lt;span class=&quot;nt&quot;&gt;-Pnative&lt;/span&gt; &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.version&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;3.2.6.Final &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.builder-image&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;quay.io/quarkus/ubi-quarkus-mandrel-builder-image:22.3-java17 &lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+  &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.additional-build-args&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;-H&lt;/span&gt;:+DashboardAll,-H:+DashboardJson,-H:DashboardDump&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;path/to/22.3.dashboard.json
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Note: Make sure to change &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;path/to/&lt;/code&gt; to the path where you would like the dashboard json files to be stored, each file is about 370MB big.&lt;/p&gt;
+
+&lt;h3 id=&quot;analyzing-and-visualizing-the-data&quot;&gt;Analyzing and visualizing the data&lt;/h3&gt;
+
+&lt;p&gt;To process the data from the dashboards we used a Jupyter notebook, like we did to create this article.
+To grab the notebook follow &lt;a href=&quot;/assets/examples/posts/mandrel-23-0-image-size-increase/quarkus-size-22-3-23-0.ipynb&quot;&gt;this link&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;For those willing to use a spreadsheet instead, a CSV file can be created to facilitate the analysis in a spreadsheet.
+E.g. using &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;jq&lt;/code&gt;:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;jq &lt;span class=&quot;nt&quot;&gt;-r&lt;/span&gt; &lt;span class=&quot;nt&quot;&gt;-s&lt;/span&gt; &lt;span class=&quot;s1&quot;&gt;'([&quot;Name&quot;, &quot;22.3 size&quot;, &quot;23.0 size&quot;], (map(.&quot;code-breakdown&quot;.&quot;code-size&quot;) | flatten | group_by(.name) | map({name: .[0].name, size22: .[0].size, size23: .[1].size})[] | [.name, .size22, .size23])) | @csv'&lt;/span&gt; 22.3.dashboard.json 23.0.dashboard.json &lt;span class=&quot;o&quot;&gt;&amp;gt;&lt;/span&gt; analysis.csv
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h4 id=&quot;loading-the-data-from-the-json-files&quot;&gt;Loading the data from the json files&lt;/h4&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;kn&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;nn&quot;&gt;json&lt;/span&gt;
+&lt;span class=&quot;kn&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;nn&quot;&gt;pandas&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;as&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# load data from JSON file
+&lt;/span&gt;&lt;span class=&quot;k&quot;&gt;with&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;open&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'22.3.dashboard.json'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'r'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;as&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;data22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;json&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;load&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;with&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;open&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'23.0.dashboard.json'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'r'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;as&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;n&quot;&gt;data23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;json&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;load&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# create dataframes from json data
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;df22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;data22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;df23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;data23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h2 id=&quot;key-observations&quot;&gt;Key Observations&lt;/h2&gt;
+
+&lt;p&gt;The key questions we want to answer using the aforementioned data are:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;Is the code area bigger due to more methods being compiled?&lt;/li&gt;
+  &lt;li&gt;Is the code area bigger due to more code being generated per method?&lt;/li&gt;
+  &lt;li&gt;Is the heap image bigger because we store more objects in it?&lt;/li&gt;
+  &lt;li&gt;Is the heap image bigger because we store more metadata?&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h3 id=&quot;code-area-size-increase&quot;&gt;Code Area Size Increase&lt;/h3&gt;
+
+&lt;p&gt;We first answer the code area related questions.&lt;/p&gt;
+
+&lt;h4 id=&quot;is-the-code-area-bigger-due-to-more-methods-being-compiled&quot;&gt;Is the code area bigger due to more methods being compiled?&lt;/h4&gt;
+
+&lt;p&gt;To answer this question we get the two lists of the compiled methods and compare their sizes:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;c1&quot;&gt;# Get code-size lists from dataframes
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_size_22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;df22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'code-breakdown'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;][&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'code-size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;code_size_23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;df23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'code-breakdown'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;][&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'code-size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Compiled methods with 22_3:&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;len&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_size_22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;))&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Compiled methods with 23_0:&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;len&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_size_23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;))&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Compiled methods with 22_3: 46298
+Compiled methods with 23_0: 46299
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The results indicate that the answer is no.
+In both cases the number of compiled methods is the same (off by 1).
+As a result the code size increase is not coming from more methods becoming reachable and compiled.&lt;/p&gt;
+
+&lt;h4 id=&quot;is-the-code-area-bigger-due-to-more-code-being-generated-per-method&quot;&gt;Is the code area bigger due to more code being generated per method?&lt;/h4&gt;
+
+&lt;p&gt;To answer this question we calculate the percentage difference between the compiled methods:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;kn&quot;&gt;import&lt;/span&gt; &lt;span class=&quot;nn&quot;&gt;matplotlib.pyplot&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;as&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# create dataframes from code_size lists
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_df22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_size_22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;rename&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;columns&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;})&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;code_df23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_size_23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;rename&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;columns&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'size-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;})&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# merge dataframes
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merge&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;code_df22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;code_df23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;on&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'name'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;how&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'outer'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;fillna&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# create column with size increase as percentage skipping entries with 0 size
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;percentage_increase&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;lambda&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;
+    &lt;span class=&quot;p&quot;&gt;((&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;])&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;])&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;100&lt;/span&gt; 
+    &lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;gt;&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt; &lt;span class=&quot;ow&quot;&gt;and&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;gt;&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt; 
+    &lt;span class=&quot;k&quot;&gt;else&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;
+&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;apply&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;percentage_increase&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;axis&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We count the number of methods, the number of those that didn’t change size, the number of those that their size increased, and the number of those that their size decreased:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;n&quot;&gt;total_compiled_methods&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;len&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;sa&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Total number of compiled methods: &lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;total_compiled_methods&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;zero_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;==&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;sum&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;zero_increase_percent&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;zero_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;total_compiled_methods&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;100&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;sa&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Number of methods that their compiled size remains the same: &lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;zero_increase_count&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt; (&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;zero_increase_percent&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:.&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;%)&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;positive_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;gt;&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;sum&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;positive_increase_percent&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;positive_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;total_compiled_methods&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;100&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;sa&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Number of methods that their compiled size increased: &lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;positive_increase_count&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt; (&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;positive_increase_percent&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:.&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;%)&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;negative_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;&amp;lt;&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;sum&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;negative_increase_percent&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;negative_increase_count&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;total_compiled_methods&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;*&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;100&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;sa&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Number of methods that their compiled size decreased: &lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;negative_increase_count&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt; (&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;negative_increase_percent&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:.&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;2&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;f&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;%)&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Total number of compiled methods: 48476
+Number of methods that their compiled size remains the same: 13947 (28.77%)
+Number of methods that their compiled size increased: 33351 (68.80%)
+Number of methods that their compiled size decreased: 1178 (2.43%)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The results indicate that 68.8% of the compiled methods are bigger when compiled by 23.0 in comparison to when they are compiled by 22.3.
+But how much bigger?
+To answer this we print a histogram of the size increase:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;c1&quot;&gt;# plot histogram
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;hist&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;],&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;bins&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;auto&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;xlabel&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Percentage difference'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;ylabel&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Frequency'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;title&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Histogram of percentage difference in code size (full range)'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;show&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/images/posts/mandrel-23-0-image-size-increase/index_9_0.png&quot; alt=&quot;png&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;We observe that due to a large number of methods retaining the same size and due to some outliers the histogram is hard to read.
+So we remove the methods with no size changes and limit our focus in the range [-5, 25]:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;c1&quot;&gt;# create column with size increase as percentage skipping entries with 0 size
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;zero_filter&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;lambda&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;if&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;row&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;!=&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt; &lt;span class=&quot;k&quot;&gt;else&lt;/span&gt; &lt;span class=&quot;bp&quot;&gt;None&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;apply&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;zero_filter&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;axis&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;1&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# drop rows with None values
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;dropna&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# plot histogram
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;hist&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-increase'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;],&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;bins&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;auto&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;xlim&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;-&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;5&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;mi&quot;&gt;25&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;xlabel&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Percentage difference'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;ylabel&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Frequency'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;title&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'Histogram of percentage difference in code size in the range [-5%, 25%] excluding 0%'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;c1&quot;&gt;# show the plot
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;plt&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;show&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/images/posts/mandrel-23-0-image-size-increase/index_11_0.png&quot; alt=&quot;png&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;This plot shows that the majority of the affected methods get a code size increase between 0 and 10 %, which is inline with the overall size increase we observe in the code area.&lt;/p&gt;
+
+&lt;h5 id=&quot;why&quot;&gt;Why?&lt;/h5&gt;
+
+&lt;p&gt;To see why the same methods get compiled to larger machine code when using Mandrel 23.0 we first inspected how many methods are getting inlined in each case.
+To do so, we build the native executables with debug info generation enabled using the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;-Dquarkus.native.debug.enabled=true&lt;/code&gt; parameter.
+To make sure that inline DIEs are included when building with Mandrel 22.3 we also pass the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;-Dquarkus.native.additional-build-args=-H:-OmitInlinedMethodDebugLineInfo&lt;/code&gt; option, e.g.:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;mvn clean package &lt;span class=&quot;nt&quot;&gt;-Pnative&lt;/span&gt; &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.version&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;3.2.6.Final&lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.builder-image&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-17&lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.debug.enabled&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;true&lt;/span&gt;&lt;span class=&quot;se&quot;&gt;\&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;-Dquarkus&lt;/span&gt;.native.additional-build-args&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;-H&lt;/span&gt;:-OmitInlinedMethodDebugLineInfo
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;After the image is built we count the number of &lt;em&gt;inlined&lt;/em&gt; Debug Info Entries (DIEs) using the following command:&lt;/p&gt;
+
+&lt;div class=&quot;language-shell highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;readelf &lt;span class=&quot;nt&quot;&gt;--debug-dump&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;info quarkus-runner | &lt;span class=&quot;nb&quot;&gt;grep&lt;/span&gt; &lt;span class=&quot;nt&quot;&gt;-i&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;DW_TAG_inlined_subroutine&quot;&lt;/span&gt; | &lt;span class=&quot;nb&quot;&gt;wc&lt;/span&gt; &lt;span class=&quot;nt&quot;&gt;-l&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The results are shown in the table below:&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;Mandrel version&lt;/th&gt;
+      &lt;th&gt;22.3&lt;/th&gt;
+      &lt;th&gt;23.0&lt;/th&gt;
+      &lt;th&gt;Increase %&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Inlined methods&lt;/td&gt;
+      &lt;td&gt;2798414&lt;/td&gt;
+      &lt;td&gt;2817686&lt;/td&gt;
+      &lt;td&gt;0.69 %&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;While they indicate a slight increase in the number of inlined methods between Mandrel 22.3 and 23.0, the increase is so small that it doesn’t align with the overall code size increase.&lt;/p&gt;
+
+&lt;p&gt;As a next step, we hand-picked a number of methods with different code sizes in the generated native executables and inspected their disassembled code (using &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;gdb&lt;/code&gt;).&lt;/p&gt;
+
+&lt;p&gt;For example inspecting &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;InstrumentedUnpooledUnsafeNoCleanerDirectByteBuf.allocateDirect(int)&lt;/code&gt; from &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;io.netty.buffer.UnpooledByteBufAllocator&lt;/code&gt; using:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-gdb&quot;&gt;(gdb) x/20i 'io.netty.buffer.UnpooledByteBufAllocator$InstrumentedUnpooledUnsafeNoCleanerDirectByteBuf::allocateDirect(int)'
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;we see that the one extra byte comes from an additional &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nop&lt;/code&gt; between two calls.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mandrel 22.3&lt;/strong&gt;&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-asm&quot;&gt;sub    $0x18,%rsp
+cmp    0x8(%r15),%rsp
+jbe    0x96ad8f
+mov    %rdi,0x8(%rsp)
+mov    %esi,%edi
+mov    %esi,0x14(%rsp)
+call   0xb7e870
+nop
+call   0x756e10
+nop
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&lt;strong&gt;Mandrel 23.0&lt;/strong&gt;&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-asm&quot;&gt;sub    $0x18,%rsp
+cmp    0x8(%r15),%rsp
+jbe    0x96ad8f
+mov    %rdi,0x8(%rsp)
+mov    %esi,%edi
+mov    %esi,0x14(%rsp)
+call   0xb7e870
+nop
+nop                     // &amp;lt;==== extra nop
+call   0x756e10
+nop
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;We observed this pattern in multiple methods which is an indication of some code alignment change.
+However, there were also methods with increased compiled code size without having an increased number of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nop&lt;/code&gt;s, hinting that the code size increase is not caused by a single change as we confirm in &lt;a href=&quot;#attributing-binary-size-increase-to-specific-code-changes&quot;&gt;Attributing Binary Size Increase to Specific Code Changes&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h3 id=&quot;image-heap-size-increase&quot;&gt;Image Heap Size Increase&lt;/h3&gt;
+
+&lt;p&gt;Upon initial inspection, it was noted that there was an increase of approximately 650KB in the image heap size.
+As a result next we opted to answer whether:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;The heap image is bigger because we store more objects in it?&lt;/li&gt;
+  &lt;li&gt;The heap image is bigger because we store more metadata?&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h4 id=&quot;is-the-heap-image-bigger-because-we-store-more-objects-in-it&quot;&gt;Is the heap image bigger because we store more objects in it?&lt;/h4&gt;
+
+&lt;p&gt;Using the dashboard data we first checked whether the number of objects in the image heap is different between the two versions:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;c1&quot;&gt;# Get heap-size lists from dataframes
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_size_22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;df22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'heap-breakdown'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;][&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'heap-size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;heap_size_23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;df23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'heap-breakdown'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;][&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'heap-size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+
+&lt;span class=&quot;c1&quot;&gt;# create dataframes from heap_size lists
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_df22_3&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_size_22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;rename&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;columns&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'count'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'count-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;})&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;heap_df23_0&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;DataFrame&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_size_23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;rename&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;columns&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;{&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'size-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'count'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'count-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;})&lt;/span&gt;
+
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Number of objects in image heap with 22.3: &quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;heap_df22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'count-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;].&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;sum&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;())&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Number of objects in image heap with 23.0: &quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;heap_df23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'count-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;].&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;sum&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;())&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Number of objects in image heap with 22.3:  340870
+Number of objects in image heap with 23.0:  348063
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We observe that the image generated with 22.3 has ~7000 (or roughly 2%) more objects in the image heap.
+We then check to see if these additional objects are from different types being instantiated:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Types in image heap with 22.3:&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;len&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_size_22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;))&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;print&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;Types in image heap with 23.0:&quot;&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;nb&quot;&gt;len&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_size_23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;))&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;div class=&quot;language-plaintext highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Types in image heap with 22.3: 3681
+Types in image heap with 23.0: 3679
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The results indicate that the number of types in the image heap remain about the same, hinting that 23.0 instantiates more objects of the same types in the image heap.
+To see which types are those seeing the larger, in terms of heap size, increase in the image heap we run:&lt;/p&gt;
+
+&lt;div class=&quot;language-python highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;c1&quot;&gt;# merge dataframes
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;pd&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merge&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;heap_df22_3&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;heap_df23_0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;on&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'name'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;how&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'outer'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;fillna&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;0&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'count-diff'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'count-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'count-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-diff'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;=&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-23.0'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt; &lt;span class=&quot;o&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-22.3'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]&lt;/span&gt;
+&lt;span class=&quot;c1&quot;&gt;# get top 10 types with the biggest difference in occupied heap size
+&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;merged_heap_df&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;.&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;sort_values&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;by&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'size-diff'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;],&lt;/span&gt; &lt;span class=&quot;n&quot;&gt;ascending&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;&lt;span class=&quot;bp&quot;&gt;False&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;).&lt;/span&gt;&lt;span class=&quot;n&quot;&gt;head&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;mi&quot;&gt;10&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)[[&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;'name'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'count-diff'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;,&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;'size-diff'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;]]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;div&gt;
+&lt;style scoped=&quot;&quot;&gt;
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+&lt;/style&gt;
+&lt;table border=&quot;1&quot; class=&quot;dataframe&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr style=&quot;text-align: right;&quot;&gt;
+      &lt;th&gt;&lt;/th&gt;
+      &lt;th&gt;name&lt;/th&gt;
+      &lt;th&gt;count-diff&lt;/th&gt;
+      &lt;th&gt;size-diff&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;th&gt;1340&lt;/th&gt;
+      &lt;td&gt;[B&lt;/td&gt;
+      &lt;td&gt;2042.0&lt;/td&gt;
+      &lt;td&gt;894704.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;2384&lt;/th&gt;
+      &lt;td&gt;Ljava/lang/invoke/DirectMethodHandle;&lt;/td&gt;
+      &lt;td&gt;1293.0&lt;/td&gt;
+      &lt;td&gt;71920.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;2901&lt;/th&gt;
+      &lt;td&gt;Ljava/lang/String;&lt;/td&gt;
+      &lt;td&gt;2032.0&lt;/td&gt;
+      &lt;td&gt;65024.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;3684&lt;/th&gt;
+      &lt;td&gt;Ljdk/internal/module/ServicesCatalog$ServicePr...&lt;/td&gt;
+      &lt;td&gt;1058.0&lt;/td&gt;
+      &lt;td&gt;42320.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;2582&lt;/th&gt;
+      &lt;td&gt;[Ljava/lang/Object;&lt;/td&gt;
+      &lt;td&gt;246.0&lt;/td&gt;
+      &lt;td&gt;36472.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;898&lt;/th&gt;
+      &lt;td&gt;[Ljava/lang/String;&lt;/td&gt;
+      &lt;td&gt;9.0&lt;/td&gt;
+      &lt;td&gt;28024.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;1297&lt;/th&gt;
+      &lt;td&gt;Ljava/lang/invoke/MethodType;&lt;/td&gt;
+      &lt;td&gt;276.0&lt;/td&gt;
+      &lt;td&gt;15456.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;3238&lt;/th&gt;
+      &lt;td&gt;Ljava/util/concurrent/ConcurrentHashMap$Node;&lt;/td&gt;
+      &lt;td&gt;274.0&lt;/td&gt;
+      &lt;td&gt;13152.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;1065&lt;/th&gt;
+      &lt;td&gt;Ljava/util/HashMap;&lt;/td&gt;
+      &lt;td&gt;146.0&lt;/td&gt;
+      &lt;td&gt;10512.0&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;th&gt;3244&lt;/th&gt;
+      &lt;td&gt;[Ljava/lang/Class;&lt;/td&gt;
+      &lt;td&gt;261.0&lt;/td&gt;
+      &lt;td&gt;9680.0&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+
+&lt;p&gt;The results indicate an increase of ~870KB of bytes in byte arrays, which unfortunately is not very informative, especially combined with the size of other types significantly differing between the two versions (possibly due to GraalVM internal code changes which result in different allocation patterns).&lt;/p&gt;
+
+&lt;h4 id=&quot;is-the-heap-image-bigger-because-we-store-more-metadata&quot;&gt;Is the heap image bigger because we store more metadata?&lt;/h4&gt;
+
+&lt;p&gt;As shown in &lt;a href=&quot;#better-understanding-what-is-different-between-the-generated-native-executables&quot;&gt;Better understanding what is different between the generated native executables&lt;/a&gt; there appears to be a significant increase in the number of types registered for reflection (645 in Mandrel 22.3 vs. 4317 in Mandrel 23.0).
+This, along with the reported (in the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;native-image&lt;/code&gt; output) increase of code metadata, initially led us to think that there is some change in Mandrel that results in more types being registered for reflection.
+In the end, as discussed in &lt;a href=&quot;#attributing-binary-size-increase-to-specific-code-changes&quot;&gt;Attributing Binary Size Increase to Specific Code Changes&lt;/a&gt;, contrary to our intuition, the increase is not related to the increase in the reported types registered for reflection which is due to &lt;a href=&quot;https://github.com/oracle/graal/commit/23d70b802b2dbc9b7d2324a31141c32b6575083f#diff-54ef73a23b10bd907d5869cc88b651fae7fef0467ccfaf8f50472cdd1e114eceR385&quot;&gt;a fix in the way the reported types registered for reflection are measured&lt;/a&gt;.
+Instead, the increase of the code metadata stored in the image heap is due to &lt;a href=&quot;https://github.com/oracle/graal/pull/5156&quot;&gt;skipping constant folding of reflection methods with side effects&lt;/a&gt;, a fix introduced in 23.0 to prevent undesired effects when folding invocations using reflection.&lt;/p&gt;
+
+&lt;h2 id=&quot;attributing-binary-size-increase-to-specific-code-changes&quot;&gt;Attributing Binary Size Increase to Specific Code Changes&lt;/h2&gt;
+
+&lt;p&gt;At this point, we have a rough understanding of what is different in the generated native executables, but we still don’t know why.
+Is this increase in the size of native executables well justified?&lt;/p&gt;
+
+&lt;p&gt;To answer this question, we decided to detect the code base changes that resulted in the observed behaviors.
+To do so, we used &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;git bisect&lt;/code&gt;, marking the 22.3 release’s commit as &lt;em&gt;good&lt;/em&gt; and the 23.0 release’s commit as &lt;em&gt;bad&lt;/em&gt;.
+For each commit, we built an instance of Mandrel and compiled our test application to see the code and heap area size.
+If the sizes matched the ones from 22.3, we marked the commit as &lt;em&gt;good&lt;/em&gt; otherwise we marked it as &lt;em&gt;bad&lt;/em&gt;.
+During this process, we noticed that there were commits resulting in binary sizes bigger than the ones generated with 22.3 but smaller than 23.0.
+This confirmed our expectation that the binary size increase was the result of more than one change in the code base.
+To reduce the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;git bisect&lt;/code&gt; cost we noted down the code and heap area sizes for each tested commit hash.
+Then using that info, we replayed the bisect process a few times using the output of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;git bisect log&lt;/code&gt; and changing which commits we considered &lt;em&gt;good&lt;/em&gt;, once we identified the first, second, and so forth change contributing to the binary size increase.&lt;/p&gt;
+
+&lt;h3 id=&quot;identified-causes-of-code-size-increase&quot;&gt;Identified Causes of Code Size Increase&lt;/h3&gt;
+
+&lt;p&gt;The above process led us to the conclusion that the binary size increase is mainly mainly the result of the following three changes:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;
+    &lt;p&gt;&lt;a href=&quot;https://github.com/oracle/graal/pull/5156&quot;&gt;&lt;strong&gt;Skipping constant folding of reflection methods with side effects&lt;/strong&gt;&lt;/a&gt;: A fix introduced in 23.0 to prevent undesired effects when folding invocations using reflection (e.g. triggering build time initialization of classes that should be run time initialized).
+This change is responsible for the image heap size increase.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li&gt;
+    &lt;p&gt;&lt;a href=&quot;https://github.com/oracle/graal/pull/5330&quot;&gt;&lt;strong&gt;Reducing the number of stores that are executed by the serial GC write barriers to improve performance by reducing the number of cache misses&lt;/strong&gt;&lt;/a&gt;: This change essentially adds two additional instructions, a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;cmpb   $0x0,0x30(%rcx,%rax,1)&lt;/code&gt; and a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;je&lt;/code&gt;, to each inlined instance of the serial GC write barrier.
+The aim of this change is to avoid unnecessary stores in the GC write barriers in order to reduce cache line invalidations and improve performance.
+According to our measurements, the total impact of this change is ~1MB increase of code area in our test case which inlines the write barrier 90697 times when using Mandrel 22.3 and 93686 times when using Mandrel 23.0.
+To measure the number the barrier was inlined we inspect the number of breakpoint locations set in &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;gdb&lt;/code&gt; when running &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;b CardTable.java:91&lt;/code&gt;, i.e. when setting a breakpoint in &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;com.oracle.svm.core.genscavenge.remset.CardTable#setDirty&lt;/code&gt;.
+E.g.:&lt;/p&gt;
+
+    &lt;pre&gt;&lt;code class=&quot;language-gdb&quot;&gt;(gdb) b CardTable.java:91
+Breakpoint 1 at 0x407574: CardTable.java:91. (93686 locations)
+&lt;/code&gt;&lt;/pre&gt;
+  &lt;/li&gt;
+  &lt;li&gt;
+    &lt;p&gt;&lt;a href=&quot;https://github.com/oracle/graal/commit/4de58f1b3c484213951622c03d74f3435a20c4ef#diff-991a434bbfc9a6af5514e4609380d5fbfe7618585d5b1b3f11fa2a7431ca7ab0L1388-R1388&quot;&gt;&lt;strong&gt;Enabling code alignment to compensate for the performance penalty of Intel’s Jump Conditional Code Erratum&lt;/strong&gt;&lt;/a&gt;: According to &lt;a href=&quot;https://www.intel.com/content/dam/support/us/en/documents/processors/mitigations-jump-conditional-code-erratum.pdf&quot;&gt;Intel’s white paper about “Mitigations for Jump Conditional Code Erratum”&lt;/a&gt;:&lt;/p&gt;
+
+    &lt;blockquote&gt;
+      &lt;p&gt;Software can compensate for the performance effects of the workaround for this erratum with optimizations that align the code such that jump instructions (and macro-fused jump instructions) do not cross 32-byte boundaries or end on a 32-byte boundary.
+Such aligning can reduce or eliminate the performance penalty caused by the transition of execution from Decoded ICache to the legacy decode pipeline.&lt;/p&gt;
+    &lt;/blockquote&gt;
+
+    &lt;p&gt;As a result, this change results in an increased number of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nop&lt;/code&gt; instructions in the generated code, but can result in up to 4% performance improvements according to the same document:&lt;/p&gt;
+
+    &lt;blockquote&gt;
+      &lt;p&gt;Intel has observed performance effects associated with the workaround ranging from
+0-4% on many industry-standard benchmarks.
+In subcomponents of these benchmarks, Intel has observed outliers higher than the 0-4% range.
+Other workloads not observed by Intel may behave differently.
+Intel has in turn developed software-based tools to minimize the impact on potentially affected applications and workloads.&lt;/p&gt;
+    &lt;/blockquote&gt;
+
+    &lt;p&gt;According to our measurements, the total impact of this change is ~900KB in our test case.&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;conclusion&quot;&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;In conclusion, the increase in the size of native executables produced with Mandrel 23.0 compared to Mandrel 22.3 can be attributed to the above three specific changes in the Mandrel code base.&lt;/p&gt;
+
+&lt;p&gt;While these changes do contribute to the increase in native executable size, they also come with performance and correctness benefits.
+Therefore, the larger executables are a trade-off to ensure better application performance and avoid undesired side effects.&lt;/p&gt;
+
+            </description>
+            <pubDate>Thu, 02 Nov 2023 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/mandrel-23-0-image-size-increase/
+            </guid>
+            
+            
+            
+            <author>Foivos Zakkak (https://twitter.com/zakkak)</author>
+            
+        </item>
         
         <item>
             <title>Quarkus 3.5.0 released - Java 21, OIDC enhancements</title>
@@ -1348,86 +1949,6 @@ Do not forget that such kind of application:&lt;/p&gt;
             
             
             <author>Clement Escoffier (https://twitter.com/clementplop)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.4.2 released - Maintenance release</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-4-2-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Today, we released Quarkus 3.4.2, our first maintenance release for our 3.4 release train (we skipped 3.4.0).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It includes a bunch of bugfixes, together with documentation improvements.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.4.2, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To migrate from 3.3, please refer to &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.4&quot;&gt;our migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are not already using 3.x, please refer to the &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-0-final-released/&quot;&gt;3.0 announcement&lt;/a&gt; for all the details.
-You can also refer to &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-upgrade/&quot;&gt;this blog post&lt;/a&gt; for additional details.
-Once you upgraded to 3.0, also have a look at the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.1&quot;&gt;3.1&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.2&quot;&gt;3.2&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.3&quot;&gt;3.3&lt;/a&gt; migration guides.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.4.2&quot;&gt;the full changelog of 3.4.2 on GitHub&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Thu, 05 Oct 2023 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-4-2-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
             
         </item>
         
