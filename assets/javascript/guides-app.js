@@ -19,7 +19,7 @@ const appElement = document.querySelector(appSelector);
 
 const app = createApp({
   props: {
-    url: String,
+    searchApiServer: String,
     initialTimeout: Number,
     moreTimeout: Number,
     minChars: Number,
@@ -85,8 +85,8 @@ const app = createApp({
     hasHits() {
       return this.search.result.hits.length > 0
     },
-    cardHits() {
-      return this.search.result.hits.map(hit => this.guidesPathToCardHtmlElement.get(hit.id)).filter(e => e)
+    searchHits() {
+      return this.search.result.hits
     }
   },
   mounted() {
@@ -101,7 +101,37 @@ const app = createApp({
       cards = appElement.querySelectorAll(cardSelector)
     }
     this.guidesPathToCardHtmlElement = new Map(Array.from(cards)
-      .map(element => [new URL(element.querySelector('a').href).pathname, element]))
+        .map(element => {
+          const link = element.querySelector('h4 a')
+          if (link) {
+            // new versions:
+            const url = link.getAttribute('href');
+            return [
+              new URL(link.href).pathname,
+              {
+                url: url,
+                className: element.className,
+                title: link.innerHTML,
+                summary: element.querySelector('div .description').innerHTML,
+                keywords: element.querySelector('div .keywords').innerHTML,
+                categories: element.querySelector('div .categories').innerHTML,
+                origin: element.querySelector('div .origin')?.innerHTML
+              }];
+          } else {
+            // older Quarkus versions:
+            const url = element.querySelector('a').getAttribute('href')
+            return [
+              url,
+              {
+                url: url,
+                className: element.className,
+                title: element.querySelector('p.title').innerHTML,
+                summary: element.querySelector('div.description').innerHTML,
+                keywords: element.querySelector('div.keywords').innerHTML,
+                origin: element.querySelector('div.origin')?.innerHTML
+              }];
+          }
+        }))
 
     // Load more results on scroll
     document.addEventListener('scroll', e => {
@@ -157,11 +187,14 @@ const app = createApp({
         }
         const queryParams = {
           page: this.search.page,
-          version: this.quarkusVersion
+          version: this.quarkusVersion,
+          contentSnippets: 2,
+          contentSnippetsLength: 120,
+          highlightCssClass: 'highlighted'
         }
         Object.assign(queryParams, this.search.input)
         const result = await this._jsonFetch(controller, 'GET', queryParams, timeout)
-        this.search.result.hits = this.search.result.hits.concat(result.hits)
+        this.search.result.hits = this.search.result.hits.concat(this._processHits(result.hits))
         this.search.result.hasMoreHits = result.hits.length > 0
       }
       catch(error) {
@@ -182,9 +215,15 @@ const app = createApp({
         }
       }
     },
+    _processHits(serverHits) {
+      return serverHits.map(hit => {
+        hit.content = hit?.content.map(paragraph => `...${paragraph}...`)
+        return hit;
+      })
+    },
     async _jsonFetch(controller, method, queryParams, timeout) {
       const timeoutId = setTimeout(() => controller.abort(), timeout)
-      const response = await fetch(this.url + '?' + ( new URLSearchParams( queryParams ) ).toString(), {
+      const response = await fetch(`${this.searchApiServer}api/guides/search?${new URLSearchParams( queryParams )}`, {
         method: method,
         signal: controller.signal,
         body: null
@@ -203,21 +242,20 @@ const app = createApp({
 
       return Array.from(this.guidesPathToCardHtmlElement)
           .filter(([path, card]) => this._javascriptFilter(card, terms, categories))
-          .map(([path, _]) => { return { id: path } })
+          .map(([_, card]) => card)
     },
     _javascriptFilter(card, terms, categories) {
       let match = true
       if (match && categories) {
-        const categoriesElem = card.getElementsByClassName('categories').item(0)
-        match = categoriesElem && this._containsAllCaseInsensitive(categoriesElem, categories)
+        match = this._containsAllCaseInsensitive(card.categories, categories)
       }
       if (match && terms) {
-        match = this._containsAllCaseInsensitive(card, terms)
+        match = this._containsAllCaseInsensitive(`${card.keywords}${card.summary}${card.title}${card.categories}`, terms)
       }
       return match
     },
     _containsAllCaseInsensitive(elem, terms) {
-      const text = (elem.textContent || elem.innerText || '').toLowerCase()
+      const text = (elem ? elem : '').toLowerCase();
       for (let i in terms) {
         if (text.indexOf(terms[i].toLowerCase()) < 0) {
           return false
