@@ -14,7 +14,13 @@ But first, let's describe briefly what Stork can do for you.
 SmallRye Stork is a client-side service discovery and selection framework.
 It provides out-of-the-box integrations with Kubernetes, Eureka, and Hashicorp Consul, as well as a few selection strategies, including round-robin.
 But the most noteworthy feature of Stork is its extensibility. You can create your own service selection strategy or plug in your own service discovery mechanism.
-If you don't know it yet, a good way to get started is to take a look at our https://quarkus.io/guides/stork[getting started guide]. With the latest added additions we highlight how Stork
+If you don't know it yet, a good way to get started is to take a look at our https://quarkus.io/guides/stork[getting started guide].
+
+Additionally, our documentation has also been enhanced, offering comprehensive guides for both seasoned users and those taking their first steps with Stork.
+To further support your exploration, there is https://www.youtube.com/watch?v=fCNwxPDGt7Q[a video] and supplementary content that show Stork's capabilities in detail, don’t hesitate to check them out.
+Don't have much time? Don't worry, we have the https://www.youtube.com/shorts/F4Gd1I1zfjs[perfect video] to understand Stork in less than 1 minute.
+
+With the latest added additions we highlight how Stork
 continues to reshape the game of service discovery and selection from the client side.
 
 == Programmatic Service definition
@@ -109,8 +115,62 @@ business logic for decision-making and data expiration.
 This enhancement was driven by the specific requirements of Kubernetes service discovery as contacting the cluster too frequently can result in performance
 problems. So, out of the box, Stork Kubernetes service discovery now comes with a tailored cache expiration strategy to keep service instances until an event occurs.
 
+If you would like to do so for your custom service discovery implementations, you need:
+- Extend the CachingServiceDiscovery as mentioned above.
+- Implement the `cache` method where the expiration strategy is defined.
+- Invalidate the cache when the expiration condition evaluates to `true`.
 
-If you would like to do so for your custom service discovery implementations, you just need to override the `cache` method.
+Look at the example bellow:
+
+[source,java]
+----
+package examples;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.stork.api.ServiceInstance;
+import io.smallrye.stork.impl.CachingServiceDiscovery;
+import io.smallrye.stork.impl.DefaultServiceInstance;
+import io.smallrye.stork.utils.ServiceInstanceIds;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class CustomExpirationCachedAcmeServiceDiscovery extends CachingServiceDiscovery {
+
+    private final String host;
+    private final int port;
+
+    private AtomicBoolean invalidated = new AtomicBoolean();
+
+    public CustomExpirationCachedAcmeServiceDiscovery(CachedAcmeConfiguration configuration) {
+        super(configuration.getRefreshPeriod()); // (1)
+        this.host = configuration.getHost();
+        this.port = Integer.parseInt(configuration.getPort());
+    }
+
+    @Override
+    public Uni<List<ServiceInstance>> fetchNewServiceInstances(List<ServiceInstance> previousInstances) {
+        // Retrieve services...
+        DefaultServiceInstance instance =
+                new DefaultServiceInstance(ServiceInstanceIds.next(), host, port, false);
+        return Uni.createFrom().item(() -> Collections.singletonList(instance));
+    }
+
+    @Override
+    public Uni<List<ServiceInstance>> cache(Uni<List<ServiceInstance>> uni) {
+        return uni.memoize().until(() -> invalidated.get());
+    }
+
+    //command-based cache invalidation: user triggers the action to invalidate the cache.
+    public void invalidate() {
+        invalidated.set(true);
+    }
+
+}
+----
+
+You can check the https://github.com/smallrye/smallrye-stork/blob/main/service-discovery/kubernetes/src/main/java/io/smallrye/stork/servicediscovery/kubernetes/KubernetesServiceDiscovery.java[Kubernetes Service Discovery code] for further details about an event-based invalidation example.
 
 
 == Observability
@@ -122,13 +182,6 @@ and selection durations and error rates.
 
 If you're leveraging Stork within your Quarkus application, now, you can easily check and analyze metrics such as service discovery and selection
 response times and errors directly in Prometheus. Check the https://quarkus.io/version/main/guides/stork-reference#configure-stork-observability[Stork reference guide] for details.
-
-== Documentation
-
-Additionally, our documentation has also been enhanced, offering comprehensive guides for both seasoned users and those taking their first steps with Stork.
-To further support your exploration, there is https://www.youtube.com/watch?v=fCNwxPDGt7Q[a video] and supplementary content that show Stork's capabilities in detail, don’t hesitate to check them out.
-Don't have much time? Don't worry, we have the https://www.youtube.com/shorts/F4Gd1I1zfjs[perfect video] to understand Stork in less than 1 minute.
-
 
 In conclusion, all these advancements in Stork signify our commitment to enhancing your experience with service discovery and selection.
 
