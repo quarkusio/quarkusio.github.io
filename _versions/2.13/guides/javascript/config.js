@@ -10,11 +10,11 @@ if(tables){
     for (var table of tables) {
         var caption = table.previousElementSibling;
         if (table.classList.contains('searchable')) { // activate search engine only when needed
-          var input = caption.firstElementChild.lastElementChild;
-          input.addEventListener("keyup", initiateSearch);
-          input.addEventListener("input", initiateSearch);
-          input.attributes.removeNamedItem('disabled');
-          inputs[input.id] = {"table": table};
+            var input = caption.firstElementChild.lastElementChild;
+            input.addEventListener("keyup", initiateSearch);
+            input.addEventListener("input", initiateSearch);
+            input.attributes.removeNamedItem('disabled');
+            inputs[input.id] = {"table": table};
         }
 
         const collapsibleRows = table.querySelectorAll('tr.row-collapsible');
@@ -158,8 +158,8 @@ function reinstallClickHandlers(table){
             var iconDecoration = decoration.firstElementChild.children.item(0);
             var collapsibleSpan = decoration.firstElementChild.children.item(1);
             var collapsibleHandler = makeCollapsibleHandler(descDiv, td, row,
-                                                            collapsibleSpan,
-                                                            iconDecoration);
+                collapsibleSpan,
+                iconDecoration);
 
             row.addEventListener("click", collapsibleHandler);
         }
