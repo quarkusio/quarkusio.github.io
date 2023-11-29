@@ -373,10 +373,26 @@ The platform thread is blocked in this situation, precisely as it would have bee
 </div>
 <div class="paragraph">
 <p>It can be reasonably easy to avoid these situations in your code, but verifying every dependency you use is hard.
-Typically, while experimenting with virtual threads, we realized that old versions of the <a href="https://javadoc.io/doc/org.postgresql/postgresql/latest/index.html">postgresql-JDBC driver</a>
-results in frequent pinning.
+Typically, while experimenting with virtual threads, we realized that versions older than 42.6.0 of the <a href="https://javadoc.io/doc/org.postgresql/postgresql/latest/index.html">postgresql-JDBC driver</a> result in frequent pinning.
 Most JDBC drivers still pin the carrier thread.
-Even worse, lots of widespread libraries are pinning and would require code changes.</p>
+Even worse, many libraries require code changes.</p>
+</div>
+<div class="paragraph">
+<p>For more information, see <a href="https://quarkus.io/blog/virtual-thread-1/">When Quarkus meets Virtual Threads</a></p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+This information about pinning cases applies to PostgreSQL JDBC driver 42.5.4 and earlier.
+For PostgreSQL JDBC driver 42.6.0 and later, virtually all synchronized methods have been replaced by reentrant locks.
+For more information, see the <a href="https://jdbc.postgresql.org/changelogs/2023-03-17-42.6.0-release/">Notable Changes</a> for PostgreSQL JDBC driver 42.6.0.
+</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect3">
@@ -626,35 +642,32 @@ If would not fail the tests, but at least dump start traces if the code pins the
         &lt;java.util.logging.manager&gt;org.jboss.logmanager.LogManager&lt;/java.util.logging.manager&gt;
         &lt;maven.home&gt;${maven.home}&lt;/maven.home&gt;
       &lt;/systemPropertyVariables&gt;
-      &lt;argLine&gt;--enable-preview -Djdk.tracePinnedThreads&lt;/argLine&gt;
+      &lt;argLine&gt;-Djdk.tracePinnedThreads&lt;/argLine&gt;
   &lt;/configuration&gt;
 &lt;/plugin&gt;</code></pre>
 </div>
-</div>
-<div class="admonitionblock note">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-note" title="Note"></i>
-</td>
-<td class="content">
-The <code>--enable-preview</code> flag is not necessary with Java 21.
-</td>
-</tr>
-</table>
 </div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="run-application-using-virtual-threads"><a class="anchor" href="#run-application-using-virtual-threads"></a>Run application using virtual threads</h2>
 <div class="sectionbody">
-<div class="paragraph">
-<p>Prior to Java 21, virtual threads are still an experimental feature, you need to start your application with the <code>--enable-preview</code> flag:</p>
-</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">java --enable-preview -jar target/quarkus-app/quarkus-run.jar</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">java -jar target/quarkus-app/quarkus-run.jar</code></pre>
 </div>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+Prior to Java 21, virtual threads were still an experimental feature, you need to start your application with the <code>--enable-preview</code> flag.
+</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
@@ -676,24 +689,19 @@ Refer to the <a href="./container-image">containerization guide</a> to learn mor
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.container-image.build=true
 quarkus.container-image.group=&lt;your-group-name&gt;
 quarkus.container-image.name=&lt;you-container-name&gt;
-quarkus.jib.base-jvm-image=eclipse-temurin:20.0.1_9-jre-ubi9-minimal <i class="conum" data-value="1"></i><b>(1)</b>
-quarkus.jib.platforms=linux/amd64,linux/arm64 <i class="conum" data-value="2"></i><b>(2)</b>
-quarkus.jib.jvm-arguments=--enable-preview <i class="conum" data-value="3"></i><b>(3)</b></code></pre>
+quarkus.jib.base-jvm-image=registry.access.redhat.com/ubi8/openjdk-21-runtime <i class="conum" data-value="1"></i><b>(1)</b>
+quarkus.jib.platforms=linux/amd64,linux/arm64 <i class="conum" data-value="2"></i><b>(2)</b></code></pre>
 </div>
 </div>
 <div class="colist arabic">
 <table>
 <tr>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>Make sure you use a base image supporting virtual threads. Here we use an image providing Java 20.</td>
+<td>Make sure you use a base image supporting virtual threads. Here we use an image providing Java 21. Quarkus picks an image providing Java 21+ automatically if you do not set one.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
 <td>Select the target architecture. You can select more than one to build multi-archs images.</td>
-</tr>
-<tr>
-<td><i class="conum" data-value="3"></i><b>3</b></td>
-<td>Don&#8217;t forget to use the <code>--enable-preview</code> flag if you are not using Java 21+.</td>
 </tr>
 </table>
 </div>
@@ -836,6 +844,64 @@ You can customize this prefix, or disable the naming altogether configuring an e
 </div>
 </div>
 <div class="sect1">
+<h2 id="inject-the-virtual-thread-executor"><a class="anchor" href="#inject-the-virtual-thread-executor"></a>Inject the virtual thread executor</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>In order to run tasks on virtual threads Quarkus manages an internal <code>ThreadPerTaskExecutor</code>.
+In rare instances where you&#8217;d need to access this executor directly you can inject it using the <code>@VirtualThreads</code> CDI qualifier:</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Injecting the Virtual Thread ExecutorService is experimental and may change in future versions.
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme;
+
+import org.acme.fortune.repository.FortuneRepository;
+
+import java.util.concurrent.ExecutorService;
+
+import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+
+import io.quarkus.logging.Log;
+import io.quarkus.runtime.StartupEvent;
+import io.quarkus.virtual.threads.VirtualThreads;
+
+public class MyApplication {
+
+    @Inject
+    FortuneRepository repository;
+
+    @Inject
+    @VirtualThreads
+    ExecutorService vThreads;
+
+    void onEvent(@Observes StartupEvent event) {
+        vThreads.execute(this::findAll);
+    }
+
+    @Transactional
+    void findAll() {
+        Log.info(repository.findAllBlocking());
+    }
+
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="testing-virtual-thread-applications"><a class="anchor" href="#testing-virtual-thread-applications"></a>Testing virtual thread applications</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -957,6 +1023,7 @@ public class LoomUnitExampleTest {
 </li>
 <li><a href="#use-the-duplicated-context-in-virtual-threads">Use the duplicated context in virtual threads</a></li>
 <li><a href="#virtual-thread-names">Virtual thread names</a></li>
+<li><a href="#inject-the-virtual-thread-executor">Inject the virtual thread executor</a></li>
 <li><a href="#testing-virtual-thread-applications">Testing virtual thread applications</a></li>
 <li><a href="#additional-references">Additional references</a></li>
 </ul></div>

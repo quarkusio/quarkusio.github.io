@@ -265,7 +265,7 @@ cd rest-client-reactive-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.5.3:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.6.0:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-client-reactive-quickstart \
     -Dextensions='resteasy-reactive-jackson,rest-client-reactive-jackson' \
@@ -1363,6 +1363,133 @@ extensionsService.getByIdAsUni(id)
 <p>If you use a <code>CompletionStage</code>, you would need to call the service&#8217;s method to retry.
 This difference comes from the laziness aspect of Mutiny and its subscription protocol.
 More details about this can be found in <a href="https://smallrye.io/smallrye-mutiny/latest/reference/uni-and-multi/">the Mutiny documentation</a>.</p>
+</div>
+<div class="sect2">
+<h3 id="server-sent-event-sse-support"><a class="anchor" href="#server-sent-event-sse-support"></a>Server-Sent Event (SSE) support</h3>
+<div class="paragraph">
+<p>Consuming SSE events is possible simply by declaring the result type as a <code>io.smallrye.mutiny.Multi</code>.</p>
+</div>
+<div class="paragraph">
+<p>The simplest example is:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.rest.client;
+
+import io.smallrye.mutiny.Multi;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@Path("/sse")
+@RegisterRestClient(configKey = "some-api")
+public interface SseClient {
+     @GET
+     @Produces(MediaType.SERVER_SENT_EVENTS)
+     Multi&lt;String&gt; get();
+}</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>All the IO involved in streaming the SSE results is done in a non-blocking manner.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Results are not limited to strings - for example when the server returns JSON payload for each event, Quarkus automatically deserializes it into the generic type used in the <code>Multi</code>.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Users can also access the entire SSE event by using the <code>org.jboss.resteasy.reactive.client.SseEvent</code> type.</p>
+</div>
+<div class="paragraph">
+<p>A simple example where the event payloads are <code>Long</code> values is the following:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.rest.client;
+
+import io.smallrye.mutiny.Uni;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import org.jboss.resteasy.reactive.client.SseEvent;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.QueryParam;
+
+@Path("/sse")
+@RegisterRestClient(configKey = "some-api")
+public interface SseClient {
+     @GET
+     @Produces(MediaType.SERVER_SENT_EVENTS)
+     Multi&lt;SseEvent&lt;Long&gt;&gt; get();
+}</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="filtering-out-events"><a class="anchor" href="#filtering-out-events"></a>Filtering out events</h4>
+<div class="paragraph">
+<p>On occasion, the stream of SSE events may contain some events that should not be returned by the client - an example of this is having the server send heartbeat events in order to keep the underlying TCP connection open.
+The REST Client supports filtering out such events by providing the <code>@org.jboss.resteasy.reactive.client.SseEventFilter</code>.</p>
+</div>
+<div class="paragraph">
+<p>Here is an example of filtering out heartbeat events:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.rest.client;
+
+import io.smallrye.mutiny.Uni;
+import java.util.function.Predicate;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import org.jboss.resteasy.reactive.client.SseEvent;
+import org.jboss.resteasy.reactive.client.SseEventFilter;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.QueryParam;
+
+@Path("/sse")
+@RegisterRestClient(configKey = "some-api")
+public interface SseClient {
+
+     @GET
+     @Produces(MediaType.SERVER_SENT_EVENTS)
+     @SseEventFilter(HeartbeatFilter.class)
+     Multi&lt;SseEvent&lt;Long&gt;&gt; get();
+
+
+     class HeartbeatFilter implements Predicate&lt;SessionEvent&lt;String&gt;&gt; {
+
+        @Override
+        public boolean test(SseEvent&lt;String&gt; event) {
+            return !"heartbeat".equals(event.id());
+        }
+     }
+}</code></pre>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -2486,7 +2613,11 @@ To change this behavior, set the <code>quarkus.rest-client-reactive.scope</code>
 <li><a href="#use-custom-http-options">Use Custom HTTP Options</a></li>
 <li><a href="#redirection">Redirection</a></li>
 <li><a href="#update-the-test">Update the test</a></li>
-<li><a href="#async-support">Async Support</a></li>
+<li><a href="#async-support">Async Support</a>
+<ul class="sectlevel2">
+<li><a href="#server-sent-event-sse-support">Server-Sent Event (SSE) support</a></li>
+</ul>
+</li>
 <li><a href="#custom-headers-support">Custom headers support</a>
 <ul class="sectlevel2">
 <li><a href="#default-header-factory">Default header factory</a></li>
