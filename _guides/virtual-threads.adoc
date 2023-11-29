@@ -78,6 +78,7 @@ In this scenario, it is worse than useless to have thousands of threads if we ha
 Even worse, when running a CPU-bound workload on a virtual thread, the virtual thread monopolizes the carrier thread on which it is mounted.
 It will either reduce the chance for the other virtual thread to run or will start creating new carrier threads, leading to high memory usage.
 
+[[run-code-on-virtual-threads-using-runonvirtualthread]]
 == Run code on virtual threads using @RunOnVirtualThread
 
 In Quarkus, the support of virtual thread is implemented using the link:{runonvthread}[@RunOnVirtualThread] annotation.
@@ -132,10 +133,15 @@ According to link:{vthreadjep}[JEP 425] this can happen in two situations:
 - when it executes a blocking operation inside a native method or a foreign function
 
 It can be reasonably easy to avoid these situations in your code, but verifying every dependency you use is hard.
-Typically, while experimenting with virtual threads, we realized that old versions of the link:{pgsql-driver}[postgresql-JDBC driver]
-results in frequent pinning.
+Typically, while experimenting with virtual threads, we realized that versions older than 42.6.0 of the link:{pgsql-driver}[postgresql-JDBC driver] result in frequent pinning.
 Most JDBC drivers still pin the carrier thread.
-Even worse, lots of widespread libraries are pinning and would require code changes.
+Even worse, many libraries require code changes.
+
+For more information, see link:https://quarkus.io/blog/virtual-thread-1/[When Quarkus meets Virtual Threads]
+
+IMPORTANT: This information about pinning cases applies to PostgreSQL JDBC driver 42.5.4 and earlier.
+For PostgreSQL JDBC driver 42.6.0 and later, virtually all synchronized methods have been replaced by reentrant locks.
+For more information, see the link:https://jdbc.postgresql.org/changelogs/2023-03-17-42.6.0-release/[Notable Changes] for PostgreSQL JDBC driver 42.6.0.
 
 [[pooling]]
 ==== The pooling case
@@ -314,21 +320,20 @@ If would not fail the tests, but at least dump start traces if the code pins the
         <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
         <maven.home>${maven.home}</maven.home>
       </systemPropertyVariables>
-      <argLine>--enable-preview -Djdk.tracePinnedThreads</argLine>
+      <argLine>-Djdk.tracePinnedThreads</argLine>
   </configuration>
 </plugin>
 ----
 
-NOTE: The `--enable-preview` flag is not necessary with Java 21.
-
 == Run application using virtual threads
 
-Prior to Java 21, virtual threads are still an experimental feature, you need to start your application with the `--enable-preview` flag:
 
 [source, bash]
 ----
-java --enable-preview -jar target/quarkus-app/quarkus-run.jar
+java -jar target/quarkus-app/quarkus-run.jar
 ----
+
+TIP: Prior to Java 21, virtual threads were still an experimental feature, you need to start your application with the `--enable-preview` flag.
 
 == Build containers for application using virtual threads
 
@@ -344,13 +349,11 @@ To containerize your Quarkus application that use `@RunOnVirtualThread`, add the
 quarkus.container-image.build=true
 quarkus.container-image.group=<your-group-name>
 quarkus.container-image.name=<you-container-name>
-quarkus.jib.base-jvm-image=eclipse-temurin:20.0.1_9-jre-ubi9-minimal <1>
+quarkus.jib.base-jvm-image=registry.access.redhat.com/ubi8/openjdk-21-runtime <1>
 quarkus.jib.platforms=linux/amd64,linux/arm64 <2>
-quarkus.jib.jvm-arguments=--enable-preview <3>
 ----
-<1> Make sure you use a base image supporting virtual threads. Here we use an image providing Java 20.
+<1> Make sure you use a base image supporting virtual threads. Here we use an image providing Java 21. Quarkus picks an image providing Java 21+ automatically if you do not set one.
 <2> Select the target architecture. You can select more than one to build multi-archs images.
-<3> Don't forget to use the `--enable-preview` flag if you are not using Java 21+.
 
 Then, build your container as you would do usually.
 For example, if you are using Maven, run:
@@ -438,6 +441,50 @@ You can customize this prefix, or disable the naming altogether configuring an e
 ----
 quarkus.virtual-threads.name-prefix=
 
+----
+
+== Inject the virtual thread executor
+
+In order to run tasks on virtual threads Quarkus manages an internal `ThreadPerTaskExecutor`.
+In rare instances where you'd need to access this executor directly you can inject it using the `@VirtualThreads` CDI qualifier:
+
+IMPORTANT: Injecting the Virtual Thread ExecutorService is experimental and may change in future versions.
+
+[source,java]
+----
+package org.acme;
+
+import org.acme.fortune.repository.FortuneRepository;
+
+import java.util.concurrent.ExecutorService;
+
+import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+
+import io.quarkus.logging.Log;
+import io.quarkus.runtime.StartupEvent;
+import io.quarkus.virtual.threads.VirtualThreads;
+
+public class MyApplication {
+
+    @Inject
+    FortuneRepository repository;
+
+    @Inject
+    @VirtualThreads
+    ExecutorService vThreads;
+
+    void onEvent(@Observes StartupEvent event) {
+        vThreads.execute(this::findAll);
+    }
+
+    @Transactional
+    void findAll() {
+        Log.info(repository.findAllBlocking());
+    }
+
+}
 ----
 
 == Testing virtual thread applications
