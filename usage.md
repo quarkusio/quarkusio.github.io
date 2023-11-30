@@ -50,4 +50,4 @@ Example using maven:
 mvn clean install -Dquarkus.analytics.disabled=true
 ```
 
-Similarly, you can set it to `quarkus.analytics.disabled=true` if you want to enable it for a single run.
+Similarly, you can set it to `quarkus.analytics.disabled=false` if you want to enable it for a single run.
