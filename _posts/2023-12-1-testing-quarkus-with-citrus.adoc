@@ -1,0 +1,506 @@
+---
+layout: post
+title: 'Testing Quarkus with Citrus'
+date: 2023-01-12
+tags: testing event-driven integration kafka messaging
+synopsis: 'Explore how to verify Quarkus event-driven applications with the Citrus integration test framework.'
+author: christophd
+---
+:imagesdir: /assets/images/posts/citrus
+
+image::citrus-quarkus.png[Citrus & Quarkus,align="center"]
+
+This post shows how to combine Quarkus with the https://citrusframework.org[Citrus] test framework in order to write automated tests for event-driven applications.
+https://citrusframework.org[Citrus] is an Open Source Java test framework focusing on messaging and integration testing in general.
+
+Developers can easily empower the *@QuarkusTest* with Citrus capabilities in order to produce and consume events during the test.
+As a result the test is able to interact with the Quarkus event-driven application by exchanging events and messages with real messaging communication.
+
+== Introducing the demo application
+
+In this post we use a Quarkus demo application called `food-market`.
+You can find the demo application code and all Citrus tests in https://github.com/citrusframework/citrus-samples/tree/main/demo/sample-quarkus[this GitHub code repository].
+The Quarkus application connects to Kafka streams as an event-driven application that produces and consumes various events (e.g. bookings, supplies, shipping events).
+The processed events and their individual status are stored in a PostgreSQL database.
+
+image::food-market-demo-application.png[Food Market App,align="center"]
+
+The food-market application matches incoming `booking` and `supply` events and produces `shipping` and `booking-completed` events accordingly.
+
+Each event references a product and specifies an amount as well as a price in a simple Json object structure.
+
+[source, json]
+----
+{ "client": "citrus-test", "product": "Pineapple", "amount":  100, "price":  0.99 }
+----
+
+Clients create the `booking` events and at the same time suppliers will add their individual `supply` events.
+The Quarkus food-market application consumes both event types and finds matching bookings and supplies.
+Once a booking and a supply do match in certain criteria the application produces `booking-completed` and `shipping` events as a result.
+
+Last but not least the booking client gets informed via email about the completed booking status.
+
+In a fully automated integration test we want to verify all events and their processing using real messaging communication with Kafka streams and database persistence.
+
+== Testing the application with Citrus
+
+The Quarkus application connects to different infrastructure (Kafka, PostgreSQL, Mail SMTP).
+The automated integration test should verify the message communication, the event processing and connectivity to all components.
+We will use the Citrus test framework as it provides the complete toolset for testing this kind of event-driven message-based solutions.
+
+The first thing to do is to add Citrus to the Quarkus project.
+The most convenient way is to import the `citrus-bom`.
+
+.Citrus BOM
+[source, xml]
+----
+<dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.citrusframework</groupId>
+        <artifactId>citrus-bom</artifactId>
+        <version>${citrus.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+----
+
+The `citrus-quarkus` extension provides a special `@QuarkusTest` resource implementation that enables us to combine Citrus with a Quarkus test.
+So let's add this extension as a test scoped dependency.
+
+.Citrus Quarkus extension
+[source, xml]
+----
+<dependency>
+  <groupId>org.citrusframework</groupId>
+  <artifactId>citrus-quarkus</artifactId>
+  <scope>test</scope>
+</dependency>
+----
+
+Also, we need to include some other Citrus modules because we want to exchange data via Kafka and connect to the PostgreSQL database as part of the test.
+Citrus is very modular. This means you can choose from a wide range of modules each of them adding specific testing capabilities to your project (e.g. `citrus-kafka`, `citrus-sql`, `citrus-validation-json`).
+
+In this sample project we include the following Citrus modules as test scoped dependencies:
+
+- citrus-quarkus
+- citrus-kafka
+- citrus-validation-json
+- citrus-sql
+- citrus-mail
+
+This completes the setup of all required Citrus modules.
+Now we can move on to writing an automated integration test in order to verify the Quarkus event-driven application.
+
+== Writing Citrus tests on top of QuarkusTest
+
+We want to write an automated test that makes sure that all inbound events (`booking` and `supply`) are being processed properly and that the resulting outbound  events (`booking-completed` and `shipping`) are being produced as expected.
+
+image::citrus-demo-test-setup.png[Citrus test setup,align="center"]
+
+Citrus as a test framework will act as all surrounding components producing client events and verifying resulting outbound events.
+Also, Citrus will have a look into the database in order to verify the persisted domain model objects.
+Later on in a more advanced test scenario Citrus will also receive and verify the mail message content that is sent by the food-market Quarkus application.
+
+For now let's start with a normal Quarkus test.
+The test needs to start the Quarkus application and also needs to prepare some infrastructure such as the database and the Kafka streams message broker. Fortunately Quarkus dev services provides the awesome testing capability to automatically start Testcontainers that represent the required infrastructure.
+
+The test is annotated with the `@QuarkusTest` annotation.
+It enables the Quarkus dev services test capabilities and takes care of setting everything up for you.
+The test itself is an arbitrary JUnit Jupiter unit test, so you can start this test from your Java IDE or as part of the Maven test lifecycle.
+
+Now let's add Citrus to the picture.
+With the Citrus Quarkus extension that we have added to the Maven project in the previous section we can now enable the Citrus capabilities for the test.
+Just add the `@CitrusSupport` annotation to the test class.
+
+This annotation enables the Citrus capabilities for the Quarkus test.
+Citrus will now participate in the Quarkus test lifecycle which enables you to inject specific Citrus resources such as endpoints as well as the Citrus test runner.
+
+.Citrus enabled Quarkus test
+[source, java]
+----
+@QuarkusTest
+@CitrusSupport
+class FoodMarketApplicationTest {
+
+    private final KafkaEndpoint bookings = kafka()
+            .asynchronous()
+            .topic("bookings")
+            .build();
+
+    @CitrusResource
+    private TestCaseRunner t;
+
+    @Inject
+    ObjectMapper mapper;
+
+    @Test
+    void shouldProcessEvents() {
+        Product product = new Product("Pineapple");
+
+        Booking booking = new Booking("citrus-test", product, 100, 0.99D);
+        t.when(send()
+                .endpoint(bookings)
+                .message().body(marshal(booking, mapper)));
+    }
+}
+----
+
+The Citrus enabled test uses additional resources such as the `KafkaEndpoint` named bookings.
+The `KafkaEndpoint` component comes with the `citrus-kafka` module and allows us to interact with Kafka streams by sending and receiving events to a topic.
+
+The Citrus `TestCaseRunner` resource represents the entrance to the Citrus Java domain specific testing language.
+This allows us to run any Citrus test action (e.g. send/receive messages, verify data in an SQL database) during the test.
+
+See this sample code to send a message to the Kafka streams topic.
+
+.Send booking event
+[source, java]
+----
+Product product = new Product("Pineapple");
+
+Booking booking = new Booking("citrus-test", product, 100, 0.99D);
+t.when(send()
+    .endpoint(bookings)
+    .message().body(marshal(booking, mapper)));
+----
+
+The injected Citrus `TestCaseRunner` is able to use a Gherkin `Given-When-Then` syntax and executes Citrus test operations.
+This first test activity references the KafkaEndpoint `bookings` in a send operation.
+The test is able to use domain model objects (`Product` and `Booking`) as message body.
+The send operation properly serializes the domain model objects to Json with the injected `ObjectMapper`.
+
+TIP: You can also use the `@QuarkusIntegrationTest` annotation in order to start the demo application in a separate JVM. This separates the test code from the application and usually binds the test to the integration-test phase in Maven. Please be aware that an integration test is not able to inject application resources such as ObjectMapper or DataSource. The good news is that you can use the very same Citrus extension also with the `@QuarkusIntegrationTest`.
+
+This is basically how you can combine Citrus capabilities with Quarkus test dev services in an automated integration test.
+
+The rest of the story is quite easy.
+In the same way as sending the booking event we can now also send a matching `supply` event.
+
+.Send supply event
+[source, java]
+----
+Supply supply = new Supply(product, 100, 0.99D);
+t.then(send()
+    .endpoint(supplies)
+    .message().body(marshal(supply)));
+----
+
+The test now has produced a booking and a matching supply event.
+This should trigger the food-market application to produce respective `booking-completed` and `shipping` events.
+As a next step in the test we should receive and verify these events with Citrus.
+
+.Receive and verify events
+[source, java]
+----
+class FoodMarketApplicationTest {
+
+    // ... Kafka endpoints defined here
+
+    @Test
+    void shouldProcessEvents() {
+        Product product = new Product("Pineapple");
+
+        Booking booking = new Booking("citrus-test", product, 100, 0.99D);
+        t.when(send()
+            .endpoint(bookings)
+            .message().body(marshal(booking, mapper)));
+
+        // ... also send supply events
+
+        ShippingEvent shippingEvent = new ShippingEvent(booking.getClient(), product.getName(), booking.getAmount(), "@ignore@");
+        t.then(receive()
+            .endpoint(shipping)
+            .message().body(marshal(shippingEvent, mapper))
+        );
+    }
+}
+----
+
+Citrus is able to perform powerful message validation when receiving the events.
+This is why we have added the `citrus-validation-json` module in the very beginning.
+The Json message validator in Citrus will compare the received Json object with an expected Json template and make sure that all fields and properties do match as expected.
+
+The test creates the expected `shippingEvent` Json object which uses properties like the `client`, `product` and the `amount`.
+The received event must match these expected values in order to pass the test.
+Unfortunately we are not able to verify the `address` field because it has been generated by the Quarkus application.
+This is why the `address` gets ignored during the validation by using the `@ignored@` Citrus validation expression as an expected value.
+
+The Citrus Json message validator is quite powerful and will now compare the received shipping event with the expected Json object.
+All given Json properties get verified and the test will fail when there is a mismatch.
+
+.Received Json
+[source, json]
+----
+{ "client":  "citrus-test", "product": "Pineapple", "amount": 100, "address": "10556 Citrus Blvd." }
+----
+
+.Control Json
+[source, json]
+----
+{ "client":  "citrus-test", "product": "Pineapple", "amount": 100, "address": "@ignore@" }
+----
+
+You can use ignore expressions, use validation matchers, functions and test variables in the expected template.
+
+.Control Json
+[source, json]
+----
+{ "client":  "${clientName}", "product": "@matches(Pineapple|Strawberry|Banana)@", "amount": "@isNumber()@", "address": "@ignore@" }
+----
+
+This completes the first test with many events being exchanged with the application under test.
+Now let's run the test.
+
+== Running the Citrus tests
+
+The Quarkus test framework in the example uses JUnit Jupiter as a test driver.
+This means you can run the tests just like any other JUnit test from your Java IDE or with Maven for instance.
+
+[source, bash]
+----
+./mvnw test
+----
+
+The test is now run with the Maven test lifecycle.
+The `@QuarkusTest` dev services will start the application and prepare the infrastructure with Testcontainers.
+Then Citrus will produce the events and verify the outcome with powerful Json validation.
+
+In this first test we made sure that the application is able to process the incoming events and that the resulting events are produced as expected.
+Now let's move on to more advanced tests including the database and a mail server SMTP communication.
+
+== Verify stored data with SQL
+
+When testing distributed event-driven applications the timing of events is an essential ingredient to success.
+Each test scenario is keen to verify a specific application behavior and the correct timing of events is key to triggering and verifying this behavior.
+Also timing is very important to avoid running into flaky tests where racing conditions may influence the test result on slower machines (e.g. CI jobs).
+
+As an example assume the test needs to create a new product first and then sends a new booking event referencing this newly added product.
+The test needs to wait for the product event to be processed completely before sending the booking event.
+
+In Citrus we are able to add this waiting state very easily.
+
+.Wait for object to be created in persistence layer
+[source, java]
+----
+Product product = new Product("Watermelon");
+t.when(send()
+    .endpoint(products)
+    .message().body(marshal(product)));
+
+t.then(repeatOnError()
+    .condition((i, context) -> i > 25)
+    .autoSleep(500)
+    .actions(
+        sql().dataSource(dataSource)
+            .query()
+            .statement("select count(id) as found from product where product.name='%s'"
+                    .formatted(product.getName()))
+            .validate("found", "1"))
+);
+----
+
+After the product event has been sent we use the `repeatOnError()` test action.
+In combination with an `autoSleep` and a max retry count setting the action periodically polls the database for the created product.
+This makes sure that we do not continue with the test until the new product has been properly stored to the database.
+
+The database interaction in Citrus comes with the `citrus-sql` module and enables you to verify any SQL result set.
+
+TIP: Quarkus is able to inject the `dataSource` that is being used to connect to the PostgreSQL database. This also works when Quarkus uses the PostgreSQL Testcontainers infrastructure in the test. Just use the `@Inject` annotation in your test and reference the datasource in the Citrus `sql()` test action.
+
+TIP: You may introduce test behaviors for common Citrus test logic such as waiting for a domain model object to be persisted in the database. In general a test behavior encapsulates a set of Citrus test actions to a reusable entity that you can reference many times from your tests.
+
+.Citrus test behavior
+[source, java]
+----
+public class WaitForProductCreated implements TestBehavior {
+
+    private final Product product;
+    private final DataSource dataSource;
+
+    public WaitForProductCreated(Product product, DataSource dataSource) {
+        this.product = product;
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public void apply(TestActionRunner t) {
+        t.run(repeatOnError()
+            .condition((i, context) -> i > 25)
+            .autoSleep(500)
+            .actions(
+                sql().dataSource(dataSource)
+                    .query()
+                    .statement("select count(id) as found from product where product.name='%s'"
+                            .formatted(product.getName()))
+                    .validate("found", "1"))
+        );
+    }
+}
+----
+
+In a test you can apply the test behavior.
+
+.Apply test behaviors
+[source, java]
+----
+Product product = new Product("Watermelon");
+t.when(send()
+    .endpoint(products)
+    .message().body(marshal(product)));
+
+t.then(t.applyBehavior(new WaitForProductCreated(product, dataSource)));
+----
+
+The ability to look into the database in order to check on the persisted entities is quite powerful as it allows us to fully control the test workflow.
+We could also use the Citrus SQL result set verification in the test to verify a booking status.
+
+.Verify booking status completed
+[source, java]
+----
+t.then(sql().dataSource(dataSource)
+        .query()
+        .statement("select status from booking where booking.id='${bookingId}'")
+        .validate("status", "COMPLETED")
+);
+----
+
+This verifies that the booking with the given id has the status `COMPLETED`.
+The SQL result set validation in Citrus is able to handle complex column sets with multiple rows.
+
+== Verify the mail server interaction
+
+The food-market Quarkus application under test may inform the client about a completed booking via email.
+
+.Mail content
+[source, text]
+----
+Subject: Booking completed!
+
+Hey citrus-client, your booking Pineapple has been completed!
+----
+
+The Citrus test is able to verify this particular mail content by starting an SMTP mail server that will receive that mail message and verify its content.
+
+In Quarkus we can use the `quarkus-mailer` extension to send mails via SMTP.
+
+.Quarkus mail service
+[source, java]
+----
+@Singleton
+public class MailService {
+
+    @Inject
+    ReactiveMailer mailer;
+
+    public void send(Booking booking) {
+        if (Booking.Status.COMPLETED != booking.getStatus()) {
+            return;
+        }
+
+        mailer.send(
+            Mail.withText("%s@quarkus.io".formatted(booking.getClient()),
+                "Booking completed!",
+                "Hey %s, your booking %s has been completed.".formatted(booking.getClient(), booking.getProduct().getName())
+            )
+        ).subscribe().with(success -> {
+            // handle mail sent
+        }, failure -> {
+            // handle mail error
+        });
+    }
+}
+----
+
+For the test Citrus starts an SMTP mail server that is able to accept the mail messages sent by Quarkus.
+
+.Citrus mail server component
+[source, java]
+----
+@BindToRegistry
+private MailServer mailServer = mail().server()
+            .port(2222)
+            .knownUsers(Collections.singletonList("foodmarket@quarkus.io:foodmarket:secr3t"))
+            .autoAccept(true)
+            .autoStart(true)
+            .build();
+----
+
+Let's tell Quarkus to connect to this Citrus mail server during the test.
+
+.Quarkus mailer configuration
+[source, properties]
+----
+quarkus.mailer.mock=false
+quarkus.mailer.own-host-name=localhost
+quarkus.mailer.from=foodmarket@quarkus.io
+quarkus.mailer.host=localhost
+quarkus.mailer.port=2222
+
+quarkus.mailer.username=foodmarket
+quarkus.mailer.password=secr3t
+----
+
+With this setup we can now add a test action that receives and verifies the mail message sent.
+
+.Verify mail message sent
+[source, java]
+----
+t.variable("client", "citrus-test");
+t.variable("product", product.getName());
+
+t.run(receive()
+    .endpoint(mailServer)
+    .message(MailMessage.request("foodmarket@quarkus.io", "${client}@quarkus.io", "Booking completed!")
+            .body("Hey ${client}, your booking ${product} has been completed.", "text/plain"))
+);
+
+t.run(send()
+    .endpoint(mailServer)
+    .message(MailMessage.response(250, "Ok"))
+);
+----
+
+The expected mail content uses some test variables `${client}` and `${product}`.
+You may set these test variables in Citrus accordingly so these placeholders get resolved before the validation is performed.
+
+The mail server responds with a code and a text according to the SMTP protocol.
+In the success case this is a `250` `Ok` response.
+
+TIP: Again you can introduce a Citrus test behavior that covers the booking completed mail message verification.
+Many tests may apply this behavior in their test logic then.
+
+Another interesting point about the mail server interaction is that the Citrus mail server component is also able to simulate a mail server error.
+
+.Simulate mail server error
+[source, java]
+----
+t.run(receive()
+    .endpoint(mailServer)
+    .message(MailMessage.request("foodmarket@quarkus.io", "${client}@quarkus.io", "Booking completed!")
+            .body("Hey ${client}, your booking ${product} has been completed.", "text/plain"))
+);
+
+t.run(send()
+    .endpoint(mailServer)
+    .message(MailMessage.response(443, "Failed!"))
+);
+----
+
+This time the Citrus mail server explicitly responds with a `443` `Failed!` error and the Quarkus application needs to handle this error accordingly.
+Verifying error scenarios in automated integration tests is very important and helps us to develop robust applications.
+It is great to have the opportunity to trigger these error scenarios with Citrus in an automated test.
+
+== Summary
+
+In this post we have seen how to combine the Citrus test framework with Quarkus test dev services in order to perform automated integration testing of event-driven applications.
+The test is able to produce/consume events on Kafka streams and verifies the Quarkus application accordingly by verifying the Json data and the persisted entities in the database.
+
+Citrus as a framework provides many modules each of them providing endpoints (client and server) for straight forward messaging interaction during an integration test (e.g. Kafka, JMS, FTP, Http, SOAP, Mail, ...).
+The message validation capabilities allow us to verify the exchanged message content with different formats (e.g. Json, XML, plaintext).
+
+While the Citrus project has been around for quite some time the Citrus Quarkus extension is a new addition in the most recent Citrus version 4.0.
+As always, your feedback is much appreciated!
+Please give it a try and let us know what you think about this approach of automated integration testing with the combination of Citrus and Quarkus testing.
