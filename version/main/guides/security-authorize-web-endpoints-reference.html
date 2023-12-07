@@ -320,9 +320,9 @@ import io.vertx.ext.web.RoutingContext;
 @ApplicationScoped
 public class CustomNamedHttpSecPolicy implements HttpSecurityPolicy {
     @Override
-    public Uni&lt;CheckResult&gt; checkPermission(RoutingContext request, Uni&lt;SecurityIdentity&gt; identity,
+    public Uni&lt;CheckResult&gt; checkPermission(RoutingContext event, Uni&lt;SecurityIdentity&gt; identity,
             AuthorizationRequestContext requestContext) {
-        if (customRequestAuthorization(request)) {
+        if (customRequestAuthorization(event)) {
             return Uni.createFrom().item(CheckResult.PERMIT);
         }
         return Uni.createFrom().item(CheckResult.DENY);
@@ -331,6 +331,11 @@ public class CustomNamedHttpSecPolicy implements HttpSecurityPolicy {
     @Override
     public String name() {
         return "custom"; <i class="conum" data-value="1"></i><b>(1)</b>
+    }
+
+    private static boolean customRequestAuthorization(RoutingContext event) {
+        // here comes your own security check
+        return !event.request().path().endsWith("denied");
     }
 }</code></pre>
 </div>
@@ -776,8 +781,6 @@ based on the common security annotations <code>@RolesAllowed</code>, <code>@Deny
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Principal;
 
-import jakarta.annotation.security.DenyAll;
-import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -1121,7 +1124,7 @@ quarkus.http.auth.permission.roles1.paths=/crud/modify/*,/crud/id/*             
 quarkus.http.auth.permission.roles1.policy=role-policy1
 
 quarkus.http.auth.policy.role-policy2.permissions.user=list
-quarkus.http.auth.policy.role-policy2.permission-class=org.acme.crud.CRUDResource.CustomPermission  <i class="conum" data-value="4"></i><b>(4)</b>
+quarkus.http.auth.policy.role-policy2.permission-class=org.acme.crud.CRUDResource$CustomPermission  <i class="conum" data-value="4"></i><b>(4)</b>
 quarkus.http.auth.permission.roles2.paths=/crud/list
 quarkus.http.auth.permission.roles2.policy=role-policy2</code></pre>
 </div>
@@ -1144,7 +1147,7 @@ For more information about the path-matching algorithm, see <a href="#matching-m
 </tr>
 <tr>
 <td><i class="conum" data-value="4"></i><b>4</b></td>
-<td>You can also specify a custom implementation of the <code>java.security.Permission</code> class.
+<td>You can specify a custom implementation of the <code>java.security.Permission</code> class.
 Your custom class must define exactly one constructor that accepts the permission name and optionally some actions, for example, <code>String</code> array.
 In this scenario, the permission <code>list</code> is added to the <code>SecurityIdentity</code> instance as <code>new CustomPermission("list")</code>.</td>
 </tr>
@@ -1158,7 +1161,9 @@ Later, Quarkus instantiates your custom permission with actual arguments, with w
 <div class="listingblock">
 <div class="title">Example of a custom <code>java.security.Permission</code> class that accepts additional arguments</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Permission;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.library;
+
+import java.security.Permission;
 import java.util.Arrays;
 import java.util.Set;
 
@@ -1185,7 +1190,7 @@ public class LibraryPermission extends Permission {
         return false;
     }
 
-    ...
+    // here comes your own implementation of the `java.security.Permission` class methods
 
     public static abstract class Library {
 
@@ -1204,7 +1209,7 @@ public class LibraryPermission extends Permission {
     }
 
     public static class TvLibrary extends MediaLibrary {
-        ...
+        // TvLibrary specific implementation of the 'isParentLibraryOf' method
     }
 }</code></pre>
 </div>
@@ -1228,8 +1233,11 @@ For this to happen, declare the second parameter as <code>String[]</code>.</td>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.security.PermissionsAllowed;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.library;
+
+import io.quarkus.security.PermissionsAllowed;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.acme.library.LibraryPermission.Library;
 
 @ApplicationScoped
 public class LibraryService {
@@ -1267,7 +1275,16 @@ The permission constructor and the annotated method must have the parameter <cod
 <div class="listingblock">
 <div class="title">Example of a resource secured with the <code>LibraryPermission</code></div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/library")
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.library;
+
+import io.quarkus.security.PermissionsAllowed;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import org.acme.library.LibraryPermission.Library;
+
+@Path("/library")
 public class LibraryResource {
 
     @Inject
@@ -1298,9 +1315,6 @@ public class LibraryResource {
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.library;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
-import java.security.Permission;
-import java.util.Arrays;
-import java.util.Set;
 
 @RegisterForReflection <i class="conum" data-value="1"></i><b>(1)</b>
 public class MediaLibraryPermission extends LibraryPermission {
@@ -1338,6 +1352,19 @@ quarkus.http.auth.permission.roles3.policy=role-policy3</code></pre>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
 <td>Grants the permission <code>media-library</code>, which permits <code>read</code>, <code>write</code>, and <code>list</code> actions.
 Because <code>MediaLibrary</code> is the <code>TvLibrary</code> class parent, a user with the <code>admin</code> role is also permitted to modify <code>TvLibrary</code>.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+The <code>/library/*</code> path can be tested from a Keycloak provider Dev UI page, because the user <code>alice</code> which is created
+automatically by the <a href="security-openid-connect-dev-services">Dev Services for Keycloak</a> has an <code>admin</code> role.
+</td>
 </tr>
 </table>
 </div>
