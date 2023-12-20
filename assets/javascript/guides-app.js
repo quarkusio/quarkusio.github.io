@@ -77,7 +77,7 @@ const app = createApp({
       }
     },
     hasInput() {
-      return this.search.input.q || this.search.input.categories
+      return this.search.input.q && this.search.input.q.length >= this.minChars || this.search.input.categories
     },
     hasInputWithTooFewChars() {
       return this.search.input.q && this.search.input.q.length < this.minChars
