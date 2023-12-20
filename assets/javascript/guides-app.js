@@ -20,10 +20,11 @@ const appElement = document.querySelector(appSelector);
 const app = createApp({
   props: {
     searchApiServer: String,
+    quarkusVersion: String,
+    language: String,
     initialTimeout: Number,
     moreTimeout: Number,
-    minChars: Number,
-    quarkusVersion: String
+    minChars: Number
   },
   data() {
     return {
@@ -188,6 +189,7 @@ const app = createApp({
         const queryParams = {
           page: this.search.page,
           version: this.quarkusVersion,
+          language: this.language,
           contentSnippets: 2,
           contentSnippetsLength: 120,
           highlightCssClass: 'highlighted'
