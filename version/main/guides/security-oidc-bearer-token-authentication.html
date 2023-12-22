@@ -256,7 +256,7 @@ Also, if you use Keycloak and bearer tokens, see <a href="security-keycloak-auth
 <p>To learn about how you can protect service applications by using OIDC Bearer token authentication, see <a href="security-oidc-bearer-token-authentication-tutorial">OIDC Bearer token authentication tutorial</a>.</p>
 </div>
 <div class="paragraph">
-<p>If you want to protect web applications by using OIDC authorization code flow authentication, see <a href="security-oidc-code-flow-authentication-concept">OIDC authorization code flow authentication</a>.</p>
+<p>If you want to protect web applications by using OIDC authorization code flow authentication, see <a href="security-oidc-code-flow-authentication">OIDC authorization code flow authentication</a>.</p>
 </div>
 <div class="paragraph">
 <p>For information about how to support multiple tenants, see <a href="security-openid-connect-multitenancy">Using OpenID Connect Multi-Tenancy</a>.</p>
@@ -335,6 +335,29 @@ This check supports the tokens issued by Keycloak</p>
 </ul>
 </div>
 <div class="paragraph">
+<p>For example, the following JWT token has a complex <code>groups</code> claim which contains an array <code>roles</code> containing roles:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">{
+    "iss": "https://server.example.com",
+    "sub": "24400320",
+    "upn": "jdoe@example.com",
+    "preferred_username": "jdoe",
+    "exp": 1311281970,
+    "iat": 1311280970,
+    "groups": {
+        "roles": [
+          "microprofile_jwt_user"
+        ],
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>microprofile_jwt_user</code> role has to be mapped to SecurityIdentity roles and you can do it with this configuration: <code>quarkus.oidc.roles.role-claim-path=groups/roles</code>.</p>
+</div>
+<div class="paragraph">
 <p>If the token is opaque (binary) then a <code>scope</code> property from the remote token introspection response will be used.</p>
 </div>
 <div class="paragraph">
@@ -352,7 +375,8 @@ You can also map <code>SecurityIdentity</code> roles created from token claims t
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.util.List;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 
@@ -381,6 +405,20 @@ public class ProtectedResource {
         return List.of(new Order(1));
     }
 
+    public static class Order {
+        String id;
+        public Order() {
+        }
+        public Order(String id) {
+            this.id = id;
+        }
+        public String getId() {
+            return id;
+        }
+        public void setId() {
+            this.id = id;
+        }
+    }
 }</code></pre>
 </div>
 </div>
@@ -530,6 +568,7 @@ But if <code>quarkus.oidc.token.issuer</code> property is set then the <code>iss
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -858,7 +897,7 @@ public class GreetingResourceTest {
 
     @AfterAll
     public static void close() {
-        client.close();
+        oidcTestClient.close();
     }
 
     @Test
@@ -1054,7 +1093,6 @@ quarkus.oidc.application-type=service</code></pre>
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static io.quarkus.test.keycloak.server.KeycloakTestResourceLifecycleManager.getAccessToken;
 import static org.hamcrest.Matchers.equalTo;
 
-import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 
 import io.quarkus.test.common.QuarkusTestResource;
@@ -1068,7 +1106,7 @@ public class BearerTokenAuthorizationTest {
 
     @Test
     public void testBearerToken() {
-        RestAssured.given().auth().oauth2(getAccessToken("alice"))))
+        RestAssured.given().auth().oauth2(getAccessToken("alice"))
             .when().get("/api/users/preferredUserName")
             .then()
             .statusCode(200)
@@ -1101,7 +1139,7 @@ smallrye.jwt.sign.key.location=/privateKey.pem</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>copy <code>privateKey.pem</code> from the <code>integration-tests/oidc-tenancy</code> in the <code>main</code> Quarkus repository and use a test code similar to the one in the <code>Wiremock</code> section above to generate JWT tokens. You can use your own test keys if preferred.</p>
+<p>copy <a href="https://github.com/quarkusio/quarkus/blob/main/integration-tests/oidc-tenancy/src/main/resources/privateKey.pem">privateKey.pem</a> from the <code>integration-tests/oidc-tenancy</code> in the <code>main</code> Quarkus repository and use a test code similar to the one in the <code>Wiremock</code> section above to generate JWT tokens. You can use your own test keys if preferred.</p>
 </div>
 <div class="paragraph">
 <p>This approach provides a more limited coverage compared to the Wiremock approach - for example, the remote communication code is not covered.</p>
@@ -1181,8 +1219,14 @@ public class TestSecurityAuthTest {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.oidc.OidcConfigurationMetadata;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import io.quarkus.oidc.OidcConfigurationMetadata;
 import io.quarkus.oidc.UserInfo;
+import io.quarkus.security.Authenticated;
+
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
 @Path("/service")
@@ -1256,7 +1300,12 @@ public class TestSecurityAuthTest {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.oidc.TokenIntrospection;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import io.quarkus.oidc.TokenIntrospection;
+import io.quarkus.security.Authenticated;
 import io.quarkus.security.identity.SecurityIdentity;
 
 @Path("/service")
@@ -1397,6 +1446,7 @@ an injected <code>SecurityIdentity</code> would not correctly represent the veri
 import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
 
 import jakarta.inject.Inject;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import io.vertx.core.eventbus.EventBus;
@@ -1410,7 +1460,18 @@ public class OrderResource {
     @POST
     public void order(String product, @HeaderParam(AUTHORIZATION) String bearer) {
         String rawToken = bearer.substring("Bearer ".length()); <i class="conum" data-value="1"></i><b>(1)</b>
-        eventBus.publish("product-order", new Product(product, 1, rawToken));
+        eventBus.publish("product-order", new Product(product, rawToken));
+    }
+
+    public static class Product {
+         public String product;
+         public String customerAccessToken;
+         public Product() {
+         }
+         public Product(String product, String customerAccessToken) {
+             this.product = product;
+             this.customerAccessToken = customerAccessToken;
+         }
     }
 }</code></pre>
 </div>
@@ -1450,9 +1511,8 @@ public class OrderService {
     @Blocking
     @ConsumeEvent("product-order")
     void processOrder(Product product) {
-        String rawToken = product.customerAccessToken;
-        AccessTokenCredential token = new AccessTokenCredential(rawToken);
-        SecurityIdentity = identityProvider.authenticate(token).await().indefinitely(); <i class="conum" data-value="2"></i><b>(2)</b>
+        AccessTokenCredential tokenCredential = new AccessTokenCredential(product.customerAccessToken);
+        SecurityIdentity securityIdentity = identityProvider.authenticate(tokenCredential).await().indefinitely(); <i class="conum" data-value="2"></i><b>(2)</b>
         ...
     }
 
@@ -1523,9 +1583,6 @@ For more information, see <a href="security-code-flow-authentication#oidc-reques
 </li>
 <li>
 <p><a href="security-oidc-bearer-token-authentication-tutorial">Protect a service application by using OIDC Bearer token authentication</a></p>
-</li>
-<li>
-<p><a href="security-protect-service-applications-by-using-oidc-bearer-authentication-how-to">Protect service applications by using OIDC Bearer token authentication</a></p>
 </li>
 <li>
 <p><a href="https://www.keycloak.org/documentation.html">Keycloak Documentation</a></p>
