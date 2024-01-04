@@ -198,10 +198,16 @@
 <p>Deploy the application to Heroku</p>
 </li>
 <li>
-<p>Deploy the application as Docker image to Heroku</p>
+<p>Deploy the application as container image to Heroku</p>
 </li>
 <li>
-<p>Deploy the native application as Docker image to Heroku</p>
+<p>Using Docker</p>
+</li>
+<li>
+<p>Using Podman</p>
+</li>
+<li>
+<p>Deploy the native application as container image to Heroku</p>
 </li>
 </ul>
 </div>
@@ -268,9 +274,6 @@ In addition, it offers a container registry that can be used to deploy prebuilt 
 <p>All three approaches need to be aware of the port that Heroku assigns to it to handle traffic.
 Luckily, there&#8217;s a dynamic configuration property for it.</p>
 </div>
-<div class="paragraph">
-<p>The guide assumes that you have the <a href="https://devcenter.heroku.com/articles/heroku-cli">Heroku CLI</a> installed.</p>
-</div>
 </div>
 </div>
 <div class="sect1">
@@ -331,7 +334,7 @@ git commit -am "Configure the HTTP Port."</code></pre>
 inside Heroku&#8217;s build infrastructure and then deploying that result, the other one uses a local build process to create an optimized container.</p>
 </div>
 <div class="paragraph">
-<p>Two additional files are needed in your application&#8217;s root directory:</p>
+<p>For the first variant, two additional files are needed in your application&#8217;s root directory:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -431,8 +434,33 @@ mvn clean package\
   -Dquarkus.container-image.tag=latest</code></pre>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="push-and-release-the-image"><a class="anchor" href="#push-and-release-the-image"></a>Push and release the image</h2>
+<div class="sectionbody">
 <div class="paragraph">
-<p>With Docker installed, you can now push the image and release it:</p>
+<p>You can now push the image and release it.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The initial push is rather big, as all layers of the image need to be transferred.
+The following pushes will be smaller.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="pushing-through-docker"><a class="anchor" href="#pushing-through-docker"></a>Pushing through Docker</h3>
+<div class="paragraph">
+<p>With Docker installed, these steps are simple:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -440,6 +468,70 @@ mvn clean package\
 heroku container:release web --app $APP_NAME</code></pre>
 </div>
 </div>
+</div>
+<div class="sect2">
+<h3 id="pushing-through-podman"><a class="anchor" href="#pushing-through-podman"></a>Pushing through Podman</h3>
+<div class="paragraph">
+<p>When you want to use Podman as a drop-in-replacement for Docker, you will have some problems because the Heroku CLI depends on Docker and doesn&#8217;t support the OCI format. But there are possible solutions for these problems.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="title">Cannot find docker, please ensure docker is installed.</div>
+<div class="paragraph">
+<p>The problem is obviously that the heroku-cli can’t find docker. This is quite easy to resolve, because the podman cli is docker-compatible. We just need to create a symlink from podman to docker:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">sudo ln -s $(which podman) /usr/local/bin/docker</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="title">Error writing manifest: Error uploading manifest latest to registry.heroku.com/$APP_NAME/web: unsupported</div>
+<div class="paragraph">
+<p>Instead of doing a normal podman push (OCI format) we must use a workaround in order to push and release our app through Podman and the Heroku CLI in the desired format (v2s2 - Docker Image Manifest Version 2, Schema 2). Also <a href="https://github.com/containers/skopeo">skopeo</a> is needed.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">CONTAINER_DIR="target/container-dir"
+mkdir $CONTAINER_DIR
+podman push --format=v2s2 "registry.heroku.com/$APP_NAME/web" dir:$CONTAINER_DIR
+skopeo --debug copy dir:$CONTAINER_DIR "docker://registry.heroku.com/$APP_NAME/web:latest"
+heroku container:release web --app "$APP_NAME"
+rm -rf $CONTAINER_DIR</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://urhengulas.github.io/blog/podman_heroku.html">Source of solutions and workarounds</a></p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="check-the-logs"><a class="anchor" href="#check-the-logs"></a>Check the logs</h2>
+<div class="sectionbody">
 <div class="paragraph">
 <p>You can and should check the logs to see if your application is now indeed running from the container:</p>
 </div>
@@ -448,10 +540,11 @@ heroku container:release web --app $APP_NAME</code></pre>
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">heroku logs --app $APP_NAME --tail</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>The initial push is rather big, as all layers of the image need to be transferred.
-The following pushes will be smaller.</p>
 </div>
+</div>
+<div class="sect1">
+<h2 id="deploy-as-native-application-inside-a-container"><a class="anchor" href="#deploy-as-native-application-inside-a-container"></a>Deploy as native application inside a container</h2>
+<div class="sectionbody">
 <div class="paragraph">
 <p>The biggest advantage we take when deploying our app as a container is to deploy a container with the natively compiled application.
 Why? Because Heroku will stop or sleep the application when there&#8217;s no incoming traffic.
@@ -474,13 +567,7 @@ mvn clean package\
 </div>
 </div>
 <div class="paragraph">
-<p>After that, push and release again:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">docker push registry.heroku.com/$APP_NAME/web
-heroku container:release web --app $APP_NAME</code></pre>
-</div>
+<p>After that, push and release again using Docker or Podman (see above) and check the logs.</p>
 </div>
 </div>
 </div>
@@ -493,6 +580,14 @@ heroku container:release web --app $APP_NAME</code></pre>
 <li><a href="#prepare-the-quarkus-http-port">Prepare the Quarkus HTTP Port</a></li>
 <li><a href="#deploy-the-repository-and-build-on-heroku">Deploy the repository and build on Heroku</a></li>
 <li><a href="#deploy-as-container">Deploy as container</a></li>
+<li><a href="#push-and-release-the-image">Push and release the image</a>
+<ul class="sectlevel2">
+<li><a href="#pushing-through-docker">Pushing through Docker</a></li>
+<li><a href="#pushing-through-podman">Pushing through Podman</a></li>
+</ul>
+</li>
+<li><a href="#check-the-logs">Check the logs</a></li>
+<li><a href="#deploy-as-native-application-inside-a-container">Deploy as native application inside a container</a></li>
 </ul></div>
     </div>
   </div>
@@ -518,6 +613,12 @@ heroku container:release web --app $APP_NAME</code></pre>
         <li class="guide"><a href="/version/main/guides/container-image">Container Images</a></li>
       
         
+        <li class="guide"><a href="/version/main/guides/quarkus-runtime-base-image">Quarkus Base Runtime Image</a></li>
+      
+        
+        <li class="guide"><a href="/version/main/guides/podman">Using Podman with Quarkus</a></li>
+      
+        
         <li class="guide"><a href="/version/main/guides/ansible">Automate Quarkus deployment with Ansible</a></li>
       
         
@@ -525,12 +626,6 @@ heroku container:release web --app $APP_NAME</code></pre>
       
         
         <li class="guide"><a href="/version/main/guides/aws-lambda-snapstart">AWS Lambda SnapStart Configuration</a></li>
-      
-        
-        <li class="guide"><a href="/version/main/guides/aws-lambda-http">AWS Lambda with RESTEasy Reactive, Undertow, or Reactive Routes</a></li>
-      
-        
-        <li class="guide"><a href="/version/main/guides/azure-functions">Azure Functions</a></li>
       </ul>
     </div>
     </div>
