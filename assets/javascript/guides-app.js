@@ -69,12 +69,18 @@ const app = createApp({
     },
     category: {
       get() {
-        // Turn null to "", because that's how the select box refers to "all categories"
+        // Turn "no entry" into "", because that's how the select box refers to "all categories"
         return this.search.input.categories || ""
       },
       set(val) {
-        // Turn "" to null, because that's how the search service refers to "all categories"
-        this.search.input.categories = val || null
+        if (val) {
+          this.search.input.categories = val
+        }
+        // Turn null/"" into "no entry", because not specifying the category
+        // is how we get the search service to return all categories
+        else {
+          delete this.search.input.categories
+        }
       }
     },
     hasInput() {
