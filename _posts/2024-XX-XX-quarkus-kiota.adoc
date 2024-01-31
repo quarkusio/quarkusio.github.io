@@ -1,0 +1,158 @@
+---
+layout: post
+title: 'The road to generated SDKs with Kiota lands to Quarkus'
+date: 2024-XX-XX
+tags: release
+synopsis: 'Introducing a Quarkus-Kiota extension and available Java tools to work with Kiota.'
+author: andreaTP
+---
+
+== The Challenge
+:imagesdir: assets/images/posts/kiota
+
+Quarkus applications typically expose functionalities through API endpoints; here, we discuss how to easily consume those APIs and provide a smooth experience for our beloved users. While HTTP calls are easy to perform in any programming language and environment, when API complexity increases, and the number of available endpoints becomes uncountable, the need for better tools becomes apparent.
+
+image::api_monster.jpeg[API monster]
+
+=== Wishlist from the Developer Experience Perspective:
+
+- Fully typed programmatic APIs that make discovering and invoking HTTP endpoints safe, expressive, and elegant.
+- An easy and idiomatic way to plug in various authentication mechanisms.
+- Smooth upgrades of the generated code when the description evolves.
+
+Looking at the learnings from big companies facing this issue at scale, a viable solution is to ship language-specific SDKs (Software Development Kits). For years, companies have been paying developers to manually provide an abstraction layer, making cloud services functionalities more easily accessible. This approach adds up to the maintenance burden, increases the operational complexity of releases, and is tedious for developers.
+
+To pave the way for better tooling, new standards are being defined in the computer industry. For building HTTP-based APIs, link:https://www.openapis.org[OpenAPI] stands out as a widely adopted option.
+
+=== A Story of Open Source Collaboration
+
+==== Microsoft Kiota
+
+Recognizing the challenges faced by the industry in generating comprehensive and efficient SDKs for diverse APIs, Microsoft took the lead. In the context of link:https://learn.microsoft.com/en-us/graph/overview[Microsoft Graph], they introduced link:https://github.com/microsoft/kiota[Kiota], a CLI to streamline and automate the process of creating Software Development Kits (SDKs) for HTTP APIs.
+
+Kiota, born and raised in the open source, fosters collaboration and is ground-up designed with link:https://learn.microsoft.com/en-gb/openapi/kiota/design[modularity] in mind. The Kiota project's community is extra welcoming, and it has demonstrated to be easy to open an issue not only for bugs but also to improve over the design decisions.
+
+Nowadays, Kiota demonstrates its value daily with the automated generation of SDKs for multiple Microsoft services. More big industries, like link:https://github.blog/2024-01-03-our-move-to-generated-sdks/[GitHub], are quickly following the lead.
+
+==== Red Hat
+
+Deeply understanding the technological problem and accepting the fact that the available alternatives are sub-optimal, especially for consistency across languages and frameworks, Red Hat joined the effort on Kiota. The collaboration led to important milestones, directly blossomed from this collaboration:
+
+- To make the usage of the generated code almost indistinguishable from a human-crafted product, we thoroughly implemented language-specific mangling of names.
+- To ease the fruition of the Kiota CLI from standard Java projects, we implemented a link:https://github.com/kiota-community/kiota-java-extra?tab=readme-ov-file#maven-plugin[Maven plugin].
+- To make frictionless the usage of Kiota on different and opinionated technological stacks, we ship alternative core libraries to let the user easily swap out from Microsoft's defaults (OkHttp + Gson): link:https://github.com/kiota-community/kiota-java-extra?tab=readme-ov-file#serialization-jackson[Jackson Serde], link:https://github.com/kiota-community/kiota-java-extra?tab=readme-ov-file#http-vertx[Vert.X Http], link:https://github.com/kiota-community/kiota-java-extra?tab=readme-ov-file#http-jdk[JDK Http].
+- To increase compatibility with alternative Java runtimes, we completely removed the usage of reflection from all of the internals. Thus, Kiota-generated SDKs are automatically, and with zero configuration, able to be compiled and run on link:https://www.graalvm.org/latest/reference-manual/native-image/[GraalVM native-image].
+- Feeling the pain of un-maintained and various levels of maturity of URI Templates implementations (internally used to compose URLs), we rolled out a link:https://github.com/std-uritemplate/std-uritemplate?tab=readme-ov-file#motivation[dependency-free unified library] available for all of the languages Kiota supports.
+
+Along with additional bug fixes and improvements, we finally achieved a sweet spot where Kiota can be easily integrated and leveraged by mainstream and mature software projects. link:https://github.com/Apicurio/apicurio-registry[Apicurio Registry stands out among others] shipping (and extensively leveraging in tests) the generated link:https://github.com/Apicurio/apicurio-registry/tree/main/java-sdk[Java SDK] along with link:https://github.com/Apicurio/apicurio-registry/tree/main/python-sdk[Python] and link:https://github.com/Apicurio/apicurio-registry/tree/main/go-sdk[Go SDK].
+
+=== Quarkus Meet Kiota
+
+Given that all the dots have already been connected, the last and most important step is a smooth integration with supersonic, subatomic applications leveraging Quarkus! We are happy to announce that it has been finalized, and you can swiftly leverage the power of Kiota thanks to the new `quarkus-kiota` extension!
+
+The codebase lives in the link:https://github.com/quarkiverse/quarkus-kiota[Quarkiverse], the project is listed in the link:https://quarkus.io/extensions/io.quarkiverse.kiota/quarkus-kiota/[extensions] and the link:https://docs.quarkiverse.io/quarkus-kiota/dev/index.html[docs] are available at the usual location.
+
+Get started by adding this extension:
+
+----
+quarkus ext add io.quarkiverse.kiota:quarkus-kiota
+----
+
+Since it's a code generator extension, you will need to add the `generate-code` goal to the `quarkus-maven-plugin` `executions` section:
+
+[source,xml]
+----
+<plugin>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-maven-plugin</artifactId>
+  <extensions>true</extensions>
+  <executions>
+    <execution>
+      <goals>
+        <goal>build</goal>
+        <goal>generate-code</goal>
+      </goals>
+    </execution>
+  </executions>
+</plugin>
+----
+
+Add the necessary dependencies, we are going to replace the default http and json serialization libraries published by Microsoft and swap in Vert.X and Jackson(published from this https://github.com/kiota-community/kiota-java-extra[repository]) as they nicely play with the rest of the stack of a typical Quarkus based application.
+
+[source,xml]
+----
+<dependency>
+  <groupId>com.microsoft.kiota</groupId>
+  <artifactId>microsoft-kiota-abstractions</artifactId>
+  <version>${kiota.libs.version}</version>
+</dependency>
+<dependency>
+  <groupId>io.kiota</groupId>
+  <artifactId>kiota-http-vertx</artifactId> <!-- alternatively <artifactId>kiota-http-jdk</artifactId> -->
+  <version>{kiota-java-extra.version}</version>
+</dependency>
+<dependency>
+  <groupId>io.kiota</groupId>
+  <artifactId>kiota-serialization-jackson-quarkus</artifactId>
+  <version>{kiota-java-extra.version}</version>
+</dependency>
+<dependency>
+  <groupId>com.microsoft.kiota</groupId>
+  <artifactId>microsoft-kiota-serialization-text</artifactId>
+  <version>${kiota.libs.version}</version>
+</dependency>
+<dependency>
+  <groupId>com.microsoft.kiota</groupId>
+  <artifactId>microsoft-kiota-serialization-form</artifactId>
+  <version>${kiota.libs.version}</version>
+</dependency>
+<dependency>
+  <groupId>com.microsoft.kiota</groupId>
+  <artifactId>microsoft-kiota-serialization-multipart</artifactId>
+  <version>${kiota.libs.version}</version>
+</dependency>
+<dependency>
+  <groupId>jakarta.annotation</groupId>
+  <artifactId>jakarta.annotation-api</artifactId>
+</dependency>
+----
+
+Now we need to generate the actual client for our OpenAPI description, to do so, you should drop the OpenAPI file in the ``src/main/openapi`` folder.
+You are all set to use the client in your application:
+
+[source,java]
+----
+var client = new ApiClient(ew VertXRequestAdapter(vertx));
+client.
+----
+
+striking ``.`` after client, the code completion of your IDE should kick in and provide you a beautiful, fully typed, builder pattern matching the endopoint descriptions provided in the OpenAPI specification.
+
+image::completion.jpeg[Code Completion]
+
+For example an endpoint definition like https://github.com/Apicurio/apicurio-registry/blob/6882af10e9de8e1d245006db01f039b1fbf6355a/common/src/main/resources/META-INF/openapi-v2.json#L668[this one] nicely unroll in Java as:
+
+[source,java]
+----
+client
+  .groups()
+  .byGroupId(groupId)
+  .artifacts()
+  .byArtifactId(artifactId)
+  .meta()
+  .get();
+----
+
+== Alternatives
+
+Among the various alternatives, link:https://github.com/quarkiverse/quarkus-openapi-generator[quarkus-openapi-generator] is a mature Quarkus extension to generate client code from OpenAPI. It is recommended when you want to favor a tight Quarkus integration as opposed to consistency across languages/frameworks.
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus-Kiota user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/quarkiverse/quarkus-kiota/issues[GitHub];
+ * craft some code and https://github.com/quarkiverse/quarkus-kiota/pulls[push a PR];
+ 
