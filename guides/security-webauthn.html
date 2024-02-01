@@ -222,7 +222,7 @@ Feedback is welcome on our <a href="https://groups.google.com/d/forum/quarkus-de
 <p>An IDE</p>
 </li>
 <li>
-<p>JDK 11+ installed with <code>JAVA_HOME</code> configured appropriately</p>
+<p>JDK 17+ installed with <code>JAVA_HOME</code> configured appropriately</p>
 </li>
 <li>
 <p>Apache Maven 3.9.6</p>
@@ -348,7 +348,7 @@ However, you can go right to the completed example.</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus create app org.acme:security-webauthn-quickstart \
-    --extension='security-webauthn,reactive-pg-client,resteasy-reactive,hibernate-reactive-panache' \
+    --extension='security-webauthn,jdbc-postgresql,resteasy-reactive,hibernate-orm-panache' \
     --no-code
 cd security-webauthn-quickstart</code></pre>
 </div>
@@ -366,10 +366,10 @@ cd security-webauthn-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.6.9:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.7.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-webauthn-quickstart \
-    -Dextensions='security-webauthn,reactive-pg-client,resteasy-reactive,hibernate-reactive-panache' \
+    -Dextensions='security-webauthn,jdbc-postgresql,resteasy-reactive,hibernate-orm-panache' \
     -DnoCode
 cd security-webauthn-quickstart</code></pre>
 </div>
@@ -561,8 +561,7 @@ import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
-import io.quarkus.hibernate.reactive.panache.PanacheEntity;
-import io.smallrye.mutiny.Uni;
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
 import io.vertx.ext.auth.webauthn.Authenticator;
 import io.vertx.ext.auth.webauthn.PublicKeyCredential;
 
@@ -651,16 +650,12 @@ public class WebAuthnCredential extends PanacheEntity {
         user.webAuthnCredential = this;
     }
 
-    public static Uni&lt;List&lt;WebAuthnCredential&gt;&gt; findByUserName(String userName) {
+    public static List&lt;WebAuthnCredential&gt; findByUserName(String userName) {
         return list("userName", userName);
     }
 
-    public static Uni&lt;List&lt;WebAuthnCredential&gt;&gt; findByCredID(String credID) {
+    public static List&lt;WebAuthnCredential&gt; findByCredID(String credID) {
         return list("credID", credID);
-    }
-
-    public &lt;T&gt; Uni&lt;T&gt; fetch(T association) {
-        return getSession().flatMap(session -&gt; session.fetch(association));
     }
 }</code></pre>
 </div>
@@ -672,10 +667,9 @@ public class WebAuthnCredential extends PanacheEntity {
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.webauthn;
 
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
 import jakarta.persistence.Entity;
 import jakarta.persistence.ManyToOne;
-
-import io.quarkus.hibernate.reactive.panache.PanacheEntity;
 
 
 @Entity
@@ -698,13 +692,11 @@ public class WebAuthnCertificate extends PanacheEntity {
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.webauthn;
 
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
-
-import io.quarkus.hibernate.reactive.panache.PanacheEntity;
-import io.smallrye.mutiny.Uni;
 
 @Table(name = "user_table")
 @Entity
@@ -717,8 +709,8 @@ public class User extends PanacheEntity {
     @OneToOne(mappedBy = "user")
     public WebAuthnCredential webAuthnCredential;
 
-    public static Uni&lt;User&gt; findByUserName(String userName) {
-        return find("userName", userName).firstResult();
+    public static User findByUserName(String userName) {
+        return User.find("userName", userName).firstResult();
     }
 }</code></pre>
 </div>
@@ -759,98 +751,83 @@ WebAuthn security model:</p>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.webauthn;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
+import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 
-import io.quarkus.hibernate.reactive.panache.common.runtime.ReactiveTransactional;
 import io.quarkus.security.webauthn.WebAuthnUserProvider;
 import io.smallrye.mutiny.Uni;
 import io.vertx.ext.auth.webauthn.AttestationCertificates;
 import io.vertx.ext.auth.webauthn.Authenticator;
+import jakarta.transaction.Transactional;
 
+import static org.acme.security.webauthn.WebAuthnCredential.findByCredID;
+import static org.acme.security.webauthn.WebAuthnCredential.findByUserName;
+
+@Blocking
 @ApplicationScoped
 public class MyWebAuthnSetup implements WebAuthnUserProvider {
 
-    @ReactiveTransactional
+    @Transactional
     @Override
     public Uni&lt;List&lt;Authenticator&gt;&gt; findWebAuthnCredentialsByUserName(String userName) {
-        return WebAuthnCredential.findByUserName(userName)
-                .flatMap(MyWebAuthnSetup::toAuthenticators);
+        return Uni.createFrom().item(toAuthenticators(findByUserName(userName)));
     }
 
-    @ReactiveTransactional
+    @Transactional
     @Override
     public Uni&lt;List&lt;Authenticator&gt;&gt; findWebAuthnCredentialsByCredID(String credID) {
-        return WebAuthnCredential.findByCredID(credID)
-                .flatMap(MyWebAuthnSetup::toAuthenticators);
+        return Uni.createFrom().item(toAuthenticators(findByCredID(credID)));
     }
 
-    @ReactiveTransactional
+    @Transactional
     @Override
     public Uni&lt;Void&gt; updateOrStoreWebAuthnCredentials(Authenticator authenticator) {
-        return User.findByUserName(authenticator.getUserName())
-            .flatMap(user -&gt; {
+        // leave the scooby user to the manual endpoint, because if we do it here it will be created/updated twice
+        if(!authenticator.getUserName().equals("scooby")) {
+            User user = User.findByUserName(authenticator.getUserName());
+            if(user == null) {
                 // new user
-                if(user == null) {
-                    User newUser = new User();
-                    newUser.userName = authenticator.getUserName();
-                    WebAuthnCredential credential = new WebAuthnCredential(authenticator, newUser);
-                    return credential.persist()
-                            .flatMap(c -&gt; newUser.persist())
-                            .onItem().ignore().andContinueWithNull();
-                } else {
-                    // existing user
-                    user.webAuthnCredential.counter = authenticator.getCounter();
-                    return Uni.createFrom().nullItem();
-                }
-            });
-    }
-
-    private static Uni&lt;List&lt;Authenticator&gt;&gt; toAuthenticators(List&lt;WebAuthnCredential&gt; dbs) {
-        // can't call combine/uni on empty list
-        if(dbs.isEmpty())
-            return Uni.createFrom().item(Collections.emptyList());
-        List&lt;Uni&lt;Authenticator&gt;&gt; ret = new ArrayList&lt;&gt;(dbs.size());
-        for (WebAuthnCredential db : dbs) {
-            ret.add(toAuthenticator(db));
+                User newUser = new User();
+                newUser.userName = authenticator.getUserName();
+                WebAuthnCredential credential = new WebAuthnCredential(authenticator, newUser);
+                credential.persist();
+                newUser.persist();
+            } else {
+                // existing user
+                user.webAuthnCredential.counter = authenticator.getCounter();
+            }
         }
-        return Uni.combine().all().unis(ret).combinedWith(f -&gt; (List)f);
+        return Uni.createFrom().nullItem();
     }
 
-    private static Uni&lt;Authenticator&gt; toAuthenticator(WebAuthnCredential credential) {
-        return credential.fetch(credential.x5c)
-                .map(x5c -&gt; {
-                    Authenticator ret = new Authenticator();
-                    ret.setAaguid(credential.aaguid);
-                    AttestationCertificates attestationCertificates = new AttestationCertificates();
-                    attestationCertificates.setAlg(credential.alg);
-                    List&lt;String&gt; x5cs = new ArrayList&lt;&gt;(x5c.size());
-                    for (WebAuthnCertificate webAuthnCertificate : x5c) {
-                        x5cs.add(webAuthnCertificate.x5c);
-                    }
-                    ret.setAttestationCertificates(attestationCertificates);
-                    ret.setCounter(credential.counter);
-                    ret.setCredID(credential.credID);
-                    ret.setFmt(credential.fmt);
-                    ret.setPublicKey(credential.publicKey);
-                    ret.setType(credential.type);
-                    ret.setUserName(credential.userName);
-                    return ret;
-                });
+    private static List&lt;Authenticator&gt; toAuthenticators(List&lt;WebAuthnCredential&gt; dbs) {
+        return dbs.stream().map(MyWebAuthnSetup::toAuthenticator).collect(Collectors.toList());
+    }
+
+    private static Authenticator toAuthenticator(WebAuthnCredential credential) {
+        Authenticator ret = new Authenticator();
+        ret.setAaguid(credential.aaguid);
+        AttestationCertificates attestationCertificates = new AttestationCertificates();
+        attestationCertificates.setAlg(credential.alg);
+        ret.setAttestationCertificates(attestationCertificates);
+        ret.setCounter(credential.counter);
+        ret.setCredID(credential.credID);
+        ret.setFmt(credential.fmt);
+        ret.setPublicKey(credential.publicKey);
+        ret.setType(credential.type);
+        ret.setUserName(credential.userName);
+        return ret;
     }
 
     @Override
     public Set&lt;String&gt; getRoles(String userId) {
         if(userId.equals("admin")) {
-            Set&lt;String&gt; ret = new HashSet&lt;&gt;();
-            ret.add("user");
-            ret.add("admin");
-            return ret;
+            return Set.of("user", "admin");
         }
         return Collections.singleton("user");
     }
@@ -1369,23 +1346,19 @@ and <code>WebAuthnSecurity.register</code> methods. For example, here&#8217;s ho
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.webauthn;
 
-import java.net.URI;
-
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
-import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.Response.Status;
 
 import org.jboss.resteasy.reactive.RestForm;
 
-import io.quarkus.hibernate.reactive.panache.common.runtime.ReactiveTransactional;
 import io.quarkus.security.webauthn.WebAuthnLoginResponse;
 import io.quarkus.security.webauthn.WebAuthnRegisterResponse;
 import io.quarkus.security.webauthn.WebAuthnSecurity;
-import io.smallrye.mutiny.Uni;
 import io.vertx.ext.auth.webauthn.Authenticator;
 import io.vertx.ext.web.RoutingContext;
 
@@ -1397,85 +1370,65 @@ public class LoginResource {
 
     @Path("/login")
     @POST
-    @ReactiveTransactional
-    public Uni&lt;Response&gt; login(@RestForm String userName,
-                               @BeanParam WebAuthnLoginResponse webAuthnResponse,
-                               RoutingContext ctx) {
+    @Transactional
+    public Response login(@RestForm String userName,
+                          @BeanParam WebAuthnLoginResponse webAuthnResponse,
+                          RoutingContext ctx) {
         // Input validation
-        if(userName == null || userName.isEmpty()
-                || !webAuthnResponse.isSet()
-                || !webAuthnResponse.isValid()) {
-            return Uni.createFrom().item(Response.status(Status.BAD_REQUEST).build());
+        if(userName == null || userName.isEmpty() || !webAuthnResponse.isSet() || !webAuthnResponse.isValid()) {
+            return Response.status(Status.BAD_REQUEST).build();
         }
 
-        Uni&lt;User&gt; userUni = User.findByUserName(userName);
-        return userUni.flatMap(user -&gt; {
-            if(user == null) {
-                // Invalid user
-                return Uni.createFrom().item(Response.status(Status.BAD_REQUEST).build());
-            }
-            Uni&lt;Authenticator&gt; authenticator = this.webAuthnSecurity.login(webAuthnResponse, ctx);
-
-            return authenticator
-                    // bump the auth counter
-                    .invoke(auth -&gt; user.webAuthnCredential.counter = auth.getCounter())
-                    .map(auth -&gt; {
-                        // make a login JWT cookie
-                        NewCookie cookie = null;
-                        return Response.seeOther(URI.create("/")).cookie(cookie).build();
-                    })
-                    // handle login failure
-                    .onFailure().recoverWithItem(x -&gt; {
-                        // make a proper error response
-                        return Response.status(Status.BAD_REQUEST).build();
-                    });
-
-        });
+        User user = User.findByUserName(userName);
+        if(user == null) {
+            // Invalid user
+            return Response.status(Status.BAD_REQUEST).build();
+        }
+        try {
+            Authenticator authenticator = this.webAuthnSecurity.login(webAuthnResponse, ctx).await().indefinitely();
+            // bump the auth counter
+            user.webAuthnCredential.counter = authenticator.getCounter();
+            // make a login cookie
+            this.webAuthnSecurity.rememberUser(authenticator.getUserName(), ctx);
+            return Response.ok().build();
+        } catch (Exception exception) {
+            // handle login failure - make a proper error response
+            return Response.status(Status.BAD_REQUEST).build();
+        }
     }
 
     @Path("/register")
     @POST
-    @ReactiveTransactional
-    public Uni&lt;Response&gt; register(@RestForm String userName,
+    @Transactional
+    public Response register(@RestForm String userName,
                                   @BeanParam WebAuthnRegisterResponse webAuthnResponse,
                                   RoutingContext ctx) {
         // Input validation
-        if(userName == null || userName.isEmpty()
-                || !webAuthnResponse.isSet()
-                || !webAuthnResponse.isValid()) {
-            return Uni.createFrom().item(Response.status(Status.BAD_REQUEST).build());
+        if(userName == null || userName.isEmpty() || !webAuthnResponse.isSet() || !webAuthnResponse.isValid()) {
+            return Response.status(Status.BAD_REQUEST).build();
         }
 
-        Uni&lt;User&gt; userUni = User.findByUserName(userName);
-        return userUni.flatMap(user -&gt; {
-            if(user != null) {
-                // Duplicate user
-                return Uni.createFrom().item(Response.status(Status.BAD_REQUEST).build());
-            }
-            Uni&lt;Authenticator&gt; authenticator = this.webAuthnSecurity.register(webAuthnResponse, ctx);
-
-            return authenticator
-                    // store the user
-                    .flatMap(auth -&gt; {
-                        User newUser = new User();
-                        newUser.userName = auth.getUserName();
-                        WebAuthnCredential credential = new WebAuthnCredential(auth, newUser);
-                        return credential.persist()
-                                .flatMap(c -&gt; newUser.persist());
-
-                    })
-                    .map(newUser -&gt; {
-                        // make a login JWT cookie
-                        NewCookie cookie = null;
-                        return Response.seeOther(URI.create("/")).cookie(cookie).build();
-                    })
-                    // handle login failure
-                    .onFailure().recoverWithItem(x -&gt; {
-                        // make a proper error response
-                        return Response.status(Status.BAD_REQUEST).build();
-                    });
-
-        });
+        User user = User.findByUserName(userName);
+        if(user != null) {
+            // Duplicate user
+            return Response.status(Status.BAD_REQUEST).build();
+        }
+        try {
+            // store the user
+            Authenticator authenticator = this.webAuthnSecurity.register(webAuthnResponse, ctx).await().indefinitely();
+            User newUser = new User();
+            newUser.userName = authenticator.getUserName();
+            WebAuthnCredential credential = new WebAuthnCredential(authenticator, newUser);
+            credential.persist();
+            newUser.persist();
+            // make a login cookie
+            this.webAuthnSecurity.rememberUser(newUser.userName, ctx);
+            return Response.ok().build();
+        } catch (Exception ignored) {
+            // handle login failure
+            // make a proper error response
+            return Response.status(Status.BAD_REQUEST).build();
+        }
     }
 }</code></pre>
 </div>
@@ -1524,13 +1477,14 @@ Quarkus WebAuthn endpoints to defer those calls to the worker pool.</p>
 <pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
     &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
     &lt;artifactId&gt;quarkus-test-security-webauthn&lt;/artifactId&gt;
+    &lt;scope&gt;test&lt;/scope&gt;
 &lt;/dependency&gt;</code></pre>
 </div>
 </div>
 <div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
 <div class="title">build.gradle</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-test-security-webauthn")</code></pre>
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">testImplementation("io.quarkus:quarkus-test-security-webauthn")</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -1779,7 +1733,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-security-webauthn_quarkus.webauthn.enabled"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.enabled">quarkus.webauthn.enabled</a></code></p>
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-security-webauthn_quarkus-webauthn-enabled"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-enabled">quarkus.webauthn.enabled</a></code></p>
 </div>
 <div id="conf-collapsible-desc-1" class="openblock description description-collapsed">
 <div class="content">
@@ -1787,7 +1741,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>If the WebAuthn extension is enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7750">QUARKUS_WEBAUTHN_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7750" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7830">QUARKUS_WEBAUTHN_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7830" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1799,7 +1753,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.origin"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.origin">quarkus.webauthn.origin</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-origin"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-origin">quarkus.webauthn.origin</a></code></p>
 </div>
 <div id="conf-collapsible-desc-2" class="openblock description description-collapsed">
 <div class="content">
@@ -1807,7 +1761,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The origin of the application. The origin is basically protocol, host and port. If you are calling WebAuthn API while your application is located at <code><a href="https://example.com/login" class="bare">https://example.com/login</a></code>, then origin will be <code><a href="https://example.com" class="bare">https://example.com</a></code>. If you are calling from <code><a href="http://localhost:2823/test" class="bare">http://localhost:2823/test</a></code>, then the origin will be <code><a href="http://localhost:2823" class="bare">http://localhost:2823</a></code>. Please note that WebAuthn API will not work on pages loaded over HTTP, unless it is localhost, which is considered secure context.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7751">QUARKUS_WEBAUTHN_ORIGIN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7751" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7831">QUARKUS_WEBAUTHN_ORIGIN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7831" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1819,7 +1773,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.transports"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.transports">quarkus.webauthn.transports</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-transports"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-transports">quarkus.webauthn.transports</a></code></p>
 </div>
 <div id="conf-collapsible-desc-3" class="openblock description description-collapsed">
 <div class="content">
@@ -1843,7 +1797,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7752">QUARKUS_WEBAUTHN_TRANSPORTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7752" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7832">QUARKUS_WEBAUTHN_TRANSPORTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7832" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1855,7 +1809,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.relying-party.id"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.relying-party.id">quarkus.webauthn.relying-party.id</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-relying-party-id"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-relying-party-id">quarkus.webauthn.relying-party.id</a></code></p>
 </div>
 <div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
 <div class="content">
@@ -1863,7 +1817,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The id (or domain name of your server)</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7753">QUARKUS_WEBAUTHN_RELYING_PARTY_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7753" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7833">QUARKUS_WEBAUTHN_RELYING_PARTY_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7833" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1875,7 +1829,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.relying-party.name"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.relying-party.name">quarkus.webauthn.relying-party.name</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-relying-party-name"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-relying-party-name">quarkus.webauthn.relying-party.name</a></code></p>
 </div>
 <div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
 <div class="content">
@@ -1883,7 +1837,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>A user friendly name for your server</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7754">QUARKUS_WEBAUTHN_RELYING_PARTY_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7754" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7834">QUARKUS_WEBAUTHN_RELYING_PARTY_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7834" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1895,7 +1849,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.authenticator-attachment"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.authenticator-attachment">quarkus.webauthn.authenticator-attachment</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-authenticator-attachment"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-authenticator-attachment">quarkus.webauthn.authenticator-attachment</a></code></p>
 </div>
 <div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
 <div class="content">
@@ -1913,7 +1867,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7755">QUARKUS_WEBAUTHN_AUTHENTICATOR_ATTACHMENT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7755" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7835">QUARKUS_WEBAUTHN_AUTHENTICATOR_ATTACHMENT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7835" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1927,7 +1881,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.require-resident-key"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.require-resident-key">quarkus.webauthn.require-resident-key</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-require-resident-key"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-require-resident-key">quarkus.webauthn.require-resident-key</a></code></p>
 </div>
 <div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
 <div class="content">
@@ -1935,7 +1889,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>Resident key required. A resident (private) key, is a key that cannot leave your authenticator device, this means that you cannot reuse the authenticator to log into a second computer.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7756">QUARKUS_WEBAUTHN_REQUIRE_RESIDENT_KEY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7756" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7836">QUARKUS_WEBAUTHN_REQUIRE_RESIDENT_KEY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7836" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1947,7 +1901,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.user-verification"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.user-verification">quarkus.webauthn.user-verification</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-user-verification"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-user-verification">quarkus.webauthn.user-verification</a></code></p>
 </div>
 <div id="conf-collapsible-desc-8" class="openblock description description-collapsed">
 <div class="content">
@@ -1968,7 +1922,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7757">QUARKUS_WEBAUTHN_USER_VERIFICATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7757" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7837">QUARKUS_WEBAUTHN_USER_VERIFICATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7837" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1982,7 +1936,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.timeout"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.timeout">quarkus.webauthn.timeout</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-timeout"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-timeout">quarkus.webauthn.timeout</a></code></p>
 </div>
 <div id="conf-collapsible-desc-9" class="openblock description description-collapsed">
 <div class="content">
@@ -1990,7 +1944,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>Non-negative User Verification timeout. Authentication must occur within the timeout, this will prevent the user browser from being blocked with a pop-up required user verification, and the whole ceremony must be completed within the timeout period. After the timeout, any previously issued challenge is automatically invalidated.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7758">QUARKUS_WEBAUTHN_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7758" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7838">QUARKUS_WEBAUTHN_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7838" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2003,7 +1957,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.attestation"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.attestation">quarkus.webauthn.attestation</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-attestation"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-attestation">quarkus.webauthn.attestation</a></code></p>
 </div>
 <div id="conf-collapsible-desc-10" class="openblock description description-collapsed">
 <div class="content">
@@ -2027,7 +1981,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7759">QUARKUS_WEBAUTHN_ATTESTATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7759" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7839">QUARKUS_WEBAUTHN_ATTESTATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7839" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2041,7 +1995,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.pub-key-cred-params"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.pub-key-cred-params">quarkus.webauthn.pub-key-cred-params</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-pub-key-cred-params"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-pub-key-cred-params">quarkus.webauthn.pub-key-cred-params</a></code></p>
 </div>
 <div id="conf-collapsible-desc-11" class="openblock description description-collapsed">
 <div class="content">
@@ -2049,7 +2003,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>Allowed Public Key Credential algorithms by preference order. Webauthn mandates that all authenticators must support at least the following 2 algorithms: <code>ES256</code> and <code>RS256</code>. Applications may require stronger keys and algorithms, for example: <code>ES512</code> or <code>EdDSA</code>. Note that the use of stronger algorithms, e.g.: <code>EdDSA</code> may require Java 15 or a cryptographic <code>JCE</code> provider that implements the algorithms.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7760">QUARKUS_WEBAUTHN_PUB_KEY_CRED_PARAMS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7760" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7840">QUARKUS_WEBAUTHN_PUB_KEY_CRED_PARAMS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7840" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2061,7 +2015,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.challenge-length"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.challenge-length">quarkus.webauthn.challenge-length</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-challenge-length"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-challenge-length">quarkus.webauthn.challenge-length</a></code></p>
 </div>
 <div id="conf-collapsible-desc-12" class="openblock description description-collapsed">
 <div class="content">
@@ -2069,7 +2023,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>Length of the challenges exchanged between the application and the browser. Challenges must be at least 32 bytes.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7761">QUARKUS_WEBAUTHN_CHALLENGE_LENGTH</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7761" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7841">QUARKUS_WEBAUTHN_CHALLENGE_LENGTH</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7841" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2081,7 +2035,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.login-page"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.login-page">quarkus.webauthn.login-page</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-login-page"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-login-page">quarkus.webauthn.login-page</a></code></p>
 </div>
 <div id="conf-collapsible-desc-13" class="openblock description description-collapsed">
 <div class="content">
@@ -2089,7 +2043,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The login page</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7762">QUARKUS_WEBAUTHN_LOGIN_PAGE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7762" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7842">QUARKUS_WEBAUTHN_LOGIN_PAGE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7842" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2101,7 +2055,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.session-timeout"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.session-timeout">quarkus.webauthn.session-timeout</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-session-timeout"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-session-timeout">quarkus.webauthn.session-timeout</a></code></p>
 </div>
 <div id="conf-collapsible-desc-14" class="openblock description description-collapsed">
 <div class="content">
@@ -2109,7 +2063,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The inactivity (idle) timeout When inactivity timeout is reached, cookie is not renewed and a new login is enforced.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7763">QUARKUS_WEBAUTHN_SESSION_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7763" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7843">QUARKUS_WEBAUTHN_SESSION_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7843" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2122,15 +2076,15 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.new-cookie-interval"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.new-cookie-interval">quarkus.webauthn.new-cookie-interval</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-new-cookie-interval"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-new-cookie-interval">quarkus.webauthn.new-cookie-interval</a></code></p>
 </div>
 <div id="conf-collapsible-desc-15" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>How old a cookie can get before it will be replaced with a new cookie with an updated timeout, also referred to as "renewal-timeout". Note that smaller values will result in slightly more server load (as new encrypted cookies will be generated more often), however larger values affect the inactivity timeout as the timeout is set when a cookie is generated. For example if this is set to 10 minutes, and the inactivity timeout is 30m, if a users last request is when the cookie is 9m old then the actual timeout will happen 21m after the last request, as the timeout is only refreshed when a new cookie is generated. In other words, no timeout is tracked on the server side; the timestamp is encoded and encrypted in the cookie itself, and it is decrypted and parsed with each request.</p>
+<p>How old a cookie can get before it will be replaced with a new cookie with an updated timeout, also referred to as "renewal-timeout". Note that smaller values will result in slightly more server load (as new encrypted cookies will be generated more often); however, larger values affect the inactivity timeout because the timeout is set when a cookie is generated. For example if this is set to 10 minutes, and the inactivity timeout is 30m, if a user&#8217;s last request is when the cookie is 9m old then the actual timeout will happen 21m after the last request because the timeout is only refreshed when a new cookie is generated. That is, no timeout is tracked on the server side; the timestamp is encoded and encrypted in the cookie itself, and it is decrypted and parsed with each request.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7764">QUARKUS_WEBAUTHN_NEW_COOKIE_INTERVAL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7764" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7844">QUARKUS_WEBAUTHN_NEW_COOKIE_INTERVAL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7844" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2143,7 +2097,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.cookie-name"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.cookie-name">quarkus.webauthn.cookie-name</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-cookie-name"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-cookie-name">quarkus.webauthn.cookie-name</a></code></p>
 </div>
 <div id="conf-collapsible-desc-16" class="openblock description description-collapsed">
 <div class="content">
@@ -2151,7 +2105,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The cookie that is used to store the persistent session</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7765">QUARKUS_WEBAUTHN_COOKIE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7765" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7845">QUARKUS_WEBAUTHN_COOKIE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7845" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2163,7 +2117,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.cookie-same-site"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.cookie-same-site">quarkus.webauthn.cookie-same-site</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-cookie-same-site"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-cookie-same-site">quarkus.webauthn.cookie-same-site</a></code></p>
 </div>
 <div id="conf-collapsible-desc-17" class="openblock description description-collapsed">
 <div class="content">
@@ -2171,7 +2125,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>SameSite attribute for the session cookie.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7766">QUARKUS_WEBAUTHN_COOKIE_SAME_SITE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7766" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7846">QUARKUS_WEBAUTHN_COOKIE_SAME_SITE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7846" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2185,7 +2139,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-security-webauthn_quarkus.webauthn.cookie-path"></a><code><a href="#quarkus-security-webauthn_quarkus.webauthn.cookie-path">quarkus.webauthn.cookie-path</a></code></p>
+<p><a id="quarkus-security-webauthn_quarkus-webauthn-cookie-path"></a><code><a href="#quarkus-security-webauthn_quarkus-webauthn-cookie-path">quarkus.webauthn.cookie-path</a></code></p>
 </div>
 <div id="conf-collapsible-desc-18" class="openblock description description-collapsed">
 <div class="content">
@@ -2193,7 +2147,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <p>The cookie path for the session cookies.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7767">QUARKUS_WEBAUTHN_COOKIE_PATH</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7767" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7847">QUARKUS_WEBAUTHN_COOKIE_PATH</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7847" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2215,7 +2169,7 @@ public class TestUserProvider extends MyWebAuthnSetup {
 <div class="title">About the Duration format</div>
 <div class="paragraph">
 <p>To write duration values, use the standard <code>java.time.Duration</code> format.
-See the <a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)">Duration#parse() javadoc</a> for more information.</p>
+See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)">Duration#parse() Java API documentation</a> for more information.</p>
 </div>
 <div class="paragraph">
 <p>You can also use a simplified format, starting with a number:</p>
@@ -2318,7 +2272,7 @@ See the <a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/ja
         <li class="guide"><a href="/guides/security-keycloak-admin-client">Using Keycloak Admin Client</a></li>
       
         
-        <li class="guide"><a href="/guides/security-keycloak-authorization">Using OpenID Connect (OIDC) and Keycloak to Centralize Authorization</a></li>
+        <li class="howto"><a href="/guides/security-keycloak-authorization">Using OpenID Connect (OIDC) and Keycloak to centralize authorization</a></li>
       
         
         <li class="concepts"><a href="/guides/security-authentication-mechanisms">Authentication mechanisms in Quarkus</a></li>
@@ -2336,19 +2290,19 @@ See the <a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/ja
         <li class="guide"><a href="/guides/security-csrf-prevention">Cross-Site Request Forgery Prevention</a></li>
       
         
-        <li class="guide"><a href="/guides/security-openid-connect-dev-services">Dev Services and UI for OpenID Connect (OIDC)</a></li>
+        <li class="howto"><a href="/guides/security-openid-connect-dev-services">Dev Services and Dev UI for OpenID Connect (OIDC)</a></li>
       
         
         <li class="howto"><a href="/guides/security-basic-authentication-howto">Enable Basic authentication</a></li>
       
         
-        <li class="tutorial"><a href="/guides/security-getting-started-tutorial">Getting Started with Security using Basic authentication and Jakarta Persistence</a></li>
+        <li class="tutorial"><a href="/guides/security-getting-started-tutorial">Getting started with Security by using Basic authentication and Jakarta Persistence</a></li>
       
         
         <li class="concepts"><a href="/guides/security-identity-providers">Identity providers</a></li>
       
         
-        <li class="reference"><a href="/guides/security-openid-connect-client-reference">OpenID Connect (OIDC) and OAuth2 Client and Filters Reference Guide</a></li>
+        <li class="reference"><a href="/guides/security-openid-connect-client-reference">OpenID Connect (OIDC) and OAuth2 client and filters</a></li>
       
         
         <li class="concepts"><a href="/guides/security-oidc-bearer-token-authentication">OpenID Connect (OIDC) Bearer token authentication</a></li>
@@ -2360,7 +2314,7 @@ See the <a href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/ja
         <li class="concepts"><a href="/guides/security-oidc-code-flow-authentication">OpenID Connect authorization code flow mechanism for protecting web applications</a></li>
       
         
-        <li class="guide"><a href="/guides/security-openid-connect-client">OpenID Connect Client and Token Propagation Quickstart</a></li>
+        <li class="tutorial"><a href="/guides/security-openid-connect-client">OpenID Connect client and token propagation quickstart</a></li>
       
         
         <li class="concepts"><a href="/guides/security-proactive-authentication">Proactive authentication</a></li>
