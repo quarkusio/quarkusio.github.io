@@ -1,5 +1,10 @@
 module Jekyll
-   module StringsFilter
+  module StringsFilter
+
+    def equals(text, query)
+      return text == query
+    end
+
     def startswith(text, query)
       return text.start_with? query
     end
@@ -9,5 +14,5 @@ module Jekyll
     end
   end
 end
-  
+
 Liquid::Template.register_filter(Jekyll::StringsFilter)
