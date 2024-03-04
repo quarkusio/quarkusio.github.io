@@ -466,7 +466,9 @@ quarkus.datasource.jdbc.url=jdbc:postgresql:elytron-security-jdbc</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>In our context, we are using PostgreSQL as identity store, and we initialize the database with users and roles.</p>
+<p>In our context, we are using PostgreSQL as identity store, and we initialize the database with users and roles.
+We will use the salted and hashed version of <code>password</code> as a password in this example.
+We can use the <code>BcryptUtil</code> class to generate passwords in the Modular Crypt Format (MCF).</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -477,25 +479,28 @@ quarkus.datasource.jdbc.url=jdbc:postgresql:elytron-security-jdbc</code></pre>
   role VARCHAR(255)
 );
 
-INSERT INTO test_user (id, username, password, role) VALUES (1, 'admin', 'admin', 'admin');
-INSERT INTO test_user (id, username, password, role) VALUES (2, 'user','user', 'user');</code></pre>
+INSERT INTO test_user (id, username, password, role) VALUES (1, 'admin', '$2a$10$Uc.SZ0hvGJQlYdsAp7be1.lFjmOnc7aAr4L0YY3/VN3oK.F8zJHRG', 'admin');
+INSERT INTO test_user (id, username, password, role) VALUES (2, 'user','$2a$10$Uc.SZ0hvGJQlYdsAp7be1.lFjmOnc7aAr4L0YY3/VN3oK.F8zJHRG', 'user');</code></pre>
 </div>
 </div>
-<div class="admonitionblock note">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-note" title="Note"></i>
-</td>
-<td class="content">
 <div class="paragraph">
-<p>It is probably useless, but we kindly remind you that you must not store clear-text passwords in production environment ;-).
-The <code>elytron-security-jdbc</code> extension offers a built-in bcrypt password mapper.
-Please refer to the <a href="security-getting-started-tutorial#define-the-user-entity">Define the user entity</a> section of the Getting started with Security by using Basic authentication and Jakarta Persistence tutorial for practical example.</p>
+<p>When signing up new users, we can encrypt their password as follows:</p>
 </div>
-</td>
-</tr>
-</table>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.jdbc;
+
+import io.quarkus.elytron.security.common.BcryptUtil;
+
+public class AccountService {
+
+    public void signupUser(String username, String password) {
+        String encryptedPassword = BcryptUtil.bcryptHash(password);
+
+        // store user with the encrypted password in the database
+    }
+}</code></pre>
+</div>
 </div>
 <div class="paragraph">
 <p>We can now configure the Elytron JDBC Realm.</p>
@@ -504,8 +509,10 @@ Please refer to the <a href="security-getting-started-tutorial#define-the-user-e
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.security.jdbc.enabled=true
 quarkus.security.jdbc.principal-query.sql=SELECT u.password, u.role FROM test_user u WHERE u.username=? <i class="conum" data-value="1"></i><b>(1)</b>
-quarkus.security.jdbc.principal-query.clear-password-mapper.enabled=true <i class="conum" data-value="2"></i><b>(2)</b>
-quarkus.security.jdbc.principal-query.clear-password-mapper.password-index=1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.enabled=true <i class="conum" data-value="2"></i><b>(2)</b>
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.password-index=1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.salt-index=-1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.iteration-count-index=-1
 quarkus.security.jdbc.principal-query.attribute-mappings.0.index=2 <i class="conum" data-value="3"></i><b>(3)</b>
 quarkus.security.jdbc.principal-query.attribute-mappings.0.to=groups</code></pre>
 </div>
@@ -521,7 +528,7 @@ quarkus.security.jdbc.principal-query.attribute-mappings.0.to=groups</code></pre
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>We  configure the password mapper with the position of the password field in the <code>SELECT</code> fields and other information like salt, hash encoding, etc.</td>
+<td>We configure the password mapper with the position of the password field in the <code>SELECT</code> fields and other information like salt, hash encoding, etc. Setting the salt and iteration count indexes to <code>-1</code> is required for MCF.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="3"></i><b>3</b></td>
@@ -581,7 +588,7 @@ Not authorized%</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u admin:admin http://localhost:8080/api/admin
+<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u admin:password http://localhost:8080/api/admin
 HTTP/1.1 200 OK
 Content-Length: 5
 Content-Type: text/plain;charset=UTF-8
@@ -590,7 +597,7 @@ admin%</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>By providing the <code>admin:admin</code> credentials, the extension authenticated the user and loaded their roles.
+<p>By providing the <code>admin:password</code> credentials, the extension authenticated the user and loaded their roles.
 The <code>admin</code> user is authorized to access to the protected resources.</p>
 </div>
 <div class="paragraph">
@@ -598,7 +605,7 @@ The <code>admin</code> user is authorized to access to the protected resources.<
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u admin:admin http://localhost:8080/api/users/me
+<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u admin:password http://localhost:8080/api/users/me
 HTTP/1.1 403 Forbidden
 Content-Length: 34
 Content-Type: text/html;charset=UTF-8
@@ -611,7 +618,7 @@ Forbidden%</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u user:user http://localhost:8080/api/users/me
+<pre class="highlightjs highlight"><code class="language-shell hljs" data-lang="shell">$ curl -i -X GET -u user:password http://localhost:8080/api/users/me
 HTTP/1.1 200 OK
 Content-Length: 4
 Content-Type: text/plain;charset=UTF-8
@@ -641,8 +648,10 @@ quarkus.datasource.permissions.jdbc.url=jdbc:postgresql:multiple-data-sources-pe
 
 quarkus.security.jdbc.enabled=true
 quarkus.security.jdbc.principal-query.sql=SELECT u.password FROM test_user u WHERE u.username=?
-quarkus.security.jdbc.principal-query.clear-password-mapper.enabled=true
-quarkus.security.jdbc.principal-query.clear-password-mapper.password-index=1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.enabled=true
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.password-index=1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.salt-index=-1
+quarkus.security.jdbc.principal-query.bcrypt-password-mapper.iteration-count-index=-1
 
 quarkus.security.jdbc.principal-query.roles.sql=SELECT r.role_name FROM test_role r, test_user_role ur WHERE ur.username=? AND ur.role_id = r.id
 quarkus.security.jdbc.principal-query.roles.datasource=permissions
