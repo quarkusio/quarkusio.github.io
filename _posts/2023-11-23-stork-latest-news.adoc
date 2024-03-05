@@ -1,0 +1,197 @@
+---
+layout: post
+title: 'SmallRye Stork Unwrapped: Exploring New Features and Enhancements'
+date: 2023-11-23
+tags: extension smallrye-stork
+synopsis: Explore in detail the latest features added to Smallrye Stork
+author: aureamunoz
+---
+:imagesdir: /assets/images/posts/smallrye-stork
+Since its initial release in January 2022, Stork has undergone significant development, introducing new features that extended its capabilities and improved developer experience.
+
+This blog post takes a deep dive into the evolution of SmallRye Stork beyond its initial release, providing a detailed exploration of its fresh additions.
+But first, let's describe briefly what Stork can do for you.
+SmallRye Stork is a client-side service discovery and selection framework.
+It provides out-of-the-box integrations with Kubernetes, Eureka, and Hashicorp Consul, as well as a set of selection strategies, including round-robin, power-of-two-choices and best response time.
+But the most noteworthy feature of Stork is its extensibility. You can create your own service selection strategy or plug in your own service discovery mechanism.
+If you don't know it yet, a good way to get started is to take a look at our https://quarkus.io/guides/stork[getting started guide].
+
+Additionally, our documentation has also been enhanced, offering comprehensive guides for both seasoned users and those taking their first steps with Stork.
+To further support your exploration, there is https://www.youtube.com/watch?v=fCNwxPDGt7Q[a video] and supplementary content that show Stork's capabilities in detail, don’t hesitate to check them out.
+Don't have much time? Don't worry, we have the https://www.youtube.com/shorts/F4Gd1I1zfjs[perfect video] to understand Stork in less than 1 minute.
+
+With the latest added additions we highlight how Stork
+continues to reshape the client-side service discovery and selection landscape.
+
+Let's now have a look at the most interesting additions added to Stork since its initial release.
+
+== Programmatic service definition
+
+Initially, you had to configure Stork in the application configuration. You needed to configure the service discovery and selection (optionally) for each _service_ you wanted to discover and select. 
+
+Stork, from the 1.2.0 version, proposes a programmatic API to allow users to define the service discovery and selection configuration through code rather
+than through declarative or external configuration files. This means that you can use the full expressive power of Java to explicitly specify new service
+definitions and do manual lookup and selection. This is particularly beneficial when the configuration requirements of an application are not known until runtime,
+and it provides the ability to adjust settings without restarting the application.
+
+When using the programmatic API of Stork, you can:
+
+* Retrieve the singleton `Stork` instance. This instance is configured with the set of `Services` it manages.
+* Register new service definition.
+* Retrieve the `Service` you want to use. Each Service is associated with a name.
+* Retrieve the `ServiceInstance`, which will provide the metadata to access the actual instance.
+
+In the following code, we use Stork programmatic API to set up and configure services with different discovery methods and selection strategies:
+
+[source,java]
+----
+package examples;
+
+import io.smallrye.stork.Stork;
+import io.smallrye.stork.api.ServiceDefinition;
+import io.smallrye.stork.loadbalancer.random.RandomConfiguration;
+import io.smallrye.stork.servicediscovery.consul.ConsulRegistrarConfiguration;
+import io.smallrye.stork.servicediscovery.staticlist.StaticConfiguration;
+import io.smallrye.stork.servicediscovery.staticlist.StaticRegistrarConfiguration;
+
+public class DefinitionExample {
+
+    public static void example(Stork stork) {
+        String example = "localhost:8080, localhost:8081";
+
+        // A service using a static list of locations as discovery
+        // As not set, it defaults to round-robin to select the instance.
+        stork.defineIfAbsent("my-service",
+                ServiceDefinition.of(new StaticConfiguration().withAddressList(example)));
+
+        // Another service using the random selection strategy, instead of round-robin
+        stork.defineIfAbsent("my-second-service",
+                ServiceDefinition.of(new StaticConfiguration().withAddressList(example),
+                        new RandomConfiguration()));
+
+        // Another service using the random selection strategy, instead of round-robin
+        // and a static service registrar
+        stork.defineIfAbsent("my-second-service",
+                ServiceDefinition.of(new StaticConfiguration().withAddressList(example),
+                        new RandomConfiguration(), new StaticRegistrarConfiguration()));
+    }
+}
+----
+
+It’s important to note that the choice between programmatic and declarative configuration often depends on the specific requirements and constraints of
+your application.
+
+
+== Service discovery and selection strategies provided as CDI beans.
+
+The second noticeable improvement is the integration with CDI. 
+
+Users may prefer using a framework that leverages CDI mechanism to easily manage and inject dependencies and have a more testable and maintainable code.
+Stork can now do that. Starting from the 2.0.1 release, users can use the service discovery and load balancer as beans.
+For that, it looks for CDI beans during the initialization in addition to the SPI providers.
+It is worth mentioning that this enhancement also contributes to improving the Quarkus experience.
+
+
+== New service discovery approaches added.
+
+We are happy to announce a few added service discovery strategies using DNS and Knative.
+
+With the Knative service discovery, Smallrye Stork introduces seamless service discovery through its serverless infrastructure, even when there are no 'pod' running.
+
+The Stork Knative service discovery implementation is very similar to the Kubernetes one.
+
+Stork will ask for https://knative.dev/docs/serving/reference/serving-api/#serving.knative.dev/v1.Service[Knative services] to the cluster instead of vanilla https://kubernetes.io/docs/concepts/services-networking/service/#service-resource[Kubernetes services] used by the Kubernetes implementation.
+Again, to do so, Stork uses https://github.com/fabric8io/kubernetes-client/blob/master/extensions/knative/client/src/main/java/io/fabric8/knative/client/KnativeClient.java[Fabric 8 Knative Client] which is just an extension of Fabric8 Kubernetes Client.
+
+The DNS-based service discovery is also here to stay. When a service has registered one or more instances in a Domain Name System (DNS) server,
+Stork will be able to discover them by querying the DNS. This strategy is simple and widely used, so Stork could not fail to implement it.
+
+
+== New sticky service selection strategy
+
+The Stork load balancer family has been extended with a new one: the sticky service selection implementation.
+
+The sticky service selection implemented by Stork refers to a strategy where a client "sticks" to a particular instance of a service until it fails,
+then it selects another one. It is also possible to configure a backoff period for specifying how long a failing service instance should be retried.
+This can be useful in scenarios where maintaining a consistent connection to the same instance is beneficial, such as when dealing with sessions or
+stateful applications.
+
+
+== Enhanced service instances cache expiration policy.
+
+Since almost the first release, Stork has provided in-memory caching of discovered instances by extending the `CachingServiceDiscovery` class.
+
+As of version 1.3, this capability has been expanded to allow the retention of the cached service instances for a specified duration and the implementation of custom business logic for decision-making and data expiration.
+
+This enhancement was driven by the specific requirements of Kubernetes service discovery as contacting the cluster too frequently can result in performance
+problems. So, out of the box, Stork Kubernetes service discovery now comes with a tailored cache expiration strategy to keep service instances until an event occurs.
+
+If you would like to do so for your custom service discovery implementations, you need:
+
+* Extend the CachingServiceDiscovery as mentioned above.
+* Implement the `cache` method where the expiration strategy is defined.
+* Invalidate the cache when the expiration condition evaluates to `true`.
+
+Look at the example bellow:
+
+[source,java]
+----
+package examples;
+
+import io.smallrye.mutiny.Uni;
+import io.smallrye.stork.api.ServiceInstance;
+import io.smallrye.stork.impl.CachingServiceDiscovery;
+import io.smallrye.stork.impl.DefaultServiceInstance;
+import io.smallrye.stork.utils.ServiceInstanceIds;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class CustomExpirationCachedAcmeServiceDiscovery extends CachingServiceDiscovery {
+
+    private final String host;
+    private final int port;
+
+    private AtomicBoolean invalidated = new AtomicBoolean();
+
+    public CustomExpirationCachedAcmeServiceDiscovery(CachedAcmeConfiguration configuration) {
+        super(configuration.getRefreshPeriod()); // (1)
+        this.host = configuration.getHost();
+        this.port = Integer.parseInt(configuration.getPort());
+    }
+
+    @Override
+    public Uni<List<ServiceInstance>> fetchNewServiceInstances(List<ServiceInstance> previousInstances) {
+        // Retrieve services...
+        DefaultServiceInstance instance =
+                new DefaultServiceInstance(ServiceInstanceIds.next(), host, port, false);
+        return Uni.createFrom().item(() -> Collections.singletonList(instance));
+    }
+
+    @Override
+    public Uni<List<ServiceInstance>> cache(Uni<List<ServiceInstance>> uni) {
+        return uni.memoize().until(() -> invalidated.get());
+    }
+
+    //command-based cache invalidation: user triggers the action to invalidate the cache.
+    public void invalidate() {
+        invalidated.set(true);
+    }
+
+}
+----
+
+You can check the https://github.com/smallrye/smallrye-stork/blob/main/service-discovery/kubernetes/src/main/java/io/smallrye/stork/servicediscovery/kubernetes/KubernetesServiceDiscovery.java[Kubernetes Service Discovery code] for further details about an event-based invalidation example.
+
+
+== Observability
+
+Observability refers to the ability to understand and gain insights into the internal workings and behaviors of a system through the analysis of its external outputs or observations. Stork observability support has been integrated in Quarkus 3.6.0 release (release planned for next week). This addition brings automated observability to the forefront of service discovery and selection providing a window into how Stork behaves in real-time. Now you can effortlessly monitor metrics such as service discovery and selection durations and error rates.
+
+If you're leveraging Stork within your Quarkus application, now, you can easily check and analyze metrics such as service discovery and selection
+response times and errors directly in Prometheus. Check the https://quarkus.io/version/main/guides/stork-reference#configure-stork-observability[Stork reference guide] for details.
+
+In conclusion, all these advancements in Stork signify our commitment to enhancing your experience with service discovery and selection.
+
+Stay tuned for more updates. Your feedback is invaluable to us so share it and contribute to making Stork even better.
