@@ -1,6 +1,6 @@
 ---
 layout: continuum
 title: Continuum
-subtitle:
+subtitle: Quarkus is designed to support the development of modern applications.
 permalink: /continuum/
 ---
