@@ -27,7 +27,7 @@ To better understand why that happens we perform a thorough analysis to attribut
 
 ## TL;DR
 
-According to our analysis the binary size increase is attributed to two distinct changes, both of which are necessary for getting more accurate profiles when using the [async-profiler](https://github.com/async-profiler/async-profiler).
+According to our analysis the binary size increase is attributed to two distinct changes, both of which are necessary for getting more accurate profiles when using the [async-sampler](https://github.com/oracle/graal/discussions/7707#discussioncomment-7443058).
 
 - [**Add support for profiling of topmost frame**](https://github.com/oracle/graal/pull/7003)
 - [**ProfilingSampler does not need local variable values**](https://github.com/oracle/graal/pull/6763) (specifically [the commit "Always store bci in frame info"](https://github.com/oracle/graal/commit/d747c30c7691012c39989a8597fd850c68b740ad))
@@ -303,7 +303,7 @@ this way we detected the following two pull requests:
 1. [**Add support for profiling of topmost frame**](https://github.com/oracle/graal/pull/7003) which adds ~1MB of data to the image.
 2. [**ProfilingSampler does not need local variable values**](https://github.com/oracle/graal/pull/6763) (specifically [the commit "Always store bci in frame info"](https://github.com/oracle/graal/commit/d747c30c7691012c39989a8597fd850c68b740ad)) which adds ~1.7MB of data to the image.
 
-Both of these changes are necessary to improve the accuracy of the [async-profiler](https://github.com/async-profiler/async-profiler).
+Both of these changes are necessary to improve the accuracy of the [async-sampler](https://github.com/oracle/graal/discussions/7707#discussioncomment-7443058).
 
 ## Conclusion
 
