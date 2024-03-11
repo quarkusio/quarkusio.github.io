@@ -14,6 +14,13 @@ function debounce(wait, fn) {
   }
 }
 
+function concat(fn1, fn2) {
+  return function(...args) {
+    fn1.apply(this, args)
+    fn2.apply(this, args)
+  }
+}
+
 const appSelector = '#guides-app'
 const appElement = document.querySelector(appSelector);
 
@@ -44,13 +51,21 @@ const app = createApp({
   },
   watch: {
     'search.input.q': {
-      // "debounce" makes sure we only run search ~300ms after the user is done typing the text
-      // WARNING: we really do want to debounce here, NOT in setters,
-      // because debouncing in setters leads to data in input forms being refreshed after the timeout,
-      // causing problems when typing text relatively fast.
-      handler: debounce(300, function(newValue, oldValue) {
-        this.resetAndSearch()
-      })
+      handler: concat(
+        // Without debouncing, we want to cancel the previous search and mark the view as "loading",
+        // so that we don't mistakenly display "no results" while debouncing the initial search.
+        // See https://github.com/quarkusio/search.quarkus.io/issues/200
+        function(newValue, oldValue) {
+          this.resetAndMarkLoading()
+        },
+        // "debounce" makes sure we only run search ~300ms after the user is done typing the text
+        // WARNING: we really do want to debounce here, NOT in setters,
+        // because debouncing in setters leads to data in input forms being refreshed after the timeout,
+        // causing problems when typing text relatively fast.
+        debounce(300, function(newValue, oldValue) {
+          this.resetAndSearch()
+        })
+      )
     },
     'search.input.categories': {
       handler(newValue, oldValue) {
@@ -161,12 +176,15 @@ const app = createApp({
     })
   },
   methods: {
-    async resetAndSearch() {
+    async resetAndMarkLoading() {
       if (this.loading) {
         this.loading.abort()
       }
-      this.loading = new AbortController();
+      this.loading = new AbortController()
       this._resetResults()
+    },
+    async resetAndSearch() {
+      this.resetAndMarkLoading()
       await this._searchBatch(this.initialTimeout)
     },
     async searchMore() {
