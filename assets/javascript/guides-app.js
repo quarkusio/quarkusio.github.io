@@ -185,7 +185,7 @@ const app = createApp({
     },
     async resetAndSearch() {
       this.resetAndMarkLoading()
-      await this._searchBatch(this.initialTimeout)
+      await this._searchBatch(this.loading, this.initialTimeout)
     },
     async searchMore() {
       if (this.loading) {
@@ -193,20 +193,19 @@ const app = createApp({
       }
       this.loading = new AbortController();
       this.search.page = this.search.page + 1
-      await this._searchBatch(this.moreTimeout)
+      await this._searchBatch(this.loading, this.moreTimeout)
     },
     _resetResults() {
       this.search.page = 0
       this.search.result.hits = []
       this.search.result.hasMoreHits = false
     },
-    async _searchBatch(timeout) {
-      if (!this.hasInput) {
-        // No input => no search
-        return
-      }
-      const controller = this.loading
+    async _searchBatch(controller, timeout) {
       try {
+        if (!this.hasInput) {
+          // No input => no search
+          return
+        }
         if (this.hasInputWithTooFewChars) {
           throw 'Too few characters'
         }
