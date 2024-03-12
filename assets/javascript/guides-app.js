@@ -132,8 +132,11 @@ const app = createApp({
               new URL(link.href).pathname,
               {
                 url: url,
-                className: element.className,
                 title: link.innerHTML,
+                type: [...element.classList]
+                    .filter(clazz => clazz.endsWith("bkg"))
+                    .map(clazz => clazz.substring(0, clazz.length - "bkg".length))
+                    .at(0),
                 summary: element.querySelector('div .description').innerHTML,
                 keywords: element.querySelector('div .keywords').innerHTML,
                 categories: element.querySelector('div .categories').innerHTML,
@@ -146,7 +149,6 @@ const app = createApp({
               url,
               {
                 url: url,
-                className: element.className,
                 title: element.querySelector('p.title').innerHTML,
                 summary: element.querySelector('div.description').innerHTML,
                 keywords: element.querySelector('div.keywords').innerHTML,
