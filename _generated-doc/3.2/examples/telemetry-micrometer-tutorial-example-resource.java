@@ -1,5 +1,5 @@
 // tag::example[]
-/*-
+/*
 package org.acme.micrometer;
 
 // tag::ignore[]
