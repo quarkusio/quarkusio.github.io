@@ -14,6 +14,13 @@ function debounce(wait, fn) {
   }
 }
 
+function concat(fn1, fn2) {
+  return function(...args) {
+    fn1.apply(this, args)
+    fn2.apply(this, args)
+  }
+}
+
 const appSelector = '#guides-app'
 const appElement = document.querySelector(appSelector);
 
@@ -44,13 +51,21 @@ const app = createApp({
   },
   watch: {
     'search.input.q': {
-      // "debounce" makes sure we only run search ~300ms after the user is done typing the text
-      // WARNING: we really do want to debounce here, NOT in setters,
-      // because debouncing in setters leads to data in input forms being refreshed after the timeout,
-      // causing problems when typing text relatively fast.
-      handler: debounce(300, function(newValue, oldValue) {
-        this.resetAndSearch()
-      })
+      handler: concat(
+        // Without debouncing, we want to cancel the previous search and mark the view as "loading",
+        // so that we don't mistakenly display "no results" while debouncing the initial search.
+        // See https://github.com/quarkusio/search.quarkus.io/issues/200
+        function(newValue, oldValue) {
+          this.resetAndMarkLoading()
+        },
+        // "debounce" makes sure we only run search ~300ms after the user is done typing the text
+        // WARNING: we really do want to debounce here, NOT in setters,
+        // because debouncing in setters leads to data in input forms being refreshed after the timeout,
+        // causing problems when typing text relatively fast.
+        debounce(300, function(newValue, oldValue) {
+          this.resetAndSearch()
+        })
+      )
     },
     'search.input.categories': {
       handler(newValue, oldValue) {
@@ -117,8 +132,11 @@ const app = createApp({
               new URL(link.href).pathname,
               {
                 url: url,
-                className: element.className,
                 title: link.innerHTML,
+                type: [...element.classList]
+                    .filter(clazz => clazz.endsWith("bkg"))
+                    .map(clazz => clazz.substring(0, clazz.length - "bkg".length))
+                    .at(0),
                 summary: element.querySelector('div .description').innerHTML,
                 keywords: element.querySelector('div .keywords').innerHTML,
                 categories: element.querySelector('div .categories').innerHTML,
@@ -131,7 +149,6 @@ const app = createApp({
               url,
               {
                 url: url,
-                className: element.className,
                 title: element.querySelector('p.title').innerHTML,
                 summary: element.querySelector('div.description').innerHTML,
                 keywords: element.querySelector('div.keywords').innerHTML,
@@ -161,13 +178,16 @@ const app = createApp({
     })
   },
   methods: {
-    async resetAndSearch() {
+    async resetAndMarkLoading() {
       if (this.loading) {
         this.loading.abort()
       }
-      this.loading = new AbortController();
+      this.loading = new AbortController()
       this._resetResults()
-      await this._searchBatch(this.initialTimeout)
+    },
+    async resetAndSearch() {
+      this.resetAndMarkLoading()
+      await this._searchBatch(this.loading, this.initialTimeout)
     },
     async searchMore() {
       if (this.loading) {
@@ -175,20 +195,19 @@ const app = createApp({
       }
       this.loading = new AbortController();
       this.search.page = this.search.page + 1
-      await this._searchBatch(this.moreTimeout)
+      await this._searchBatch(this.loading, this.moreTimeout)
     },
     _resetResults() {
       this.search.page = 0
       this.search.result.hits = []
       this.search.result.hasMoreHits = false
     },
-    async _searchBatch(timeout) {
-      if (!this.hasInput) {
-        // No input => no search
-        return
-      }
-      const controller = this.loading
+    async _searchBatch(controller, timeout) {
       try {
+        if (!this.hasInput) {
+          // No input => no search
+          return
+        }
         if (this.hasInputWithTooFewChars) {
           throw 'Too few characters'
         }
