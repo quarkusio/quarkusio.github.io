@@ -25,6 +25,7 @@ group :jekyll_plugins do
   gem 'jekyll-asciidoc'
   gem 'jekyll-paginate-v2'
   gem 'jekyll-archives'
+  gem 'jekyll-auto-authors'
 end
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
