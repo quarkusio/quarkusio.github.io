@@ -257,14 +257,25 @@ If you are not familiar with the Quarkus Vert.x extension, consider reading the 
 <p>The application shall manage fruit entities:</p>
 </div>
 <div class="listingblock">
+<div class="title">src/main/java/org/acme/reactive/crud/Fruit.java</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public class Fruit {
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.reactive.crud;
+
+import io.smallrye.mutiny.Multi;
+import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.pgclient.PgPool;
+import io.vertx.mutiny.sqlclient.Row;
+import io.vertx.mutiny.sqlclient.RowSet;
+import io.vertx.mutiny.sqlclient.Tuple;
+
+public class Fruit {
 
     public Long id;
 
     public String name;
 
     public Fruit() {
+        // default constructor.
     }
 
     public Fruit(String name) {
@@ -278,6 +289,39 @@ If you are not familiar with the Quarkus Vert.x extension, consider reading the 
 }</code></pre>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="prerequisites"><a class="anchor" href="#prerequisites"></a>Prerequisites</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>To complete this guide, you need:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Roughly 15 minutes</p>
+</li>
+<li>
+<p>An IDE</p>
+</li>
+<li>
+<p>JDK 17+ installed with <code>JAVA_HOME</code> configured appropriately</p>
+</li>
+<li>
+<p>Apache Maven 3.9.6</p>
+</li>
+<li>
+<p>A working container runtime (Docker or <a href="podman">Podman</a>)</p>
+</li>
+<li>
+<p>Optionally the <a href="cli-tooling">Quarkus CLI</a> if you want to use it</p>
+</li>
+<li>
+<p>Optionally Mandrel or GraalVM installed and <a href="building-native-image#configuring-graalvm">configured appropriately</a> if you want to build a native executable (or Docker if you use a native container build)</p>
+</li>
+</ul>
+</div>
 <div class="admonitionblock tip">
 <table>
 <tr>
@@ -286,7 +330,10 @@ If you are not familiar with the Quarkus Vert.x extension, consider reading the 
 </td>
 <td class="content">
 <div class="paragraph">
-<p>Do you need a ready-to-use PostgreSQL server to try out the examples?</p>
+<p>If you start the application in dev mode, Quarkus provides you with a <a href="https://quarkus.io/guides/databases-dev-services">zero-config database</a> out of the box.</p>
+</div>
+<div class="paragraph">
+<p>You might also start a database up front:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -296,6 +343,21 @@ If you are not familiar with the Quarkus Vert.x extension, consider reading the 
 </td>
 </tr>
 </table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="solution"><a class="anchor" href="#solution"></a>Solution</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>We recommend that you follow the instructions in the next sections and create the application step by step.
+However, you can go right to the completed example.</p>
+</div>
+<div class="paragraph">
+<p>Clone the Git repository: <code>git clone -b development <a href="https://github.com/quarkusio/quarkus-quickstarts.git" class="bare">https://github.com/quarkusio/quarkus-quickstarts.git</a></code>, or download an <a href="https://github.com/quarkusio/quarkus-quickstarts/archive/development.zip">archive</a>.</p>
+</div>
+<div class="paragraph">
+<p>The solution is located in the <code>getting-started-reactive-crud</code> <a href="https://github.com/quarkusio/quarkus-quickstarts/tree/development/getting-started-reactive-crud">directory</a>.</p>
 </div>
 </div>
 </div>
@@ -423,7 +485,7 @@ If you are not familiar with Mutiny, check <a href="mutiny-primer">Mutiny - an i
 <h3 id="json-binding"><a class="anchor" href="#json-binding"></a>JSON Binding</h3>
 <div class="paragraph">
 <p>We will expose <code>Fruit</code> instances over HTTP in the JSON format.
-Consequently, you also need to add the <code>quarkus-rest-jackson</code> extension:</p>
+Consequently, you must also add the <code>quarkus-rest-jackson</code> extension:</p>
 </div>
 <div class="listingblock primary asciidoc-tabs-sync-cli">
 <div class="title">CLI</div>
@@ -483,16 +545,36 @@ quarkus.datasource.reactive.url=postgresql://localhost:5432/quarkus_test</code><
 </div>
 </div>
 <div class="paragraph">
-<p>With that you may create your <code>FruitResource</code> skeleton and <code>@Inject</code> a <code>io.vertx.mutiny.pgclient.PgPool</code> instance:</p>
+<p>With that you can create your <code>FruitResource</code> skeleton and inject a <code>io.vertx.mutiny.pgclient.PgPool</code> instance:</p>
 </div>
 <div class="listingblock">
 <div class="title">src/main/java/org/acme/vertx/FruitResource.java</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("fruits")
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.reactive.crud;
+
+import java.net.URI;
+
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.ResponseBuilder;
+import jakarta.ws.rs.core.Response.Status;
+
+import io.smallrye.mutiny.Multi;
+import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.pgclient.PgPool;
+
+@Path("fruits")
 public class FruitResource {
 
-    @Inject
-    io.vertx.mutiny.pgclient.PgPool client;
+    private final PgPool client;
+
+    public FruitResource(PgPool client) {
+        this.client = client;
+    }
 }</code></pre>
 </div>
 </div>
@@ -502,28 +584,45 @@ public class FruitResource {
 <h2 id="database-schema-and-seed-data"><a class="anchor" href="#database-schema-and-seed-data"></a>Database schema and seed data</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Before we implement the REST endpoint and data management code, we need to set up the database schema.
-It would also be convenient to have some data inserted up-front.</p>
+<p>Before we implement the REST endpoint and data management code, we must set up the database schema.
+It would also be convenient to have some data inserted up front.</p>
 </div>
 <div class="paragraph">
 <p>For production, we would recommend to use something like the <a href="flyway">Flyway database migration tool</a>.
 But for development we can simply drop and create the tables on startup, and then insert a few fruits.</p>
 </div>
 <div class="listingblock">
-<div class="title">src/main/java/org/acme/vertx/FruitResource.java</div>
+<div class="title">/src/main/java/org/acme/reactive/crud/DBInit.java</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Inject
-@ConfigProperty(name = "myapp.schema.create", defaultValue = "true") <i class="conum" data-value="1"></i><b>(1)</b>
-boolean schemaCreate;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.reactive.crud;
 
-void config(@Observes StartupEvent ev) {
-    if (schemaCreate) {
-        initdb();
+import io.quarkus.runtime.StartupEvent;
+import io.vertx.mutiny.pgclient.PgPool;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
+
+@ApplicationScoped
+public class DBInit {
+
+    private final PgPool client;
+    private final boolean schemaCreate;
+
+    public DBInit(PgPool client, @ConfigProperty(name = "myapp.schema.create", defaultValue = "true") boolean schemaCreate) {
+        this.client = client;
+        this.schemaCreate = schemaCreate;
     }
-}
 
-private void initdb() {
-    // TODO
+    void onStart(@Observes StartupEvent ev) {
+        if (schemaCreate) {
+            initdb();
+        }
+    }
+
+    private void initdb() {
+        // TODO
+    }
 }</code></pre>
 </div>
 </div>
@@ -534,7 +633,7 @@ private void initdb() {
 <i class="fa icon-tip" title="Tip"></i>
 </td>
 <td class="content">
-You may override the default value of the <code>myapp.schema.create</code> property in the <code>application.properties</code> file.
+You might override the default value of the <code>myapp.schema.create</code> property in the <code>application.properties</code> file.
 </td>
 </tr>
 </table>
@@ -548,9 +647,10 @@ It returns a <code>Uni</code> and thus can be composed to execute queries sequen
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">client.query("DROP TABLE IF EXISTS fruits").execute()
     .flatMap(r -&gt; client.query("CREATE TABLE fruits (id SERIAL PRIMARY KEY, name TEXT NOT NULL)").execute())
-    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Orange')").execute())
-    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Pear')").execute())
-    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Apple')").execute())
+    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Kiwi')").execute())
+    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Durian')").execute())
+    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Pomelo')").execute())
+    .flatMap(r -&gt; client.query("INSERT INTO fruits (name) VALUES ('Lychee')").execute())
     .await().indefinitely();</code></pre>
 </div>
 </div>
@@ -561,9 +661,11 @@ It returns a <code>Uni</code> and thus can be composed to execute queries sequen
 <i class="fa icon-note" title="Note"></i>
 </td>
 <td class="content">
-Wondering why we need to block until the latest query is completed?
-This code is part of a <code>@PostConstruct</code> method and Quarkus invokes it synchronously.
-As a consequence, returning prematurely could lead to serving requests while the database is not ready yet.
+<div class="paragraph">
+<p>Wondering why we must block until the latest query is completed?
+This code is part of a method that <code>@Observes</code> the <code>StartupEvent</code> and Quarkus invokes it synchronously.
+As a consequence, returning prematurely could lead to serving requests while the database is not ready yet.</p>
+</div>
 </td>
 </tr>
 </table>
@@ -585,48 +687,37 @@ We are now ready to develop the data management code and implement our RESTful e
 To retrieve all the data, we will use the <code>query</code> method again:</p>
 </div>
 <div class="listingblock">
+<div class="title">/src/main/java/org/acme/reactive/crud/Fruit.java</div>
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">Uni&lt;RowSet&lt;Row&gt;&gt; rowSet = client.query("SELECT id, name FROM fruits ORDER BY name ASC").execute();</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    public static Multi&lt;Fruit&gt; findAll(PgPool client) {
+        return client.query("SELECT id, name FROM fruits ORDER BY name ASC").execute()
+                .onItem().transformToMulti(set -&gt; Multi.createFrom().iterable(set)) <i class="conum" data-value="1"></i><b>(1)</b>
+                .onItem().transform(Fruit::from); <i class="conum" data-value="2"></i><b>(2)</b>
+    }
+
+    private static Fruit from(Row row) {
+        return new Fruit(row.getLong("id"), row.getString("name"));
+    }</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>When the operation completes, we will get a <code>RowSet</code> that has all the rows buffered in memory.
-A <code>RowSet</code> is an <code>java.lang.Iterable&lt;Row&gt;</code> and thus can be converted to a <code>Multi</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">Multi&lt;Fruit&gt; fruits = rowSet
-  .onItem().transformToMulti(set -&gt; Multi.createFrom().iterable(set))
-  .onItem().transform(Fruit::from);</code></pre>
-</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Transform the <code>io.vertx.mutiny.sqlclient.RowSet</code> to a <code>Multi&lt;Row&gt;</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Convert each <code>io.vertx.mutiny.sqlclient.Row</code> to a <code>Fruit</code>.</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>The <code>Fruit#from</code> method converts a <code>Row</code> instance to a <code>Fruit</code> instance.
-It is extracted as a convenience for the implementation of the other data management methods:</p>
-</div>
-<div class="listingblock">
-<div class="title">src/main/java/org/acme/vertx/Fruit.java</div>
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">private static Fruit from(Row row) {
-    return new Fruit(row.getLong("id"), row.getString("name"));
-}</code></pre>
-</div>
+It is extracted as a convenience for the implementation of the other data management methods.</p>
 </div>
 <div class="paragraph">
-<p>Putting it all together, the <code>Fruit.findAll</code> method looks like:</p>
-</div>
-<div class="listingblock">
-<div class="title">src/main/java/org/acme/vertx/Fruit.java</div>
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public static Multi&lt;Fruit&gt; findAll(PgPool client) {
-    return client.query("SELECT id, name FROM fruits ORDER BY name ASC").execute()
-            .onItem().transformToMulti(set -&gt; Multi.createFrom().iterable(set))
-            .onItem().transform(Fruit::from);
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>And the endpoint to get all fruits from the backend:</p>
+<p>Then, add the endpoint to get all fruits from the backend:</p>
 </div>
 <div class="listingblock">
 <div class="title">src/main/java/org/acme/vertx/FruitResource.java</div>
@@ -663,7 +754,7 @@ public Multi&lt;Fruit&gt; get() {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">[{"id":3,"name":"Apple"},{"id":1,"name":"Orange"},{"id":2,"name":"Pear"}]</code></pre>
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">[{"id":2,"name":"Durian"},{"id":1,"name":"Kiwi"},{"id":4,"name":"Lychee"},{"id":3,"name":"Pomelo"}]</code></pre>
 </div>
 </div>
 </div>
@@ -825,16 +916,17 @@ public Uni&lt;Response&gt; delete(Long id) {
 </div>
 </div>
 <div class="paragraph">
-<p>With <code>GET</code>, <code>POST</code> and <code>DELETE</code> methods implemented, we may now create a minimal web page to try the RESTful application out.
+<p>With <code>GET</code>, <code>POST</code> and <code>DELETE</code> methods implemented, we can now create a minimal web page to try the RESTful application out.
 We will use <a href="https://jquery.com/">jQuery</a> to simplify interactions with the backend:</p>
 </div>
 <div class="listingblock">
+<div class="title">/src/main/resources/META-INF/resources/fruits.html</div>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-html hljs" data-lang="html">&lt;!doctype html&gt;
 &lt;html&gt;
 &lt;head&gt;
     &lt;meta charset="utf-8"/&gt;
-    &lt;title&gt;Reactive PostgreSQL Client - Quarkus&lt;/title&gt;
+    &lt;title&gt;Reactive REST - Quarkus&lt;/title&gt;
     &lt;script src="https://code.jquery.com/jquery-3.3.1.min.js"
             integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"&gt;&lt;/script&gt;
     &lt;script type="application/javascript" src="fruits.js"&gt;&lt;/script&gt;
@@ -855,6 +947,18 @@ We will use <a href="https://jquery.com/">jQuery</a> to simplify interactions wi
 &lt;/html&gt;</code></pre>
 </div>
 </div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+Quarkus automatically serves static resources located under the <code>META-INF/resources</code> directory.
+</td>
+</tr>
+</table>
+</div>
 <div class="paragraph">
 <p>In the JavaScript code, we need a function to refresh the list of fruits when:</p>
 </div>
@@ -872,6 +976,7 @@ We will use <a href="https://jquery.com/">jQuery</a> to simplify interactions wi
 </ul>
 </div>
 <div class="listingblock">
+<div class="title">/src/main/resources/META-INF/resources/fruits.js</div>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-javascript hljs" data-lang="javascript">function refresh() {
     $.get('/fruits', function (fruits) {
@@ -1348,7 +1453,7 @@ provider that provides time limited credentials, like the <a href="credentials-p
 <p>Sometimes, the database connection pool cannot be configured only by declaration.</p>
 </div>
 <div class="paragraph">
-<p>You may need to read a specific file only present in production, or retrieve configuration data from a proprietary configuration server.</p>
+<p>For example, you might have to read a specific file only present in production, or retrieve configuration data from a proprietary configuration server.</p>
 </div>
 <div class="paragraph">
 <p>In this case, you can customize pool creation by creating a class implementing an interface which depends on the target database:</p>
@@ -3892,6 +3997,8 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
     </div>
     <div class="grid__item width-4-12 width-12-12-m tocwrapper">
       <div class="hide-mobile toc"><ul class="sectlevel1">
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#solution">Solution</a></li>
 <li><a href="#installing">Installing</a>
 <ul class="sectlevel2">
 <li><a href="#reactive-postgresql-client-extension">Reactive PostgreSQL Client extension</a></li>
