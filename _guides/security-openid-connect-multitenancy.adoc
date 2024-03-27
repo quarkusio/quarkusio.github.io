@@ -55,7 +55,7 @@ First, we need a new project.
 Create a new project with the following command:
 
 :create-app-artifact-id: security-openid-connect-multi-tenancy-quickstart
-:create-app-extensions: oidc,resteasy-reactive-jackson
+:create-app-extensions: oidc,rest-jackson
 include::{includes}/devtools/create-app.adoc[]
 
 If you already have your Quarkus project configured, add the `oidc` extension to your project by running the following command in your project base directory:
@@ -597,8 +597,9 @@ When you set multiple tenant configurations in the `application.properties` file
 To configure the resolution of the tenant identifier, use one of the following options:
 
 * <<tenant-resolver>>
-* <<default-tenant-resolver>>
 * <<annotations-tenant-resolver>>
+* <<configuration-based-tenant-resolver>>
+* <<default-tenant-resolver>>
 
 These tenant resolution options are tried in the order they are listed until the tenant id gets resolved.
 If the tenant id remains unresolved (`null`), the default (unnamed) tenant configuration is selected.
@@ -646,6 +647,75 @@ public class CustomTenantResolver implements TenantResolver {
 
 In this example, the value of the last request path segment is a tenant id, but if required, you can implement a more complex tenant identifier resolution logic.
 
+[[annotations-tenant-resolver]]
+=== Resolve with annotations
+
+You can use the `io.quarkus.oidc.Tenant` annotation for resolving the tenant identifiers as an alternative to using `io.quarkus.oidc.TenantResolver`.
+
+[NOTE]
+====
+Proactive HTTP authentication must be disabled (`quarkus.http.auth.proactive=false`) for this to work.
+For more information, see the xref:security-proactive-authentication.adoc[Proactive authentication] guide.
+====
+
+Assuming your application supports two OIDC tenants, the `hr` and default tenants, all resource methods and classes carrying `@Tenant("hr")` are authenticated by using the OIDC provider configured by `quarkus.oidc.hr.auth-server-url`.
+In contrast, all other classes and methods are still authenticated by using the default OIDC provider.
+
+[source,java]
+----
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+import io.quarkus.oidc.Tenant;
+import io.quarkus.security.Authenticated;
+
+@Authenticated
+@Path("/api/hello")
+public class HelloResource {
+
+    @Tenant("hr") <1>
+    @GET
+    @Produces(MediaType.TEXT_PLAIN)
+    public String sayHello() {
+        return "Hello!";
+    }
+}
+----
+<1> The `io.quarkus.oidc.Tenant` annotation must be placed on either the resource class or resource method.
+
+[[TIP]]
+In the example above, authentication of the `sayHello` endpoint is enforced with the `@Authenticated` annotation.
+Alternatively, if you use an the xref:security-authorize-web-endpoints-reference.adoc#authorization-using-configuration[HTTP Security policy]
+to secure the endpoint, then, for the `@Tenant` annotation be effective, you must delay this policy's permission check as shown in the example below:
+[source,properties]
+----
+quarkus.http.auth.permission.authenticated.paths=/api/hello
+quarkus.http.auth.permission.authenticated.methods=GET
+quarkus.http.auth.permission.authenticated.policy=authenticated
+quarkus.http.auth.permission.authenticated.applies-to=JAXRS <1>
+----
+<1> Tell Quarkus to run the HTTP permission check after the tenant has been selected with the `@Tenant` annotation.
+
+[[configuration-based-tenant-resolver]]
+=== Resolve with configuration
+
+You can use the `quarkus.oidc.tenant-paths` configuration property for resolving the tenant identifier as an alternative to using `io.quarkus.oidc.TenantResolver`.
+Here is how you can select the `hr` tenant for the `sayHello` endpoint of the `HelloResource` resource used in the previous example:
+
+[source,properties]
+----
+quarkus.oidc.hr.tenant-paths=/api/hello <1>
+quarkus.oidc.google.tenant-paths=/api/* <2>
+quarkus.oidc.google.tenant-paths=/*/hello <3>
+----
+<1> Same path-matching rules apply as for the `quarkus.http.auth.permission.authenticated.paths=/api/hello` configuration property from the previous example.
+<2> The wildcard placed at the end of the path represents any number of path segments. However the path is less specific than the `/api/hello`, therefore the `hr` tenant will be used to secure the `sayHello` endpoint.
+<3> The wildcard in the `/*/hello` represents exactly one path segment. Nevertheless, the wildcard is less specific than the `api`, therefore the `hr` tenant will be used.
+
+TIP: Path-matching mechanism works exactly same as in the xref:security-authorize-web-endpoints-reference.adoc#authorization-using-configuration[Authorization using configuration].
+
 [[default-tenant-resolver]]
 === Default resolution
 
@@ -685,44 +755,6 @@ Therefore, authenticated users can access the secured application area without r
 
 Default resolution can also work for Bearer token authentication.
 Still, it might be less practical because a tenant identifier must always be set as the last path segment value.
-
-[[annotations-tenant-resolver]]
-=== Resolve with annotations
-
-You can use the `io.quarkus.oidc.Tenant` annotation for resolving the tenant identifiers as an alternative to using `io.quarkus.oidc.TenantResolver`.
-
-[NOTE]
-====
-Proactive HTTP authentication must be disabled (`quarkus.http.auth.proactive=false`) for this to work.
-For more information, see the xref:security-proactive-authentication.adoc[Proactive authentication] guide.
-====
-
-Assuming your application supports two OIDC tenants, the `hr` and default tenants, all resource methods and classes carrying `@Tenant("hr")` are authenticated by using the OIDC provider configured by `quarkus.oidc.hr.auth-server-url`.
-In contrast, all other classes and methods are still authenticated by using the default OIDC provider.
-
-[source,java]
-----
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.core.MediaType;
-
-import io.quarkus.oidc.Tenant;
-import io.quarkus.security.Authenticated;
-
-@Authenticated
-@Path("/api/hello")
-public class HelloResource {
-
-    @Tenant("hr") <1>
-    @GET
-    @Produces(MediaType.TEXT_PLAIN)
-    public String sayHello() {
-        return "Hello!";
-    }
-}
-----
-<1> The `io.quarkus.oidc.Tenant` annotation must be placed on either the resource class or resource method.
 
 [[tenant-config-resolver]]
 == Dynamic tenant configuration resolution
