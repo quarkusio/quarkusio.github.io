@@ -24,7 +24,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 #### Using a local Ruby environment
 [Jekyll static site generator docs](https://jekyllrb.com/docs/).
 
-1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 2.7.1`.
+1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 3.2.3`.
 2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems)
   
         gem install bundler
