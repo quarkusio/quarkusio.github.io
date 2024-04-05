@@ -1039,77 +1039,30 @@ Although <code>alice</code> exists in both tenants, the application treats them 
 </div>
 </div>
 <div class="sect1">
-<h2 id="static-tenant-resolution"><a class="anchor" href="#static-tenant-resolution"></a>Static tenant configuration resolution</h2>
+<h2 id="tenant-resolution-order"><a class="anchor" href="#tenant-resolution-order"></a>Tenant resolution order</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>When you set multiple tenant configurations in the <code>application.properties</code> file, you only need to specify how the tenant identifier gets resolved.
-To configure the resolution of the tenant identifier, use one of the following options:</p>
+<p>OIDC tenants are resolved in the following order:
+* <code>io.quarkus.oidc.Tenant</code> annotation is checked first if the proactive authentication is disabled.
+* Dynamic tenant resolution using a custom <code>TenantConfigResolver</code>.
+* Static tenant resolution using one of these options: custom <code>TenantResolver</code>, configured tenant paths, and defaulting to the last request path segment as a tenant id.
+* Default OIDC tenant is selected if a tenant id has not been resolved after the preceeding steps.</p>
+</div>
+<div class="paragraph">
+<p>See the following sections for more information:</p>
 </div>
 <div class="ulist">
 <ul>
 <li>
-<p><a href="#tenant-resolver">Resolve with <code>TenantResolver</code></a></p>
-</li>
-<li>
 <p><a href="#annotations-tenant-resolver">Resolve with annotations</a></p>
 </li>
 <li>
-<p><a href="#configuration-based-tenant-resolver">Resolve with configuration</a></p>
+<p><a href="#tenant-config-resolver">Dynamic tenant configuration resolution</a></p>
 </li>
 <li>
-<p><a href="#default-tenant-resolver">Default resolution</a></p>
+<p><a href="#static-tenant-resolution">Static tenant configuration resolution</a></p>
 </li>
 </ul>
-</div>
-<div class="paragraph">
-<p>These tenant resolution options are tried in the order they are listed until the tenant id gets resolved.
-If the tenant id remains unresolved (<code>null</code>), the default (unnamed) tenant configuration is selected.</p>
-</div>
-<div class="sect2">
-<h3 id="tenant-resolver"><a class="anchor" href="#tenant-resolver"></a>Resolve with <code>TenantResolver</code></h3>
-<div class="paragraph">
-<p>The following <code>application.properties</code> example shows how you can resolve the tenant identifier of two tenants named <code>a</code> and <code>b</code> by using the <code>TenantResolver</code> method:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Tenant 'a' configuration
-quarkus.oidc.a.auth-server-url=http://localhost:8180/realms/quarkus-a
-quarkus.oidc.a.client-id=client-a
-quarkus.oidc.a.credentials.secret=client-a-secret
-
-# Tenant 'b' configuration
-quarkus.oidc.b.auth-server-url=http://localhost:8180/realms/quarkus-b
-quarkus.oidc.b.client-id=client-b
-quarkus.oidc.b.credentials.secret=client-b-secret</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>You can return the tenant id of either <code>a</code> or <code>b</code> from <code>quarkus.oidc.TenantResolver</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import quarkus.oidc.TenantResolver;
-
-public class CustomTenantResolver implements TenantResolver {
-
-    @Override
-    public String resolve(RoutingContext context) {
-        String path = context.request().path();
-        if (path.endsWith("a")) {
-            return "a";
-        } else if (path.endsWith("b")) {
-            return "b";
-        } else {
-            // default tenant
-            return null;
-        }
-    }
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>In this example, the value of the last request path segment is a tenant id, but if required, you can implement a more complex tenant identifier resolution logic.</p>
-</div>
 </div>
 <div class="sect2">
 <h3 id="annotations-tenant-resolver"><a class="anchor" href="#annotations-tenant-resolver"></a>Resolve with annotations</h3>
@@ -1188,8 +1141,154 @@ quarkus.http.auth.permission.authenticated.applies-to=JAXRS <i class="conum" dat
 </table>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="tenant-config-resolver"><a class="anchor" href="#tenant-config-resolver"></a>Dynamic tenant configuration resolution</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>If you need a more dynamic configuration for the different tenants you want to support and don&#8217;t want to end up with multiple
+entries in your configuration file, you can use the <code>io.quarkus.oidc.TenantConfigResolver</code>.</p>
+</div>
+<div class="paragraph">
+<p>This interface allows you to dynamically create tenant configurations at runtime:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import java.util.function.Supplier;
+
+import io.smallrye.mutiny.Uni;
+import io.quarkus.oidc.OidcRequestContext;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.TenantConfigResolver;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class CustomTenantConfigResolver implements TenantConfigResolver {
+
+    @Override
+    public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+        String path = context.request().path();
+        String[] parts = path.split("/");
+
+        if (parts.length == 0) {
+            //Resolve to default tenant configuration
+            return null;
+        }
+
+        if ("tenant-c".equals(parts[1])) {
+            // Do 'return requestContext.runBlocking(createTenantConfig());'
+            // if a blocking call is required to create a tenant config,
+            return Uni.createFromItem(createTenantConfig());
+        }
+
+        //Resolve to default tenant configuration
+        return null;
+    }
+
+    private Supplier&lt;OidcTenantConfig&gt; createTenantConfig() {
+        final OidcTenantConfig config = new OidcTenantConfig();
+
+        config.setTenantId("tenant-c");
+        config.setAuthServerUrl("http://localhost:8180/realms/tenant-c");
+        config.setClientId("multi-tenant-client");
+        OidcTenantConfig.Credentials credentials = new OidcTenantConfig.Credentials();
+
+        credentials.setSecret("my-secret");
+
+        config.setCredentials(credentials);
+
+        // Any other setting supported by the quarkus-oidc extension
+
+        return () -&gt; config;
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>OidcTenantConfig</code> returned by this method is the same one used to parse the <code>oidc</code> namespace configuration from the <code>application.properties</code>.
+You can populate it by using any settings supported by the <code>quarkus-oidc</code> extension.</p>
+</div>
+<div class="paragraph">
+<p>If the dynamic tenant resolver returns <code>null</code>, a <a href="#static-tenant-resolution">Static tenant configuration resolution</a> is attempted next.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="static-tenant-resolution"><a class="anchor" href="#static-tenant-resolution"></a>Static tenant configuration resolution</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>When you set multiple tenant configurations in the <code>application.properties</code> file, you only need to specify how the tenant identifier gets resolved.
+To configure the resolution of the tenant identifier, use one of the following options:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="#tenant-resolver">Resolve with <code>TenantResolver</code></a></p>
+</li>
+<li>
+<p><a href="#configure-tenant-paths">Configure tenant paths</a></p>
+</li>
+<li>
+<p><a href="#default-tenant-resolver">Default resolution</a></p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>These tenant resolution options are tried in the order they are listed until the tenant id gets resolved.
+If the tenant id remains unresolved (<code>null</code>), the default (unnamed) tenant configuration is selected.</p>
+</div>
 <div class="sect2">
-<h3 id="configuration-based-tenant-resolver"><a class="anchor" href="#configuration-based-tenant-resolver"></a>Resolve with configuration</h3>
+<h3 id="tenant-resolver"><a class="anchor" href="#tenant-resolver"></a>Resolve with <code>TenantResolver</code></h3>
+<div class="paragraph">
+<p>The following <code>application.properties</code> example shows how you can resolve the tenant identifier of two tenants named <code>a</code> and <code>b</code> by using the <code>TenantResolver</code> method:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Tenant 'a' configuration
+quarkus.oidc.a.auth-server-url=http://localhost:8180/realms/quarkus-a
+quarkus.oidc.a.client-id=client-a
+quarkus.oidc.a.credentials.secret=client-a-secret
+
+# Tenant 'b' configuration
+quarkus.oidc.b.auth-server-url=http://localhost:8180/realms/quarkus-b
+quarkus.oidc.b.client-id=client-b
+quarkus.oidc.b.credentials.secret=client-b-secret</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>You can return the tenant id of either <code>a</code> or <code>b</code> from <code>quarkus.oidc.TenantResolver</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import quarkus.oidc.TenantResolver;
+
+public class CustomTenantResolver implements TenantResolver {
+
+    @Override
+    public String resolve(RoutingContext context) {
+        String path = context.request().path();
+        if (path.endsWith("a")) {
+            return "a";
+        } else if (path.endsWith("b")) {
+            return "b";
+        } else {
+            // default tenant
+            return null;
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>In this example, the value of the last request path segment is a tenant id, but if required, you can implement a more complex tenant identifier resolution logic.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="configure-tenant-paths"><a class="anchor" href="#configure-tenant-paths"></a>Configure tenant paths</h3>
 <div class="paragraph">
 <p>You can use the <code>quarkus.oidc.tenant-paths</code> configuration property for resolving the tenant identifier as an alternative to using <code>io.quarkus.oidc.TenantResolver</code>.
 Here is how you can select the <code>hr</code> tenant for the <code>sayHello</code> endpoint of the <code>HelloResource</code> resource used in the previous example:</p>
@@ -1276,29 +1375,45 @@ Therefore, authenticated users can access the secured application area without r
 Still, it might be less practical because a tenant identifier must always be set as the last path segment value.</p>
 </div>
 </div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="tenant-config-resolver"><a class="anchor" href="#tenant-config-resolver"></a>Dynamic tenant configuration resolution</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="tenant-resolution-for-oidc-web-app-applications"><a class="anchor" href="#tenant-resolution-for-oidc-web-app-applications"></a>Tenant resolution for OIDC web-app applications</h3>
 <div class="paragraph">
-<p>If you need a more dynamic configuration for the different tenants you want to support and don&#8217;t want to end up with multiple
-entries in your configuration file, you can use the <code>io.quarkus.oidc.TenantConfigResolver</code>.</p>
+<p>Tenant resolution for the OIDC <code>web-app</code> applications must be done at least 3 times during an authorization code flow, when the OIDC tenant-specific configuration affects how each of the following steps is run.</p>
+</div>
+<div class="sect3">
+<h4 id="step-1-unauthenticated-user-accesses-an-endpoint-and-is-redirected-to-oidc-provider"><a class="anchor" href="#step-1-unauthenticated-user-accesses-an-endpoint-and-is-redirected-to-oidc-provider"></a>Step 1: Unauthenticated user accesses an endpoint and is redirected to OIDC provider</h4>
+<div class="paragraph">
+<p>When an unauthenticated user accesses a secured path, the user is redirected to the OIDC provider to authenticate and the tenant configuration is used to build the redirect URI.</p>
 </div>
 <div class="paragraph">
-<p>This interface allows you to dynamically create tenant configurations at runtime:</p>
+<p>All the static and dynamic tenant resolution options listed in the <a href="#static-tenant-resolution">Static tenant configuration resolution</a> and <a href="#tenant-config-resolver">Dynamic tenant configuration resolution</a> sections can be used to resolve a tenant.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="step-2-the-user-is-redirected-back-to-the-endpoint"><a class="anchor" href="#step-2-the-user-is-redirected-back-to-the-endpoint"></a>Step 2: The user is redirected back to the endpoint</h4>
+<div class="paragraph">
+<p>After the provider authentication, the user is redirected back to the Quarkus endpoint and the tenant configuration is used to complete the authorization code flow.</p>
+</div>
+<div class="paragraph">
+<p>All the static and dynamic tenant resolution options listed in the <a href="#static-tenant-resolution">Static tenant configuration resolution</a> and <a href="#tenant-config-resolver">Dynamic tenant configuration resolution</a> sections can be used to resolve a tenant. Before the tenant resolution begins, the authorization code flow <code>state cookie</code> is used to set the already resolved tenant configuration id as a RoutingContext <code>tenant-id</code> attribute: both custom dynamic <code>TenantConfigResolver</code> and static <code>TenantResolver</code> tenant resolvers can check it.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="step-3-authenticated-user-accesses-the-secured-path-using-the-session-cookie-the-tenant-configuration-determines-how-the-session-cookie-is-verified-and-refreshed-before-the-tenant-resolution-begins-the-authorization-code-flow-session-cookie-is-used-to-set-the-already-resolved-tenant-configuration-id-as-a-routingcontext-tenant-id-attribute-both-custom-dynamic-tenantconfigresolver-and-static-tenantresolver-tenant-resolvers-can-check-it"><a class="anchor" href="#step-3-authenticated-user-accesses-the-secured-path-using-the-session-cookie-the-tenant-configuration-determines-how-the-session-cookie-is-verified-and-refreshed-before-the-tenant-resolution-begins-the-authorization-code-flow-session-cookie-is-used-to-set-the-already-resolved-tenant-configuration-id-as-a-routingcontext-tenant-id-attribute-both-custom-dynamic-tenantconfigresolver-and-static-tenantresolver-tenant-resolvers-can-check-it"></a>Step 3: Authenticated user accesses the secured path using the session cookie: the tenant configuration determines how the session cookie is verified and refreshed. Before the tenant resolution begins, the authorization code flow <code>session cookie</code> is used to set the already resolved tenant configuration id as a RoutingContext <code>tenant-id</code> attribute: both custom dynamic <code>TenantConfigResolver</code> and static <code>TenantResolver</code> tenant resolvers can check it.</h4>
+<div class="paragraph">
+<p>For example, here is how a custom <code>TenantConfigResolver</code> can avoid creating the already resolved tenant configuration, that may otherwise require blocking reads from the database or other remote sources:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
 
 import jakarta.enterprise.context.ApplicationScoped;
-import java.util.function.Supplier;
-
-import io.smallrye.mutiny.Uni;
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
+import io.quarkus.oidc.runtime.OidcUtils;
+import io.smallrye.mutiny.Uni;
 import io.vertx.ext.web.RoutingContext;
 
 @ApplicationScoped
@@ -1306,129 +1421,225 @@ public class CustomTenantConfigResolver implements TenantConfigResolver {
 
     @Override
     public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
-        String path = context.request().path();
-        String[] parts = path.split("/");
-
-        if (parts.length == 0) {
-            //Resolve to default tenant configuration
+        String resolvedTenantId = context.get(OidcUtils.TENANT_ID_ATTRIBUTE);
+        if (resolvedTenantId != null) { <i class="conum" data-value="1"></i><b>(1)</b>
             return null;
         }
 
-        if ("tenant-c".equals(parts[1])) {
-            // Do 'return requestContext.runBlocking(createTenantConfig());'
-            // if a blocking call is required to create a tenant config,
-            return Uni.createFromItem(createTenantConfig());
+        String path = context.request().path(); <i class="conum" data-value="2"></i><b>(2)</b>
+        if (path.endsWith("tenant-a")) {
+            return Uni.createFromItem(createTenantConfig("tenant-a", "client-a", "secret-a"));
+        } else if (path.endsWith("tenant-b")) {
+            return Uni.createFromItem(createTenantConfig("tenant-b", "client-b", "secret-b"));
         }
 
-        //Resolve to default tenant configuration
+        // Default tenant id
         return null;
     }
 
-    private Supplier&lt;OidcTenantConfig&gt; createTenantConfig() {
+    private OidcTenantConfig createTenantConfig(String tenantId, String clientId, String secret) {
         final OidcTenantConfig config = new OidcTenantConfig();
-
-        config.setTenantId("tenant-c");
-        config.setAuthServerUrl("http://localhost:8180/realms/tenant-c");
-        config.setClientId("multi-tenant-client");
-        OidcTenantConfig.Credentials credentials = new OidcTenantConfig.Credentials();
-
-        credentials.setSecret("my-secret");
-
-        config.setCredentials(credentials);
-
-        // Any other setting supported by the quarkus-oidc extension
-
-        return () -&gt; config;
+        config.setTenantId(tenantId);
+        config.setAuthServerUrl("http://localhost:8180/realms/"  + tenantId);
+        config.setClientId(clientId);
+        config.getCredentials().setSecret(secret);
+        config.setApplicationType(ApplicationType.WEB_APP);
+        return config;
     }
 }</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>The <code>OidcTenantConfig</code> returned by this method is the same one used to parse the <code>oidc</code> namespace configuration from the <code>application.properties</code>.
-You can populate it by using any settings supported by the <code>quarkus-oidc</code> extension.</p>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Let Quarkus use the already resolved tenant configuration if it has been resolved earlier.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Check the request path to create tenant configurations.</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
-<p>If the dynamic tenant resolver returns <code>null</code>, a <a href="#static-tenant-resolution">Static tenant configuration resolution</a> is attempted next.</p>
-</div>
-<div class="sect2">
-<h3 id="tenant-resolution-for-oidc-web-app-applications"><a class="anchor" href="#tenant-resolution-for-oidc-web-app-applications"></a>Tenant resolution for OIDC web-app applications</h3>
-<div class="paragraph">
-<p>The simplest option for resolving the OIDC <code>web-app</code> application configuration is to follow the steps described in the <a href="#default-tenant-resolver">Default resolution</a> section.</p>
-</div>
-<div class="paragraph">
-<p>Try one of the options below if the default resolution strategy does not work for your application setup.</p>
-</div>
-<div class="paragraph">
-<p>Several options are available for selecting the tenant configuration that should be used to secure the current HTTP request for both <code>service</code> and <code>web-app</code> OIDC applications, such as:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Check the URL paths.
-For example, a <code>tenant-service</code> configuration must be used for the <code>/service</code> paths, while a <code>tenant-manage</code> configuration must be used for the <code>/management</code> paths.</p>
-</li>
-<li>
-<p>Check the HTTP headers.
-For example, with a URL path always being <code>/service</code>, a header such as <code>Realm: service</code> or <code>Realm: management</code> can help to select between the <code>tenant-service</code> and <code>tenant-manage</code> configurations.</p>
-</li>
-<li>
-<p>Check the URL query parameters.
-It can work similarly to the way the headers are used to select the tenant configuration.</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>All these options can be easily implemented with the custom <code>TenantResolver</code> and <code>TenantConfigResolver</code> implementations for the OIDC <code>service</code> applications.</p>
-</div>
-<div class="paragraph">
-<p>However, due to an HTTP redirect required to complete the code authentication flow for the OIDC <code>web-app</code> applications, a custom HTTP cookie might be needed to select the same tenant configuration before and after this redirect request because:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>The URL path might not be the same after the redirect request if a single redirect URL has been registered in the OIDC provider.
-The original request path can be restored after the tenant configuration has been resolved.</p>
-</li>
-<li>
-<p>The HTTP headers used during the original request are unavailable after the redirect.</p>
-</li>
-<li>
-<p>The custom URL query parameters are restored after the redirect but only after the tenant configuration is resolved.</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>One option to ensure the information for resolving the tenant configurations for <code>web-app</code> applications is available before and after the redirect is to use a cookie, for example:</p>
+<p>The default configuration may look like this:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.quickstart.oidc;
-
-import java.util.List;
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=http://localhost:8180/realms/default
+quarkus.oidc.client-id=client-default
+quarkus.oidc.credentials.secret=secret-default
+quarkus.oidc.application-type=web-app</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The preceeding example assumes that the <code>tenant-a</code>, <code>tenant-b</code> and default tenants are all used to protect the same endpoint paths. In other words, after the user has authenticated with the <code>tenant-a</code> configuration, this user will not be able to choose to authenticate with the <code>tenant-b</code> or default configuration before this user logs out and has a session cookie cleared or expired.</p>
+</div>
+<div class="paragraph">
+<p>The situtaion where multiple OIDC <code>web-app</code> tenants protect the tenant-specific paths is less typical and also requires an extra care.
+When multiple OIDC <code>web-app</code> tenants such as <code>tenant-a</code>, <code>tenant-b</code> and default tenants are used to control access to the tenant specific paths, the users authenticated with one OIDC provider must not be able to access the paths requiring an authentication with another provider, otherwise the results can be unpredictable, most likely causing unexpected authentication failures.
+For example, if the <code>tenant-a</code> authentication requires a Keycloak authentication and the <code>tenant-b</code> authentication requires an Auth0 authentication, then, if the <code>tenant-a</code> authenticated user attempts to access a path secured by the <code>tenant-b</code> configuration, then the session cookie will not be verified, since the Auth0 public verification keys can not be used to verify the tokens signed by Keycloak.
+An easy, recommended way to avoid multiple <code>web-app</code> tenants conflicting with each other is to set the tenant specific session path as shown in the following example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
 
 import jakarta.enterprise.context.ApplicationScoped;
-
-import io.quarkus.oidc.TenantResolver;
-import io.vertx.core.http.Cookie;
+import io.quarkus.oidc.OidcRequestContext;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.TenantConfigResolver;
+import io.quarkus.oidc.runtime.OidcUtils;
+import io.smallrye.mutiny.Uni;
 import io.vertx.ext.web.RoutingContext;
 
 @ApplicationScoped
-public class CustomTenantResolver implements TenantResolver {
+public class CustomTenantConfigResolver implements TenantConfigResolver {
 
     @Override
-    public String resolve(RoutingContext context) {
-        List&lt;String&gt; tenantIdQuery = context.queryParam("tenantId");
-        if (!tenantIdQuery.isEmpty()) {
-            String tenantId = tenantIdQuery.get(0);
-            context.response().addCookie(Cookie.cookie("tenant", tenantId));
-            return tenantId;
-        } else if (!context.request().cookies("tenant").isEmpty()) {
-            return context.request().getCookie("tenant").getValue();
+    public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+        String resolvedTenantId = context.get(OidcUtils.TENANT_ID_ATTRIBUTE);
+        if (resolvedTenantId != null) { <i class="conum" data-value="1"></i><b>(1)</b>
+            return null;
         }
 
+        String path = context.request().path(); <i class="conum" data-value="2"></i><b>(2)</b>
+        if (path.endsWith("tenant-a")) {
+            return Uni.createFromItem(createTenantConfig("tenant-a", "/tenant-a", "client-a", "secret-a"));
+        } else if (path.endsWith("tenant-b")) {
+            return Uni.createFromItem(createTenantConfig("tenant-b", "/tenant-b", "client-b", "secret-b"));
+        }
+
+        // Default tenant id
         return null;
     }
+
+    private OidcTenantConfig createTenantConfig(String tenantId, String cookiePath, String clientId, String secret) {
+        final OidcTenantConfig config = new OidcTenantConfig();
+        config.setTenantId(tenantId);
+        config.setAuthServerUrl("http://localhost:8180/realms/"  + tenantId);
+        config.setClientId(clientId);
+        config.getCredentials().setSecret(secret);
+        config.setApplicationType(ApplicationType.WEB_APP);
+        config.getAuthentication().setCookiePath(cookiePath); <i class="conum" data-value="3"></i><b>(3)</b>
+        return config;
+    }
 }</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Let Quarkus use the already resolved tenant configuration if it has been resolved earlier.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Check the request path to create tenant configurations.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Set the tenant-specific cookie paths which makes sure the session cookie is only visible to the tenant which created it.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The default tenant configuration should be adjusted like this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=http://localhost:8180/realms/default
+quarkus.oidc.client-id=client-default
+quarkus.oidc.credentials.secret=secret-default
+quarkus.oidc.authentication.cookie-path=/default
+quarkus.oidc.application-type=web-app</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Having the same session cookie path when multiple OIDC <code>web-app</code> tenants protect the tenant-specific paths is not recommended and should be avoided
+as it requires even more care from the custom resolvers, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import io.quarkus.oidc.OidcRequestContext;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.TenantConfigResolver;
+import io.quarkus.oidc.runtime.OidcUtils;
+import io.smallrye.mutiny.Uni;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class CustomTenantConfigResolver implements TenantConfigResolver {
+
+    @Override
+    public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+
+        String path = context.request().path(); <i class="conum" data-value="1"></i><b>(1)</b>
+        if (path.endsWith("tenant-a")) {
+            String resolvedTenantId = context.get(OidcUtils.TENANT_ID_ATTRIBUTE);
+	    if (resolvedTenantId != null) {
+	        if ("tenant-a".equals(resolvedTenantId)) { <i class="conum" data-value="2"></i><b>(2)</b>
+	            return null;
+	        } else {
+	           // Require a "tenant-a" authentication
+                   context.remove(OidcUtils.TENANT_ID_ATTRIBUTE); <i class="conum" data-value="3"></i><b>(3)</b>
+	        }
+            }
+            return Uni.createFromItem(createTenantConfig("tenant-a", "client-a", "secret-a"));
+        } else if (path.endsWith("tenant-b")) {
+            String resolvedTenantId = context.get(OidcUtils.TENANT_ID_ATTRIBUTE);
+	    if (resolvedTenantId != null) {
+	        if ("tenant-b".equals(resolvedTenantId)) { <i class="conum" data-value="2"></i><b>(2)</b>
+	            return null;
+	        } else {
+	            // Require a "tenant-b" authentication
+                   context.remove(OidcUtils.TENANT_ID_ATTRIBUTE); <i class="conum" data-value="3"></i><b>(3)</b>
+	        }
+            }
+            return Uni.createFromItem(createTenantConfig("tenant-b", "client-b", "secret-b"));
+        }
+
+        // Set default tenant id
+        context.put(OidcUtils.TENANT_ID_ATTRIBUTE, OidcUtils.DEFAULT_TENANT_ID); <i class="conum" data-value="4"></i><b>(4)</b>
+        return null;
+    }
+
+    private OidcTenantConfig createTenantConfig(String tenantId, String clientId, String secret) {
+        final OidcTenantConfig config = new OidcTenantConfig();
+        config.setTenantId(tenantId);
+        config.setAuthServerUrl("http://localhost:8180/realms/"  + tenantId);
+        config.setClientId(clientId);
+        config.getCredentials().setSecret(secret);
+        config.setApplicationType(ApplicationType.WEB_APP);
+        return config;
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Check the request path to create tenant configurations.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Let Quarkus use the already resolved tenant configuration if the already resolved tenant is expected for the current path.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Remove the <code>tenant-id</code> attribute if the already resolved tenant configuration is not expected for the current path.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Use the default tenant for all other paths. It is equivalent to removing the <code>tenant-id</code> attribute.</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
@@ -1519,16 +1730,17 @@ public class CustomTenantResolver implements TenantResolver {
 <li><a href="#use-the-browser">Use the browser</a></li>
 </ul>
 </li>
+<li><a href="#tenant-resolution-order">Tenant resolution order</a>
+<ul class="sectlevel2">
+<li><a href="#annotations-tenant-resolver">Resolve with annotations</a></li>
+</ul>
+</li>
+<li><a href="#tenant-config-resolver">Dynamic tenant configuration resolution</a></li>
 <li><a href="#static-tenant-resolution">Static tenant configuration resolution</a>
 <ul class="sectlevel2">
 <li><a href="#tenant-resolver">Resolve with <code>TenantResolver</code></a></li>
-<li><a href="#annotations-tenant-resolver">Resolve with annotations</a></li>
-<li><a href="#configuration-based-tenant-resolver">Resolve with configuration</a></li>
+<li><a href="#configure-tenant-paths">Configure tenant paths</a></li>
 <li><a href="#default-tenant-resolver">Default resolution</a></li>
-</ul>
-</li>
-<li><a href="#tenant-config-resolver">Dynamic tenant configuration resolution</a>
-<ul class="sectlevel2">
 <li><a href="#tenant-resolution-for-oidc-web-app-applications">Tenant resolution for OIDC web-app applications</a></li>
 </ul>
 </li>
