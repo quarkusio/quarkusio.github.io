@@ -36,3 +36,6 @@ gem "wdm", "~> 0.1.0" if Gem.win_platform?
 
 
 gem "webrick", "~> 1.7"
+
+# Copy search-wc.js from the search-wc server
+gem "open-uri", "~> 0.4.1"
