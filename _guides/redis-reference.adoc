@@ -54,7 +54,7 @@ import io.quarkus.redis.datasource.RedisDataSource;
 @Inject RedisDataSource highLevelApi;
 ----
 
-More details about the various APIs offered by the quarkus-redis extension are available in the xref:apis[One extension, multiple APIs] section.
+More details about the various APIs offered by the quarkus-redis extension are available in the <<apis>> section.
 
 [NOTE]
 To use Redis as a cache backend, refer to the xref:cache-redis-reference.adoc[Redis Cache Backend reference].
@@ -87,7 +87,8 @@ To help you select the suitable API for you, here are some recommendations:
 * If you have existing Vert.x code, use `io.vertx.redis.client.RedisAPI`
 * If you need to emit custom commands, you can either use the data sources (reactive or imperative) or the `io.vertx.mutiny.redis.client.Redis`.
 
-== Inject the default and named clients
+[[default-and-named-clients]]
+== [[inject-the-default-and-named-clients]] Inject the default and named clients
 
 This extension lets you configure a _default_ Redis client/data sources or _named_ ones.
 The latter is essential when you need to connect to multiple Redis instances.
@@ -172,9 +173,15 @@ quarkus.redis.hosts=redis://localhost:5000,redis://localhost:5001,redis://localh
 quarkus.redis.client-type=sentinel
 
 # Optional
-quarkus.redis.master-name=my-sentinel # Default is my-master
+quarkus.redis.master-name=my-sentinel # Default is mymaster
 quarkus.redis.role=master # master is the default
 ----
+
+The host URLs here must be the sentinel servers.
+The client will obtain the URLs of actual Redis servers (master or replicas, depending on `role`) from one of the sentinels, using the `master-name` as an identifier of the "master set".
+
+Note that you practically never want to configure `quarkus.redis.role=sentinel`.
+This setting means that the Redis client will execute commands directly on one of the sentinel servers, instead of an actual Redis server guarded by the sentinels.
 
 === Use the Cluster Mode
 
@@ -184,10 +191,26 @@ When using Redis in cluster mode, you need to pass multiple _host urls_, configu
 ----
 quarkus.redis.hosts=redis://localhost:7000,redis://localhost:7001,redis://localhost:7002
 quarkus.redis.client-type=cluster
-quarkus.redis.replicas=share
+
+# Optional
+quarkus.redis.replicas=share # defaults to "never"
 ----
 
-=== Use the replication Mode
+The host URLs here must be some of the cluster members.
+Not all cluster members need to be configured, as the client will obtain a full cluster topology from one of the known servers.
+However, it is advisable to configure at least 2 or 3 nodes, not just 1.
+
+By default, all commands are sent to a master node (if the command has a key, it is the master node of the shard that owns the key, otherwise it is a random master node).
+It is possible to configure the Redis client to send read-only commands (queries) to replica nodes.
+Set the `quarkus.redis.replicas` configuration property to:
+
+* `never`: never use replica nodes, always send queries to master nodes (this is the default)
+* `always`: always use replica nodes (if there's more than one replica in the shard, it is selected randomly), never send queries to master nodes
+* `share`: use master and replica nodes to execute queries (the specific node for each query is selected randomly)
+
+Note that replication in Redis is asynchronous, so replica nodes may be lagging behind their master nodes.
+
+=== Use the Replication Mode
 
 When using the replication mode, you need to pass a single host url and configure the type to be `replication`:
 
@@ -195,7 +218,20 @@ When using the replication mode, you need to pass a single host url and configur
 ----
 quarkus.redis.hosts=redis://localhost:7000
 quarkus.redis.client-type=replication
+
+# Optional
+quarkus.redis.replicas=share # defaults to "never"
 ----
+
+By default, all commands are sent to the master node.
+It is possible to configure the Redis client to send read-only commands (queries) to replica nodes.
+Set the `quarkus.redis.replicas` configuration property to:
+
+* `never`: never use replica nodes, always send queries to the master node (this is the default)
+* `always`: always use replica nodes (if there's more than one replica, it is selected randomly), never send queries to the master node
+* `share`: use master and replica nodes to execute queries (the specific node for each query is selected randomly)
+
+Note that replication in Redis is asynchronous, so replica nodes may be lagging behind the master node.
 
 === Connect to Redis Cloud
 
@@ -214,12 +250,32 @@ To use TLS, you need to:
 1. Set the `quarkus.redis.tls.enabled=true` property
 2. Make sure that your URL starts with `rediss://` (with two `s`)
 
+IMPORTANT: The default hostname verifier is set to `NONE`, meaning it does not verify the host name. You can change this behavior by setting the `quarkus.redis.tls.hostname-verification-algorithm` property, to `HTTPS` for example.
+
 === Configure the authentication
 
 The Redis password can be set in the `redis://` URL or with the `quarkus.redis.password` property.
 We recommend the latter, and if possible, using secrets or an environment variable to configure the password.
 
 The associated environment variable is `QUARKUS_REDIS_PASSWORD`, or `QUARKUS_REDIS_<NAME>_PASSWORD` for named clients.
+
+=== Connection pooling
+
+Connections to Redis are always pooled.
+By default, maximum number of connections in the pool is 6.
+This can be configured using `quarkus.redis.max-pool-size`.
+
+When the connection pool is depleted, attempts to obtain a connection are put into a queue.
+By default, maximum number of attempts waiting in the queue to obtain a Redis connection is 24.
+This can be configured using `quarkus.redis.max-pool-waiting`.
+
+Executing certain commands modifies the server-side state and the behavior of the connection.
+Such connections cannot be reused and when closed, they are not put back into the pool; instead, they are truly closed.
+The commands that cause this behavior are:
+
+* subscription commands (`SUBSCRIBE`, `UNSUBSCRIBE` etc.)
+* `SELECT`
+* `AUTH`
 
 == Use Redis data sources
 

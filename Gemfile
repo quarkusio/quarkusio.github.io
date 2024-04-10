@@ -25,6 +25,7 @@ group :jekyll_plugins do
   gem 'jekyll-asciidoc'
   gem 'jekyll-paginate-v2'
   gem 'jekyll-archives'
+  gem 'jekyll-auto-authors'
 end
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
@@ -35,3 +36,6 @@ gem "wdm", "~> 0.1.0" if Gem.win_platform?
 
 
 gem "webrick", "~> 1.7"
+
+# Copy search-wc.js from the search-wc server
+gem "open-uri", "~> 0.4.1"

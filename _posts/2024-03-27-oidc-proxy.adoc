@@ -1,0 +1,455 @@
+---
+layout: post
+title: 'Use OIDC Proxy to integrate OIDC service endpoints with custom GPT'
+date: 2024-03-27
+tags: oidc ai chatgpt gpt
+synopsis: 'Explain how OIDC Proxy can help to integrate OIDC service endpoints with custom GPT'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/oidc-proxy
+
+== Introduction
+
+https://github.com/quarkiverse/quarkus-oidc-proxy[Quarkus OIDC Proxy] is a new https://github.com/quarkiverse[Quarkiverse] extension which can help to integrate https://quarkus.io/guides/security-oidc-bearer-token-authentication[OIDC service endpoints] with external Single-page applications (SPA). 
+
+SPA runs in the browser and uses the https://quarkus.io/guides/security-oidc-code-flow-authentication#overview-of-the-oidc-authorization-code-flow-mechanism[OIDC authorization code flow], but without relying on Quarkus, to authenticate the current user and accesses the Quarkus OIDC service endpoint with the access token on behalf of the authenticated user. Here is a simple diagram showing how this process works, copied to this post from the https://quarkus.io/guides/security-oidc-bearer-token-authentication[OIDC Bearer token guide] for your convenience:
+
+image::security-bearer-token-spa.png[SPA and Quarkus Service,align="center"]
+
+As illustrated in the picture above, the OIDC provider authenticates the current user. The SPA receives the ID, access, and, possibly, refresh tokens as the outcome of the authorization code flow and uses the access token to access the Quarkus OIDC service endpoint. 
+
+The SPA interacts with the OIDC provider. 
+Thus, it must know the provider connection details, including the registered OIDC application's client ID and other OIDC-specific details required to complete the authorization code flow successfully. 
+You must also provide a _callback_ URL in your registered OIDC application, which may not always be acceptable.  
+
+The https://github.com/quarkiverse/quarkus-oidc-proxy[Quarkus OIDC Proxy] extension simplifieds this whole setup. 
+It acts as a proxy between the SPA and Quarkus OIDC service endpoints and delegates to the real OIDC provider to support an authorization code flow. 
+It allows integrating OIDC service endpoints with SPAs without having to expose the internal OIDC connection details to this SPA, and thus, sends all the required details to the user browser.
+
+Another use case for the OIDC Proxy is to support several https://quarkus.io/guides/security-oidc-code-flow-authentication[Quarkus OIDC web-app] endpoints to authenticate users using the same OIDC proxy configuration before accessing the OIDC service endpoint.
+
+How does this OIDC proxy actually work? We are coming to that, but first, let's talk about custom GPT actions.
+
+[[gpt_actions]]
+== Custom GPT Actions
+
+https://chat.openai.com[ChatGPT] has introduced https://platform.openai.com/docs/actions/introduction[Actions], which can be used to create custom GPTs. For example, you can create a custom GPT which can enhance your ChatGPT conversation experience by connecting it to your API endpoints.
+
+One of the challenges when connecting a custom GPTs with your API is the authentication, how your custom GPT can be https://platform.openai.com/docs/actions/authentication[authenticated] to be allowed to access the API.
+The https://platform.openai.com/docs/actions/authentication/oauth[OAuth] option is the best option when you need a user-specific permission to access the API, and this is what https://github.com/quarkiverse/quarkus-oidc-proxy[Quarkus OIDC Proxy] will help you to achieve without exposing all the OIDC/OAuth2 connection details.
+
+Be aware that at the moment, custom GPT actions can only be created with ChatGPT Plus and Enterprise subscriptions.
+
+[[fitness_adviser]]
+== Quarkus Fitness Adviser
+
+Ok, let's see how it works more precisely.
+To illustrate this, we are going to create the `Quarkus Fitness Adviser,` a custom GPT that analyzes activities recorded in Strava and other social providers which track physical exercise.
+
+We will do it by registering a https://www.strava.com/[Strava] API Application, creating a https://quarkus.io/guides/security-openid-connect-providers#strava[Strava OAuth2] service endpoint, proxying it with https://github.com/quarkiverse/quarkus-oidc-proxy[OIDC Proxy], providing an HTTPS tunnel with <<ngrok, NGrok>> and finally, creating a custom GPT which uses https://github.com/quarkiverse/quarkus-oidc-proxy[OIDC Proxy] to authenticate the GPT users to Strava and use access tokens to access the Quarkus Strava OIDC service endpoint to analyze the recorded activities.
+
+[[strava_application_registration]]
+=== Step 1 - Strava Application Registration
+
+We will start by registering a new `Quarkus Fitness Adviser` application in Strava:
+
+image::strava-application-registration.png[Strava Application Registration,align="center"]
+
+Note that the `Authorization Callback Domain` points to your free <<ngrok, NGrok>> (or in production, the real) domain representing the domain where OIDC Proxy is available, likely to be the same domain where your Quarkus micro-services are hosted as well. It is an important feature of Quarkus OIDC Proxy as it lets OIDC provider administrators to point to the trusted domain as opposed to a 3rd party domain.
+
+Also, note that the fact that only a domain is accepted as a callback option is specific to the https://www.strava.com/[Strava] application registration process. Allowing only specific absolute callback URLs is recommended in general, and the Quarkus https://quarkus.io/guides/security-openid-connect-providers#strava[Strava OAuth2] integration enforces that only a single callback URL is allowed.
+
+After completing the application registration, write down the generated client id and secret. We will need them later.
+
+[[strava_service]]
+=== Step 2 - Quarkus Strava Service
+
+Quarkus OIDC integrates the https://quarkus.io/guides/security-openid-connect-providers#strava[Strava OAuth2 provider] and encapsulates all the Strava OAuth2 specific details. You just need one line in your configuration file: `quarkus.oidc.provider=strava`.
+
+The Strava provider is _mostly_ OAuth2-compliant. 
+But, it uses HTTP query parameters to complete the authorization code flow POST token request, while using the form parameters is a usual option. 
+It also uses a comma `,` separator when multiple scopes are requested during the initial redirect to Strava, while space ' ' is the typical separator character.
+
+The Quarkus OIDC proxy can handle it because it relies on the Quarkus OIDC knowledge. It should be noted that custom GPT does not support these options with its built-in OAuth authentication option. 
+Fortunately, the proxy is going to handle that for us.
+
+Alright, it's time to write that application.
+First, you need to add a few Maven dependencies to your project:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest-client-oidc-token-propagation</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-smallrye-openapi</artifactId>
+</dependency>
+----
+
+You need Quarkus `3.9.0+`.
+
+Next we create the OIDC configuration:
+
+[source,properties]
+----
+quarkus.oidc.provider=strava
+quarkus.oidc.application-type=service
+
+quarkus.oidc.client-id=${strava-client-id}
+quarkus.oidc.credentials.secret=${strava-client-secret}
+quarkus.oidc.authentication.extra-params.scope=profile:read_all,activity:read_all
+----
+
+By default, `quarkus.oidc.provider=strava` enables a Quarkus OIDC `web-app` application type that can support an authorization code flow. 
+But our endpoint acts as a Quarkus OIDC `service` that accepts the bearer access tokens from the custom  GPT.
+Thus, we override the application type to `service`. 
+Instead, the OIDC Proxy will manage the authorization code flow.
+
+Note how the extra https://developers.strava.com/docs/reference/[Strava API] scopes are added to the scopes which are already enabled by `quarkus.oidc.provider=strava`, instead of overriding them. See https://quarkus.io/guides/security-openid-connect-providers#provider-scope[Provider scopes] for more information.
+
+The client id, secret and the extra scopes are not really required by the OIDC service endpoint. These properties are set to support OIDC Proxy which needs to know how to correctly handle the OIDC authorization code flow requests from the external SPA.
+
+We also add the following properties:
+
+[source,properties]
+----
+quarkus.rest-client.strava-client.url=https://www.strava.com/api/v3
+
+quarkus.smallrye-openapi.operation-id-strategy=method
+quarkus.smallrye-openapi.auto-add-security=false
+quarkus.smallrye-openapi.servers=https://<your-free-ngrok-domain>.app
+----
+
+First, we configure the REST client to point to the base Strava API endpoint. 
+We then tune a little bit the way https://quarkus.io/guides/openapi-swaggerui[Quarkus generates OpenAPI document] to make it acceptable by a custom GPT configuration process.
+
+Now that we have tied up the configuration, we need to define the REST client interface calling the Strava API. 
+It automatically https://quarkus.io/guides/security-openid-connect-providers#access-provider-services-with-token-propagation[propagates] the Strava access tokens to access the user-specific Strava data:
+
+[source,java]
+----
+package org.acme.security.openid.connect.plugin;
+
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+
+import io.quarkus.oidc.token.propagation.AccessToken;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@RegisterRestClient(configKey="strava-client")
+@AccessToken
+@Path("/")
+public interface StravaClient {
+
+	@GET
+	@Path("athlete/activities")
+	@Produces(MediaType.APPLICATION_JSON)
+	String athleteActivities();
+
+	@GET
+	@Path("activities/{id}")
+	@Produces(MediaType.APPLICATION_JSON)
+	String athleteActivity(@PathParam("id") long activityId);
+	
+	@GET
+	@Path("athletes/{id}/stats")
+	@Produces(MediaType.APPLICATION_JSON)
+	String athleteStats(@PathParam("id") long athleteId);
+
+	// Etc for other Strava API
+}
+----
+
+Now, let's implement the primary endpoint of our application, which exposes the same API as Strava. It accepts the access tokens from a custom GPT and uses the REST client to forward them to Strava:
+
+[source,java]
+----
+package org.acme.security.openid.connect.plugin;
+
+import org.eclipse.microprofile.rest.client.inject.RestClient;
+
+import io.quarkus.logging.Log;
+import io.quarkus.oidc.UserInfo;
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+
+@Path("/athlete")
+@Authenticated <1>
+public class FitnessAdviserService {
+
+    @Inject
+    UserInfo athlete;
+
+    @Inject
+    @RestClient
+    StravaClient stravaClient;
+
+    @GET
+    @Produces("application/json")
+    public String athlete() {
+        Log.info("Fitness adviser: athlete");
+        return athlete.getJsonObject().toString();
+    }
+
+    @GET
+    @Produces("application/json")
+    @Path("/activities")
+    public String activities() {
+        Log.info("Fitness adviser: activities");
+        return stravaClient.athleteActivities();
+    }
+
+    @GET
+    @Produces("application/json")
+    @Path("/activity/{id}")
+    public String activity(@PathParam("id") long activityId) {
+        Log.infof("Fitness adviser: activity %d", activityId);
+        return stravaClient.athleteActivity(activityId);
+    }
+    
+    @GET
+    @Produces("application/json")
+    @Path("/stats")
+    public String stats() {
+        Log.info("Fitness adviser: stats");
+        return stravaClient.athleteStats(athlete.getLong("id"));
+    }
+
+    // Etc for other Strava API
+}
+----
+<1> Access to the `FitnessAdviserService` endpoint requires a verified access token.
+
+Note, to accept binary Strava access tokens, this endpoint verifies them indirectly by requesting `UserInfo` from Strava during the token authentication process, which is enabled by the `quarkus.oidc.provider=strava` declaration.
+In this case, `UserInfo` represents a Strava athlete profile, which is already available to the endpoint by the time it makes an outbound  REST client call. For example, the `FitnessAdviserService` endpoint passes a `UserInfo` athlete `id` attribute to `StravaClient` to request the current authenticated athlete's stats.
+
+If it were an access token issued by a provider such as Keycloak or Auth0, then it would be verified locally with the Keycloak or Auth0 public verification keys and https://quarkus.io/guides/security-oidc-bearer-token-authentication#accessing-jwt-claims[injected directly as JsonWebToken].
+
+[[oidc_proxy]]
+=== Step 3 - OIDC Proxy
+
+Finally, let's talk about the OIDC Proxy. 
+We have our OIDC Strava service endpoint calling the Stava API.
+It is time to make it accessible to the external SPA using the OIDC Proxy and an authorization code flow authentication process.
+ 
+All we need to do is adding the following dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.oidc-proxy</groupId>
+    <artifactId>quarkus-oidc-proxy</artifactId>
+    <version>0.1.1</version>
+</dependency>
+----
+
+It exposes the OIDC `/q/oidc/authorize` endpoint to accept custom GPT authentication redirects and the `/q/oidc/token` endpoint to exchange the authorization code and tokens.
+
+Let's now update the application configuration to setup our proxy:
+
+[source,properties]
+----
+quarkus.oidc.authentication.redirect-path=/callback <1>
+quarkus.oidc-proxy.external-redirect-uri=https://chat.openai.com/aip/g-2faf163d359505ecb63596f17baa3dfe53ea3cb9/oauth/callback <2>
+quarkus.oidc.authentication.force-redirect-https-scheme=true <3>
+quarkus.oidc-proxy.root-path=/oidc
+quarkus.oidc-proxy.external-client-id=external-client-id <4>
+quarkus.oidc-proxy.external-client-secret=external-client-secret <4>
+----
+<1> Request OIDC Proxy to create an endpoint that will support redirects from the actual OIDC provider. As explained in the <<strava_application_registration>> section, it can be helpful to register the known, trusted domain URL in the OIDC provider's dashboard. This property is already set to `/strava` with the Strava provider by default to restrict the possible callback URLs, as explained in the <<strava_application_registration>> section; this example shows how it can be customized. You do not have to use `quarkus.oidc.authentication.redirect-path`, but please be aware of this property.
+<2> The external callback URL where OIDC Proxy will redirect the user to after accepting the `quarkus.oidc.authentication.redirect-path` callback.
+<3> <<ngrok, NGrok>> will terminate the HTTPS connection before calling an `HTTP` based endpoint, so the original `HTTPS` scheme must be used for building an external redirect URL.
+<4> Set the external client id and secret that will be used during the integration with the 3rd party SPA. Use these properties if you do not want to expose
+the real client id and secret to the SPA.
+
+We're done! Let's run it:
+
+[source,bash]
+----
+mvn clean install
+java target/quarkus-app/quarkus-run.jar
+----
+
+If you prefer to use the Quarkus _dev_ mode, then, to allow the redirects from the external SPA to the OIDC Proxy authorization endpoint, you have to disable the DevUI CORS control:
+
+[source,properties]
+----
+%dev.quarkus.dev-ui.cors.enabled=false
+----
+
+[[ngrok]]
+=== Step 4 - NGrok
+
+3rd party SPA will most likely require that the OIDC provider endpoints are HTTPS-based, therefore, to make OIDC Proxy endpoints use the HTTPS scheme on the localhost, using https://ngrok.com/[NGrok] is the simplest way to do it.
+
+Note that:
+
+[source,bash]
+----
+ngrok http --domain <your-free-ngrok-domain> 8080
+----
+
+does not prevent the NGrok warning that the website is served for free from NGrok, which confuses the custom GPT's OAuth authorization code flow support.
+In this case you should enable an HTTP tunnel as described in this https://stackoverflow.com/questions/73017353/how-to-bypass-ngrok-browser-warning[Stack Overflow post], for example:
+
+[source,bash]
+----
+ngrok tunnel --label edge=<ngrok-tunnel-id> http://localhost:8080
+----
+
+=== Step 5 - Create the custom GPT
+
+As noted in the <<gpt_actions>> section, custom GPT actions can only be created with ChatGPT Plus and Enterprise subscriptions. Please see the <<next-steps>> section below for other suggestions to experiment with OIDC Proxy.
+
+Login to your ChatGPT account, and choose `Create` in `My GPTs`:
+
+image::create-custom-gpt.png[Create custom GPT,align="center"]
+
+Name it as `Quarkus Fitness Adviser` and provide its description:
+
+image::custom-gpt-description.png[Custom GPT description,align="center"]
+
+Next, choose an `OAuth` authentication option:
+
+image::custom-gpt-select-oauth.png[Custom GPT OAuth option,align="center"]
+
+and set the OAuth2 authorize and token endpoint addresses, keeping in mind your free <<ngrok>> domain name and that you have set the OIDC Proxy root address to `/oidc` in the <<oidc_proxy>> section:
+
+image::custom-gpt-configure-oauth.png[custom GPT OAuth configuration,align="center"]
+
+Set the client id and secret to the external client id and external client secret properties which you configured in the <<oidc_proxy>> section.
+
+Now you can see that this custom GPT's OAuth setup has been completed without sharing a single detail related to the Strava provider configuration in the Quarkus OIDC service endpoint.
+You also do not need to set the scopes, OIDC Proxy knows about them from the Quarkus OIDC endpoint configuration.
+
+Next, import an OpenAPI schema by choosing an `Import from URL` option and entering `http://<your-free-ngrok-domain>/q/openapi`:
+
+image::custom-gpt-import-openapi.png[Custom GPT Import OpenAPI,align="center"]
+
+At this point you are ready to save this GPT and start using it.
+
+Note this GPT's callback, this is the external callback URI value you configured in the <<oidc_proxy>> section:
+
+image::custom-gpt-callback.png[Custom GPT callback,align="center"]
+
+You have to decide if you would like to share this GPT. Most likely, after testing it, you will prefer to share it with your team to test it, and eventually, with your customers.
+
+In this case, the first thing you have to do is to ask ChatGPT for a typical privacy policy text, if you do not already have it, and after modifying it as necessary, save it, for example, in a `privacy.txt` document in the `src/main/resources/META-INF/resources/` of your <<strava_service>> application and link to it in the `Privacy Policy` configuration field as `http://<your-free-ngrok-domain>/privacy.txt`. Finally, publish it using the `Anyone with a link` option.
+
+`Quarkus Fitness Adviser` is now ready:
+
+image::custom-gpt-is-ready.png[Custom GPT is ready,align="center"]
+
+[[use_custom_gpt]]
+=== Step 6 - Use the custom GPT
+
+Let's start with asking `Quarkus Fitness Adviser` to check the athlete profile:
+
+image::custom-gpt-sign-in.png[Custom GPT Sign In,align="center"]
+
+When you ask the GPT the first question, it will attempt to sign you in using the OAuth authentication option. Select the `Sign in` option and you will be redirected to OIDC Proxy which will in turn redirect to Strava to authenticate:
+
+image::oidc-proxy-strava-login.png[Strava Login,align="center"]
+
+Enter your Strava name and password and continue. You will be asked to authenticate again only when the access token acquired with the authorization code flow has expired.
+
+After the successful authentication you will be asked to authorize the `Quarkus Fitness Adviser` applicaton which you registered in the <<strava_application_registration>> section:
+
+image::strava-application-authorization.png[Strava Authorization,align="center"]
+
+The https://developers.strava.com/docs/authentication/#detailsaboutrequestingaccess[Strava API scopes] which have been configured for the <<strava_service>> affect what you will be asked to authorize.
+
+You will now be redirected to the custom GPT with the authorization code which will be exchanged for the access and refresh tokens using OIDC Proxy.
+The GPT will now want to talk to the Quarkus API and ask you to approve it:
+
+image::custom-gpt-approve-action.png[Custom GPT Approve Action,align="center"]
+
+Approve it and `Quarkus Fitness Adviser` will provide the first answer:
+
+image::custom-gpt-profile-overview.png[Custom GPT Profile Overview,align="center"]
+
+It also provides information about your bike, running shoes, and gives some initial recommendations. You can now ask for some advice on balancing cycling and swimming, running, etc.
+
+Next, let's ask about the the latest activity:
+
+image::custom-gpt-latest-activity.png[Custom GPT Latest Activity,align="center"]
+
+Ask it to be more specific about the latest activity and provide some advice. Quarkus Fitness Adviser responds:
+
+image::custom-gpt-activity-recommendation.png[Custom GPT Activity Recommendation,align="center"]
+
+and concludes with a sound advice to have good rest and recovery.
+
+Finally, let's ask it to check the profile again and provide more recommendations. `Quarkus Fitness Adviser` is happy to help and provides, in my case, eight personalized recommendations, I will only show the start of the response:
+
+image::custom-gpt-profile-recommendations.png[Custom GPT More Profile Recommendations,align="center"]
+
+and the end of it:
+
+image::custom-gpt-enjoy-the-ride.png[Custom GPT Enjoy the Ride,align="center"]
+
+We will return to this advice later in this post.
+
+Let's finish by saying `Thank you`:
+
+image::custom-gpt-final-message.png[Custom GPT Final Message,align="center"]
+
+[[next-steps]]
+== Next Steps
+
+So far, `Quarkus Fitness Adviser` has helped to analyze the authenticated athlete's profile and activities.
+Please experiment further by creating a more advanced version of `Quarkus Fitness Adviser` by checking the routes, zones, and other fitness data supported by the https://developers.strava.com/docs/reference/[Strava API].
+
+Create a new custom GPT with the help of https://quarkus.io/guides/security-openid-connect-providers[any other well-known social provider supported in Quarkus].
+
+Also note, your Quarkus OIDC service endpoint does not have to propagate the access token. For example, if you use Keycloak or Auth0, then the access tokens in JWT formats issued by these OIDC compliant providers can be verified by Quarkus OIDC to provide a role-based or permission-based access control for custom GPT's requests, with the service endpoint returning data from the database, etc.
+
+You are also encouraged to look closely at the https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] project which provides a top class integration between Quarkus and the https://github.com/langchain4j/langchain4j[LangChain4j] library.
+
+How about creating a custom GPT which will use OIDC Proxy to authenticate custom GPT users to Keycloak or Auth0 or Azure and access Quarkus OIDC service endpoint powered by https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] ? Give it a try please !
+
+What if you do not have ChatGPT Plus or Enterprise subscriptions ?
+
+Not a problem, OIDC Proxy will work with any SPA which implements an authorization code flow and prefers to have an OIDC provider neutral integration, please test OIDC Proxy with such SPAs.
+
+Alternatively, experiment with configuring Quarkus OIDC `web-app` applications using OIDC Proxy to authenticate users before calling OIDC service endpoints. For example, imagine three different Quarkus OIDC `web-app` applications using the same Keycloak realm to authenticate the users with an authorization code flow and propagating the access tokens to the same OIDC `service` application. Now, instead of setting the Keycloak specific details in all of the OIDC `web-app` applications, you can try to add OIDC Proxy to the OIDC Service endpoint and configure the OIDC `web-app` applications to use OIDC Proxy.
+
+== Security Considerations
+
+You have already seen several OIDC Proxy security features in the <<oidc_proxy>> section.
+
+General OIDC Proxy feature is about hiding all the real OIDC provider specific details from the SPA, including all the OAuth2 or OIDC provider specific details, as well as the extra scopes which are requested during the authentication redirect to the provider.
+
+OIDC Proxy allows you to set the trusted domain in the allowed callback URI which is registered in the OIDC provider and enables a callback bridge between the real OIDC provider and the external SPA.
+
+You can hide the real client id and client secret which OIDC Proxy must use from the external SPA.
+
+You can request that OIDC Proxy does not return a refresh and/or ID token from the authorization code token exchange to the SPA.
+
+Refresh token is the most powerful token, usually with a long life-span. If an SPA leaks it, alongside the client id and secret, the attacker can
+refresh and use access tokens to access the API for a long time. Therefore, if you are concerned about SPA, such as a custom GPT, possibly leaking this information, add `quarkus.oidc-proxy.allow-refresh-token=false` to the configuration to request OIDC Proxy to remove the refresh token value from the authorization code flow response which it is about to return to the GPT. It will not block a given custom GPT from using the Quarkus API, it will only require this GPT to re-authenticate the user when the access token has expired, as opposed to refreshing it.
+
+ID token contains information about the currently authenticated user. If you know that the SPA does not need an ID token, such as a custom GPT which only works with the access and refresh tokens, then it is recommended to block returning it with `quarkus.oidc-proxy.allow-id-token=false`
+
+== Conclusion
+
+In this post, we looked at how https://github.com/quarkiverse/quarkus-oidc-proxy[Quarkus OIDC Proxy] can help to integrate OIDC service endpoints with SPA without having to expose the internal OIDC connection details. We have built `Quarkus Fitness Adviser`, a https://platform.openai.com/docs/actions/introduction[custom GPT], which uses OIDC Proxy to authenticate users with https://quarkus.io/guides/security-openid-connect-providers#strava[Strava] and provides fitness advice by reading the authenticated user-specific data from the Quarkus OIDC Strava service.
+
+Enjoy Quarkus, and, as the `Quarkus Fitness Adviser` recommended, enjoy the ride!

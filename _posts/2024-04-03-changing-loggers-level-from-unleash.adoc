@@ -1,0 +1,562 @@
+---
+layout: post
+title: 'Changing the Quarkus loggers level from Unleash'
+date: 2024-04-03
+tags: unleash logging development-tips
+synopsis: Updating an environment variable to change a logger level can sometimes be slow. What if you could change that level immediately with Unleash?
+author: gwenneg
+---
+:imagesdir: /assets/images/posts/changing-loggers-level-from-unleash
+
+== Introduction
+
+I'm part of a Red Hat team that is responsible for a dozen of Quarkus apps which run in Red Hat OpenShift, with multiple pods each.
+While these apps all have different purposes, they also share a common fate: something will go wrong eventually.
+When it does, we'll need to understand and fix the problem as fast as possible.
+Lowering the level of a logger is often helpful, but our apps are containerized and updating an environment variable to change the logger level isn't always as easy at it sounds.
+We also don't want to expose REST endpoints in most of our apps, so extensions such as https://github.com/quarkiverse/quarkus-logging-manager[quarkus-logging-manager^] are not an option.
+
+Our apps have another thing in common: they depend on https://docs.quarkiverse.io/quarkus-unleash/dev/index.html[quarkus-unleash^] because we're fetching our feature toggles from https://www.getunleash.io/[Unleash^].
+When I read https://medium.com/safe-engineering/how-unleash-enhanced-our-troubleshooting-experience-by-100x-e0c82b6df825[Zero downtime log level changes using Unleash^] from Aman Jain, it made me want to try the same thing with Quarkus.
+I'll show you below how I successfully did that.
+
+[NOTE]
+====
+This blog post contains incremental code snippets.
+Each one of them is an enhanced version of the previous one and addresses a specific technical challenge.
+====
+
+== Changing a logger level programmatically
+
+Let's start with the obvious requirement: how to change the level of a logger programmatically with Quarkus.
+
+[NOTE]
+====
+As described in the https://quarkus.io/guides/logging[Logging configuration guide^], Quarkus supports multiple logging APIs.
+I only tested the following code with the JBoss Logging API as well as the `io.quarkus.logging.Log` API.
+I can't guarantee that everything will work out of the box with other logging APIs.
+====
+
+The JBoss Logging API doesn't offer a way to change the level of a logger programmatically, so we need the help of the `java.util.logging` API to do it:
+
+[source, java]
+----
+import java.util.logging.Level; // <1>
+import java.util.logging.Logger; // <1>
+
+public class LogLevelManager {
+
+    public void setLoggerLevel(String loggerName, String levelName) {
+        Logger logger = Logger.getLogger(loggerName); // <2>
+        Level level = Level.parse(levelName); // <3>
+        logger.setLevel(level);
+    }
+}
+----
+<1> Make sure you're importing classes from the `java.util.logging` package.
+<2> Any category as described in the https://quarkus.io/guides/logging#logging-categories[Logging configuration guide^] will work as the logger name.
+<3> `Level#parse` will throw exceptions if the level name is not valid. Please handle them carefully.
+
+== Setting a logger level from Unleash
+
+So, we're able to set a logger level programmatically.
+Now, how do we feed the `LogLevelManager#setLoggerLevel` method with data from Unleash?
+
+=== Unleash variants to the rescue
+
+In Unleash, the feature toggles can be associated with https://docs.getunleash.io/reference/feature-toggle-variants[variants^] which are meant to facilitate A/B testing and experimentation.
+Each variant is defined with a set of properties, including the optional `payload` that can be used to pass JSON data from Unleash to our Quarkus app.
+That's how we'll set the level of our Quarkus app loggers:
+
+image::payload.png[Unleash variant payload]
+
+=== Retrieving the variant payload
+
+Now, let's see how we'll retrieve from the Quarkus app the variant payload defined in Unleash.
+
+image::connecting.png[Connecting Quarkus to Unleash]
+
+First, the Quarkus app needs to depend on the https://docs.quarkiverse.io/quarkus-unleash/dev/index.html[quarkus-unleash^] extension.
+
+We'll also use a very simple data structure to deserialize the payload with Jackson:
+
+[source,java]
+----
+public class LogConfig {
+    public String category;
+    public String level;
+}
+----
+
+Then, here's an update of the `LogLevelManager` class to make it get the variant from Unleash, deserialize the payload and change the level of a series of loggers:
+
+[source,java]
+----
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.getunleash.Unleash;
+import io.getunleash.Variant;
+import io.getunleash.variant.Payload;
+import io.quarkus.logging.Log;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+@ApplicationScoped // <1>
+public class LogLevelManager {
+
+    private static final String UNLEASH_TOGGLE_NAME = "my-app.log-levels";
+
+    @Inject
+    Unleash unleash; // <2>
+
+    @Inject
+    ObjectMapper objectMapper;
+
+    public void updateLoggersLevel() {
+        for (LogConfig logConfig : getLogConfigs()) {
+            try {
+                setLoggerLevel(logConfig.category, logConfig.level);
+            } catch (Exception e) {
+                Log.error("Could not the set level of a logger", e);
+            }
+        }
+    }
+
+    private LogConfig[] getLogConfigs() {
+        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME); // <3>
+        if (variant.isEnabled()) { // <4>
+            Optional<Payload> payload = variant.getPayload();
+            if (payload.isPresent() && payload.get().getType().equals("json") && payload.get().getValue() != null) {
+                try {
+                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
+                } catch (JsonProcessingException e) {
+                    Log.error("Variant payload deserialization failed", e);
+                }
+            }
+        }
+        return new LogConfig[0]; // <5>
+    }
+
+    private void setLoggerLevel(String loggerName, String levelName) {
+        Logger logger = Logger.getLogger(loggerName);
+        Level currentLevel = logger.getLevel();
+        Level newLevel = Level.parse(levelName);
+        if (!newLevel.equals(currentLevel)) {
+            logger.setLevel(newLevel);
+        }
+    }
+}
+----
+<1> From now on, `LogLevelManager` is an `@ApplicationScoped` bean.
+<2> `Unleash` is an `@ApplicationScoped` bean produced by the https://docs.quarkiverse.io/quarkus-unleash/dev/index.html[quarkus-unleash^] extension.
+<3> Be careful about the argument passed to `Unleash#getVariant`: it has to be the toggle name, not the variant name.
+<4> `variant.isEnabled()` will return `false` if the toggle is disabled in Unleash or if the toggle has no variants.
+<5> If the method is unable to find a variant payload or if it fails to deserialize that payload for any reasons, an empty `LogConfig` array will be returned.
+
+We can now retrieve the loggers configuration from Unleash, that's great!
+But that new `LogLevelManager#updateLoggerslevel` method isn't used yet.
+Where should it be used from, and when?
+
+image::triggering.png[Triggering the loggers level update]
+
+We need that method to be executed as soon as the loggers configuration is changed in Unleash.
+So, its execution has to be periodically scheduled somehow.
+We could make the method `@Scheduled` with the https://quarkus.io/guides/scheduler-reference[quarkus-scheduler^] extension, but there is a better approach thanks to the Unleash SDK.
+Let's jump to the next section.
+
+=== The Subscriber API from Unleash
+
+The Unleash Client SDK for Java comes with a feature that will be very helpful here: the https://docs.getunleash.io/reference/sdks/java#subscriber-api[Subscriber API^].
+The https://github.com/Unleash/unleash-client-java/blob/main/src/main/java/io/getunleash/event/UnleashSubscriber.java[UnleashSubscriber^] interface can indeed be implemented to subscribe to various Unleash events, including `FeatureToggleResponse` which is emitted when the Unleash client fetches toggles from the server.
+
+Using the Subscriber API with the https://docs.quarkiverse.io/quarkus-unleash/dev/index.html[quarkus-unleash^] extension is extremely simple.
+`UnleashSubscriber` needs to be implemented in a CDI bean and that's it!
+The extension will pass the bean to the Unleash client builder automatically.
+
+[source,java]
+----
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.getunleash.Unleash;
+import io.getunleash.Variant;
+import io.getunleash.event.UnleashSubscriber;
+import io.getunleash.repository.FeatureToggleResponse;
+import io.getunleash.variant.Payload;
+import io.quarkus.logging.Log;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
+
+@ApplicationScoped
+public class LogLevelManager implements UnleashSubscriber { // <1>
+
+    private static final String UNLEASH_TOGGLE_NAME = "my-app.log-levels";
+
+    @Inject
+    Unleash unleash;
+
+    @Inject
+    ObjectMapper objectMapper;
+
+    @Override
+    public void togglesFetched(FeatureToggleResponse toggleResponse) { // <2>
+        if (toggleResponse.getStatus() == CHANGED) { // <3>
+            updateLoggersLevel();
+        }
+    }
+
+    // Unchanged, except for the access modifier.
+    private void updateLoggersLevel() {
+        for (LogConfig logConfig : getLogConfigs()) {
+            try {
+                setLoggerLevel(logConfig.category, logConfig.level);
+            } catch (Exception e) {
+                Log.error("Could not the set level of a logger", e);
+            }
+        }
+    }
+
+    // Unchanged.
+    private LogConfig[] getLogConfigs() {
+        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
+        if (variant.isEnabled()) {
+            Optional<Payload> payload = variant.getPayload();
+            if (payload.isPresent() && payload.get().getType().equals("json") && payload.get().getValue() != null) {
+                try {
+                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
+                } catch (JsonProcessingException e) {
+                    Log.error("Variant payload deserialization failed", e);
+                }
+            }
+        }
+        return new LogConfig[0];
+    }
+
+    // Unchanged.
+    private void setLoggerLevel(String loggerName, String levelName) {
+        Logger logger = Logger.getLogger(loggerName);
+        Level currentLevel = logger.getLevel();
+        Level newLevel = Level.parse(levelName);
+        if (!newLevel.equals(currentLevel)) {
+            logger.setLevel(newLevel);
+        }
+    }
+}
+----
+<1> We're still using the same `LogLevelManager` class, but now it's implementing `UnleashSubscriber`.
+<2> This method is invoked every time the Unleash client fetches toggles from the server.
+<3> We'll update the loggers level only if the toggles changed server-side.
+
+Okay, the `LogLevelManager#updateLoggerslevel` method is now automatically invoked whenever the client fetches new data from the server.
+But what about scheduling that periodically?
+Well, the Unleash client already relies on an internal scheduled executor to fetch the toggles.
+Therefore, we don't need to bother scheduling anything in our app.
+It will work automagically!
+
+image::automagically.png[LogLevelManager with UnleashSubscriber]
+
+== One variant to rule them all
+
+At the beginning of this post, I mentioned that my team is responsible for a dozen of Quarkus apps.
+Each app runs with a varying number of replicas.
+Let's simplify and consider all of them as hosts.
+
+We have dozens of hosts and yet only one Unleash variant to manage the loggers level for all of them.
+Here's how I implemented that.
+
+First, the data structure of the variant payload needs a small addition:
+
+[source,java]
+----
+public class LogConfig {
+    public String hostName; // <1>
+    public String category;
+    public String level;
+}
+----
+<1> That's new!
+
+Now, we can introduce a host filtering capability in `LogLevelManager`:
+
+[source,java]
+----
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.getunleash.Unleash;
+import io.getunleash.Variant;
+import io.getunleash.event.UnleashSubscriber;
+import io.getunleash.repository.FeatureToggleResponse;
+import io.getunleash.variant.Payload;
+import io.quarkus.logging.Log;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
+
+@ApplicationScoped
+public class LogLevelManager implements UnleashSubscriber {
+
+    private static final String UNLEASH_TOGGLE_NAME = "my-app.log-levels";
+
+    @ConfigProperty(name = "host-name", defaultValue = "localhost") // <1>
+    String hostName;
+
+    @Inject
+    Unleash unleash;
+
+    @Inject
+    ObjectMapper objectMapper;
+
+    // Unchanged.
+    @Override
+    public void togglesFetched(FeatureToggleResponse toggleResponse) {
+        if (toggleResponse.getStatus() == CHANGED) {
+            updateLoggersLevel();
+        }
+    }
+
+    private void updateLoggersLevel() {
+        for (LogConfig logConfig : getLogConfigs()) {
+            try {
+                if (shouldThisHostBeUpdated(logConfig)) { // <2>
+                    setLoggerLevel(logConfig.category, logConfig.level);
+                }
+            } catch (Exception e) {
+                Log.error("Could not the set level of a logger", e);
+            }
+        }
+    }
+
+    // Unchanged.
+    private LogConfig[] getLogConfigs() {
+        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
+        if (variant.isEnabled()) {
+            Optional<Payload> payload = variant.getPayload();
+            if (payload.isPresent() && payload.get().getType().equals("json") && payload.get().getValue() != null) {
+                try {
+                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
+                } catch (JsonProcessingException e) {
+                    Log.error("Variant payload deserialization failed", e);
+                }
+            }
+        }
+        return new LogConfig[0];
+    }
+
+    private boolean shouldThisHostBeUpdated(LogConfig logConfig) {
+        if (logConfig.hostName == null) {
+            return true;
+        }
+        if (logConfig.hostName.endsWith("*")) { // <3>
+            return hostName.startsWith(logConfig.hostName.substring(0, logConfig.hostName.length() - 1));
+        } else {
+            return hostName.equals(logConfig.hostName);
+        }
+    }
+
+    // Unchanged.
+    private void setLoggerLevel(String loggerName, String levelName) {
+        Logger logger = Logger.getLogger(loggerName);
+        Level currentLevel = logger.getLevel();
+        Level newLevel = Level.parse(levelName);
+        if (!newLevel.equals(currentLevel)) {
+            logger.setLevel(newLevel);
+        }
+    }
+}
+----
+<1> In OpenShift, we're passing the generated pod name through the `HOST_NAME` environment variable.
+<2> That's new!
+<3> This block is used to filter hosts based on a host name prefix. That's enough for our use case, but a regular expression could be used for finer filtering.
+
+Here's how the variant payload may look like after these changes:
+
+[source,json]
+----
+[
+  {
+    "hostName": "unstable-service-7dbbcb4cc-9d9hl",
+    "category": "io.quarkus.arc",
+    "level": "FINE"
+  },
+  {
+    "hostName": "awesome-app*",
+    "category": "org.acme.SomeService",
+    "level": "WARNING"
+  },
+  {
+    "category": "org.apache.kafka.clients",
+    "level": "FINER"
+  }
+]
+----
+
+In that payload:
+
+- the first entry will affect a specific host: `unstable-service-7dbbcb4cc-9d9hl`
+- the second entry will affect all hosts whose name starts with `awesome-app`
+- the third entry will affect all hosts regardless of their names
+
+== Reverting changes automatically
+
+Changing the level of loggers through an Unleash variant should be a temporary action, mostly for troubleshooting purposes.
+This means we need to revert the level of the loggers eventually when the troubleshooting is over.
+Doing so by hand would be painful, so let's see how we can automate that.
+
+[source,java]
+----
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.getunleash.Unleash;
+import io.getunleash.Variant;
+import io.getunleash.event.UnleashSubscriber;
+import io.getunleash.repository.FeatureToggleResponse;
+import io.getunleash.variant.Payload;
+import io.quarkus.logging.Log;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
+import static java.util.stream.Collectors.toSet;
+
+@ApplicationScoped
+public class LogLevelManager implements UnleashSubscriber {
+
+    private static final String UNLEASH_TOGGLE_NAME = "my-app.log-levels";
+
+    @ConfigProperty(name = "host-name", defaultValue = "localhost")
+    String hostName;
+
+    @Inject
+    Unleash unleash;
+
+    @Inject
+    ObjectMapper objectMapper;
+
+    private final Map<String, Level> originalLoggerLevels = new ConcurrentHashMap<>();
+
+    // Unchanged.
+    @Override
+    public void togglesFetched(FeatureToggleResponse toggleResponse) {
+        if (toggleResponse.getStatus() == CHANGED) {
+            updateLoggersLevel();
+        }
+    }
+
+    public void updateLoggersLevel() {
+        LogConfig[] logConfigs = getLogConfigs();
+        for (LogConfig logConfig : logConfigs) {
+            try {
+                if (shouldThisHostBeUpdated(logConfig)) {
+                    setLoggerLevel(logConfig.category, logConfig.level);
+                }
+            } catch (Exception e) {
+                Log.error("Could not the set level of a logger", e);
+            }
+        }
+        revertLoggersLevel(logConfigs); // <1>
+    }
+
+    // Unchanged.
+    private LogConfig[] getLogConfigs() {
+        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
+        if (variant.isEnabled()) {
+            Optional<Payload> payload = variant.getPayload();
+            if (payload.isPresent() && payload.get().getType().equals("json") && payload.get().getValue() != null) {
+                try {
+                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
+                } catch (JsonProcessingException e) {
+                    Log.error("Variant payload deserialization failed", e);
+                }
+            }
+        }
+        return new LogConfig[0];
+    }
+
+    // Unchanged.
+    private boolean shouldThisHostBeUpdated(LogConfig logConfig) {
+        if (logConfig.hostName == null) {
+            return true;
+        }
+        if (logConfig.hostName.endsWith("*")) {
+            return hostName.startsWith(logConfig.hostName.substring(0, logConfig.hostName.length() - 1));
+        } else {
+            return hostName.equals(logConfig.hostName);
+        }
+    }
+
+    private void setLoggerLevel(String loggerName, String levelName) {
+        Logger logger = Logger.getLogger(loggerName);
+        Level currentLevel = logger.getLevel();
+        Level newLevel = Level.parse(levelName);
+        if (!newLevel.equals(currentLevel)) {
+            originalLoggerLevels.putIfAbsent(loggerName, currentLevel); // <2>
+            logger.setLevel(newLevel);
+        }
+    }
+
+    private void revertLoggersLevel(LogConfig[] logConfigs) {
+        if (logConfigs.length == 0) {
+            originalLoggerLevels.forEach(this::revertLoggerLevel);
+            originalLoggerLevels.clear();
+        } else {
+            Set<String> knownLoggers = Arrays.stream(logConfigs)
+                    .filter(this::shouldThisHostBeUpdated)
+                    .map(logConfig -> logConfig.category)
+                    .collect(toSet());
+            originalLoggerLevels.entrySet().removeIf(entry -> {
+                boolean remove = !knownLoggers.contains(entry.getKey());
+                if (remove) {
+                    revertLoggerLevel(entry.getKey(), entry.getValue()); // <3>
+                }
+                return remove;
+            });
+        }
+    }
+
+    private void revertLoggerLevel(String loggerName, Level originalLevel) {
+        Logger logger = Logger.getLogger(loggerName);
+        logger.setLevel(originalLevel); // <4>
+    }
+}
+----
+<1> That's new!
+<2> The original logger level is now stored in memory and will be used when the changes are eventually reverted.
+<3> If the level of a logger was previously modified from Unleash and that logger is no longer part of the latest Unleash variant payload, its level will be reverted to the original value.
+<4> If the original level is `null`, then the logger will inherit the level from its parent logger.
+
+== Conclusion
+
+The `LogLevelManager` class is still far from perfect, but it finally meets the requirements of this blog post:
+
+- it changes the level of Quarkus loggers automatically and immediately, based on a variant payload from Unleash
+- it automatically reverts all changes to the previous loggers configuration when needed
+
+Thanks for reading this post! I hope it will help you troubleshoot your applications faster.
+
+== Special thanks
+
+Thanks to Mikel Alejo Barcina for helping me fix a bug in the code above!
