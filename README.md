@@ -23,9 +23,8 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 5. *OR* run docker compose manually setting _SELINUX_ to "Z:" or "" dependent on OS:
 
-        _SELINUX_=Z: docker compose up # Linux
-
-         _SELINUX_= docker compose up  # Mac or Windows
+        _SELINUX_=Z: docker-compose up # Linux
+        _SELINUX_=   docker-compose up # Mac or Windows
 
 5. Now browse to http://localhost:4000
 
