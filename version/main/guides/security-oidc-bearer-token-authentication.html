@@ -791,6 +791,94 @@ quarkus.oidc.introspection-path=/protocol/openid-connect/tokens/introspect</code
 </div>
 </div>
 <div class="sect2">
+<h3 id="jwt-token-certificate-chain"><a class="anchor" href="#jwt-token-certificate-chain"></a>JWT token certificate chain</h3>
+<div class="paragraph">
+<p>In some cases, JWT bearer tokens have an <code>x5c</code> header which represents an X509 certificate chain whose leaf certificate contains a public key that must be used to verify this token&#8217;s signature.
+Before this public key can be accepted to verify the signature, the certificate chain must be validated first.
+The certificate chain validation involves several steps:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Confirm that every certificate but the root one is signed by the parent certificate.</p>
+</li>
+<li>
+<p>Confirm the chain&#8217;s root certificate is also imported in the truststore.</p>
+</li>
+<li>
+<p>Validate the chain&#8217;s leaf certificate. If a common name of the leaf certificate is configured then a common name of the chain&#8217;s leaf certificate must match it. Otherwise the chain&#8217;s leaf certificate must also be avaiable in the truststore, unless one or more custom <code>TokenCertificateValidator</code> implementations are registered.</p>
+</li>
+<li>
+<p><code>quarkus.oidc.TokenCertificateValidator</code> can be used to add a custom certificate chain validation step. It can be used by all tenants expecting tokens with the certificate chain or bound to specific OIDC tenants with the <code>@quarkus.oidc.TenantFeature</code> annotation.</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>For example, here is how you can configure Quarkus OIDC to verify the token&#8217;s certificate chain, without using <code>quarkus.oidc.TokenCertificateValidator</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.certificate-chain.trust-store-file=truststore-rootcert.p12 <i class="conum" data-value="1"></i><b>(1)</b>
+quarkus.oidc.certificate-chain.trust-store-password=storepassword
+quarkus.oidc.certificate-chain.leaf-certificate-name=www.quarkusio.com <i class="conum" data-value="2"></i><b>(2)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The truststore must contain the certificate chain&#8217;s root certificate.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The certificate chain&#8217;s leaf certificate must have a common name equal to <code>www.quarkusio.com</code>. If this property is not configured then the truststore must contain the certificate chain&#8217;s leaf certificate unless one or more custom <code>TokenCertificateValidator</code> implementations are registered.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>You can add a custom certificate chain validation step by registering a custom <code>quarkus.oidc.TokenCertificateValidator</code>, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.List;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.TokenCertificateValidator;
+import io.quarkus.oidc.runtime.TrustStoreUtils;
+import io.vertx.core.json.JsonObject;
+
+@ApplicationScoped
+@Unremovable
+public class BearerGlobalTokenChainValidator implements TokenCertificateValidator {
+
+    @Override
+    public void validate(OidcTenantConfig oidcConfig, List&lt;X509Certificate&gt; chain, String tokenClaims) throws CertificateException {
+        String rootCertificateThumbprint = TrustStoreUtils.calculateThumprint(chain.get(chain.size() - 1));
+        JsonObject claims = new JsonObject(tokenClaims);
+        if (!rootCertificateThumbprint.equals(claims.getString("root-certificate-thumbprint"))) { <i class="conum" data-value="1"></i><b>(1)</b>
+            throw new CertificateException("Invalid root certificate");
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Confirm that the certificate chain&#8217;s root certificate is bound to the custom JWT token&#8217;s claim.</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
 <h3 id="oidc-provider-client-authentication"><a class="anchor" href="#oidc-provider-client-authentication"></a>OIDC provider client authentication</h3>
 <div class="paragraph">
 <p><code>quarkus.oidc.runtime.OidcProviderClient</code> is used when a remote request to an OIDC provider is required.
@@ -1809,6 +1897,7 @@ For more information, see <a href="security-oidc-code-flow-authentication#oidc-r
 <li><a href="#cross-origin-resource-sharing">Cross-origin resource sharing</a></li>
 <li><a href="#provider-endpoint-configuration">Provider endpoint configuration</a></li>
 <li><a href="#token-propagation">Token propagation</a></li>
+<li><a href="#jwt-token-certificate-chain">JWT token certificate chain</a></li>
 <li><a href="#oidc-provider-client-authentication">OIDC provider client authentication</a></li>
 <li><a href="#integration-testing">Testing</a></li>
 <li><a href="#integration-testing-oidc-test-client"><code>OidcTestClient</code></a></li>
