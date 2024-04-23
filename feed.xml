@@ -5,7 +5,298 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Mon, 22 Apr 2024 09:16:22 +0000</lastBuildDate>
+        <lastBuildDate>Tue, 23 Apr 2024 03:03:31 +0000</lastBuildDate>
+        
+        <item>
+            <title>Obtaining heap dump on OutOfMemoryError with Quarkus native</title>
+            <link>
+                https://quarkus.io/blog/heapdump-oome-native/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Starting with GraalVM for JDK 21,
+native executables can run with the &lt;code&gt;-XX:+HeapDumpOnOutOfMemoryError&lt;/code&gt; option to generate a heap dump when a &lt;code&gt;java.lang.OutOfMemoryError&lt;/code&gt; is thrown.
+In this blog post we will explore how to use the flag,
+we will inspect what a GraalVM Native Image heap dump looks like and how it compares with one produced by HotSpot.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Note: The heap of GraalVM Native Image executables has both read-only and read-write segments.
+The read-only part is referred to as the &quot;image heap&quot; and contains the data pre-initialized during the image build to help speed up start-up time.
+The read-write part is where allocations at runtime are made.
+Therefore, heap dumps generated at runtime will contain content from both the &quot;image heap&quot; and the read-write heap.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To see this flag in action, we need to manufacture a situation where a Quarkus application runs out of memory.
+One easy way to achieve this is to configure the application with a garbage collector that doesn&amp;#8217;t do any memory reclamation,
+i.e. the Epsilon GC.
+Once the Quarkus application is running with Epsilon GC,
+apply some load and within a short space of time it will run out of memory and produce a heap dump.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let’s do this using a Quarkus application that simply responds to an HTTP endpoint request as a starting point.
+The sample application can be downloaded from
+&lt;a href=&quot;https://code.quarkus.io&quot;&gt;code.quarkus.io&lt;/a&gt; using a browser
+or via the command line:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ wget &quot;https://code.quarkus.io/d?S=io.quarkus.platform%3A3.8&amp;amp;cn=code.quarkus.io&quot; -O code.zip
+$ unzip code.zip
+$ cd code-with-quarkus&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Next, build a Quarkus native executable with GraalVM for JDK 21 configuring it to use Epsilon GC:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ ./mvnw package -DskipTests -Dnative -Dquarkus.native.additional-build-args=--gc=epsilon&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Note: The GC selection needs to be done at build time for Quarkus native applications.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;While the Quarkus native executable is being produced you will be able to observe that GC is indeed configured to be EpsilonGC:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;[INFO] --- quarkus-maven-plugin:3.9.3:build (default) @ getting-started-reactive ---
+...
+[1/8] Initializing...
+ Java version: 21.0.2+13, vendor version: GraalVM CE 21.0.2+13.1
+ Graal compiler: optimization level: 2, target machine: compatibility
+ C compiler: gcc (redhat, x86_64, 13.2.1)
+ Garbage collector: Epsilon GC (max heap size: 80% of RAM)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once the build completes,
+start Quarkus with &lt;code&gt;-XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError&lt;/code&gt;.
+The latter forces the application to shutdown when an &lt;code&gt;OutOfMemoryError&lt;/code&gt; occurs rather than leave the process in an indeterminate state:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ getting-started-reactive-1.0.0-SNAPSHOT-runner -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -Xmx64m
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,&amp;lt; / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT native (powered by Quarkus 3.9.3) started in 0.030s. Listening on: http://0.0.0.0:8080
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Next, apply some load to the HTTP endpoint exposed by the Quarkus application, for example using &lt;code&gt;curl&lt;/code&gt; in a bash loop:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ while true; do curl http://localhost:8080/hello; done&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Switching to the Quarkus console,
+an &lt;code&gt;OutOfMemoryError&lt;/code&gt; would be observed along with some messages indicating that a heap dump is being produced:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT native (powered by Quarkus 3.9.3) started in 0.030s. Listening on: http://0.0.0.0:8080
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+Dumping heap to svm-heapdump-2213-OOME.hprof ...
+Heap dump file created [98454651 bytes in 0.733 secs]
+Terminating due to java.lang.OutOfMemoryError: Garbage-collected heap size exceeded.&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Multiple graphical tools exist out there to inspect heap dumps,
+such as &lt;a href=&quot;https://visualvm.github.io/&quot;&gt;VisualVM&lt;/a&gt;,
+&lt;a href=&quot;https://eclipse.dev/mat/&quot;&gt;Eclipse Memory Analyzer (MAT)&lt;/a&gt;, etc.,
+but some new ones are also available that you can run in the command line to get a quick picture of the heap dump,
+for example
+&lt;a href=&quot;https://github.com/openjdk/jol&quot;&gt;Java Object Layout (JOL)&lt;/a&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ java -Xmx256m -DprintFirst=6 -jar jol-cli.jar heapdump-stats svm-heapdump-2213-OOME.hprof
+Heap Dump: svm-heapdump-2213-OOME.hprof
+Read progress: DONE
+
+Hotspot Layout Simulation (JDK 21, Current VM: 12-byte object headers, 4-byte references, 8-byte aligned objects, 8-byte aligned array bases)
+
+=== Class Histogram
+
+Table is sorted by &quot;INSTANCES&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+         132,330              24       3,175,920    java.lang.String
+          50,277              40       2,011,080    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          44,852              40       1,794,080    com.oracle.svm.core.monitor.JavaMonitor
+          38,755              32       1,240,160    java.util.HashMap$Node
+          33,776              24         810,624    byte[5]
+          31,728              48       1,522,944    java.util.HashMap
+             ...             ...             ...    ...
+         899,336       9,438,056      48,193,360    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    &amp;lt;total&amp;gt;
+
+=== Class Histogram
+
+Table is sorted by &quot;SIZE&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1       3,480,544       3,480,544    byte[3480528]
+               1       3,236,728       3,236,728    byte[3236705]
+               1         642,648         642,648    byte[642626]
+               1         289,824         289,824    byte[289808]
+               1         173,664         173,664    byte[173645]
+               1         157,728         157,728    byte[157710]
+             ...             ...             ...    ...
+       1,231,048       1,457,128      50,767,032    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    &amp;lt;total&amp;gt;
+
+=== Class Histogram
+
+Table is sorted by &quot;SUM SIZE&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1       3,480,544       3,480,544    byte[3480528]
+               1       3,236,728       3,236,728    byte[3236705]
+         132,330              24       3,175,920    java.lang.String
+          50,277              40       2,011,080    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          10,054             184       1,849,936    io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext
+          44,852              40       1,794,080    com.oracle.svm.core.monitor.JavaMonitor
+             ...             ...             ...    ...
+         993,539       2,720,704      43,199,880    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    &amp;lt;total&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The presence of SubstrateVM,
+the VM that powers native images built with GraalVM,
+can be clearly observed because of the instances of &lt;code&gt;com.oracle.svm.core.monitor.JavaMonitor&lt;/code&gt; present in the heap dump.
+What would the heap dump look like if we repeat exactly the same exercise but instead we use Quarkus JVM mode? Let’s see:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Rebuild the Quarkus app for JVM mode and run it with Epsilon GC:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ mvnw package -DskipTests
+$ java -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -XX:+UnlockExperimentalVMOptions -XX:+UseEpsilonGC -Xmx64m -jar quarkus-run.jar
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,&amp;lt; / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+2024-04-12 10:02:37,945 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.9.3) started in 1.692s. Listening on: http://0.0.0.0:8080
+2024-04-12 10:02:37,961 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 10:02:37,962 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;After applying the same load, you would observe the heap dump being generated in JVM mode as well:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;2024-04-12 10:02:37,945 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.9.3) started in 1.692s. Listening on: http://0.0.0.0:8080
+2024-04-12 10:02:37,961 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 10:02:37,962 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+java.lang.OutOfMemoryError: Java heap space
+Dumping heap to java_pid2841.hprof ...
+Heap dump file created [97383542 bytes in 1.232 secs]
+Terminating due to java.lang.OutOfMemoryError: Java heap space&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And this is what the heap dump looks like with JOL:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;java -Xmx256m -DprintFirst=6 -jar jol-cli.jar heapdump-stats java_pid2841.hprof
+Heap Dump: java_pid2841.hprof
+Read progress: DONE
+
+Hotspot Layout Simulation (JDK 21, Current VM: 12-byte object headers, 4-byte references, 8-byte aligned objects, 8-byte aligned array bases)
+
+=== Class Histogram
+
+Table is sorted by &quot;INSTANCES&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+          91,335              24       2,192,040    java.lang.String
+          35,946              40       1,437,840    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          34,942              32       1,118,144    java.util.HashMap$Node
+          22,998              24         551,952    byte[5]
+          22,789              48       1,093,872    java.util.HashMap
+          22,381              32         716,192    java.util.concurrent.ConcurrentHashMap$Node
+             ...             ...             ...    ...
+         716,986      19,427,976      59,367,272    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    &amp;lt;total&amp;gt;
+
+=== Class Histogram
+
+Table is sorted by &quot;SIZE&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1         972,120         972,120    int[243026]
+               1         416,136         416,136    int[104030]
+               1         282,056         282,056    int[70510]
+               1         237,608         237,608    byte[237587]
+               1         131,920         131,920    int[32976]
+               1         129,672         129,672    int[32414]
+             ...             ...             ...    ...
+         947,371      17,258,664      64,307,800    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    &amp;lt;total&amp;gt;
+
+=== Class Histogram
+
+Table is sorted by &quot;SUM SIZE&quot;.
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+          91,335              24       2,192,040    java.lang.String
+           7,189             232       1,667,848    io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext
+          35,946              40       1,437,840    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          15,528              80       1,242,240    java.util.HashMap$Node[16]
+          14,380              80       1,150,400    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry[16]
+          34,942              32       1,118,144    java.util.HashMap$Node
+             ...             ...             ...    ...
+         748,057      19,427,688      57,668,800    &amp;lt;other&amp;gt;
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    &amp;lt;total&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As expected, no SubstrateVM classes are present in this heap dump,
+leaving only Quarkus, Vert.x and OpenJDK types in the heap dump.&lt;/p&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Tue, 23 Apr 2024 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/heapdump-oome-native/
+            </guid>
+            
+            
+            
+            <author>Galder Zamarreño (https://twitter.com/galderz)</author>
+            
+        </item>
         
         <item>
             <title>Ship.Cars leverages Quarkus to reach its goals</title>
@@ -1651,265 +1942,6 @@ public class LogLevelManager implements UnleashSubscriber {
             
             
             <author>Gwenneg Lepage</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.9 - Big Reactive Rename</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-9-1-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It is with great pleasure that we are announcing the release of Quarkus 3.9.1.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This development cycle for this release was a bit longer than usual
-as it contains all the new features since we branched Quarkus 3.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus 3.9 is for developers who want the latest features,
-if you are looking for an extended support cycle, you are encouraged to stay on 3.8 LTS.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Here are the main changes for 3.9:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/39159&quot;&gt;#39159&lt;/a&gt; and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/39301&quot;&gt;#39301&lt;/a&gt; - Big Reactive Rename&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/39142&quot;&gt;#39142&lt;/a&gt; - Initial version of the new declarative WebSocket server API&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/34493&quot;&gt;#34493&lt;/a&gt; - Add CLI command for Config&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/39389&quot;&gt;#39389&lt;/a&gt; - Update to Infinispan 15&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37680&quot;&gt;#37680&lt;/a&gt; - Welcome page now dynamic&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38541&quot;&gt;#38541&lt;/a&gt; - Support OIDC Client JWT Bearer authentication&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38603&quot;&gt;#38603&lt;/a&gt; - Introduce &lt;code&gt;@ClientBasicAuth`&lt;/code&gt; annotation&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38608&quot;&gt;#38608&lt;/a&gt; - Allow TLS certificate reloading for the HTTP server&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/39206&quot;&gt;#39206&lt;/a&gt; - Improve graceful shutdown&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.9, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.9.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For more information about the adjustments you need to make to your applications, please refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.9&quot;&gt;Quarkus 3.9 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are not already using 3.x, please refer to the &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-0-final-released/&quot;&gt;3.0 announcement&lt;/a&gt; for all the details.
-You can also refer to &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-upgrade/&quot;&gt;this blog post&lt;/a&gt; for additional details.
-Once you upgraded to 3.0, also have a look at the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.1&quot;&gt;3.1&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.2&quot;&gt;3.2&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.3&quot;&gt;3.3&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.4&quot;&gt;3.4&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.5&quot;&gt;3.5&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.6&quot;&gt;3.6&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.7&quot;&gt;3.7&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.8&quot;&gt;3.8&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.9&quot;&gt;3.9&lt;/a&gt; migration guides.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;whats-new&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-new&quot;&gt;&lt;/a&gt;What&amp;#8217;s new?&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;the-big-reactive-rename&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-big-reactive-rename&quot;&gt;&lt;/a&gt;The Big Reactive Rename&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Max Andersen already presented this initiative in &lt;a href=&quot;https://quarkus.io/blog/the-big-rename/&quot;&gt;this blog post&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The idea behind this substantive change is to clarify which extensions are reactive only and which extensions are actually handling both blocking and reactive workloads equally well.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;That&amp;#8217;s why we renamed several extensions, and why RESTEasy Reactive is now branded as Quarkus REST and SmallRye Reactive Messaging as Messaging.
-Note that this change also concerns the related extension so there are quite a lot of changes.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We didn&amp;#8217;t do it lightly:
-the old names were generating a lot of confusion for our users.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The good news is that, in most cases, it should be transparent for you as we put relocations in place, both for artifacts and configuration properties.
-However we encourage you to move to the new names as soon as you can.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;When using &lt;code&gt;quarkus update&lt;/code&gt;, the update should be transparent for you.
-If you are not using &lt;code&gt;quarkus update&lt;/code&gt;, we recommend to follow the dedicated section of &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.9&quot;&gt;our migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We have a known issue for this change:
-if you are using &lt;code&gt;quarkus.resteasy-reactive.path&lt;/code&gt;/&lt;code&gt;quarkus.rest.path&lt;/code&gt;, you will get a warning saying the property is not recognized.
-Don&amp;#8217;t panic, it is actually recognized, the warning is a mistake.
-This problem will be solved in 3.9.2.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;One common issue you might have when updating manually can come from the fact that we reused the &lt;code&gt;quarkus-rest-client&lt;/code&gt; name for the Quarkus REST implementation,
-whereas in pre-3.7, it was used for the RESTEasy Classic implementation.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;A bit of history might help:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;In Quarkus 3.7, we renamed &lt;code&gt;quarkus-rest-client&lt;/code&gt;, based on the RESTEasy Classic to &lt;code&gt;quarkus-resteasy-client&lt;/code&gt; to make it consistent with &lt;code&gt;quarkus-resteasy&lt;/code&gt; and pave the way for our future changes. We put a relocation in place so that it wouldn&amp;#8217;t break your applications. You can refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.7#rest-client&quot;&gt;Quarkus 3.7 migration guide for more information&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;In Quarkus 3.9, we renamed &lt;code&gt;quarkus-rest-client-reactive&lt;/code&gt; to &lt;code&gt;quarkus-rest-client&lt;/code&gt; as part of our move to the Quarkus REST branding.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;So if your application can&amp;#8217;t start with an error saying there are duplicate implementations related to REST, just check that you are using consistently either the &lt;code&gt;quarkus-rest*&lt;/code&gt; extensions or the &lt;code&gt;quarkus-resteasy*&lt;/code&gt; extensions.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;welcome-page&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#welcome-page&quot;&gt;&lt;/a&gt;Welcome page&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The default welcome page you get when starting a Quarkus application in dev mode is now dynamic (and prettier!).&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;websocket-next&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#websocket-next&quot;&gt;&lt;/a&gt;WebSocket Next&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus 3.9 comes with a next generation WebSocket extension, called &lt;code&gt;quarkus-websockets-next&lt;/code&gt; (the name is temporary as you can imagine).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are using WebSockets in your applications, we recommend that you give it a try as it is the future of WebSockets support in Quarkus.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can find more information about it in the &lt;a href=&quot;https://quarkus.io/guides/websockets-next-tutorial&quot;&gt;tutorial&lt;/a&gt; and the &lt;a href=&quot;https://quarkus.io/guides/websockets-next-reference&quot;&gt;reference guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;cli-command-for-config&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#cli-command-for-config&quot;&gt;&lt;/a&gt;CLI command for config&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Commands were added to the Quarkus CLI to help managing configuration:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;code&gt;quarkus config set&lt;/code&gt; allows to update configuration properties&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;code&gt;quarkus config encrypt&lt;/code&gt; allows to encrypt values that you want to keep encrypted in your configuration files&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;security-enhancements&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#security-enhancements&quot;&gt;&lt;/a&gt;Security enhancements&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This new version comes with several improvements related to security:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38541&quot;&gt;#38541&lt;/a&gt; - Support OIDC Client JWT Bearer authentication&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38603&quot;&gt;#38603&lt;/a&gt; - Introduce &lt;code&gt;@ClientBasicAuth`&lt;/code&gt; annotation&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38608&quot;&gt;#38608&lt;/a&gt; - Allow TLS certificate reloading for the HTTP server (see the &lt;a href=&quot;https://quarkus.io/guides/http-reference#reloading-the-certificates&quot;&gt;documentation&lt;/a&gt; for more details)&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;infinispan-15&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#infinispan-15&quot;&gt;&lt;/a&gt;Infinispan 15&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We updated to the latest and greatest Infinispan 15.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You might have to apply some changes to your applications,
-so, if you are using the Infinispan extension, have a look at the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.9#update-to-infinispan-15&quot;&gt;dedicated section of the migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;graceful-shutdown&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#graceful-shutdown&quot;&gt;&lt;/a&gt;Graceful shutdown&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Some improvements were made to our graceful shutdown support.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.9.0.CR1&quot;&gt;3.9.0.CR1&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.9.0.CR2&quot;&gt;3.9.0.CR2&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.9.0&quot;&gt;3.9.0&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.9.1&quot;&gt;3.9.1&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;contributors&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#contributors&quot;&gt;&lt;/a&gt;Contributors&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The Quarkus community is growing and has now &lt;a href=&quot;https://github.com/quarkusio/quarkus/graphs/contributors&quot;&gt;925 contributors&lt;/a&gt;.
-Many many thanks to each and everyone of them.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In particular for the 3.9 release, thanks to Ales Justin, Alex Katlein, Alex Martel, Alexander Schwartz, Alexey Loubyansky, Andy Damevin, Anton-Vasilev, arvind-vignesh, Auri Munoz, avivmu, barreiro, Bas Passon, Benedikt Werner, Brahim Raddahi, Bruno Baptista, Bruno Leonardo, Chris Laprun, Christian Thiel, cknoblauch, Clement Escoffier, Daniel Bobbert, David M. Lloyd, Davide D&amp;#8217;Alto, Diego Ramp (u804103), Dimitris Kontokostas, dliubars, ennishol, Erin Schnabel, Falko Modler, fdlane, Foivos Zakkak, Francesco Nigro, Galder Zamarreño, Gasper Kojek, George Gastaldi, Georgios Andrianakis, glefloch, Gonçalo Montalvão Marques, Guillaume Smet, Hendrik Schmitz, Holly Cummins, humberto, Idryss Bourdier, Ioannis Canellos, Jakub Jedlicka, James Netherton, Jan Martiska, Jiří Locker, Julien Ponge, Katia Aresti, Ladislav Thon, Leandro Quiroga, Loïc Mathieu, Luke Morfill, luneo7, Maciej Lisowski, Marcel Stör, Marco Bungart, Marco Sappé Griot, Marek Skacelik, mariofusco, marko-bekhta, martin, Martin Kouba, Matej Novotny, Matheus Cruz, Max Rydahl Andersen, Michael Edgar, Michal Vavřík, Michiel Thomassen, nimo23, ObserverOfTime, Oliver Wiebeck, Ozan Gunalp, Paulo Casaes, Peter Palaga, Phillip Krüger, Pierre Adam, Robert Stupp, Roberto Cortez, Rolfe Dlugy-Hegwer, Romain BADINO, Rostislav Svoboda, Sanne Grinovero, Sebastian Schuster, Selim, Sergey Beryozkin, Severin Gehwolf, SpaceFox, Steve Hawkins, stianst, Stuart Douglas, Stéphane Épardaud, Sébastien ALLEMAND, The-Huginn, Thomas Darimont, troosan, ub003, Vitaliy Baschlykoff, w0pp, Waldemar Reusch, Wesley Salimans, Wladimir Hofmann, xstefank, Yassin Hajaj, Yoann Rodière, and Yoshikazu Nojima.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 27 Mar 2024 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-9-1-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
             
         </item>
         
