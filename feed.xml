@@ -5,7 +5,455 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Thu, 25 Apr 2024 03:03:30 +0000</lastBuildDate>
+        <lastBuildDate>Thu, 25 Apr 2024 11:26:58 +0000</lastBuildDate>
+        
+        <item>
+            <title>Indexing rollover with Quarkus and Hibernate Search</title>
+            <link>
+                https://quarkus.io/blog/search-indexing-rollover/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is the first post in the series diving into the implementation details of the
+&lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io&quot;&gt;application&lt;/a&gt; backing the guide search of
+&lt;a href=&quot;https://quarkus.io/guides/&quot;&gt;quarkus.io&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Does your application need full-text search capabilities? Do you need to keep your application running
+and producing search results without any downtime, even when reindexing all your data?
+Look no further. In this post, we&amp;#8217;ll cover how you can approach this problem
+and solve it in practice with a few low-level APIs, provided you use Hibernate Search,
+be it &lt;a href=&quot;https://quarkus.io/guides/hibernate-search-orm-elasticsearch&quot;&gt;on top of Hibernate ORM&lt;/a&gt;
+or &lt;a href=&quot;https://quarkus.io/version/main/guides/hibernate-search-standalone-elasticsearch&quot;&gt;in standalone mode&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The approach suggested in this post is based on the fact that Hibernate Search uses
+&lt;a href=&quot;https://docs.jboss.org/hibernate/search/7.0/reference/en-US/html_single/#backend-elasticsearch-indexlayout&quot;&gt;aliased indexes&lt;/a&gt;,
+and communicates with the actual index through a read/write alias, depending on the operation it needs to perform.
+For example, a search operation will be routed to a read index alias,
+while an indexing operation will be sent to a write index alias.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-indexing-rollover/initial-app.png&quot; alt=&quot;initial app&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+This approach is implemented and successfully used in our Quarkus application that backs the guides&apos;
+search of &lt;a href=&quot;https://quarkus.io/guides/&quot;&gt;quarkus.io/guides/&lt;/a&gt;.
+You can see the complete implementation here:
+&lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io/blob/d956b6a1341d8693fa1d6b7881f3840f48bdaacd/src/main/java/io/quarkus/search/app/indexing/Rollover.java#L44-L331&quot;&gt;rollover implementation&lt;/a&gt;
+and &lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io/blob/d956b6a1341d8693fa1d6b7881f3840f48bdaacd/src/main/java/io/quarkus/search/app/indexing/IndexingService.java#L226-L244&quot;&gt;rollover usage&lt;/a&gt;.
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Applications using Hibernate Search can keep their search indexes up-to-date by updating the index gradually,
+as the data on which the index documents are based is modified, providing a near real-time index synchronisation.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;On the other hand, if the search requirements allow for a delay in synchronisation
+or the data is updated only at certain times of day, the option of mass indexing can effectively keep the indexes up-to-date.
+The &lt;a href=&quot;https://docs.jboss.org/hibernate/search/7.0/reference/en-US/html_single/&quot;&gt;Hibernate Search documentation&lt;/a&gt; provides more information about these approaches
+and other Hibernate Search capabilities.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The application discussed in this post is using the mass indexing approach.
+This means that at certain events, e.g., when a new version of the application is deployed or a scheduled time is reached,
+the application has to process the documentation guides and create search index documents from them.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now, since we want our application to keep  providing results to any search requests while we add/update documents to the indexes,
+we cannot perform a simple reindexing operation
+using a &lt;a href=&quot;https://docs.jboss.org/hibernate/search/7.0/reference/en-US/html_single/#search-batchindex-massindexer&quot;&gt;mass indexer&lt;/a&gt;,
+or the recently added &lt;a href=&quot;https://quarkus.io/guides/hibernate-search-orm-elasticsearch#management&quot;&gt;management endpoint in Quarkus&lt;/a&gt;,
+as these would drop all existing documents from the index before indexing them:
+search operations would not be able to match them anymore until reindexing finishes.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Instead, we can create a new index with the same schema and route any write operations to it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-indexing-rollover/write-app.png&quot; alt=&quot;write app&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Since Hibernate Search does not provide the rollover feature out of the box (&lt;a href=&quot;https://hibernate.atlassian.net/browse/HSEARCH-3499&quot;&gt;yet&lt;/a&gt;)
+we will need to resort to using the lower-level APIs to access the Elasticsearch client and perform the required operations ourselves.
+To do so, we need to follow a few simple steps:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Get the mapping information for the index we want to reindex using the schema manager.&lt;/p&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Inject
+SearchMapping searchMapping; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+// ...
+
+searchMapping.scope(MyIndexedEntity.class).schemaManager() &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    .exportExpectedSchema((backendName, indexName, export) -&amp;gt; { &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+        var createIndexRequestBody = export.extension(ElasticsearchExtension.get())
+                .bodyParts().get(0); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+        var mappings = createIndexRequestBody.getAsJsonObject(&quot;mappings&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+        var settings =createIndexRequestBody.getAsJsonObject(&quot;settings&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;(6)&lt;/b&gt;
+    });&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Inject &lt;code&gt;SearchMapping&lt;/code&gt; somewhere in your app so that we can use it to access a schema manager.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get a schema manager for the indexed entity we are interested in (&lt;code&gt;MyIndexedEntity&lt;/code&gt;).
+If all entities should be targeted, then &lt;code&gt;Object.class&lt;/code&gt; can be used to create the scope.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Use the export schema API to access the mapping information.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Use the extension to get access to the Elasticsearch-specific &lt;code&gt;.bodyParts()&lt;/code&gt; method that returns
+a JSON representing the JSON HTTP body needed to create the indexes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get the mapping information for the particular index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get the settings for the particular index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get the reference to the Elasticsearch client, so we can perform API calls to the search backend cluster:&lt;/p&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Inject
+SearchMapping searchMapping; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+// ...
+RestClient client = searchMapping.backend() &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    .unwrap(ElasticsearchBackend.class) &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+    .client(RestClient.class); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Inject &lt;code&gt;SearchMapping&lt;/code&gt; somewhere in your app so that we can use it to access a schema manager.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Access the backend from a search mapping instance.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Unwrap the backend to the &lt;code&gt;ElasticsearchBackend&lt;/code&gt;, so that we can access backend-specific APIs.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get a reference to the Elasticsearch&amp;#8217;s rest client.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Create a new index using the OpenSearch/Elasticsearch rollover API
+that would allow us to keep using the existing index for read operations,
+while write operations will be sent to the new index:&lt;/p&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Inject
+SearchMapping searchMapping; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+// ...
+
+SearchIndexedEntity&amp;lt;?&amp;gt; entity = searchMapping.indexedEntity(MyIndexedEntity.class);
+var index = entity.indexManager().unwrap(ElasticsearchIndexManager.class).descriptor(); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+
+var request = new Request(&quot;POST&quot;, &quot;/&quot; + index.writeName() + &quot;/_rollover&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+var body = new JsonObject();
+body.add(&quot;mappings&quot;, mappings);
+body.add(&quot;settings&quot;, settings);
+body.add(&quot;aliases&quot;, new JsonObject()); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+request.setEntity(new StringEntity(gson.toJson(body), ContentType.APPLICATION_JSON));
+
+var response = client.performRequest(request); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+//...&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Inject &lt;code&gt;SearchMapping&lt;/code&gt; somewhere in your app so that we can use it to access a schema manager.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Get the index descriptor to get the aliases from it.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Start building the rollover request body using the write index alias from the index descriptor.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Note that we are including an empty &quot;aliases&quot; so that the aliases are not copied over to the new index,
+except for the write alias (which is implicitly updated since the rollover request is targeting it directly).
+We don&amp;#8217;t want the read alias to start pointing to the new index immediately.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Perform the rollover API request using the Elasticsearch REST client obtained in the previous step.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With this successfully completed, indexes are in the state we wanted:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-indexing-rollover/write-app.png&quot; alt=&quot;write app&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We can start populating our write index without affecting search requests.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once we are done with indexing, we can either commit or rollback depending on the results:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-indexing-rollover/after-indexing.png&quot; alt=&quot;after indexing&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Committing the index rollover means that we are happy with the results and ready to switch to the new index
+for both reading and writing operations while removing the old one. To do that, we need to send a request to the cluster:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;var client = ... &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+var request = new Request(&quot;POST&quot;, &quot;_aliases&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+request.setEntity(new StringEntity(&quot;&quot;&quot;
+        {
+            &quot;actions&quot;: [
+                {
+                    &quot;add&quot;: {  &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+                        &quot;index&quot;: &quot;%s&quot;,
+                        &quot;alias&quot;: &quot;%s&quot;,
+                        &quot;is_write_index&quot;: false
+                    },
+                    &quot;remove_index&quot;: {  &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+                        &quot;index&quot;: &quot;%s&quot;
+                    }
+                }
+            ]
+        }
+        &quot;&quot;&quot;.formatted( newIndexName, readAliasName, oldIndexName ) &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+    , ContentType.APPLICATION_JSON));
+
+var response = client.performRequest(request); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+//...&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Get access to the Elasticsearch REST client as described above.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Start creating an &lt;code&gt;_aliases&lt;/code&gt; API request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Add an action to update the index aliases to use the new index for both read and write operations.
+Here, we must make the read alias point to the new index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Add an action to remove the old index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The names of the new/old index can be retrieved from the response of the initial &lt;code&gt;_rollover&lt;/code&gt; API request,
+while the aliases can be retrieved from the index descriptor.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Otherwise, if we have encountered an error or decided for any other reason to stop the rollover, we can roll back to using
+the initial index:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;var client = ... &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+var request = new Request(&quot;POST&quot;, &quot;_aliases&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+request.setEntity(new StringEntity(&quot;&quot;&quot;
+        {
+            &quot;actions&quot;: [
+                {
+                    &quot;add&quot;: {  &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+                        &quot;index&quot;: &quot;%s&quot;,
+                        &quot;alias&quot;: &quot;%s&quot;,
+                        &quot;is_write_index&quot;: true
+                    },
+                    &quot;remove_index&quot;: {  &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+                        &quot;index&quot;: &quot;%s&quot;
+                    }
+                }
+            ]
+        }
+        &quot;&quot;&quot;.formatted( oldIndexName, writeAliasName, newIndexName ) &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+    , ContentType.APPLICATION_JSON));
+
+var response = client.performRequest(request); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+//...&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Get access to the Elasticsearch REST client as described above.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Start creating an &lt;code&gt;_aliases&lt;/code&gt; API request.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Add an action to update the index aliases to use the old index for both read and write operations.
+Here, we must make the write alias point back to the old index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Add an action to remove the new index.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The names of the new/old index can be retrieved from the response of the initial &lt;code&gt;_rollover&lt;/code&gt; API request,
+while the aliases can be retrieved from the index descriptor.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+Keep in mind that in case of a rollback, your initial index may be out of sync if any write operations were performed
+while the write alias was pointing to the new index.
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With this knowledge, we can organize the rollover process as follows:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;try (Rollover rollover = Rollover.start(searchMapping)) {
+    // Perform the indexing operations ...
+    rollover.commit();
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Where the &lt;code&gt;Rollover&lt;/code&gt; class will look as follows:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;class Rollover implements Closeable {
+    public static Rollover start(SearchMapping searchMapping) {
+        // initiate the rollover process by sending the _rollover request ...
+        // ...
+        return new Rollover( client, rolloverResponse );  &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    }
+
+    @Override
+    public void close() {
+        if ( !done ) { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+            rollback();
+        }
+    }
+
+    public void commit() {
+        // send the `_aliases` request to switch to the *new* index
+        // ...
+        done = true;
+    }
+
+    public void rollback() {
+        // send the `_aliases` request to switch to the *old* index
+        // ...
+        done = true;
+    }
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Keep the reference to the Elasticsearch REST client to perform API calls.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;If we haven&amp;#8217;t successfully committed the rollover, it&amp;#8217;ll be rolled back on close.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once again, for a complete working example of this rollover implementation, check out the
+&lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io&quot;&gt;search.quarkus.io on GitHub&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you find this feature useful and would like to have it built-in into your Hibernate Search and Quarkus apps
+feel free to reach out to us on the &lt;a href=&quot;https://hibernate.atlassian.net/browse/HSEARCH-3499&quot;&gt;pending feature requests&lt;/a&gt;
+to discuss your ideas and suggestions.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Stay tuned for more details in the coming weeks as we publish more blog posts
+diving into other interesting implementation aspects of this application.
+Happy searching and rolling over!&lt;/p&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Thu, 25 Apr 2024 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/search-indexing-rollover/
+            </guid>
+            
+            
+            
+            <author>Marko Bekhta (https://twitter.com/that_java_guy)</author>
+            
+        </item>
         
         <item>
             <title>Obtaining heap dump on OutOfMemoryError with Quarkus native</title>
@@ -1195,753 +1643,6 @@ Once you upgraded to 3.0, also have a look at the &lt;a href=&quot;https://githu
             
             
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>Changing the Quarkus loggers level from Unleash</title>
-            <link>
-                https://quarkus.io/blog/changing-loggers-level-from-unleash/
-            </link>
-            <description>
-                &lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;introduction&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#introduction&quot;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;I&amp;#8217;m part of a Red Hat team that is responsible for a dozen of Quarkus apps which run in Red Hat OpenShift, with multiple pods each.
-While these apps all have different purposes, they also share a common fate: something will go wrong eventually.
-When it does, we&amp;#8217;ll need to understand and fix the problem as fast as possible.
-Lowering the level of a logger is often helpful, but our apps are containerized and updating an environment variable to change the logger level isn&amp;#8217;t always as easy at it sounds.
-We also don&amp;#8217;t want to expose REST endpoints in most of our apps, so extensions such as &lt;a href=&quot;https://github.com/quarkiverse/quarkus-logging-manager&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-logging-manager&lt;/a&gt; are not an option.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Our apps have another thing in common: they depend on &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-unleash/dev/index.html&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-unleash&lt;/a&gt; because we&amp;#8217;re fetching our feature toggles from &lt;a href=&quot;https://www.getunleash.io/&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Unleash&lt;/a&gt;.
-When I read &lt;a href=&quot;https://medium.com/safe-engineering/how-unleash-enhanced-our-troubleshooting-experience-by-100x-e0c82b6df825&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Zero downtime log level changes using Unleash&lt;/a&gt; from Aman Jain, it made me want to try the same thing with Quarkus.
-I&amp;#8217;ll show you below how I successfully did that.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;admonitionblock note&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td class=&quot;icon&quot;&gt;
-&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
-&lt;/td&gt;
-&lt;td class=&quot;content&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This blog post contains incremental code snippets.
-Each one of them is an enhanced version of the previous one and addresses a specific technical challenge.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;changing-a-logger-level-programmatically&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#changing-a-logger-level-programmatically&quot;&gt;&lt;/a&gt;Changing a logger level programmatically&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Let&amp;#8217;s start with the obvious requirement: how to change the level of a logger programmatically with Quarkus.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;admonitionblock note&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td class=&quot;icon&quot;&gt;
-&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
-&lt;/td&gt;
-&lt;td class=&quot;content&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As described in the &lt;a href=&quot;https://quarkus.io/guides/logging&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Logging configuration guide&lt;/a&gt;, Quarkus supports multiple logging APIs.
-I only tested the following code with the JBoss Logging API as well as the &lt;code&gt;io.quarkus.logging.Log&lt;/code&gt; API.
-I can&amp;#8217;t guarantee that everything will work out of the box with other logging APIs.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The JBoss Logging API doesn&amp;#8217;t offer a way to change the level of a logger programmatically, so we need the help of the &lt;code&gt;java.util.logging&lt;/code&gt; API to do it:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;import java.util.logging.Level; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-import java.util.logging.Logger; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-
-public class LogLevelManager {
-
-    public void setLoggerLevel(String loggerName, String levelName) {
-        Logger logger = Logger.getLogger(loggerName); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
-        Level level = Level.parse(levelName); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
-        logger.setLevel(level);
-    }
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;Make sure you&amp;#8217;re importing classes from the &lt;code&gt;java.util.logging&lt;/code&gt; package.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;Any category as described in the &lt;a href=&quot;https://quarkus.io/guides/logging#logging-categories&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Logging configuration guide&lt;/a&gt; will work as the logger name.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;&lt;code&gt;Level#parse&lt;/code&gt; will throw exceptions if the level name is not valid. Please handle them carefully.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;setting-a-logger-level-from-unleash&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#setting-a-logger-level-from-unleash&quot;&gt;&lt;/a&gt;Setting a logger level from Unleash&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;So, we&amp;#8217;re able to set a logger level programmatically.
-Now, how do we feed the &lt;code&gt;LogLevelManager#setLoggerLevel&lt;/code&gt; method with data from Unleash?&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;unleash-variants-to-the-rescue&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#unleash-variants-to-the-rescue&quot;&gt;&lt;/a&gt;Unleash variants to the rescue&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In Unleash, the feature toggles can be associated with &lt;a href=&quot;https://docs.getunleash.io/reference/feature-toggle-variants&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;variants&lt;/a&gt; which are meant to facilitate A/B testing and experimentation.
-Each variant is defined with a set of properties, including the optional &lt;code&gt;payload&lt;/code&gt; that can be used to pass JSON data from Unleash to our Quarkus app.
-That&amp;#8217;s how we&amp;#8217;ll set the level of our Quarkus app loggers:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;imageblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;img src=&quot;/assets/images/posts/changing-loggers-level-from-unleash/payload.png&quot; alt=&quot;Unleash variant payload&quot;&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;retrieving-the-variant-payload&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#retrieving-the-variant-payload&quot;&gt;&lt;/a&gt;Retrieving the variant payload&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Now, let&amp;#8217;s see how we&amp;#8217;ll retrieve from the Quarkus app the variant payload defined in Unleash.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;imageblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;img src=&quot;/assets/images/posts/changing-loggers-level-from-unleash/connecting.png&quot; alt=&quot;Connecting Quarkus to Unleash&quot;&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;First, the Quarkus app needs to depend on the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-unleash/dev/index.html&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-unleash&lt;/a&gt; extension.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We&amp;#8217;ll also use a very simple data structure to deserialize the payload with Jackson:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;public class LogConfig {
-    public String category;
-    public String level;
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Then, here&amp;#8217;s an update of the &lt;code&gt;LogLevelManager&lt;/code&gt; class to make it get the variant from Unleash, deserialize the payload and change the level of a series of loggers:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.getunleash.Unleash;
-import io.getunleash.Variant;
-import io.getunleash.variant.Payload;
-import io.quarkus.logging.Log;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-
-import java.util.Optional;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-@ApplicationScoped &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-public class LogLevelManager {
-
-    private static final String UNLEASH_TOGGLE_NAME = &quot;my-app.log-levels&quot;;
-
-    @Inject
-    Unleash unleash; &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
-
-    @Inject
-    ObjectMapper objectMapper;
-
-    public void updateLoggersLevel() {
-        for (LogConfig logConfig : getLogConfigs()) {
-            try {
-                setLoggerLevel(logConfig.category, logConfig.level);
-            } catch (Exception e) {
-                Log.error(&quot;Could not the set level of a logger&quot;, e);
-            }
-        }
-    }
-
-    private LogConfig[] getLogConfigs() {
-        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
-        if (variant.isEnabled()) { &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
-            Optional&amp;lt;Payload&amp;gt; payload = variant.getPayload();
-            if (payload.isPresent() &amp;amp;&amp;amp; payload.get().getType().equals(&quot;json&quot;) &amp;amp;&amp;amp; payload.get().getValue() != null) {
-                try {
-                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
-                } catch (JsonProcessingException e) {
-                    Log.error(&quot;Variant payload deserialization failed&quot;, e);
-                }
-            }
-        }
-        return new LogConfig[0]; &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
-    }
-
-    private void setLoggerLevel(String loggerName, String levelName) {
-        Logger logger = Logger.getLogger(loggerName);
-        Level currentLevel = logger.getLevel();
-        Level newLevel = Level.parse(levelName);
-        if (!newLevel.equals(currentLevel)) {
-            logger.setLevel(newLevel);
-        }
-    }
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;From now on, &lt;code&gt;LogLevelManager&lt;/code&gt; is an &lt;code&gt;@ApplicationScoped&lt;/code&gt; bean.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;&lt;code&gt;Unleash&lt;/code&gt; is an &lt;code&gt;@ApplicationScoped&lt;/code&gt; bean produced by the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-unleash/dev/index.html&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-unleash&lt;/a&gt; extension.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;Be careful about the argument passed to &lt;code&gt;Unleash#getVariant&lt;/code&gt;: it has to be the toggle name, not the variant name.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;&lt;code&gt;variant.isEnabled()&lt;/code&gt; will return &lt;code&gt;false&lt;/code&gt; if the toggle is disabled in Unleash or if the toggle has no variants.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;5&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;If the method is unable to find a variant payload or if it fails to deserialize that payload for any reasons, an empty &lt;code&gt;LogConfig&lt;/code&gt; array will be returned.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We can now retrieve the loggers configuration from Unleash, that&amp;#8217;s great!
-But that new &lt;code&gt;LogLevelManager#updateLoggerslevel&lt;/code&gt; method isn&amp;#8217;t used yet.
-Where should it be used from, and when?&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;imageblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;img src=&quot;/assets/images/posts/changing-loggers-level-from-unleash/triggering.png&quot; alt=&quot;Triggering the loggers level update&quot;&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We need that method to be executed as soon as the loggers configuration is changed in Unleash.
-So, its execution has to be periodically scheduled somehow.
-We could make the method &lt;code&gt;@Scheduled&lt;/code&gt; with the &lt;a href=&quot;https://quarkus.io/guides/scheduler-reference&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-scheduler&lt;/a&gt; extension, but there is a better approach thanks to the Unleash SDK.
-Let&amp;#8217;s jump to the next section.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;the-subscriber-api-from-unleash&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-subscriber-api-from-unleash&quot;&gt;&lt;/a&gt;The Subscriber API from Unleash&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The Unleash Client SDK for Java comes with a feature that will be very helpful here: the &lt;a href=&quot;https://docs.getunleash.io/reference/sdks/java#subscriber-api&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;Subscriber API&lt;/a&gt;.
-The &lt;a href=&quot;https://github.com/Unleash/unleash-client-java/blob/main/src/main/java/io/getunleash/event/UnleashSubscriber.java&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;UnleashSubscriber&lt;/a&gt; interface can indeed be implemented to subscribe to various Unleash events, including &lt;code&gt;FeatureToggleResponse&lt;/code&gt; which is emitted when the Unleash client fetches toggles from the server.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Using the Subscriber API with the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-unleash/dev/index.html&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;&gt;quarkus-unleash&lt;/a&gt; extension is extremely simple.
-&lt;code&gt;UnleashSubscriber&lt;/code&gt; needs to be implemented in a CDI bean and that&amp;#8217;s it!
-The extension will pass the bean to the Unleash client builder automatically.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.getunleash.Unleash;
-import io.getunleash.Variant;
-import io.getunleash.event.UnleashSubscriber;
-import io.getunleash.repository.FeatureToggleResponse;
-import io.getunleash.variant.Payload;
-import io.quarkus.logging.Log;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-
-import java.util.Optional;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
-
-@ApplicationScoped
-public class LogLevelManager implements UnleashSubscriber { &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-
-    private static final String UNLEASH_TOGGLE_NAME = &quot;my-app.log-levels&quot;;
-
-    @Inject
-    Unleash unleash;
-
-    @Inject
-    ObjectMapper objectMapper;
-
-    @Override
-    public void togglesFetched(FeatureToggleResponse toggleResponse) { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
-        if (toggleResponse.getStatus() == CHANGED) { &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
-            updateLoggersLevel();
-        }
-    }
-
-    // Unchanged, except for the access modifier.
-    private void updateLoggersLevel() {
-        for (LogConfig logConfig : getLogConfigs()) {
-            try {
-                setLoggerLevel(logConfig.category, logConfig.level);
-            } catch (Exception e) {
-                Log.error(&quot;Could not the set level of a logger&quot;, e);
-            }
-        }
-    }
-
-    // Unchanged.
-    private LogConfig[] getLogConfigs() {
-        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
-        if (variant.isEnabled()) {
-            Optional&amp;lt;Payload&amp;gt; payload = variant.getPayload();
-            if (payload.isPresent() &amp;amp;&amp;amp; payload.get().getType().equals(&quot;json&quot;) &amp;amp;&amp;amp; payload.get().getValue() != null) {
-                try {
-                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
-                } catch (JsonProcessingException e) {
-                    Log.error(&quot;Variant payload deserialization failed&quot;, e);
-                }
-            }
-        }
-        return new LogConfig[0];
-    }
-
-    // Unchanged.
-    private void setLoggerLevel(String loggerName, String levelName) {
-        Logger logger = Logger.getLogger(loggerName);
-        Level currentLevel = logger.getLevel();
-        Level newLevel = Level.parse(levelName);
-        if (!newLevel.equals(currentLevel)) {
-            logger.setLevel(newLevel);
-        }
-    }
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;We&amp;#8217;re still using the same &lt;code&gt;LogLevelManager&lt;/code&gt; class, but now it&amp;#8217;s implementing &lt;code&gt;UnleashSubscriber&lt;/code&gt;.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;This method is invoked every time the Unleash client fetches toggles from the server.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;We&amp;#8217;ll update the loggers level only if the toggles changed server-side.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Okay, the &lt;code&gt;LogLevelManager#updateLoggerslevel&lt;/code&gt; method is now automatically invoked whenever the client fetches new data from the server.
-But what about scheduling that periodically?
-Well, the Unleash client already relies on an internal scheduled executor to fetch the toggles.
-Therefore, we don&amp;#8217;t need to bother scheduling anything in our app.
-It will work automagically!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;imageblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;img src=&quot;/assets/images/posts/changing-loggers-level-from-unleash/automagically.png&quot; alt=&quot;LogLevelManager with UnleashSubscriber&quot;&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;one-variant-to-rule-them-all&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#one-variant-to-rule-them-all&quot;&gt;&lt;/a&gt;One variant to rule them all&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;At the beginning of this post, I mentioned that my team is responsible for a dozen of Quarkus apps.
-Each app runs with a varying number of replicas.
-Let&amp;#8217;s simplify and consider all of them as hosts.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We have dozens of hosts and yet only one Unleash variant to manage the loggers level for all of them.
-Here&amp;#8217;s how I implemented that.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;First, the data structure of the variant payload needs a small addition:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;public class LogConfig {
-    public String hostName; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-    public String category;
-    public String level;
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;That&amp;#8217;s new!&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Now, we can introduce a host filtering capability in &lt;code&gt;LogLevelManager&lt;/code&gt;:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.getunleash.Unleash;
-import io.getunleash.Variant;
-import io.getunleash.event.UnleashSubscriber;
-import io.getunleash.repository.FeatureToggleResponse;
-import io.getunleash.variant.Payload;
-import io.quarkus.logging.Log;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-
-import java.util.Optional;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
-
-@ApplicationScoped
-public class LogLevelManager implements UnleashSubscriber {
-
-    private static final String UNLEASH_TOGGLE_NAME = &quot;my-app.log-levels&quot;;
-
-    @ConfigProperty(name = &quot;host-name&quot;, defaultValue = &quot;localhost&quot;) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-    String hostName;
-
-    @Inject
-    Unleash unleash;
-
-    @Inject
-    ObjectMapper objectMapper;
-
-    // Unchanged.
-    @Override
-    public void togglesFetched(FeatureToggleResponse toggleResponse) {
-        if (toggleResponse.getStatus() == CHANGED) {
-            updateLoggersLevel();
-        }
-    }
-
-    private void updateLoggersLevel() {
-        for (LogConfig logConfig : getLogConfigs()) {
-            try {
-                if (shouldThisHostBeUpdated(logConfig)) { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
-                    setLoggerLevel(logConfig.category, logConfig.level);
-                }
-            } catch (Exception e) {
-                Log.error(&quot;Could not the set level of a logger&quot;, e);
-            }
-        }
-    }
-
-    // Unchanged.
-    private LogConfig[] getLogConfigs() {
-        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
-        if (variant.isEnabled()) {
-            Optional&amp;lt;Payload&amp;gt; payload = variant.getPayload();
-            if (payload.isPresent() &amp;amp;&amp;amp; payload.get().getType().equals(&quot;json&quot;) &amp;amp;&amp;amp; payload.get().getValue() != null) {
-                try {
-                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
-                } catch (JsonProcessingException e) {
-                    Log.error(&quot;Variant payload deserialization failed&quot;, e);
-                }
-            }
-        }
-        return new LogConfig[0];
-    }
-
-    private boolean shouldThisHostBeUpdated(LogConfig logConfig) {
-        if (logConfig.hostName == null) {
-            return true;
-        }
-        if (logConfig.hostName.endsWith(&quot;*&quot;)) { &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
-            return hostName.startsWith(logConfig.hostName.substring(0, logConfig.hostName.length() - 1));
-        } else {
-            return hostName.equals(logConfig.hostName);
-        }
-    }
-
-    // Unchanged.
-    private void setLoggerLevel(String loggerName, String levelName) {
-        Logger logger = Logger.getLogger(loggerName);
-        Level currentLevel = logger.getLevel();
-        Level newLevel = Level.parse(levelName);
-        if (!newLevel.equals(currentLevel)) {
-            logger.setLevel(newLevel);
-        }
-    }
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;In OpenShift, we&amp;#8217;re passing the generated pod name through the &lt;code&gt;HOST_NAME&lt;/code&gt; environment variable.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;That&amp;#8217;s new!&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;This block is used to filter hosts based on a host name prefix. That&amp;#8217;s enough for our use case, but a regular expression could be used for finer filtering.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Here&amp;#8217;s how the variant payload may look like after these changes:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-json hljs&quot; data-lang=&quot;json&quot;&gt;[
-  {
-    &quot;hostName&quot;: &quot;unstable-service-7dbbcb4cc-9d9hl&quot;,
-    &quot;category&quot;: &quot;io.quarkus.arc&quot;,
-    &quot;level&quot;: &quot;FINE&quot;
-  },
-  {
-    &quot;hostName&quot;: &quot;awesome-app*&quot;,
-    &quot;category&quot;: &quot;org.acme.SomeService&quot;,
-    &quot;level&quot;: &quot;WARNING&quot;
-  },
-  {
-    &quot;category&quot;: &quot;org.apache.kafka.clients&quot;,
-    &quot;level&quot;: &quot;FINER&quot;
-  }
-]&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In that payload:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;the first entry will affect a specific host: &lt;code&gt;unstable-service-7dbbcb4cc-9d9hl&lt;/code&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;the second entry will affect all hosts whose name starts with &lt;code&gt;awesome-app&lt;/code&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;the third entry will affect all hosts regardless of their names&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;reverting-changes-automatically&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#reverting-changes-automatically&quot;&gt;&lt;/a&gt;Reverting changes automatically&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Changing the level of loggers through an Unleash variant should be a temporary action, mostly for troubleshooting purposes.
-This means we need to revert the level of the loggers eventually when the troubleshooting is over.
-Doing so by hand would be painful, so let&amp;#8217;s see how we can automate that.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.getunleash.Unleash;
-import io.getunleash.Variant;
-import io.getunleash.event.UnleashSubscriber;
-import io.getunleash.repository.FeatureToggleResponse;
-import io.getunleash.variant.Payload;
-import io.quarkus.logging.Log;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import static io.getunleash.repository.FeatureToggleResponse.Status.CHANGED;
-import static java.util.stream.Collectors.toSet;
-
-@ApplicationScoped
-public class LogLevelManager implements UnleashSubscriber {
-
-    private static final String UNLEASH_TOGGLE_NAME = &quot;my-app.log-levels&quot;;
-
-    @ConfigProperty(name = &quot;host-name&quot;, defaultValue = &quot;localhost&quot;)
-    String hostName;
-
-    @Inject
-    Unleash unleash;
-
-    @Inject
-    ObjectMapper objectMapper;
-
-    private final Map&amp;lt;String, Level&amp;gt; originalLoggerLevels = new ConcurrentHashMap&amp;lt;&amp;gt;();
-
-    // Unchanged.
-    @Override
-    public void togglesFetched(FeatureToggleResponse toggleResponse) {
-        if (toggleResponse.getStatus() == CHANGED) {
-            updateLoggersLevel();
-        }
-    }
-
-    public void updateLoggersLevel() {
-        LogConfig[] logConfigs = getLogConfigs();
-        for (LogConfig logConfig : logConfigs) {
-            try {
-                if (shouldThisHostBeUpdated(logConfig)) {
-                    setLoggerLevel(logConfig.category, logConfig.level);
-                }
-            } catch (Exception e) {
-                Log.error(&quot;Could not the set level of a logger&quot;, e);
-            }
-        }
-        revertLoggersLevel(logConfigs); &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
-    }
-
-    // Unchanged.
-    private LogConfig[] getLogConfigs() {
-        Variant variant = unleash.getVariant(UNLEASH_TOGGLE_NAME);
-        if (variant.isEnabled()) {
-            Optional&amp;lt;Payload&amp;gt; payload = variant.getPayload();
-            if (payload.isPresent() &amp;amp;&amp;amp; payload.get().getType().equals(&quot;json&quot;) &amp;amp;&amp;amp; payload.get().getValue() != null) {
-                try {
-                    return objectMapper.readValue(payload.get().getValue(), LogConfig[].class);
-                } catch (JsonProcessingException e) {
-                    Log.error(&quot;Variant payload deserialization failed&quot;, e);
-                }
-            }
-        }
-        return new LogConfig[0];
-    }
-
-    // Unchanged.
-    private boolean shouldThisHostBeUpdated(LogConfig logConfig) {
-        if (logConfig.hostName == null) {
-            return true;
-        }
-        if (logConfig.hostName.endsWith(&quot;*&quot;)) {
-            return hostName.startsWith(logConfig.hostName.substring(0, logConfig.hostName.length() - 1));
-        } else {
-            return hostName.equals(logConfig.hostName);
-        }
-    }
-
-    private void setLoggerLevel(String loggerName, String levelName) {
-        Logger logger = Logger.getLogger(loggerName);
-        Level currentLevel = logger.getLevel();
-        Level newLevel = Level.parse(levelName);
-        if (!newLevel.equals(currentLevel)) {
-            originalLoggerLevels.putIfAbsent(loggerName, currentLevel); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
-            logger.setLevel(newLevel);
-        }
-    }
-
-    private void revertLoggersLevel(LogConfig[] logConfigs) {
-        if (logConfigs.length == 0) {
-            originalLoggerLevels.forEach(this::revertLoggerLevel);
-            originalLoggerLevels.clear();
-        } else {
-            Set&amp;lt;String&amp;gt; knownLoggers = Arrays.stream(logConfigs)
-                    .filter(this::shouldThisHostBeUpdated)
-                    .map(logConfig -&amp;gt; logConfig.category)
-                    .collect(toSet());
-            originalLoggerLevels.entrySet().removeIf(entry -&amp;gt; {
-                boolean remove = !knownLoggers.contains(entry.getKey());
-                if (remove) {
-                    revertLoggerLevel(entry.getKey(), entry.getValue()); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
-                }
-                return remove;
-            });
-        }
-    }
-
-    private void revertLoggerLevel(String loggerName, Level originalLevel) {
-        Logger logger = Logger.getLogger(loggerName);
-        logger.setLevel(originalLevel); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
-    }
-}&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;colist arabic&quot;&gt;
-&lt;table&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;That&amp;#8217;s new!&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;The original logger level is now stored in memory and will be used when the changes are eventually reverted.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;If the level of a logger was previously modified from Unleash and that logger is no longer part of the latest Unleash variant payload, its level will be reverted to the original value.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
-&lt;td&gt;If the original level is &lt;code&gt;null&lt;/code&gt;, then the logger will inherit the level from its parent logger.&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The &lt;code&gt;LogLevelManager&lt;/code&gt; class is still far from perfect, but it finally meets the requirements of this blog post:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;it changes the level of Quarkus loggers automatically and immediately, based on a variant payload from Unleash&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;it automatically reverts all changes to the previous loggers configuration when needed&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Thanks for reading this post! I hope it will help you troubleshoot your applications faster.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;special-thanks&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#special-thanks&quot;&gt;&lt;/a&gt;Special thanks&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Thanks to Mikel Alejo Barcina for helping me fix a bug in the code above!&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 03 Apr 2024 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/changing-loggers-level-from-unleash/
-            </guid>
-            
-            
-            
-            <author>Gwenneg Lepage</author>
             
         </item>
         
