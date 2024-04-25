@@ -1,0 +1,265 @@
+---
+layout: post
+title: 'Obtaining heap dump on OutOfMemoryError with Quarkus native'
+date: 2024-04-23
+tags: native
+synopsis: 'Generating and inspecting heap dumps in Quarkus native when `OutOfMemoryError` errors occur'
+author: galderz
+---
+
+Starting with GraalVM for JDK 21,
+native executables can run with the `-XX:+HeapDumpOnOutOfMemoryError` option to generate a heap dump when a `java.lang.OutOfMemoryError` is thrown.
+In this blog post we will explore how to use the flag,
+we will inspect what a GraalVM Native Image heap dump looks like and how it compares with one produced by HotSpot.
+
+Note: The heap of GraalVM Native Image executables has both read-only and read-write segments.
+The read-only part is referred to as the "image heap" and contains the data pre-initialized during the image build to help speed up start-up time.
+The read-write part is where allocations at runtime are made.
+Therefore, heap dumps generated at runtime will contain content from both the "image heap" and the read-write heap.
+
+To see this flag in action, we need to manufacture a situation where a Quarkus application runs out of memory.
+One easy way to achieve this is to configure the application with a garbage collector that doesn't do any memory reclamation,
+i.e. the Epsilon GC.
+Once the Quarkus application is running with Epsilon GC,
+apply some load and within a short space of time it will run out of memory and produce a heap dump.
+
+Let’s do this using a Quarkus application that simply responds to an HTTP endpoint request as a starting point.
+The sample application can be downloaded from
+https://code.quarkus.io[code.quarkus.io] using a browser
+or via the command line:
+
+[source,bash]
+----
+$ wget "https://code.quarkus.io/d?S=io.quarkus.platform%3A3.8&cn=code.quarkus.io" -O code.zip
+$ unzip code.zip
+$ cd code-with-quarkus
+----
+
+Next, build a Quarkus native executable with GraalVM for JDK 21 configuring it to use Epsilon GC:
+
+[source,bash]
+----
+$ ./mvnw package -DskipTests -Dnative -Dquarkus.native.additional-build-args=--gc=epsilon
+----
+
+Note: The GC selection needs to be done at build time for Quarkus native applications.
+
+While the Quarkus native executable is being produced you will be able to observe that GC is indeed configured to be EpsilonGC:
+
+[source,bash]
+----
+[INFO] --- quarkus-maven-plugin:3.9.3:build (default) @ getting-started-reactive ---
+...
+[1/8] Initializing...
+ Java version: 21.0.2+13, vendor version: GraalVM CE 21.0.2+13.1
+ Graal compiler: optimization level: 2, target machine: compatibility
+ C compiler: gcc (redhat, x86_64, 13.2.1)
+ Garbage collector: Epsilon GC (max heap size: 80% of RAM)
+----
+
+Once the build completes,
+start Quarkus with `-XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError`.
+The latter forces the application to shutdown when an `OutOfMemoryError` occurs rather than leave the process in an indeterminate state:
+
+[source,bash]
+----
+$ getting-started-reactive-1.0.0-SNAPSHOT-runner -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -Xmx64m
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT native (powered by Quarkus 3.9.3) started in 0.030s. Listening on: http://0.0.0.0:8080
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+----
+
+Next, apply some load to the HTTP endpoint exposed by the Quarkus application, for example using `curl` in a bash loop:
+
+[source,bash]
+----
+$ while true; do curl http://localhost:8080/hello; done
+----
+
+Switching to the Quarkus console,
+an `OutOfMemoryError` would be observed along with some messages indicating that a heap dump is being produced:
+
+[source,bash]
+----
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT native (powered by Quarkus 3.9.3) started in 0.030s. Listening on: http://0.0.0.0:8080
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 09:58:00,855 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+Dumping heap to svm-heapdump-2213-OOME.hprof ...
+Heap dump file created [98454651 bytes in 0.733 secs]
+Terminating due to java.lang.OutOfMemoryError: Garbage-collected heap size exceeded.
+----
+
+Multiple graphical tools exist out there to inspect heap dumps,
+such as https://visualvm.github.io/[VisualVM],
+https://eclipse.dev/mat/[Eclipse Memory Analyzer (MAT)], etc.,
+but some new ones are also available that you can run in the command line to get a quick picture of the heap dump,
+for example
+https://github.com/openjdk/jol[Java Object Layout (JOL)]:
+
+[source,bash]
+----
+$ java -Xmx256m -DprintFirst=6 -jar jol-cli.jar heapdump-stats svm-heapdump-2213-OOME.hprof
+Heap Dump: svm-heapdump-2213-OOME.hprof
+Read progress: DONE
+
+Hotspot Layout Simulation (JDK 21, Current VM: 12-byte object headers, 4-byte references, 8-byte aligned objects, 8-byte aligned array bases)
+
+=== Class Histogram
+
+Table is sorted by "INSTANCES".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+         132,330              24       3,175,920    java.lang.String
+          50,277              40       2,011,080    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          44,852              40       1,794,080    com.oracle.svm.core.monitor.JavaMonitor
+          38,755              32       1,240,160    java.util.HashMap$Node
+          33,776              24         810,624    byte[5]
+          31,728              48       1,522,944    java.util.HashMap
+             ...             ...             ...    ...
+         899,336       9,438,056      48,193,360    <other>
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    <total>
+
+=== Class Histogram
+
+Table is sorted by "SIZE".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1       3,480,544       3,480,544    byte[3480528]
+               1       3,236,728       3,236,728    byte[3236705]
+               1         642,648         642,648    byte[642626]
+               1         289,824         289,824    byte[289808]
+               1         173,664         173,664    byte[173645]
+               1         157,728         157,728    byte[157710]
+             ...             ...             ...    ...
+       1,231,048       1,457,128      50,767,032    <other>
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    <total>
+
+=== Class Histogram
+
+Table is sorted by "SUM SIZE".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1       3,480,544       3,480,544    byte[3480528]
+               1       3,236,728       3,236,728    byte[3236705]
+         132,330              24       3,175,920    java.lang.String
+          50,277              40       2,011,080    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          10,054             184       1,849,936    io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext
+          44,852              40       1,794,080    com.oracle.svm.core.monitor.JavaMonitor
+             ...             ...             ...    ...
+         993,539       2,720,704      43,199,880    <other>
+------------------------------------------------------------------------------------------------
+       1,231,054       9,438,264      58,748,168    <total>
+----
+
+The presence of SubstrateVM,
+the VM that powers native images built with GraalVM,
+can be clearly observed because of the instances of `com.oracle.svm.core.monitor.JavaMonitor` present in the heap dump.
+What would the heap dump look like if we repeat exactly the same exercise but instead we use Quarkus JVM mode? Let’s see:
+
+Rebuild the Quarkus app for JVM mode and run it with Epsilon GC:
+
+[source,bash]
+----
+$ mvnw package -DskipTests
+$ java -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError -XX:+UnlockExperimentalVMOptions -XX:+UseEpsilonGC -Xmx64m -jar quarkus-run.jar
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+2024-04-12 10:02:37,945 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.9.3) started in 1.692s. Listening on: http://0.0.0.0:8080
+2024-04-12 10:02:37,961 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 10:02:37,962 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+----
+
+After applying the same load, you would observe the heap dump being generated in JVM mode as well:
+
+[source,bash]
+----
+2024-04-12 10:02:37,945 INFO  [io.quarkus] (main) getting-started-reactive 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.9.3) started in 1.692s. Listening on: http://0.0.0.0:8080
+2024-04-12 10:02:37,961 INFO  [io.quarkus] (main) Profile prod activated.
+2024-04-12 10:02:37,962 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
+java.lang.OutOfMemoryError: Java heap space
+Dumping heap to java_pid2841.hprof ...
+Heap dump file created [97383542 bytes in 1.232 secs]
+Terminating due to java.lang.OutOfMemoryError: Java heap space
+----
+
+And this is what the heap dump looks like with JOL:
+
+[source,bash]
+----
+java -Xmx256m -DprintFirst=6 -jar jol-cli.jar heapdump-stats java_pid2841.hprof
+Heap Dump: java_pid2841.hprof
+Read progress: DONE
+
+Hotspot Layout Simulation (JDK 21, Current VM: 12-byte object headers, 4-byte references, 8-byte aligned objects, 8-byte aligned array bases)
+
+=== Class Histogram
+
+Table is sorted by "INSTANCES".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+          91,335              24       2,192,040    java.lang.String
+          35,946              40       1,437,840    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          34,942              32       1,118,144    java.util.HashMap$Node
+          22,998              24         551,952    byte[5]
+          22,789              48       1,093,872    java.util.HashMap
+          22,381              32         716,192    java.util.concurrent.ConcurrentHashMap$Node
+             ...             ...             ...    ...
+         716,986      19,427,976      59,367,272    <other>
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    <total>
+
+=== Class Histogram
+
+Table is sorted by "SIZE".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+               1         972,120         972,120    int[243026]
+               1         416,136         416,136    int[104030]
+               1         282,056         282,056    int[70510]
+               1         237,608         237,608    byte[237587]
+               1         131,920         131,920    int[32976]
+               1         129,672         129,672    int[32414]
+             ...             ...             ...    ...
+         947,371      17,258,664      64,307,800    <other>
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    <total>
+
+=== Class Histogram
+
+Table is sorted by "SUM SIZE".
+Printing first 6 lines. Use -DprintFirst=# to override.
+
+       INSTANCES            SIZE        SUM SIZE    CLASS
+------------------------------------------------------------------------------------------------
+          91,335              24       2,192,040    java.lang.String
+           7,189             232       1,667,848    io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext
+          35,946              40       1,437,840    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry
+          15,528              80       1,242,240    java.util.HashMap$Node[16]
+          14,380              80       1,150,400    io.vertx.core.http.impl.headers.HeadersMultiMap$MapEntry[16]
+          34,942              32       1,118,144    java.util.HashMap$Node
+             ...             ...             ...    ...
+         748,057      19,427,688      57,668,800    <other>
+------------------------------------------------------------------------------------------------
+         947,377      19,428,176      66,477,312    <total>
+----
+
+As expected, no SubstrateVM classes are present in this heap dump,
+leaving only Quarkus, Vert.x and OpenJDK types in the heap dump.

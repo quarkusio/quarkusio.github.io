@@ -1,0 +1,138 @@
+---
+layout: post
+title: 'Containerizing virtual thread applications'
+date: 2023-12-14
+tags: virtual-threads native
+synopsis: 'Learn how to containerized applications using virtual threads.'
+author: cescoffier
+---
+:imagesdir: /assets/images/posts/virtual-threads
+
+In another https://quarkus.io/blog/virtual-threads-2/[blog post], we explored how to implement a CRUD application with Quarkus to harness the power of virtual threads. 
+This post continues from that point, explaining how to containerize the application. 
+Containerization involves packaging the application into a container image, and we'll use the `quarkus-container-image-jib` extension for this purpose. 
+Quarkus offers other extensions for containerization, such as `quarkus-container-image-docker`, so choose the one that suits your preference.
+
+Packaging an application using virtual threads is not different from packaging a regular application.
+Quarkus hides all the complexity, selecting the right base image and configuring the native image build process to use the right flags.
+
+The full code for this blog post is available in the `crud-example` directory of the https://github.com/quarkusio/virtual-threads-demos[virtual-threads-demos GitHub repository].
+
+
+== Adding Jib to the Project
+
+First, add the `quarkus-container-image-jib` extension to the project:
+
+[source, xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-container-image-jib</artifactId>
+</dependency>
+----
+
+Next, open the `application.properties` file and add the following properties:
+
+[source, properties]
+----
+quarkus.container-image.build=true # <1>
+quarkus.container-image.name=virtual-threads-demos-${quarkus.application.name} # <2>
+----
+1. Enable container image build; every `mvn package` run will build a container image.
+2. Define the name of the container image. The `${quarkus.application.name}` placeholder is replaced by the application name, which is `crud-example` in our case.
+
+== Building the Container Image for the JVM
+
+To create the container image for the Java application, run the following command:
+
+[source, bash]
+----
+$ mvn clean package
+----
+
+The logs will show the container image build process, with the image being built using the `registry.access.redhat.com/ubi8/openjdk-21-runtime:1.18` base image. 
+This image is automatically selected by Quarkus as the project uses Java 21.
+
+Take note of the resulting image name: `clement/virtual-threads-demos-crud-example:1.0.0-SNAPSHOT`. The first part is your username by default, do do not forget to change it in the other commands.
+
+You can run the container image with:
+
+[source, bash]
+----
+$ docker run -it \
+  -p8080:8080 \
+  -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://docker.for.mac.localhost/rest-crud \
+  clement/virtual-threads-demos-crud-example:1.0.0-SNAPSHOT
+----
+
+Ensure to replace `clement` with your username.
+
+NOTE: If you are running on ARM64, you may encounter a warning regarding the image's platform mismatch. 
+You can override this using: `$ mvn clean package -DskipTests -Dquarkus.jib.platforms=linuxarm64`.
+
+== Building the Container Image for the Native Executable
+
+To build the container image for the native executable, use the following command:
+
+[source, bash]
+----
+$ mvn package -DskipTests \
+  -Dnative \
+  -Dquarkus.native.container-build=true \
+  -Dquarkus.jib.platforms=linux/arm64
+----
+
+The `-Dnative` flag enables native compilation, and `-Dquarkus.jib.platforms=linux/arm64` specifies the target platform (required if you are on ARM64, as by default it will pick `linux/amd64`).
+
+Note the property `quarkus.native.container-build=true`, which instructs Quarkus to use a container image to build the native executable, avoiding the need for GraalVM installation.
+
+Run the container image with:
+
+[source, bash]
+----
+$ docker run -it \
+  -p8080:8080 \
+  -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://docker.for.mac.localhost/rest-crud \
+  clement/virtual-threads-demos-crud-example:1.0.0-SNAPSHOT
+----
+
+Use the same configuration trick for the database connection, and replace `clement` with your username.
+
+== Pushing the Container Image
+
+Quarkus can push the container image to a registry. 
+To push to the GitHub container repository, use these properties:
+
+[source, properties]
+----
+quarkus.container-image.registry=ghcr.io
+quarkus.container-image.group=cescoffier
+quarkus.container-image.username=cescoffier
+quarkus.container-image.password=${GITHUB_TOKEN}
+----
+
+The `GITHUB_TOKEN` environment variable configures the GitHub token, which must have permission to create packages. Push the container image using:
+
+[source, bash]
+----
+$ mvn clean package -DskipTests -Dquarkus.container-image.push=true
+----
+
+Append `-Dnative` for native images. 
+
+Multi-architecture container images can be created using:
+
+[source, bash]
+----
+$ mvn clean package -DskipTests -Dquarkus.container-image.push=true -Dquarkus.jib.platforms=linux/amd64,linux/arm64
+----
+
+This option is not applicable for native executables, howver, it is very convenient for JVM applications as you can then use the same container image on different platforms.
+
+== Summary
+
+This blog post demonstrated how to containerize a virtual thread application using Quarkus and the Jib container image extension. Both JVM applications and native executables were covered.
+
+Attentive readers would have seen that nothing is different from a regular application.
+Quarkus handles all the complexity, selecting the right base image and configuring the native image build process to use the right flags.
+
