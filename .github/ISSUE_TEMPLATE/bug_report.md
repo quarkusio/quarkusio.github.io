@@ -2,7 +2,7 @@
 name: Bug report
 about: Report a bug on quarkus.io website
 title: ''
-labels: kind/bug
+labels: kind/bug,triage/needs-triage
 assignees: ''
 
 ---
