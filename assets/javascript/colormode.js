@@ -22,9 +22,9 @@ function updateButton() {
   const button = document.getElementById('theme-toggle');
   const storedTheme = localStorage.getItem('color-theme') || 'system';
   const themeTitles = {
-    'dark': 'Color scheme: dark; next: light',
-    'light': 'Color scheme: light; next: system preferences',
-    'system': 'Color scheme: system preferences; next: dark'
+    'dark': 'Color scheme: dark; next: system preferences',
+    'light': 'Color scheme: light; next: dark',
+    'system': 'Color scheme: system preferences; next: light'
   };
   button.setAttribute('aria-label', storedTheme);
   button.setAttribute('title', themeTitles[storedTheme]);
