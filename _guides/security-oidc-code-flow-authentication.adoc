@@ -485,6 +485,11 @@ public class ProtectedResource {
 
 [NOTE]
 ====
+When an authorization code flow access token is injected as `JsonWebToken`, its verification is automatically enabled, in addition to the mandatory ID token verification. If really needed, you can disable this code flow access token verification with `quarkus.oidc.authentication.verify-access-token=false`.
+====
+
+[NOTE]
+====
 `AccessTokenCredential` is used if the access token issued to the Quarkus `web-app` application is opaque (binary) and cannot be parsed to a `JsonWebToken` or if the inner content is necessary for the application.
 ====
 
@@ -500,6 +505,12 @@ Set the `quarkus.oidc.authentication.user-info-required=true` property to reques
 
 A request is sent to the OIDC provider `UserInfo` endpoint by using the access token returned with the authorization code grant response, and an `io.quarkus.oidc.UserInfo` (a simple `jakarta.json.JsonObject` wrapper) object is created.
 `io.quarkus.oidc.UserInfo` can be injected or accessed as a SecurityIdentity `userinfo` attribute.
+
+`quarkus.oidc.authentication.user-info-required` is automatically enabled if one of these conditions is met: 
+
+- if `quarkus.oidc.roles.source` is set to `userinfo` or `quarkus.oidc.token.verify-access-token-with-user-info` is set to `true` or `quarkus.oidc.authentication.id-token-required` is set to `false`, the current OIDC tenant must support a UserInfo endpoint in these cases.
+
+- if `io.quarkus.oidc.UserInfo` injection point is detected but only if the current OIDC tenant supports a UserInfo endpoint.
 
 [[config-metadata]]
 ==== Accessing the OIDC configuration information
@@ -561,6 +572,11 @@ For more information about using the default token cache or registering a custom
 
 For information about the claim verification, including the `iss` (issuer) claim, see the xref:security-oidc-bearer-token-authentication.adoc#jwt-claim-verification[JSON Web Token claim verification] section.
 It applies to ID tokens and also to access tokens in a JWT format, if the `web-app` application has requested the access token verification.
+
+[[jose4j-validator]]
+=== Jose4j Validator
+
+You can register a custom [Jose4j Validator] to customize the JWT claim verification process. See xref:security-oidc-bearer-token-authentication.adoc#jose4j-validator[Jose4j] section for more information.
 
 ==== Further security with Proof Key for Code Exchange (PKCE)
 
@@ -684,7 +700,7 @@ You can disable token encryption in the session cookie by setting `quarkus.oidc.
 [[custom-token-state-manager]]
 ==== Session cookie and custom TokenStateManager
 
-If you want to customize the way the tokens are associated with the session cookie, register a custom `io.quarkus.oidc.TokenStateManager' implementation as an `@ApplicationScoped` CDI bean.
+If you want to customize the way the tokens are associated with the session cookie, register a custom `io.quarkus.oidc.TokenStateManager` implementation as an `@ApplicationScoped` CDI bean.
 
 For example, you might want to keep the tokens in a cache cluster and have only a key stored in a session cookie.
 Note that this approach might introduce some challenges if you need to make the tokens available across multiple microservices nodes.
@@ -758,7 +774,7 @@ To use this feature, add the following extension to your project:
 :add-extension-extensions: oidc-db-token-state-manager
 include::{includes}/devtools/extension-add.adoc[]
 
-This extension will replace the default `io.quarkus.oidc.TokenStateManager' with a database-based one.
+This extension will replace the default `io.quarkus.oidc.TokenStateManager` with a database-based one.
 
 OIDC Database Token State Manager uses a Reactive SQL client under the hood to avoid blocking because the authentication is likely to happen on an IO thread.
 
@@ -1097,8 +1113,12 @@ To support the integration with such OAuth2 servers, `quarkus-oidc` needs to be 
 [NOTE]
 ====
 Even though you configure the extension to support the authorization code flows without `IdToken`, an internal `IdToken` is generated to standardize the way `quarkus-oidc` operates.
-You use an `IdToken` to support the authentication session and to avoid redirecting the user to the provider,  such as GitHub, on every request.
-In this case, the session lifespan is set to 5 minutes, which you can extend further as described in the <<session-management,session management>> section.
+You use an internal `IdToken` to support the authentication session and to avoid redirecting the user to the provider,  such as GitHub, on every request.
+In this case, the `IdToken` age is set to the value of a standard `expires_in` property in the authorization code flow response.
+You can use a `quarkus.oidc.authentication.internal-id-token-lifespan`property to customize the ID token age.
+The default ID token age is 5 minutes.
+
+, which you can extend further as described in the <<session-management,session management>> section.
 
 This simplifies how you handle an application that supports multiple OIDC providers.
 ====
@@ -1114,13 +1134,13 @@ For GitHub, since it does not have an introspection endpoint, requesting the Use
 [NOTE]
 ====
 Requiring <<user-info,UserInfo>> involves making a remote call on every request.
-Therefore, you might want to consider caching `UserInfo` data.
+
+Therefore, `UserInfo` is embedded in the internal generated `IdToken` and saved in the encrypted session cookie. It can be disabled with `quarkus.oidc.cache-user-info-in-idtoken=false`.
+
+Alternatively, you might want to consider caching `UserInfo` using a default or custom UserInfo cache provider.
 For more information, see the xref:security-oidc-bearer-token-authentication.adoc#token-introspection-userinfo-cache[Token Introspection and UserInfo cache] section of the "OpenID Connect (OIDC) Bearer token authentication" guide.
 
-Alternatively, you might want to request that `UserInfo` is embedded into the internal generated `IdToken` with the `quarkus.oidc.cache-user-info-in-idtoken=true` property.
-The advantage of this approach is that, by default, no cached `UserInfo` state will be kept with the endpoint - instead it will be stored in a session cookie.
-You might also want to consider encrypting `IdToken` in this case if `UserInfo` contains sensitive data.
-For more information, see <<token-state-manager,Encrypt tokens with TokenStateManager>>.
+Most well-known social OAuth2 providers enforce rate-limiting so there is a high chance you will prefer to have UserInfo cached.
 ====
 
 OAuth2 servers might not support a well-known configuration endpoint.
