@@ -58,7 +58,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 ### Deploying to GitHub Pages
 
-The website deployment is automatically performed by GitHub Actions (when commits are pushed to the `develop` branch).
+The website deployment is automatically performed by GitHub Actions (when commits are pushed to the `main` branch).
 If for some reason you need to deploy from your local machine, follow these instructions:
 
 1. Install the [act](https://github.com/nektos/act#installation) executable to run GitHub Actions locally
@@ -68,10 +68,10 @@ If for some reason you need to deploy from your local machine, follow these inst
 
 To write a blog:
 
-- create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_data/authors.yaml)
+- create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/main/_data/authors.yaml)
   - `emailhash` you can get by running `echo -n your@email.org | md5sum` on Linux or `echo -n your@email.org | md5` on macOS using an email you have registered from the [Gravatar service](https://gravatar.com),
      
-- create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_posts)
+- create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/main/_posts)
   - the file name is `yyyy-mm-dd-slug.adoc` Set the date to the same value in the asciidoc preamble.
 - `tags` should be used with some care as an archive page is created for of them. Below are some basic rules to try follow:
   - `quarkus-release` used for Quarkus release blogs
@@ -82,9 +82,9 @@ To write a blog:
   - add a tech specific, like `kafka`, if your post has a significant mention/relevance to that technology.
   - tags is space separated list `tags:extension grpc`
   - tags must be in lowercase
-- it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/develop/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
+- it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
   - Be aware that the `date` attribute in the asciidoc preamble defines when the article will be published. Add a `--future` flag when testing locally to ensure the article is included in the generated site. 
-- send a pull request against the develop branch and voilà
+- send a pull request against the main branch and voilà
 
 ## Translations/Localization (l10n)
 
@@ -115,7 +115,7 @@ See Step 5 on https://docs.github.com/en/github/working-with-github-pages/managi
 
 ## Contributing
 
-Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/blob/master/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
+Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/tree/main/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
 
 **Important:** the guides are maintained in the main Quarkus repository and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc.
