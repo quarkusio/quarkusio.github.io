@@ -653,7 +653,7 @@ For example, <code>quarkus.oidc.authentication.redirect-path=/service/callback</
 This will restore the request URL such as <code><a href="http://localhost:8080/service/1" class="bare">http://localhost:8080/service/1</a></code>.</p>
 </div>
 <div class="sect3">
-<h4 id="customizing-authentication-requests"><a class="anchor" href="#customizing-authentication-requests"></a>Customizing authentication requests</h4>
+<h4 id="customize-authentication-requests"><a class="anchor" href="#customize-authentication-requests"></a>Customizing authentication requests</h4>
 <div class="paragraph">
 <p>By default, only the <code>response_type</code> (set to <code>code</code>), <code>scope</code> (set to <code>openid</code>), <code>client_id</code>, <code>redirect_uri</code>, and <code>state</code> properties are passed as HTTP query parameters to the OIDC provider&#8217;s authorization endpoint when the user is redirected to it to authenticate.</p>
 </div>
@@ -666,6 +666,9 @@ The following example shows how you can work around this issue:</p>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.authentication.extra-params.response_mode=query</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>See also the <a href="#oidc-redirect-filters">OIDC redirect filters</a> section explaining how a custom <code>OidcRedirectFilter</code> can be used to customize OIDC redirects, including those to the OIDC authorization endpoint.</p>
 </div>
 </div>
 <div class="sect3">
@@ -705,6 +708,183 @@ For example, if it is set to '/error' and the current request URI is <code><a hr
 </tr>
 </table>
 </div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="oidc-redirect-filters"><a class="anchor" href="#oidc-redirect-filters"></a>OIDC redirect filters</h3>
+<div class="paragraph">
+<p>You can register one or more <code>io.quarkus.oidc.OidcRedirectFilter</code> implementations to filter OIDC redirects to OIDC authorization and logout endpoints but also local redirects to custom error and session expired pages. Custom <code>OidcRedirectFilter</code> can add additional query parameters, response headers and set new cookies.</p>
+</div>
+<div class="paragraph">
+<p>For example, the following simple custom <code>OidcRedirectFilter</code> adds an additional query parameter and a custom response header for all redirect requests that can be done by Quarkus OIDC:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.OidcRedirectFilter;
+
+@ApplicationScoped
+@Unremovable
+public class GlobalOidcRedirectFilter implements OidcRedirectFilter {
+
+    @Override
+    public void filter(OidcRedirectContext context) {
+        if (context.redirectUri().contains("/session-expired-page")) {
+            context.additionalQueryParams().add("redirect-filtered", "true,"); <i class="conum" data-value="1"></i><b>(1)</b>
+            context.routingContext().response().putHeader("Redirect-Filtered", "true"); <i class="conum" data-value="2"></i><b>(2)</b>
+        }
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Add an additional query parameter. Note the queury names and values are URL-encoded by Quarkus OIDC, a <code>redirect-filtered=true%20C</code> query parameter is added to the redirect URI in this case.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Add a custom HTTP response header.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>See also the <a href="#customize-authentication-requests">Customizing authentication requests</a> section how to configure additional query parameters for OIDC authorization point.</p>
+</div>
+<div class="paragraph">
+<p>Custom <code>OidcRedirectFilter</code> for local error and session expired pages can also create secure cookies to help with generating such pages.</p>
+</div>
+<div class="paragraph">
+<p>For example, let&#8217;s assume you need to redirect the current user whose session has expired to a custom session expired page available at <code><a href="http://localhost:8080/session-expired-page" class="bare">http://localhost:8080/session-expired-page</a></code>. The following custom <code>OidcRedirectFilter</code> encrypts the user name in a custom <code>session_expired</code> cookie using an OIDC tenant client secret:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.jwt.Claims;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.AuthorizationCodeTokens;
+import io.quarkus.oidc.OidcRedirectFilter;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.runtime.OidcUtils;
+import io.smallrye.jwt.build.Jwt;
+
+@ApplicationScoped
+@Unremovable
+@TenantFeature("tenant-refresh")
+public class SessionExpiredOidcRedirectFilter implements OidcRedirectFilter {
+
+    @Override
+    public void filter(OidcRedirectContext context) {
+
+        if (context.redirectUri().contains("/session-expired-page")) {
+            AuthorizationCodeTokens tokens = context.routingContext().get(AuthorizationCodeTokens.class.getName()); <i class="conum" data-value="1"></i><b>(1)</b>
+            String userName = OidcUtils.decodeJwtContent(tokens.getIdToken()).getString(Claims.preferred_username.name()); <i class="conum" data-value="2"></i><b>(2)</b>
+            String jwe = Jwt.preferredUserName(userName).jwe()
+                    .encryptWithSecret(context.oidcTenantConfig().credentials.secret.get()); <i class="conum" data-value="3"></i><b>(3)</b>
+            OidcUtils.createCookie(context.routingContext(), context.oidcTenantConfig(), "session_expired",
+                    jwe + "|" + context.oidcTenantConfig().tenantId.get(), 10); <i class="conum" data-value="4"></i><b>(4)</b>
+     }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Access <code>AuthorizationCodeTokens</code> tokens associated with the now expired session as a <code>RoutingContext</code>  attribute.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Decode ID token claims and get a user name.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Save the user name in a JWT token encrypted with the current OIDC tenant&#8217;s client secret.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Create a custom <code>session_expired</code> cookie valid for 5 seconds which joins the encrypted token and a tenant id using a "|" separator. Recording a tenant id in a custom cookie can help to generate correct session expired pages in a multi-tenant OIDC setup.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Next, a public JAX-RS resource which generates session expired pages can use this cookie to create a page tailored for this user and the corresponding OIDC tenant, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import org.eclipse.microprofile.jwt.Claims;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.runtime.TenantConfigBean;
+import io.smallrye.jwt.auth.principal.DefaultJWTParser;
+import io.vertx.ext.web.RoutingContext;
+
+@Path("/session-expired-page")
+public class SessionExpiredResource {
+
+    @Inject
+    TenantConfigBean tenantConfig; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @GET
+    public String sessionExpired(@CookieParam("session_expired") String sessionExpired) throws Exception {
+        // Cookie format: jwt|&lt;tenant id&gt;
+
+        String[] pair = sessionExpired.split("\\|"); <i class="conum" data-value="2"></i><b>(2)</b>
+        OidcTenantConfig oidcConfig = tenantConfig.getStaticTenantsConfig().get(pair[1]).getOidcTenantConfig(); <i class="conum" data-value="3"></i><b>(3)</b>
+        JsonWebToken jwt = new DefaultJWTParser().decrypt(pair[0], oidcConfig.credentials.secret.get()); <i class="conum" data-value="4"></i><b>(4)</b>
+        OidcUtils.removeCookie(context, oidcConfig, "session_expired"); <i class="conum" data-value="5"></i><b>(5)</b>
+        return jwt.getClaim(Claims.preferred_username) + ", your session has expired. "
+                + "Please login again at http://localhost:8081/" + oidcConfig.tenantId.get(); <i class="conum" data-value="6"></i><b>(6)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Inject <code>TenantConfigBean</code> which can be used to access all the current OIDC tenant configurations.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Split the custom cookie value into 2 parts, first part is the encrypted token, last part is the tenant id.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Get the OIDC tenant configuration.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Decrypt the cookie value using the OIDC tenant&#8217;s client secret.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Remove the custom cookie.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>Use the username in the decrypted token and the tenant id to generate the service expired page response.</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect2">
@@ -1669,6 +1849,9 @@ This property should be set to a value that is less than the ID token lifespan; 
 <div class="paragraph">
 <p>For example, setting <code>quarkus.oidc.authentication.session-expired-page=/session-expired-page</code> will ensure that the user whose session has expired is redirected to  <code><a href="http://localhost:8080/session-expired-page" class="bare">http://localhost:8080/session-expired-page</a></code>, assuming the application is available at <code><a href="http://localhost:8080" class="bare">http://localhost:8080</a></code>.</p>
 </div>
+<div class="paragraph">
+<p>See also the <a href="#oidc-redirect-filters">OIDC redirect filters</a> section explaining how a custom <code>OidcRedirectFilter</code> can be used to customize OIDC redirects, including those to the session expired pages.</p>
+</div>
 </td>
 </tr>
 </table>
@@ -2562,6 +2745,7 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE</cod
 <li><a href="#oidc-provider-client-authentication">OIDC provider client authentication</a></li>
 <li><a href="#oidc-request-filters">OIDC request filters</a></li>
 <li><a href="#redirecting-to-and-from-the-oidc-provider">Redirecting to and from the OIDC provider</a></li>
+<li><a href="#oidc-redirect-filters">OIDC redirect filters</a></li>
 <li><a href="#accessing-authorization-data">Accessing authorization data</a></li>
 <li><a href="#ensuring-validity-of-tokens-and-authentication-data">Ensuring validity of tokens and authentication data</a></li>
 <li><a href="#proof-key-for-code-exchange-pkce">Proof Key for Code Exchange (PKCE)</a></li>
