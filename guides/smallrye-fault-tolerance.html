@@ -205,7 +205,7 @@ specification.</p>
 </div>
 <div class="paragraph">
 <p>In this guide, we demonstrate usage of MicroProfile Fault Tolerance annotations such as <code>@Timeout</code>, <code>@Fallback</code>,
-<code>@Retry</code> and <code>@CircuitBreaker</code>.</p>
+<code>@Retry</code>, <code>@CircuitBreaker</code>, and <code>@RateLimit</code>.</p>
 </div>
 </div>
 </div>
@@ -297,7 +297,7 @@ cd microprofile-fault-tolerance-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.10.2:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.11.0:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=microprofile-fault-tolerance-quickstart \
     -Dextensions='smallrye-fault-tolerance,rest-jackson' \
@@ -818,6 +818,100 @@ again.</p>
 </div>
 </div>
 <div class="sect1">
+<h2 id="adding-resiliency-rate-limits"><a class="anchor" href="#adding-resiliency-rate-limits"></a>Adding Resiliency: Rate Limits</h2>
+<div class="sectionbody">
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+This is an additional feature of <a href="https://github.com/smallrye/smallrye-fault-tolerance/">SmallRye Fault Tolerance</a> and is not specified by MicroProfile Fault Tolerance.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>It is possible to prevent an operation from being executed too often using a <em>rate limit</em>. Rate limits enforce a maximum number of permitted invocations in a time window of some length. For example, with a rate limit, one can make sure that a method may only be called 50 times per minute. Invocations that would exceed the limit are rejected with an exception of type <code>RateLimitException</code>.</p>
+</div>
+<div class="paragraph">
+<p>Additionally, it is possible to define minimum spacing between invocations. For example, with a minimum spacing of 1 second, if a second invocation happens 500 millis after the first, it is rejected even if the limit would not be exceeded yet.</p>
+</div>
+<div class="paragraph">
+<p>Rate limit is superficially similar to a bulkhead (concurrency limit), but is in fact quite different. Bulkhead limits the number of executions happening concurrently at any point in time. Rate limit limits the number of executions in a time window of some length, without considering concurrency.</p>
+</div>
+<div class="paragraph">
+<p>Rate limits need to maintain some state between invocations: the number of recent invocations, the time stamp of last invocation, and so on. This state is a singleton, irrespective of the lifecycle of the bean that uses the <code>@RateLimit</code> annotation.</p>
+</div>
+<div class="paragraph">
+<p>More specifically, the rate limit state is uniquely identified by the combination of the bean class (<code>java.lang.Class</code>) and the method object (<code>java.lang.reflect.Method</code>) representing the guarded method.</p>
+</div>
+<div class="paragraph">
+<p>Let the Quarkus development mode run and in your IDE add the <code>@RateLimit</code> annotation to the <code>CoffeeResource#coffees()</code> method as follows and save the file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.time.temporal.ChronoUnit;
+import io.smallrye.faulttolerance.api.RateLimit;
+
+...
+public class CoffeeResource {
+    ...
+    @GET
+    @RateLimit(value = 2, window = 10, windowUnit = ChronoUnit.SECONDS)
+    public List&lt;Coffee&gt; coffees() {
+        ...
+    }
+    ...
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Hit refresh in your browser. The Quarkus development server will automatically detect the changes and recompile the app for you, so there’s no need to restart it.</p>
+</div>
+<div class="paragraph">
+<p>You can hit refresh a couple more times. After 2 requests within a 10 second interval you should start seeing errors in the logs, similar to these:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">INFO  [org.acm.mic.fau.CoffeeResource] (executor-thread-1) CoffeeResource#coffees() invocation #1 returning successfully
+ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /coffee failed, error id: d3e59090-fd45-4c67-844e-80a8f7fa6ee0-4: io.smallrye.faulttolerance.api.RateLimitException: org.acme.microprofile.faulttolerance.CoffeeResource#coffees rate limit exceeded
+        at io.smallrye.faulttolerance.core.rate.limit.RateLimit.doApply(RateLimit.java:58)
+        at io.smallrye.faulttolerance.core.rate.limit.RateLimit.apply(RateLimit.java:44)
+        at io.smallrye.faulttolerance.FaultToleranceInterceptor.syncFlow(FaultToleranceInterceptor.java:255)
+        at io.smallrye.faulttolerance.FaultToleranceInterceptor.intercept(FaultToleranceInterceptor.java:182)
+        at io.smallrye.faulttolerance.FaultToleranceInterceptor_Bean.intercept(Unknown Source)
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)
+        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)
+        at org.acme.microprofile.faulttolerance.CoffeeResource_Subclass.coffees(Unknown Source)
+        at org.acme.microprofile.faulttolerance.CoffeeResource$quarkusrestinvoker$coffees_73d7590ab944adfa130e4ad57c30282f825b2d18.invoke(Unknown Source)
+        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)
+        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)
+        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$14.runWith(VertxCoreRecorder.java:599)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2516)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2495)
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1521)
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+        at java.base/java.lang.Thread.run(Thread.java:1583)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If <code>@Fallback</code> is used with <code>@RateLimit</code>, the fallback method or handler may be invoked if a <code>RateLimitException</code> is thrown, depending on the fallback configuration.</p>
+</div>
+<div class="paragraph">
+<p>If <code>@Retry</code> is used with <code>@RateLimit</code>, each retry attempt is processed by the rate limit as an independent invocation. If <code>RateLimitException</code> is thrown, the execution may be retried, depending on how the retry is configured.</p>
+</div>
+<div class="paragraph">
+<p>If <code>@CircuitBreaker</code> is used with <code>@RateLimit</code>, the circuit breaker is checked before enforcing the rate limit. If rate limiting results in <code>RateLimitException</code>, this may be counted as a failure, depending on how the circuit breaker is configured.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="runtime-configuration"><a class="anchor" href="#runtime-configuration"></a>Runtime configuration</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -1009,6 +1103,7 @@ Otherwise, SmallRye Fault Tolerance metrics will be disabled.</p>
 <li><a href="#adding-resiliency-timeouts">Adding Resiliency: Timeouts</a></li>
 <li><a href="#adding-resiliency-fallbacks">Adding Resiliency: Fallbacks</a></li>
 <li><a href="#adding-resiliency-circuit-breaker">Adding Resiliency: Circuit Breaker</a></li>
+<li><a href="#adding-resiliency-rate-limits">Adding Resiliency: Rate Limits</a></li>
 <li><a href="#runtime-configuration">Runtime configuration</a></li>
 <li><a href="#conclusion">Conclusion</a></li>
 <li><a href="#additional-resources">Additional resources</a></li>
