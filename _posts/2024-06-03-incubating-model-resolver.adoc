@@ -1,0 +1,117 @@
+---
+layout: post
+title: 'Quarkus Maven Dependency Resolver Improvements'
+date: 2024-06-03
+tags: maven
+synopsis: '3.11 includes a more efficient (still incubating) Quarkus Maven dependency resolver that also exposes more information about dependencies of each artifact in a dependency tree'
+author: alexeyloubyansky
+---
+
+Dependency resolution is typically one of the most time-consuming tasks during a build. Given that Quarkus has its specific https://quarkus.io/guides/writing-extensions#extension-philosophy[Quarkus Extension dependency model], it comes with its own Maven dependency resolver. The Quarkus dependency resolver is used in every build phase that requires application dependencies to be resolved, that includes building the final package, bootstraping applications in dev and test modes.
+
+== What does Quarkus dependency resolver do?
+
+From the perspective of the Quarkus dependency resolver, dependencies declared in POMs of Quarkus projects are runtime dependencies (except certain cases for `provided` scope). They are runtime in a sense they will end up on the runtime classpath of the final application (test runtime classpath in case of `test` dependencies). These original project dependencies serve as input to the Quarkus dependency resolver.
+
+The job of the Quarkus dependency resolver is then to resolve the necessary Quarkus extension build time dependencies (those with the `-deployment` suffix and their dependencies) to create a complete Quarkus application build time dependency tree that will be used to initialize the build classpath of an application.
+
+== New incubating Quarkus dependency resolver
+
+The objectives behind the new (still incubating) implementation of the Quarkus dependency resolver are:
+
+. Improved performance, basically resolve dependencies more efficiently.
+. Collect more comprehensive dependency information and expose it to other dependency analysis related tools.
+
+While this implementation is still a work in progress, it already offers certain benefits compared to the current implementation and can be enabled in Quarkus projects by setting `quarkus.bootstrap.incubating-model-resolver` project property by either adding `-Dquarkus.bootstrap.incubating-model-resolver` to the `mvn` command line or adding it as a property to `pom.xml`.
+
+NOTE: `quarkus.bootstrap.incubating-model-resolver` will not be effective when set in other configuration sources, such as `application.properties`, since it's needed early in the bootstrap process, before MP `Config` is initialized.
+
+=== Performance improvements
+
+The new implementation of the dependency resolver, while being based on the Maven Resolver API, attempts to perform Quarkus-specific dependency analysis and resolution in parallel.
+
+The original application dependencies will still be downloaded by Maven as usually, since Maven build process will most probably need them before Quarkus goals will run. However, when a Quarkus application is bootstrapped (for example to run `QuarkusTest's), Quarkus dependency resolver will (re)resolve them (typically from the local Maven repository).
+
+NOTE: Even if all the artifacts are available in a local Maven repository, they will still be resolved but from the local Maven repository instead of the remote one. Performance enhancements described here are applicable to both cases: remote and local dependency resolutions.
+
+The enhancements added in the new implementation will be more noticeable in projects that declare dependencies on multiple Quarkus extensions and have many dependencies in general.
+
+A simple, although not a very precise, way of checking the effects of the enhancements on a project would be to run the following command:
+[source,bash]
+----
+$ mvn quarkus:dependency-tree -Dquarkus.bootstrap.incubating-model-resolver
+----
+
+It's not very precise since there are more Maven related operations involved than simply resolving Quarkus dependencies. Therefore calculating an average time of around 10 runs would be a way to capture the difference. Another alternative would be to run `mvn test -Dtest=SoSimpleTest`.
+
+NOTE: Dependency resolution is typically performed in preparation to do something else, such as run tests or launch a build, so, in case when all the dependencies are available locally, it might not have a dramatic impact on the overall time of a single run of a given goal.
+
+For a project such as Quarkus CLI, `quarkus:dependency-tree` appears to be ~100ms faster with the incubating model resolver (the new resolver takes ~25% less time to resolve dependencies from the local Maven repository).
+Bootstrapping a similar application for a `QuarkusTest` will take ~125ms less time, however it will be only ~10% faster overall since resolving dependencies from a test process will not be able to benefit from the Maven resolver dependency cache used in the main Maven process (among other things).
+
+=== Displaying dependency graph in Dev UI
+
+When `quarkus.bootstrap.incubating-model-resolver` option is enabled on the command line or as a project property in the POM, Dev UI will display a new menu item - `Dependencies`.
+
+Clicking on `Dependencies` will display the complete dependency graph of the application, including application runtime dependencies (colored in green), Quarkus build time dependencies (colored in blue) and the application root node (colored in red).
+
+For a runtime view, Quarkus build time (deployment) dependencies could be hidden by clicking on `deployment` in the top right corner.
+
+Clicking on a dependency node will reduce the graph to all the possible paths from the root to the selected node. This can also be done by selecting a dependency from the dropdown list.
+
+=== Displaying comprehensive dependency info in CLI
+
+Enabling `quarkus.bootstrap.incubating-model-resolver` option on the command line or as a project property in the POM, enables a couple of new options for `quarkus:dependency-tree` goal: `graph` and `verbose`.
+
+==== Graph option
+
+By default `quarkus:dependency-tree` goal displays a Quarkus build time dependency tree. A tree does not expose comprehensive information about dependencies of each individual artifact though. `-Dgraph` does exactly that.
+[source,bash]
+----
+$ mvn quarkus:dependency-tree -Dquarkus.bootstrap.incubating-model-resolver -Dgraph
+----
+In addition to dependencies that were previously displayed, the command above will display also display some dependencies with `[+]` at the end, that will signify that this is also a dependency of the parent node but its dependencies (if any) are expanded in a different location in the graph.
+
+For example, `io.netty:netty-common` and `io.netty:netty-buffer` are displayed twice in the following snippet:
+[source,bash]
+----
+[INFO]    │     └─ io.vertx:vertx-core:4.5.7 (compile)
+[INFO]    │        ├─ com.fasterxml.jackson.core:jackson-core:2.17.1 (compile) [+]
+[INFO]    │        ├─ io.netty:netty-common:4.1.108.Final (compile)
+[INFO]    │        ├─ io.netty:netty-buffer:4.1.108.Final (compile)
+[INFO]    │        │  └─ io.netty:netty-common:4.1.108.Final (compile) [+]
+[INFO]    │        ├─ io.netty:netty-transport:4.1.108.Final (compile)
+[INFO]    │        │  ├─ io.netty:netty-buffer:4.1.108.Final (compile) [+]
+[INFO]    │        │  ├─ io.netty:netty-common:4.1.108.Final (compile) [+]
+[INFO]    │        │  └─ io.netty:netty-resolver:4.1.108.Final (compile) [+]
+----
+
+==== Verbose option
+
+Adding `-Dverbose` will add some information about each dependency, such as whether it's an application runtime or build time only dependency, whether it's a Quarkus extension or whether it's hot-reloadable dependency in dev mode.
+
+For example, below is snippet of an output of running
+[source,bash]
+----
+$ mvn quarkus:dependency-tree -Dquarkus.bootstrap.incubating-model-resolver -Dverbose
+----
+
+[source,bash]
+----
+[INFO]    │  ├─ io.quarkus:quarkus-vertx-deployment:3.11.0.CR1 (compile, build-time classpath)
+[INFO]    │  │  ├─ io.quarkus:quarkus-netty-deployment:3.11.0.CR1 (compile, build-time classpath)
+[INFO]    │  │  │  └─ io.quarkus:quarkus-netty:3.11.0.CR1 (compile, runtime classpath, extension)
+[INFO]    │  │  │     ├─ io.netty:netty-codec:4.1.108.Final (compile, runtime classpath)
+[INFO]    │  │  │     └─ com.aayushatharva.brotli4j:brotli4j:1.16.0 (compile, runtime classpath)
+[INFO]    │  │  │        ├─ com.aayushatharva.brotli4j:service:1.16.0 (compile, runtime classpath)
+[INFO]    │  │  │        └─ com.aayushatharva.brotli4j:native-linux-x86_64:1.16.0 (compile, runtime classpath)
+[INFO]    │  │  ├─ io.quarkus:quarkus-vertx:3.11.0.CR1 (compile, runtime classpath, extension)
+[INFO]    │  │  │  ├─ io.netty:netty-codec-haproxy:4.1.108.Final (compile, runtime classpath)
+[INFO]    │  │  │  ├─ io.quarkus:quarkus-vertx-latebound-mdc-provider:3.11.0.CR1 (compile, runtime classpath)
+[INFO]    │  │  │  └─ io.smallrye:smallrye-fault-tolerance-vertx:6.3.0 (compile, runtime classpath)
+[INFO]    │  │  └─ io.quarkus:quarkus-jackson-spi:3.11.0.CR1 (compile, build-time classpath)
+----
+
+== Plans for future enhancements
+
+There are a few other dependency resolution related performance improvements relevant for mainly for `quarkus:dev` and `test` Maven goals that are coming in 3.12. In 3.12 the incubating application model resolver will be enabled by default in dev mode. Once enough feedback has been collected on its operation, the incubating implementation will replace the current application model resolver implementation.
