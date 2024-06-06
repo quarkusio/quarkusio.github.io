@@ -1,0 +1,139 @@
+---
+layout: post
+title: 'Quarkus and Infinispan: winner combo'
+date: 2024-06-06
+tags: ['infinispan', 'cache']
+synopsis: 'Infinispan extension updates from Quarkus 3.9, 3.10 and 3.11'
+author: karesti
+---
+
+Infinispan 15.0 has been recently released, bringing along a wave of enhancements that
+Quarkus has also embraced. Let's dive into this blog post to spotlight the significant
+updates and improvements for both Infinispan and Quarkus.
+
+== Serialization API improvements
+
+Infinispan can handle various serialization formats, but Protobuf stands out as the most
+compatible one, offering full access to all Infinispan Cache features. It's supported through
+the Protostream library. With Protostream 5, you not only get support for Protobuf 3 but also
+a more straightforward and user-friendly API.
+
+=== @Proto
+
+Using the `@Proto` annotation alone is sufficient to serialize a class, enum, or record with
+Protostream. If you want to be more specific about what needs to be serialized, you can still
+use the `@Protofield` annotation. However, a default schema setup will be automatically handled
+for you with just a single annotation. This feature comes in handy, especially when your
+schema undergoes frequent changes, and you need to refresh data frequently.
+
+[source, java]
+----
+@Proto
+public record Author(String name, String surname) {
+}
+----
+
+=== @ProtoSchema
+
+The annotation used to define the schema has been renamed to `@ProtoSchema`.
+So now, instead of `@AutoProtoSchemaBuilder`, you would use `@ProtoSchema` for specifying the schema.
+This helps clarify its purpose and usage.
+
+[source, java]
+----
+@ProtoSchema(includeClasses = { Book.class, Author.class }, schemaPackageName = "book_sample")
+interface BookStoreSchema extends GeneratedSchema {
+}
+----
+
+=== Programmatic definition of schemas
+
+If you need to define the schema programmatically, Protostream 5 now offers an API for
+that purpose. This allows you to define the schema dynamically in your code as needed.
+
+[source, java]
+----
+@Produces
+Schema magazineSchema() {
+    return new Schema.Builder("magazine.proto")
+            .packageName("magazine_sample")
+            .addMessage("Magazine")
+            .addField(Type.Scalar.STRING, "name", 1)
+            .addField(Type.Scalar.INT32, "publicationYear", 2)
+            .addField(Type.Scalar.INT32, "publicationMonth", 3)
+            .addRepeatedField(Type.Scalar.STRING, "stories", 4)
+            .build();
+}
+----
+
+Moreover, the `MessageMarshaller` class, which was previously planned for deprecation and removal,
+has been reinstated and can continue to be safely used for implementing custom marshalling.
+
+
+== Support for mocks
+Before Quarkus 3.9, because of the Search API, it wasn't possible to mock
+`RemoteCache` beans using `@QuarkusTest` and `@QuarkusMock` due to their `Singleton` scope.
+However, starting from Quarkus 3.9, their scope has been changed to `ApplicationScoped`,
+enabling full mocking for tests.
+
+Additionally, there have been enhancements in the Search API.
+Now, we can directly perform searches using methods exposed in the `RemoteCache` interface.
+
+[source, java]
+----
+@Inject
+@Remote("books")
+RemoteCache<String, Book> booksCache; <1>
+
+...
+
+Query<Book> query = booksCache.query("from book_sample.Book b where b.authors.name like '%" + name + "%'"); <2>
+List<Book> list = query.execute().list(); <3>
+----
+<1> Books cache is injected
+<2> Use `query` method directly on the books cache
+<3> Retrieve the list as usual
+
+== Infinispan Cache extension
+Starting from Quarkus 3.11, the caching annotations in the Infinispan Cache
+extension have been deprecated. Infinispan now offers a new cache extension.
+
+By swapping out the `quarkus-cache` dependency with `quarkus-infinispan-cache`,
+you can utilize `@CacheResult`, `@CacheInvalidate`, and `@CacheInvalidateAll` annotations
+from the `quarkus-cache` extension, while storing the data in the Infinispan Server.
+
+[source, java]
+----
+    @GET
+    @Path("/{country}/{city}/{name}")
+    @CacheResult(cacheName = "fruits")
+    public ExpensiveFruitsResponse getExpensiveFruitsResponse(@PathParam("country") @CacheKey String country,
+                                                              @PathParam("city") @CacheKey String city,
+                                                              @PathParam("name") @CacheKey String name,
+                                                              @QueryParam("metadata") String metadata) {
+        invocations.incrementAndGet();
+        String id = UUID.randomUUID().toString();
+        String description = String.format("Fruit in city %s, with name %s", city, name);
+        return new ExpensiveFruitsResponse(id, description, metadata);
+    }
+----
+
+Read all about it in the https://quarkus.io/guides/cache-infinispan-reference[Infinispan Cache Extension Guide]
+
+== Infinispan and Quarkus LangChain4j Integration
+Now, you can use Infinispan as an Embedding Store in the Quarkus LangChain4j extension.
+Infinispan has full text features thanks to a special integration with Hibernate Search.
+Plus, starting from Hibernate Search 7.1, Vector Search is supported. This means you can use the
+Infinispan Server as an Embedding Storage for your LLM applications.
+Read all about it in the https://docs.quarkiverse.io/quarkus-langchain4j/dev/infinispan-store.html[documentation].
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/quarkusio/quarkus/issues[GitHub];
+ * craft some code and https://github.com/quarkusio/quarkus/pulls[push a PR];
+ * discuss with us on https://quarkusio.zulipchat.com/[Zulip] and on the https://groups.google.com/d/forum/quarkus-dev[mailing list];
+ * ask your questions on https://stackoverflow.com/questions/tagged/quarkus[Stack Overflow].
