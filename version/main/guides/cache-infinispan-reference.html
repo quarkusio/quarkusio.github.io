@@ -317,10 +317,120 @@ In dev mode, you can use the <a href="infinispan-dev-services">Infinispan Dev Se
 <h2 id="marshalling"><a class="anchor" href="#marshalling"></a>Marshalling</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>When interacting with Infinispan in Quarkus, you can easily marshal and unmarshal
-Java simple types when writing to or reading from the cache. However, when dealing
-with Plain Old Java Objects (POJOs), users of Infinispan need to provide the marshalling
-schema.</p>
+<p>When interacting with Infinispan in Quarkus, you can easily serialize and deserialize Java primitive types when storing or retrieving data from the cache. No additional marshalling configuration is required for Infinispan.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@CacheResult(cacheName = "weather-cache") <i class="conum" data-value="1"></i><b>(1)</b>
+public String getDailyForecast(String dayOfWeek, int dayOfMonth, String city) { <i class="conum" data-value="2"></i><b>(2)</b>
+    return dayOfWeek + " will be " + getDailyResult(dayOfMonth % 4) + " in " + city;
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Ask this method execution to be cached in the 'weather-cache'</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The key combines <code>String</code> dayOfWeek, <code>int</code> dayOfMonth and <code>String</code> city. The associated value is of type <code>String</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Quarkus uses Protobuf for data serialization in Infinispan by default. Infinispan recommends using Protobuf as the preferred
+way to structure data. Therefore, when working with Plain Old Java Objects (POJOs), users need
+to supply the schema for marshalling in Infinispan.</p>
+</div>
+<div class="sect2">
+<h3 id="marshalling-java-types"><a class="anchor" href="#marshalling-java-types"></a>Marshalling Java types</h3>
+<div class="paragraph">
+<p>Let&#8217;s say we want a composite Key using <code>java.time.LocalDate</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@CacheResult(cacheName = "weather-cache") <i class="conum" data-value="1"></i><b>(1)</b>
+public String getDailyForecast(LocalDate date, String city) { <i class="conum" data-value="2"></i><b>(2)</b>
+    return date.getDayOfWeek() + " will be " + getDailyResult(date.getDayOfMonth() % 4) + " in " + city;
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Request that the response of this method execution be cached in 'weather-cache'</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The key combines a <code>java.util.LocalDate</code> date and a <code>String</code> city. The associated value is of type 'String'.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Since Infinispan serializes data by default using Protobuf in Quarkus, executing the code will result in the following error:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">java.lang.IllegalArgumentException:
+No marshaller registered for object of Java type java.time.LocalDate</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Protobuf does not inherently know how to marshal <code>java.time.LocalDate</code>. Fortunately, Protostream provides a straightforward solution to this problem using <code>@ProtoAdapter</code> and <code>@ProtoSchema</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ProtoAdapter(LocalDate.class)
+public class LocalDateAdapter {
+    @ProtoFactory
+    LocalDate create(String localDate) {
+        return LocalDate.parse(localDate);
+    }
+
+    @ProtoField(1)
+    String getLocalDate(LocalDate localDate) {
+        return localDate.toString();
+    }
+}
+
+@ProtoSchema(includeClasses = LocalDateAdapter.class, schemaPackageName = "quarkus")
+public interface Schema extends GeneratedSchema {
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="marshalling-your-pojos"><a class="anchor" href="#marshalling-your-pojos"></a>Marshalling your POJOs</h3>
+<div class="paragraph">
+<p>Just like with Java types, when using your POJOs as keys or values, you can follow this approach:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@CacheResult(cacheName = "my-cache") <i class="conum" data-value="1"></i><b>(1)</b>
+public ExpensiveResponse requestApi(String id) { <i class="conum" data-value="2"></i><b>(2)</b>
+    // very expensive call
+
+    return new ExpensiveResponse(...);
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Request that the response of this method execution be cached in 'my-cache'</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The key is a <code>String</code>. The associated value is of type <code>org.acme.ExpensiveResponse</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>In this case, you&#8217;ll need to define the schema for your Java type using <code>@Proto</code> and <code>@ProtoSchema</code>. This schema can encompass all types and adapters used in your Quarkus application.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -336,6 +446,7 @@ interface Schema extends GeneratedSchema {
 <div class="paragraph">
 <p>Read more about it in the <a href="infinispan-client-reference">Infinispan reference</a> in the Annotation
 based serialization section.</p>
+</div>
 </div>
 </div>
 </div>
@@ -404,7 +515,7 @@ the cache.</p>
 <p>The name of the named Infinispan client to be used for communicating with Infinispan. If not set, use the default Infinispan client.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-42785">QUARKUS_CACHE_INFINISPAN_CLIENT_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42785" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-42789">QUARKUS_CACHE_INFINISPAN_CLIENT_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42789" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -424,7 +535,7 @@ the cache.</p>
 <p>The default lifespan of the item stored in the cache</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-42786">QUARKUS_CACHE_INFINISPAN_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42786" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-42790">QUARKUS_CACHE_INFINISPAN_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42790" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -445,7 +556,7 @@ the cache.</p>
 <p>The default max-idle of the item stored in the cache</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-42787">QUARKUS_CACHE_INFINISPAN_MAX_IDLE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42787" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-42791">QUARKUS_CACHE_INFINISPAN_MAX_IDLE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42791" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -471,7 +582,7 @@ the cache.</p>
 <p>The default lifespan of the item stored in the cache</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-42788">QUARKUS_CACHE_INFINISPAN__CACHE_NAME__LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42788" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-42792">QUARKUS_CACHE_INFINISPAN__CACHE_NAME__LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42792" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -492,7 +603,7 @@ the cache.</p>
 <p>The default max-idle of the item stored in the cache</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-42789">QUARKUS_CACHE_INFINISPAN__CACHE_NAME__MAX_IDLE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42789" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-42793">QUARKUS_CACHE_INFINISPAN__CACHE_NAME__MAX_IDLE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-42793" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -556,7 +667,12 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#infinispan-as-cache-backend">Infinispan as cache backend</a></li>
 <li><a href="#use-the-infinispan-backend">Use the Infinispan backend</a></li>
 <li><a href="#infinispan-cache-configuration-reference">Configure the Infinispan backend</a></li>
-<li><a href="#marshalling">Marshalling</a></li>
+<li><a href="#marshalling">Marshalling</a>
+<ul class="sectlevel2">
+<li><a href="#marshalling-java-types">Marshalling Java types</a></li>
+<li><a href="#marshalling-your-pojos">Marshalling your POJOs</a></li>
+</ul>
+</li>
 <li><a href="#expiration">Expiration</a>
 <ul class="sectlevel2">
 <li><a href="#lifespan">Lifespan</a></li>
