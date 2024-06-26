@@ -274,7 +274,7 @@ Uni<Void> consumeAsync(Message m) {
 }
 
 @OnTextMessage
-ReponseMessage process(Message m) {
+ResponseMessage process(Message m) {
 // Process the incoming message and send a response to the client.
 // The method is called for each incoming message.
 // Note that if the method returns `null`, no response will be sent to the client.
@@ -287,7 +287,7 @@ Uni<ResponseMessage> processAsync(Message m) {
 // Note that if the method returns `null`, no response will be sent to the client. The method completes when the returned Uni emits its item.
 }
 
-OnTextMessage
+@OnTextMessage
 Multi<ResponseMessage> stream(Message m) {
 // Process the incoming message and send multiple responses to the client.
 // The method is called for each incoming message.
@@ -496,6 +496,51 @@ The `WebSocketConnection` provides both a blocking and a non-blocking method to 
 - `sendTextAndAwait(String message)`: Sends a text message to the client and waits for the message to be sent. It's blocking and should only be called from an executor thread.
 - `sendText(String message)`: Sends a text message to the client. It returns a `Uni`. It's non-blocking, but you must subscribe to it.
 
+=== List open connections
+
+It is also possible to list all open connections.
+Quarkus provides a CDI bean of type `io.quarkus.websockets.next.OpenConnections` that declares convenient methods to access the connections.
+
+[source, java]
+----
+import io.quarkus.logging.Log;
+import io.quarkus.websockets.next.OpenConnections;
+
+class MyBean {
+
+  @Inject
+  OpenConnections connections;
+
+  void logAllOpenConnections() {
+     Log.infof("Open connections: %s", connections.listAll()); <1>
+  }
+}
+----
+<1> `OpenConnections#listAll()` returns an immutable snapshot of all open connections at the given time.
+
+There are also other convenient methods.
+For example, `OpenConnections#findByEndpointId(String)` makes it easy to find connections for a specific endpoint.
+
+=== CDI events
+
+Quarkus fires a CDI event of type `io.quarkus.websockets.next.WebSocketConnection` with qualifier `@io.quarkus.websockets.next.Open` asynchronously when a new connection is opened.
+Moreover, a CDI event of type `WebSocketConnection` with qualifier `@io.quarkus.websockets.next.Closed` is fired asynchronously when a connection is closed.
+
+[source, java]
+----
+import jakarta.enterprise.event.ObservesAsync;
+import io.quarkus.websockets.next.Open;
+import io.quarkus.websockets.next.WebSocketConnection;
+
+class MyBean {
+
+  void connectionOpened(@ObservesAsync @Open WebSocketConnection connection) { <1>
+     // This observer method is called when a connection is opened...
+  }
+}
+----
+<1> An asynchronous observer method is executed using the default blocking executor service.
+
 == Serialization and Deserialization
 
 The WebSocket Next extension supports automatic serialization and deserialization of messages.
@@ -565,12 +610,28 @@ Item find(Item item) {
 1. Specify the codec to use for both the deserialization of the incoming message
 2. Specify the codec to use for the serialization of the outgoing message
 
-== Handle Pong message
+== Ping/pong messages
 
-The `@OnPongMessage` annotation is used to consume pong messages.
-A websocket endpoint must declare at most one method annotated with `@OnPongMessage`.
+A https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.2[ping message] may serve as a keepalive or to verify the remote endpoint.
+A https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.3[pong message] is sent in response to a ping message and it must have an identical payload.
 
-The method must accept a single parameter of type `Buffer`:
+The server automatically responds to a ping message sent from the client.
+In other words, there is no need for `@OnPingMessage` callback declared on an endpoint.
+
+The server can send ping messages to a connected client.
+The `WebSocketConnection` declares methods to send ping messages; there is a non-blocking variant: `WebSocketConnection#sendPing(Buffer)` and a blocking variant: `WebSocketConnection#sendPingAndAwait(Buffer)`.
+By default, the ping messages are not sent automatically.
+However, the configuration property `quarkus.websockets-next.server.auto-ping-interval` can be used to set the interval after which, the server sends a ping message to a connected client automatically. 
+
+[source,properties]
+----
+quarkus.websockets-next.server.auto-ping-interval=2 <1>
+----
+<1> Sends a ping message to a connected client every 2 seconds.
+
+The `@OnPongMessage` annotation is used to define a callback that consumes pong messages sent from the client.
+An endpoint must declare at most one method annotated with `@OnPongMessage`.
+The callback method must return either `void` or `Uni<Void>`, and it must accept a single parameter of type `Buffer`.
 
 [source,java]
 ----
@@ -579,6 +640,8 @@ void pong(Buffer data) {
     // ....
 }
 ----
+
+NOTE: The server can also send unsolicited pong messages that may serve as a unidirectional heartbeat. There is a non-blocking variant: `WebSocketConnection#sendPong(Buffer)` and also a blocking variant: `WebSocketConnection#sendPongAndAwait(Buffer)`.
 
 [[websocket-next-security]]
 == Security
@@ -630,18 +693,118 @@ public class Endpoint {
 
 `SecurityIdentity` is initially created during a secure HTTP upgrade and associated with the websocket connection.
 
-Currently, for an HTTP upgrade be secured, users must configure an HTTP policy protecting the HTTP upgrade path.
-For example, to secure the `open()` method in the above websocket endpoint, one can add the following authentication policy:
+NOTE: When OpenID Connect extension is used and token expires, Quarkus automatically closes connection.
 
+== Secure HTTP upgrade
+
+An HTTP upgrade is secured when standard security annotation is placed on an endpoint class or an HTTP Security policy is defined.
+The advantage of securing HTTP upgrade is less processing, the authorization is performed early and only once.
+You should always prefer HTTP upgrade security unless, like in th example above, you need to perform action on error.
+
+.Use standard security annotation to secure an HTTP upgrade
+[source, java]
+----
+package io.quarkus.websockets.next.test.security;
+
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.websockets.next.OnOpen;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+
+@Authenticated <1>
+@WebSocket(path = "/end")
+public class Endpoint {
+
+    @Inject
+    SecurityIdentity currentIdentity;
+
+    @OnOpen
+    String open() {
+        return "ready";
+    }
+
+    @OnTextMessage
+    String echo(String message) {
+        return message;
+    }
+}
+----
+<1> Initial HTTP handshake ends with the 401 status for anonymous users.
+You can also redirect the handshake request on authorization failure with the `quarkus.websockets-next.server.security.auth-failure-redirect-url` configuration property.
+
+IMPORTANT: HTTP upgrade is only secured when a security annotation is declared on an endpoint class next to the `@WebSocket` annotation.
+Placing a security annotation on an endpoint bean will not secure bean methods, only the HTTP upgrade.
+You must always verify that your endpoint is secured as intended.
+
+.Use HTTP Security policy to secure an HTTP upgrade
 [source,properties]
 ----
-quarkus.http.auth.permission.secured.paths=/end
-quarkus.http.auth.permission.secured.policy=authenticated
+quarkus.http.auth.permission.http-upgrade.paths=/end
+quarkus.http.auth.permission.http-upgrade.policy=authenticated
 ----
 
-Other options for securing HTTP upgrade requests, such as using the security annotations, will be explored in the future.
+== Inspect and/or reject HTTP upgrade
 
-NOTE: When OpenID Connect extension is used and token expires, Quarkus automatically closes connection.
+To inspect an HTTP upgrade, you must provide a CDI bean implementing the `io.quarkus.websockets.next.HttpUpgradeCheck` interface.
+Quarkus calls the `HttpUpgradeCheck#perform` method on every HTTP request that should be upgraded to a WebSocket connection.
+Inside this method, you can perform any business logic and/or reject the HTTP upgrade.
+
+.Example HttpUpgradeCheck
+[source, java]
+----
+package io.quarkus.websockets.next.test;
+
+import io.quarkus.websockets.next.HttpUpgradeCheck;
+import io.smallrye.mutiny.Uni;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped <1>
+public class ExampleHttpUpgradeCheck implements HttpUpgradeCheck {
+
+    @Override
+    public Uni<CheckResult> perform(HttpUpgradeContext ctx) {
+        if (rejectUpgrade(ctx)) {
+            return CheckResult.rejectUpgrade(400); <2>
+        }
+        return CheckResult.permitUpgrade();
+    }
+
+    private boolean rejectUpgrade(HttpUpgradeContext ctx) {
+        var headers = ctx.httpRequest().headers();
+        // implement your business logic in here
+    }
+}
+----
+<1> The CDI beans implementing `HttpUpgradeCheck` interface can be either `@ApplicationScoped`, `@Singleton` or `@Dependent` beans, but never the `@RequestScoped` beans.
+<2> Reject the HTTP upgrade. Initial HTTP handshake ends with the 400 Bad Request response status code.
+
+TIP: You can choose WebSocket endpoints to which the `HttpUpgradeCheck` is applied with the `HttpUpgradeCheck#appliesTo` method.
+
+[[traffic-logging]]
+== Traffic logging 
+
+Quarkus can log the messages sent and received for debugging purposes. 
+To enable traffic logging, set the `quarkus.websockets-next.server.traffic-logging.enabled` configuration property to `true`.
+The payload of text messages is logged as well.
+However, the number of logged characters is limited.
+The default limit is 100, but you can change this limit with the `quarkus.websockets-next.server.traffic-logging.text-payload-limit` configuration property.
+
+TIP: The messages are only logged if the `DEBUG` level is enabled for the logger `io.quarkus.websockets.next.traffic`.
+
+.Example configuration
+[source, properties]
+----
+quarkus.websockets-next.server.traffic-logging.enabled=true <1>
+quarkus.websockets-next.server.traffic-logging.text-payload-limit=50 <2>
+
+quarkus.log.category."io.quarkus.websockets.next.traffic".level=DEBUG <3>
+----
+<1> Enables traffic logging.
+<2> Set the number of characters of a text message payload which will be logged.
+<3> Enable `DEBUG` level is for the logger `io.quarkus.websockets.next.traffic`.
 
 [[websocket-next-configuration-reference]]
 == Configuration reference
