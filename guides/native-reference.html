@@ -848,6 +848,342 @@ For example:</p>
 </div>
 </div>
 <div class="sect1">
+<h2 id="native-image-agent-integration"><a class="anchor" href="#native-image-agent-integration"></a>Native Image Tracing Agent Integration</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Quarkus users that want to integrate new libraries/components into native image process
+(e.g. <a href="https://github.com/hierynomus/smbj">smbj</a>),
+or want to use JDK APIs that require extensive native image configuration to work (e.g. graphical user interfaces),
+face a considerable challenge coming up with the native image configuration to make their use cases work.
+These users can tweak their applications to run in JVM mode with the native image agent in order to
+auto-generate native image configuration that will help them get a head start getting applications to work as native executables.</p>
+</div>
+<div class="paragraph">
+<p>The native image tracing agent is a JVM tool interface (JVMTI) agent available within both GraalVM and Mandrel that
+tracks all usages of dynamic features such as reflection, JNI, dynamic proxies, access classpath resources&#8230;&#8203;etc,
+during an application&#8217;s regular JVM execution.
+When the JVM stops, it dumps the information on the dynamic features used during the run
+onto a collection of native image configuration files that can be used in subsequent native image builds.</p>
+</div>
+<div class="paragraph">
+<p>Using the agent and applying the generated data can be difficult for Quarkus users.
+First, the agent can be cumbersome because it requires the JVM arguments to be modified,
+and the generated configuration needs to be placed in a specific location such that the subsequent native image builds picks them up.
+Secondly, the native image configuration produced contains a lot of superfluous configuration that the Quarkus integration takes care of.</p>
+</div>
+<div class="paragraph">
+<p>Native image tracing agent integration is included in Quarkus to make the agent easier to consume.
+In this section you will learn about the integration and how to apply it to your Quarkus application.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The integration is currently only available for Maven applications.
+<a href="https://github.com/quarkusio/quarkus/issues/40361">Gradle integration</a> will follow up.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="integration-testing-with-the-tracing-agent"><a class="anchor" href="#integration-testing-with-the-tracing-agent"></a>Integration Testing with the Tracing Agent</h3>
+<div class="paragraph">
+<p>Quarkus users can now run JVM mode integration tests on Quarkus Maven applications transparently with the native image tracing agent.
+To do this make sure a container runtime is available,
+because JVM mode integration tests will run using the JVM within the default Mandrel builder container image.
+This image contains the agent libraries required to produce native image configuration,
+hence avoiding the need for a local Mandrel or GraalVM installation.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>It is highly recommended to align the Mandrel version used in integration testing
+with the Mandrel version used to build native executables.
+Doing in-container native builds with the default Mandrel builder image,
+is the safest way to keep both versions aligned.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Additionally make sure that the <code>native-image-agent</code> goal is present in the <code>quarkus-maven-plugin</code> configuration:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">&lt;plugin&gt;
+    &lt;groupId&gt;${quarkus.platform.group-id}&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-maven-plugin&lt;/artifactId&gt;
+    ...
+    &lt;executions&gt;
+        &lt;execution&gt;
+            &lt;goals&gt;
+                ...
+                &lt;goal&gt;native-image-agent&lt;/goal&gt;
+            &lt;/goals&gt;
+        &lt;/execution&gt;
+    &lt;/executions&gt;
+&lt;/plugin&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With a container runtime running,
+invoke Maven&#8217;s <code>verify</code> goal with <code>-DskipITs=false -Dquarkus.test.integration-test-profile=test-with-native-agent</code> to run the JVM mode integration tests and
+generate the native image configuration.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw verify -DskipITs=false -Dquarkus.test.integration-test-profile=test-with-native-agent
+...
+[INFO] --- failsafe:3.2.5:integration-test (default) @ new-project ---
+...
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running org.acme.GreetingResourceIT
+2024-05-14 16:29:53,941 INFO  [io.qua.tes.com.DefaultDockerContainerLauncher] (main) Executing "podman run --name quarkus-integration-test-PodgW -i --rm --user 501:20 -p 8081:8081 -p 8444:8444 --entrypoint java -v /tmp/new-project/target:/project --env QUARKUS_LOG_CATEGORY__IO_QUARKUS__LEVEL=INFO --env QUARKUS_HTTP_PORT=8081 --env QUARKUS_HTTP_SSL_PORT=8444 --env TEST_URL=http://localhost:8081 --env QUARKUS_PROFILE=test-with-native-agent --env QUARKUS_TEST_INTEGRATION_TEST_PROFILE=test-with-native-agent quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21 -agentlib:native-image-agent=access-filter-file=quarkus-access-filter.json,caller-filter-file=quarkus-caller-filter.json,config-output-dir=native-image-agent-base-config, -jar quarkus-app/quarkus-run.jar"
+...
+[INFO]
+[INFO] --- quarkus:{quarkus-version}:native-image-agent (default) @ new-project ---
+[INFO] Discovered native image agent generated files in /tmp/new-project/target/native-image-agent-final-config
+[INFO]
+...</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When the Maven invocation completes,
+you can inspect the generated configuration in the <code>target/native-image-agent-final-config</code> folder:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ cat ./target/native-image-agent-final-config/reflect-config.json
+[
+...
+{
+  "name":"org.acme.Alice",
+  "methods":[{"name":"&lt;init&gt;","parameterTypes":[] }, {"name":"sayMyName","parameterTypes":[] }]
+},
+{
+  "name":"org.acme.Bob"
+},
+...
+]</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="informative-by-default"><a class="anchor" href="#informative-by-default"></a>Informative By Default</h3>
+<div class="paragraph">
+<p>By default the generated native image configuration files are not used by subsequent native image building processes.
+This precaution is taken to avoid situations where seemingly unrelated actions have unintended consequences on the native executable produced,
+e.g. disabling randomly failing tests.</p>
+</div>
+<div class="paragraph">
+<p>Quarkus users are free to copy the files from the folder reported in the build,
+store them under source control and evolve as needed.
+Ideally these files should be stored under the <code>src/main/resources/META-INF/native-image/&lt;group-id&gt;/&lt;artifact-id&gt;`</code> folder,
+in which case the native image process will automatically pick them up.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>If managing native image agent configuration files manually,
+it is highly recommended to regenerate them each time a Mandrel version update occurs,
+because the configuration necessary to make the application work might have varied due to internal Mandrel changes.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>It is possible to instruct Quarkus to optionally apply the generated native image configuration files into subsequent native image processes,
+by setting the -Dquarkus.native.agent-configuration-apply` property.
+This can be useful to verify that the native integration tests work as expected,
+assuming that the JVM unit tests have generated the correct native image configuration.
+The typical workflow here would be to first run the integration tests with the native image agent as shown in the previous section:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw verify -DskipITs=false -Dquarkus.test.integration-test-profile=test-with-native-agent
+...
+[INFO] --- quarkus:{quarkus-version}:native-image-agent (default) @ new-project ---
+[INFO] Discovered native image agent generated files in /tmp/new-project/target/native-image-agent-final-config</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>And then request a native build passing in the configuration apply flag.
+A message during the native build process will indicate that the native image agent generated configuration files are being applied:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw verify -Dnative -Dquarkus.native.agent-configuration-apply
+...
+[INFO] --- quarkus:{quarkus-version}:build (default) @ new-project ---
+[INFO] [io.quarkus.deployment.pkg.steps.JarResultBuildStep] Building native image source jar: /tmp/new-project/target/new-project-1.0.0-SNAPSHOT-native-image-source-jar/new-project-1.0.0-SNAPSHOT-runner.jar
+[INFO] [io.quarkus.deployment.steps.ApplyNativeImageAgentConfigStep] Applying native image agent generated files to current native executable build</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="debugging-the-tracing-agent-integration"><a class="anchor" href="#debugging-the-tracing-agent-integration"></a>Debugging the Tracing Agent Integration</h3>
+<div class="paragraph">
+<p>If the generated native image agent configuration is not satisfactory,
+more information can be obtained using any of the following techniques:</p>
+</div>
+<div class="sect3">
+<h4 id="debugging-filters"><a class="anchor" href="#debugging-filters"></a>Debugging Filters</h4>
+<div class="paragraph">
+<p>Quarkus generates native image tracing agent configuration filters.
+These filters exclude commonly used packages for which Quarkus already applies the necessary configuration.</p>
+</div>
+<div class="paragraph">
+<p>If native image agent is generating a configuration that it’s not working as expected,
+you should check that the configuration files include the expected information.
+For example, if some method happens to be accessed via reflection at runtime and you get an error,
+you want to verify that the configuration file contains a reflection entry for that method.</p>
+</div>
+<div class="paragraph">
+<p>If the entry is missing, it could be that some call path is being filtered that maybe shouldn’t have been.
+To verify that, inspect the contents of <code>target/quarkus-caller-filter.json</code> and <code>target/quarkus-access-filter.json</code> files,
+and confirm that the class and/or package making the call or being accessed is not being filtered out.</p>
+</div>
+<div class="paragraph">
+<p>If the missing entry is related to some resource,
+you should inspect the Quarkus build debug output and verify which resource patterns are being discarded, e.g.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw -X verify -DskipITs=false -Dquarkus.test.integration-test-profile=test-with-native-agent
+...
+[INFO] --- quarkus:{quarkus-version}:native-image-agent (default) @ new-project ---
+...
+[DEBUG] Discarding resources from native image configuration that match the following regular expression: .*(application.properties|jakarta|jboss|logging.properties|microprofile|quarkus|slf4j|smallrye|vertx).*
+[DEBUG] Discarded included resource with pattern: \\QMETA-INF/microprofile-config.properties\\E
+[DEBUG] Discarded included resource with pattern: \\QMETA-INF/services/io.quarkus.arc.ComponentsProvider\\E
+...</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="tracing-agent-logging"><a class="anchor" href="#tracing-agent-logging"></a>Tracing Agent Logging</h4>
+<div class="paragraph">
+<p>The native image tracing agent can log the method invocations that result in the generated configuration to a JSON file.
+This can help understand why a configuration entry is generated.
+To enable this logging,
+<code>-Dquarkus.test.native.agent.output.property.name=trace-output</code> and
+<code>-Dquarkus.test.native.agent.output.property.value=native-image-agent-trace-file.json</code>
+system properties need to be added.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw verify -DskipITs=false \
+    -Dquarkus.test.integration-test-profile=test-with-native-agent \
+    -Dquarkus.test.native.agent.output.property.name=trace-output \
+    -Dquarkus.test.native.agent.output.property.value=native-image-agent-trace-file.json</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When trace output is configured, no native image configuration is generated,
+and instead a <code>target/native-image-agent-trace-file.json</code> file is generated that contains trace information.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">[
+{"tracer":"meta", "event":"initialization", "version":"1"},
+{"tracer":"meta", "event":"phase_change", "phase":"start"},
+{"tracer":"jni", "function":"FindClass", "caller_class":"java.io.ObjectStreamClass", "result":true, "args":["java/lang/NoSuchMethodError"]},
+...
+{"tracer":"reflect", "function":"findConstructorHandle", "class":"io.vertx.core.impl.VertxImpl$1$1$$Lambda/0x000000f80125f4e8", "caller_class":"java.lang.invoke.InnerClassLambdaMetafactory", "result":true, "args":[["io.vertx.core.Handler"]]},
+{"tracer":"meta", "event":"phase_change", "phase":"dead"},
+{"tracer":"meta", "event":"phase_change", "phase":"unload"}
+]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Unfortunately the trace output does not take into account the applied configuration filters,
+so the output contains all configuration decisions made by the agent.
+This is unlikely to change in the near future
+(see <a href="https://github.com/oracle/graal/issues/7635">oracle/graal#7635</a>).</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="configuration-with-origins-experimental"><a class="anchor" href="#configuration-with-origins-experimental"></a>Configuration With Origins (Experimental)</h4>
+<div class="paragraph">
+<p>Alternative to the trace output,
+it is possible to configure the native image agent with an experimental flag that shows the origins of the configuration entries.
+You can enable that with the following additional system property:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ ./mvnw verify -DskipITs=false \
+    -Dquarkus.test.integration-test-profile=test-with-native-agent \
+    -Dquarkus.test.native.agent.additional.args=experimental-configuration-with-origins</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The origins of the configuration entries can be found in text files inside the <code>target/native-image-agent-base-config</code> folder.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ cat target/native-image-agent-base-config/reflect-origins.txt
+root
+├── java.lang.Thread#run()
+│   └── java.lang.Thread#runWith(java.lang.Object,java.lang.Runnable)
+│       └── io.netty.util.concurrent.FastThreadLocalRunnable#run()
+│           └── org.jboss.threads.ThreadLocalResettingRunnable#run()
+│               └── org.jboss.threads.DelegatingRunnable#run()
+│                   └── org.jboss.threads.EnhancedQueueExecutor$ThreadBody#run()
+│                       └── org.jboss.threads.EnhancedQueueExecutor$Task#run()
+│                           └── org.jboss.threads.EnhancedQueueExecutor$Task#doRunWith(java.lang.Runnable,java.lang.Object)
+│                               └── io.quarkus.vertx.core.runtime.VertxCoreRecorder$14#runWith(java.lang.Runnable,java.lang.Object)
+│                                   └── org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext#run()
+│                                       └── io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext#invokeHandler(int)
+│                                           └── org.jboss.resteasy.reactive.server.handlers.InvocationHandler#handle(org.jboss.resteasy.reactive.server.core.ResteasyReactiveRequestContext)
+│                                               └── org.acme.GreetingResource$quarkusrestinvoker$greeting_709ef95cd764548a2bbac83843a7f4cdd8077016#invoke(java.lang.Object,java.lang.Object[])
+│                                                   └── org.acme.GreetingResource#greeting(java.lang.String)
+│                                                       └── org.acme.GreetingService_ClientProxy#greeting(java.lang.String)
+│                                                           └── org.acme.GreetingService#greeting(java.lang.String)
+│                                                               ├── java.lang.Class#forName(java.lang.String) - [ {   "name":"org.acme.Alice" }, {   "name":"org.acme.Bob" } ]
+│                                                               ├── java.lang.Class#getDeclaredConstructor(java.lang.Class[]) - [ {   "name":"org.acme.Alice",   "methods":[{"name":"&lt;init&gt;","parameterTypes":[] }] } ]
+│                                                               ├── java.lang.reflect.Constructor#newInstance(java.lang.Object[]) - [ {   "name":"org.acme.Alice",   "methods":[{"name":"&lt;init&gt;","parameterTypes":[] }] } ]
+│                                                               ├── java.lang.reflect.Method#invoke(java.lang.Object,java.lang.Object[]) - [ {   "name":"org.acme.Alice",   "methods":[{"name":"sayMyName","parameterTypes":[] }] } ]
+│                                                               └── java.lang.Class#getMethod(java.lang.String,java.lang.Class[]) - [ {   "name":"org.acme.Alice",   "methods":[{"name":"sayMyName","parameterTypes":[] }] } ]
+...</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="debugging-with-gdb"><a class="anchor" href="#debugging-with-gdb"></a>Debugging With GDB</h4>
+<div class="paragraph">
+<p>The native image agent itself is a native executable produced with GraalVM that uses JVMTI to intercept the calls that require native image configuration.
+As a last resort, it is possible to debug the native image agent with GDB,
+see <a href="https://github.com/oracle/graal/blob/master/substratevm/src/com.oracle.svm.agent/README.md">here</a>
+for instructions on how to do that.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="inspecting-and-debugging"><a class="anchor" href="#inspecting-and-debugging"></a>Inspecting and Debugging Native Executables</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -868,7 +1204,7 @@ You can find instructions on how to quickly set up this application in this guid
 <p>JDK 17 installed with <code>JAVA_HOME</code> configured appropriately</p>
 </li>
 <li>
-<p>Apache Maven 3.9.6</p>
+<p>Apache Maven 3.9.7</p>
 </li>
 <li>
 <p>A working container runtime (Docker, podman)</p>
@@ -934,7 +1270,7 @@ cd debugging-native</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.11.3:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.12.0:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=debugging-native \
     -Dextensions='rest,container-image-docker'
@@ -3080,6 +3416,13 @@ The <code>march</code> parameter is only available on GraalVM 23+.
 <li><a href="#memory-management-options">Memory Management Options</a></li>
 <li><a href="#gc-logging">GC Logging</a></li>
 <li><a href="#rss">Resident Set Size (RSS)</a></li>
+</ul>
+</li>
+<li><a href="#native-image-agent-integration">Native Image Tracing Agent Integration</a>
+<ul class="sectlevel2">
+<li><a href="#integration-testing-with-the-tracing-agent">Integration Testing with the Tracing Agent</a></li>
+<li><a href="#informative-by-default">Informative By Default</a></li>
+<li><a href="#debugging-the-tracing-agent-integration">Debugging the Tracing Agent Integration</a></li>
 </ul>
 </li>
 <li><a href="#inspecting-and-debugging">Inspecting and Debugging Native Executables</a>
