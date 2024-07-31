@@ -29,7 +29,7 @@ See Commonhaus’ own [FAQ](https://www.commonhaus.org/about/faq.html).
 
 ## What does the move consist of exactly?
 
-The move consists of donating intellectual property owned by Red Hat and related to Quarkus projects.
+    The move consists of donating Quarkus-related intellectual property owned by Red Hat.
 The donated intellectual property includes in particular:
 
  * the Quarkus trademark
@@ -51,7 +51,7 @@ The Quarkus team is expecting increased collaboration between Red Hat and other 
 
 Commonhaus requires Quarkus to adhere to its [policies](https://www.commonhaus.org/policies/), including in particular its [intellectual property policy]https://www.commonhaus.org/policies/ip-policy/) and [trademark policy](https://www.commonhaus.org/policies/trademark-policy/).
 
-This is great news for you all, as it legally binds the project to remain open-source forever.
+This is great news for you all, as it legally binds the project to remain open source forever.
 
 Commonhaus also requires having a code of conduct, and provides a recommended one, but each project has flexibility on such details so we could decide to customise it.
 
