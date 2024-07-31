@@ -1,6 +1,6 @@
 ---
 layout: usage
-title: Quarkus at CommonHaus FAQ
+title: Quarkus at Commonhaus FAQ
 subtitle: Frequently Asked Questions
 permalink: /foundation/faq
 ---
@@ -32,8 +32,8 @@ See Commonhaus’ own [FAQ](https://www.commonhaus.org/about/faq.html).
 The move consists of donating intellectual property owned by Red Hat and related to Quarkus projects.
 The donated intellectual property includes in particular:
 
- * the Quarkus trademark;
- * related domain names.
+ * the Quarkus trademark
+ * related domain names
 
 It does not include copyright, since Red Hat does not have exclusive claims to copyright on Quarkus code.
 
