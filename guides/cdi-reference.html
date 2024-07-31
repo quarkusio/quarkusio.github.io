@@ -1379,7 +1379,7 @@ The priority declared via <code>@Priority</code> or inherited from a stereotype 
 </div>
 </div>
 <div class="sect2">
-<h3 id="interception-of-static-methods"><a class="anchor" href="#interception-of-static-methods"></a>4.11. Interception of Static Methods</h3>
+<h3 id="interception_of_static_methods"><a class="anchor" href="#interception_of_static_methods"></a>4.11. Interception of Static Methods</h3>
 <div class="paragraph">
 <p>The Interceptors specification is clear that <em>around-invoke</em> methods must not be declared static.
 However, this restriction was driven mostly by technical limitations.
@@ -1856,6 +1856,326 @@ public class NoopAsyncObserverExceptionHandler implements AsyncObserverException
 </div>
 </div>
 </div>
+<div class="sect2">
+<h3 id="intercepted-self-invocation"><a class="anchor" href="#intercepted-self-invocation"></a>4.20. Intercepted self-invocation</h3>
+<div class="paragraph">
+<p>Quarkus supports what is known as intercepted self-invocation or just self-interception - a scenario where CDI bean invokes its own intercepted method from within another method while triggering any associated interceptors.
+This is a non-standard feature as CDI specification doesn&#8217;t define whether self-interception should work or not.</p>
+</div>
+<div class="paragraph">
+<p>Suppose we have a CDI bean with two methods, one of which has the <code>@Transactional</code> interceptor binding associated with it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class MyService {
+
+  @Transactional <i class="conum" data-value="1"></i><b>(1)</b>
+  void doSomething() {
+    // some application logic
+  }
+
+  void doSomethingElse() {
+    doSomething();<i class="conum" data-value="2"></i><b>(2)</b>
+  }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>One or more interceptor bindings; <code>@Transactional</code> is just an example.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Non-intercepted method invoking another method from the same bean that has associated binding(s); this will trigger interception.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>In the above example, any code calling the <code>doSomething()</code> method triggers interception - in this case, the method becomes transactional.
+This is regardless of whether the invocation originated directly from the <code>MyService</code> bean (such as <code>MyService#doSomethingElse</code>) or from some other bean.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="intercepting-producer-methods-and-synthetic-beans"><a class="anchor" href="#intercepting-producer-methods-and-synthetic-beans"></a>4.21. Intercepting Producer Methods and Synthetic Beans</h3>
+<div class="paragraph">
+<p>By default, interception is only supported for managed beans (also known as class-based beans).
+To support interception of producer methods and synthetic beans, the CDI specification includes an <code>InterceptionFactory</code>, which is a runtime oriented concept and therefore cannot be supported in Quarkus.</p>
+</div>
+<div class="paragraph">
+<p>Instead, Quarkus has its own API: <code>InterceptionProxy</code> and <code>@BindingsSource</code>.
+The <code>InterceptionProxy</code> is very similar to <code>InterceptionFactory</code>: it creates a proxy that applies <code>@AroundInvoke</code> interceptors before forwarding the method call to the target instance.
+The <code>@BindingsSource</code> annotation allows setting interceptor bindings in case the intercepted class is external and cannot be changed.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.arc.InterceptionProxy;
+
+@ApplicationScoped
+class MyProducer {
+    @Produces
+    MyClass produce(InterceptionProxy&lt;MyClass&gt; proxy) { <i class="conum" data-value="1"></i><b>(1)</b>
+        return proxy.create(new MyClass()); <i class="conum" data-value="2"></i><b>(2)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Declares an injection point of type <code>InterceptionProxy&lt;MyClass&gt;</code>.
+This means that at build time, a subclass of <code>MyClass</code> is generated that does the interception and forwarding.
+Note that the type argument must be identical to the return type of the producer method.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Creates an instance of the interception proxy for the given instance of <code>MyClass</code>.
+The method calls will be forwarded to this target instance after all interceptors run.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>In this example, interceptor bindings are read from the <code>MyClass</code> class.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Note that <code>InterceptionProxy</code> only supports <code>@AroundInvoke</code> interceptors declared on interceptor classes.
+Other kinds of interception, as well as <code>@AroundInvoke</code> interceptors declared on the target class and its superclasses, are not supported.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The intercepted class should be <a href="https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1#unproxyable">proxyable</a> and therefore should not be <code>final</code>, should not have non-private <code>final</code> methods, and should have a non-private zero-parameter constructor.
+If it isn&#8217;t, a bytecode transformation will attempt to fix it if <a href="#unproxyable_classes_transformation">enabled</a>, but note that adding a zero-parameter constructor is not always possible.</p>
+</div>
+<div class="paragraph">
+<p>It is often the case that the produced classes come from external libraries and don&#8217;t contain interceptor binding annotations at all.
+To support such cases, the <code>@BindingsSource</code> annotation may be declared on the <code>InterceptionProxy</code> parameter:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.arc.BindingsSource;
+import io.quarkus.arc.InterceptionProxy;
+
+abstract class MyClassBindings { <i class="conum" data-value="1"></i><b>(1)</b>
+    @MyInterceptorBinding
+    abstract String doSomething();
+}
+
+@ApplicationScoped
+class MyProducer {
+    @Produces
+    MyClass produce(@BindingsSource(MyClassBindings.class) InterceptionProxy&lt;MyClass&gt; proxy) { <i class="conum" data-value="2"></i><b>(2)</b>
+        return proxy.create(new MyClass());
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>A class that mirrors the <code>MyClass</code> structure and contains interceptor bindings.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The <code>@BindingsSource</code> annotation says that interceptor bindings for <code>MyClass</code> should be read from <code>MyClassBindings</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The concept of <em>bindings source</em> is a build-time friendly equivalent of <code>InterceptionFactory.configure()</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Producer method interception and synthetic bean interception only works for instance methods.
+<a href="#interception_of_static_methods">Interception of Static Methods</a> is not supported for producer methods and synthetic beans.
+</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="declaring-bindingssource"><a class="anchor" href="#declaring-bindingssource"></a>4.21.1. Declaring <code>@BindingsSource</code></h4>
+<div class="paragraph">
+<p>The <code>@BindingsSource</code> annotation specifies a class that mirrors the structure of the intercepted class.
+Interceptor bindings are then read from that class and treated as if they were declared on the intercepted class.</p>
+</div>
+<div class="paragraph">
+<p>Specifically: class-level interceptor bindings declared on the bindings source class are treated as class-level bindings of the intercepted class.
+Method-level interceptor bindings declared on the bindings source class are treated as method-level bindings of a method with the same name, return type, parameter types and <code>static</code> flag of the intercepted class.</p>
+</div>
+<div class="paragraph">
+<p>It is common to make the bindings source class and methods <code>abstract</code> so that you don&#8217;t have to write method bodies:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">abstract class MyClassBindings {
+    @MyInterceptorBinding
+    abstract String doSomething();
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Since this class is never instantiated and its method are never invoked, this is okay, but it&#8217;s also possible to create a non-<code>abstract</code> class:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">class MyClassBindings {
+    @MyInterceptorBinding
+    String doSomething() {
+        return null; <i class="conum" data-value="1"></i><b>(1)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The method body does not matter.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Note that for generic classes, the type variable names must also be identical.
+For example, for the following class:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">class MyClass&lt;T&gt; {
+    T doSomething() {
+        ...
+    }
+
+    void doSomethingElse(T param) {
+        ...
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>the bindings source class must also use <code>T</code> as the name of the type variable:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">abstract class MyClassBindings&lt;T&gt; {
+    @MyInterceptorBinding
+    abstract T doSomething();
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>You don&#8217;t need to declare methods that are not annotated simply because they exist on the intercepted class.
+If you want to add method-level bindings to a subset of methods, you only have to declare the methods that are supposed to have an interceptor binding.
+If you only want to add class-level bindings, you don&#8217;t have to declare any methods at all.</p>
+</div>
+<div class="paragraph">
+<p>These annotations can be present on a bindings source class:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><em>interceptor bindings</em>: on the class and on the methods</p>
+</li>
+<li>
+<p><em>stereotypes</em>: on the class</p>
+</li>
+<li>
+<p><code>@NoClassInterceptors</code>: on the methods</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Any other annotation present on a bindings source class is ignored.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="synthetic-beans"><a class="anchor" href="#synthetic-beans"></a>4.21.2. Synthetic Beans</h4>
+<div class="paragraph">
+<p>Using <code>InterceptionProxy</code> in synthetic beans is similar.</p>
+</div>
+<div class="paragraph">
+<p>First, you have to declare that your synthetic bean injects the <code>InterceptionProxy</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public void register(RegistrationContext context) {
+    context.configure(MyClass.class)
+            .types(MyClass.class)
+            .injectInterceptionProxy() <i class="conum" data-value="1"></i><b>(1)</b>
+            .creator(MyClassCreator.class)
+            .done();
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Once again, this means that at build time, a subclass of <code>MyClass</code> is generated that does the interception and forwarding.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Second, you have to obtain the <code>InterceptionProxy</code> from the <code>SyntheticCreationalContext</code> in the <code>BeanCreator</code> and use it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public MyClass create(SyntheticCreationalContext&lt;MyClass&gt; context) {
+    InterceptionProxy&lt;MyClass&gt; proxy = context.getInterceptionProxy(); <i class="conum" data-value="1"></i><b>(1)</b>
+    return proxy.create(new MyClass());
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Obtains the <code>InterceptionProxy</code> for <code>MyClass</code>, as declared above.
+It would also be possible to use the <code>getInjectedReference()</code> method, passing a <code>TypeLiteral</code>, but <code>getInterceptionProxy()</code> is easier.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>There&#8217;s also an equivalent of <code>@BindingsSource</code>.
+The <code>injectInterceptionProxy()</code> method has an overload with a parameter:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">public void register(RegistrationContext context) {
+    context.configure(MyClass.class)
+            .types(MyClass.class)
+            .injectInterceptionProxy(MyClassBindings.class) <i class="conum" data-value="1"></i><b>(1)</b>
+            .creator(MyClassCreator.class)
+            .done();
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The argument is the bindings source class.</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -2085,7 +2405,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4244">QUARKUS_ARC_REMOVE_UNUSED_BEANS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4244" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4367">QUARKUS_ARC_REMOVE_UNUSED_BEANS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4367" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2105,7 +2425,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>If set to true <code>@Inject</code> is automatically added to all non-static non-final fields that are annotated with one of the annotations defined by <code>AutoInjectAnnotationBuildItem</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4245">QUARKUS_ARC_AUTO_INJECT_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4245" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4368">QUARKUS_ARC_AUTO_INJECT_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4368" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2138,7 +2458,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4246">QUARKUS_ARC_TRANSFORM_UNPROXYABLE_CLASSES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4246" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4369">QUARKUS_ARC_TRANSFORM_UNPROXYABLE_CLASSES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4369" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2158,7 +2478,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>If set to true, the bytecode of private fields that are injection points will be transformed to package private. This ensures that field injection can be performed completely reflection-free. If the value is set to false, then a reflection fallback is used to perform the injection.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4247">QUARKUS_ARC_TRANSFORM_PRIVATE_INJECTED_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4247" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4370">QUARKUS_ARC_TRANSFORM_PRIVATE_INJECTED_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4370" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2178,7 +2498,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>If set to true (the default), the build fails if a private method that is neither an observer nor a producer, is annotated with an interceptor binding. An example of this is the use of <code>Transactional</code> on a private method of a bean. If set to false, Quarkus simply logs a warning that the annotation will be ignored.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4248">QUARKUS_ARC_FAIL_ON_INTERCEPTED_PRIVATE_METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4248" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4371">QUARKUS_ARC_FAIL_ON_INTERCEPTED_PRIVATE_METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4371" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2217,7 +2537,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4249">QUARKUS_ARC_SELECTED_ALTERNATIVES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4249" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4372">QUARKUS_ARC_SELECTED_ALTERNATIVES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4372" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2237,7 +2557,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>If set to true then <code>jakarta.enterprise.inject.Produces</code> is automatically added to all non-void methods that are annotated with a scope annotation, a stereotype or a qualifier, and are not annotated with <code>Inject</code> or <code>Produces</code>, and no parameter is annotated with <code>Disposes</code>, <code>Observes</code> or <code>ObservesAsync</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4250">QUARKUS_ARC_AUTO_PRODUCER_METHODS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4250" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4373">QUARKUS_ARC_AUTO_PRODUCER_METHODS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4373" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2276,7 +2596,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4251">QUARKUS_ARC_EXCLUDE_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4251" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4374">QUARKUS_ARC_EXCLUDE_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4374" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2315,7 +2635,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4252">QUARKUS_ARC_UNREMOVABLE_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4252" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4375">QUARKUS_ARC_UNREMOVABLE_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4375" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2335,7 +2655,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>If set to true then the container attempts to detect "unused removed beans" false positives during programmatic lookup at runtime. You can disable this feature to conserve some memory when running your application in production.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4253">QUARKUS_ARC_DETECT_UNUSED_FALSE_POSITIVES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4253" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4376">QUARKUS_ARC_DETECT_UNUSED_FALSE_POSITIVES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4376" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2358,7 +2678,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>A typical example is <code>@jakarta.ejb.Singleton</code> which is often confused with <code>@jakarta.inject.Singleton</code>. As a result a component annotated with <code>@jakarta.ejb.Singleton</code> would be completely ignored. Another example is an inner class annotated with a scope annotation - this component would be again completely ignored.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4254">QUARKUS_ARC_DETECT_WRONG_ANNOTATIONS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4254" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4377">QUARKUS_ARC_DETECT_WRONG_ANNOTATIONS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4377" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2384,7 +2704,7 @@ The "strictness" of the strict mode (the set of additional validations and the s
 <p>Note that <code>transform-unproxyable-classes</code> and <code>remove-unused-beans</code> also has effect on specification compatibility. You may want to disable these features to get behavior closer to the specification.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4255">QUARKUS_ARC_STRICT_COMPATIBILITY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4255" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4378">QUARKUS_ARC_STRICT_COMPATIBILITY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4378" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2416,7 +2736,7 @@ This config property should not be changed in the development mode as it require
 </table>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4256">QUARKUS_ARC_DEV_MODE_MONITORING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4256" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4379">QUARKUS_ARC_DEV_MODE_MONITORING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4379" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2436,7 +2756,7 @@ This config property should not be changed in the development mode as it require
 <p>If set to true then the dependency graphs are generated and available in the Dev UI.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4257">QUARKUS_ARC_DEV_MODE_GENERATE_DEPENDENCY_GRAPHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4257" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4380">QUARKUS_ARC_DEV_MODE_GENERATE_DEPENDENCY_GRAPHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4380" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2456,7 +2776,7 @@ This config property should not be changed in the development mode as it require
 <p>If set to true then disable <code>StartupEvent</code> and <code>ShutdownEvent</code> observers declared on application bean classes during the tests.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4258">QUARKUS_ARC_TEST_DISABLE_APPLICATION_LIFECYCLE_OBSERVERS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4258" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4381">QUARKUS_ARC_TEST_DISABLE_APPLICATION_LIFECYCLE_OBSERVERS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4381" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2489,7 +2809,7 @@ This config property should not be changed in the development mode as it require
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4259">QUARKUS_ARC_IGNORED_SPLIT_PACKAGES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4259" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4382">QUARKUS_ARC_IGNORED_SPLIT_PACKAGES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4382" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2509,7 +2829,7 @@ This config property should not be changed in the development mode as it require
 <p>If set to true and the SmallRye Context Propagation extension is present then the CDI contexts will be propagated by means of the MicroProfile Context Propagation API. Specifically, a <code>org.eclipse.microprofile.context.spi.ThreadContextProvider</code> implementation is registered. On the other hand, if set to false then the MicroProfile Context Propagation API will never be used to propagate the CDI contexts. Note that the CDI contexts may be propagated in a different way though. For example with the Vertx duplicated context.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4260">QUARKUS_ARC_CONTEXT_PROPAGATION_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4260" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4383">QUARKUS_ARC_CONTEXT_PROPAGATION_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4383" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2534,7 +2854,7 @@ This config property should not be changed in the development mode as it require
 <p>The maven groupId of the artifact.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4261">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__GROUP_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4261" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4384">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__GROUP_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4384" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2554,7 +2874,7 @@ This config property should not be changed in the development mode as it require
 <p>The maven artifactId of the artifact (optional).</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4262">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__ARTIFACT_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4262" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4385">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__ARTIFACT_ID</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4385" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2574,7 +2894,7 @@ This config property should not be changed in the development mode as it require
 <p>The maven classifier of the artifact (optional).</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4263">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__CLASSIFIER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4263" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4386">QUARKUS_ARC_EXCLUDE_DEPENDENCY__DEPENDENCY_NAME__CLASSIFIER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4386" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2611,7 +2931,7 @@ This config property should not be changed in the development mode as it require
 <li><a href="#enable_build_properties">4.8. Enabling Beans for Quarkus Build Properties</a></li>
 <li><a href="#declaring-selected-alternatives">4.9. Declaring Selected Alternatives</a></li>
 <li><a href="#simplified-producer-method-declaration">4.10. Simplified Producer Method Declaration</a></li>
-<li><a href="#interception-of-static-methods">4.11. Interception of Static Methods</a></li>
+<li><a href="#interception_of_static_methods">4.11. Interception of Static Methods</a></li>
 <li><a href="#unproxyable_classes_transformation">4.12. Ability to handle 'final' classes and methods</a></li>
 <li><a href="#container-managed-concurrency">4.13. Container-managed Concurrency</a></li>
 <li><a href="#repeatable-interceptor-bindings">4.14. Repeatable interceptor bindings</a></li>
@@ -2620,6 +2940,8 @@ This config property should not be changed in the development mode as it require
 <li><a href="#injecting-multiple-bean-instances-intuitively">4.17. Injecting Multiple Bean Instances Intuitively</a></li>
 <li><a href="#ignoring-class-level-interceptor-bindings-for-methods-and-constructors">4.18. Ignoring Class-Level Interceptor Bindings for Methods and Constructors</a></li>
 <li><a href="#exceptions-thrown-by-an-asynchronous-observer-method">4.19. Exceptions Thrown By An Asynchronous Observer Method</a></li>
+<li><a href="#intercepted-self-invocation">4.20. Intercepted self-invocation</a></li>
+<li><a href="#intercepting-producer-methods-and-synthetic-beans">4.21. Intercepting Producer Methods and Synthetic Beans</a></li>
 </ul>
 </li>
 <li><a href="#reactive_pitfalls">5. Pitfalls with Reactive Programming</a>
