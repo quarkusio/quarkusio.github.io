@@ -18,7 +18,11 @@ These instructions will get you a copy of the Quarkus.io website up and running 
         cd quarkusio.github.io
 4. Run Docker Composer
 
-        docker-compose up
+        docker compose up
+
+    If any error occurs mentioning the name conflict, try
+        
+        docker compose up --force-recreate
 
 5. Now browse to http://localhost:4000
 #### Using a local Ruby environment
