@@ -5,8 +5,467 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Thu, 01 Aug 2024 03:03:54 +0000</lastBuildDate>
+        <lastBuildDate>Thu, 01 Aug 2024 11:21:06 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>Leveraging Hibernate Search capabilities in a Quarkus application without a database</title>
+            <link>
+                https://quarkus.io/blog/search-standalone-mapper/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is the second post in the series diving into the implementation details of the
+&lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io&quot;&gt;application&lt;/a&gt; backing the guide search of
+&lt;a href=&quot;https://quarkus.io/guides/&quot;&gt;quarkus.io&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Hibernate Search is mainly known for its &lt;a href=&quot;{quarkus-hibernate-search-docs-url}&quot;&gt;integration with Hibernate ORM&lt;/a&gt;,
+where it can detect the entity changes made through ORM and reflect them in the search indexes. But there is more to
+Hibernate Search than that.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-standalone-mapper/search-orm.png&quot; alt=&quot;search orm&quot;&gt;
+&lt;/div&gt;
+&lt;div class=&quot;title&quot;&gt;Figure 1. Hibernate Search integration with Hibernate ORM&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Not all applications that require search capabilities rely on databases to provide the source for the search indexes.
+Some applications rely on a NOSQL store where Hibernate ORM is not applicable, or even flat file storage.
+What can be done in these scenarios?&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That&amp;#8217;s where the &lt;a href=&quot;https://quarkus.io/guides/hibernate-search-standalone-elasticsearch&quot;&gt;Hibernate Search Standalone mapper&lt;/a&gt; can come in handy.
+It was &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-10-0-released/&quot;&gt;recently&lt;/a&gt; included as one of the Quarkus core extensions.
+This mapper allows domain entities to be annotated with Hibernate Search annotations and then uses
+the Search DSL&amp;#8217;s power to perform search operations and more.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With the release 3.10 of Quarkus, we&amp;#8217;ve migrated our Quarkus application that backs the guides&apos;
+search of &lt;a href=&quot;https://quarkus.io/guides/&quot;&gt;quarkus.io/guides/&lt;/a&gt; to the Standalone mapper and would like to share with you
+how to use this mapper to index the data coming from files and without knowing the total number of
+records to index.
+Please refer to the &lt;a href=&quot;https://quarkus.io/guides/hibernate-search-standalone-elasticsearch&quot;&gt;guide&lt;/a&gt; for a more in depth review of how to configure and use the mapper.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-standalone-mapper/search-standalone.png&quot; alt=&quot;search standalone&quot;&gt;
+&lt;/div&gt;
+&lt;div class=&quot;title&quot;&gt;Figure 2. Hibernate Search Standalone mapper&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s start by describing the task that this search application has to perform. The application&amp;#8217;s main goal is to
+provide search capabilities over the documentation guides.
+It obtains the required information about these guides from reading multiple files.
+We want to read the data just once, start indexing as soon as we can, and keep only as many records in memory as strictly necessary.
+We would also want to monitor the progress and report any exceptions that may occur during the indexing process.
+Hence, we would want to create a finite stream of data that we would feed
+to a &lt;a href=&quot;https://docs.jboss.org/hibernate/search/7.1/reference/en-US/html_single/#indexing-massindexer-basics&quot;&gt;mass indexer&lt;/a&gt;,
+which will create the documents in the search index that we will later use to perform search operations.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Generally speaking, mass indexing can be as simple as:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Inject
+SearchMapping searchMapping; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+// ...
+
+var future = searchMapping.scope(Object.class) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    .massIndexer() &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+    .start(); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Inject &lt;code&gt;SearchMapping&lt;/code&gt; somewhere in your app so that it can be used to access Hibernate Search capabilities.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Create a scope targeting the entities that we plan to reindex.
+In this case, all indexed entities should be targeted; hence, the &lt;code&gt;Object.class&lt;/code&gt; can be used to create the scope.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Create a mass indexer with the default configuration.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Start the indexing process. Starting the process returns a future; the indexing happens in the background.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For Hibernate Search to perform this operation, we must tell it how to load the indexed entities.
+We will use an &lt;code&gt;EntityLoadingBinder&lt;/code&gt; to do that. It is a simple interface providing access to the binding context
+where we can define selection-loading strategies (for search) and mass-loading strategies (for indexing).
+Since, in our case, we are only interested in the mass indexer, it would be enough only to define the mass loading strategy:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;public class GuideLoadingBinder implements EntityLoadingBinder {
+
+    @Override
+    public void bind(EntityLoadingBindingContext context) { &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+        context.massLoadingStrategy(Guide.class, new MassLoadingStrategy&amp;lt;Guide, Guide&amp;gt;() { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+            // ...
+        });
+    }
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Implement the single &lt;code&gt;bind(..)&lt;/code&gt; method of the &lt;code&gt;EntityLoadingBinder&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Specify the mass loading strategy for the &lt;code&gt;Guide&lt;/code&gt; search entity.
+We&amp;#8217;ll discuss the implementation of the strategy later in this post.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And then, with the entity loading binder defined, we can simply reference it within the &lt;code&gt;@SearchEntity&lt;/code&gt; annotation:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@SearchEntity(loadingBinder = @EntityLoadingBinderRef(type = GuideLoadingBinder.class)) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+@Indexed( ... )
+public class Guide {
+    @DocumentId
+    public URI url;
+
+    // other fields annotated with various Hibernate Search annotations,
+    // e.g. @KeywordField/@FullTextField.
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Reference the loading binder implementation by the type.
+As with many other Hibernate Search components,
+a CDI bean reference can be used here instead by providing the bean name,
+for example, if the loading binder requires access to some CDI beans and is a CDI bean itself.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That is all that is needed to tie things together.
+The only open question is how to implement the mass loading strategy.
+Let&amp;#8217;s first review how the mass indexer works on a high level:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/search-standalone-mapper/mass-indexer.png&quot; alt=&quot;mass indexer&quot;&gt;
+&lt;/div&gt;
+&lt;div class=&quot;title&quot;&gt;Figure 3. High level mass indexer flow&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Implementing the mass loading strategy requires providing an identifier and entity loaders.
+As already mentioned, in our case, we want a data stream that reads the information from files and does the reading part just once.
+Hence, we want to avoid decoupling the id/entity reading steps.
+While the identifier loader&amp;#8217;s contract suggests that it should provide the batch of identifiers to the sink,
+nothing prevents us from passing a batch of actual entity instance instead.
+It is acceptable to do in this case since we are only interested in the mass loading;
+we are not implementing a selection loading strategy that would be used when searching.
+Now, if the identifier loader provides actual entity instances, the entity loader has nothing more to do
+than just pass through the batch of received &quot;identifiers&quot;, which are actual entities, to the entity sink.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With that in mind, the mass-loading strategy may be implemented as:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;new MassLoadingStrategy&amp;lt;Guide, Guide&amp;gt;() {
+    @Override
+    public MassIdentifierLoader createIdentifierLoader(LoadingTypeGroup&amp;lt;Guide&amp;gt; includedTypes,
+            MassIdentifierSink&amp;lt;Guide&amp;gt; sink, MassLoadingOptions options) {
+            // ...  &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+        };
+    }
+
+    @Override
+    public MassEntityLoader&amp;lt;Guide&amp;gt; createEntityLoader(LoadingTypeGroup&amp;lt;Guide&amp;gt; includedTypes,
+            MassEntitySink&amp;lt;Guide&amp;gt; sink,
+            MassLoadingOptions options) {
+        return new MassEntityLoader&amp;lt;Guide&amp;gt;() { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+            @Override
+            public void close() {
+                // noting to do
+            }
+
+            @Override
+            public void load(List&amp;lt;Guide&amp;gt; guides) throws InterruptedException {
+                sink.accept(guides); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+            }
+        };
+    }
+})&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;We&amp;#8217;ll look at the implementation of the identifier loader in the following code snippet as
+it is slightly trickier than the pass-through entity loader.
+Hence, we would want to take a closer look at it.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;An implementation of the pass-through entity loader.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;As explained above, we treat the search entities as identifiers and simply pass the entities we receive to the sink.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+If passing entities as identifiers feels like a hack, it&amp;#8217;s because it is.
+Hibernate Search will, at some point, provide alternative APIs to achieve this more elegantly: &lt;a href=&quot;https://hibernate.atlassian.net/browse/HSEARCH-5209&quot;&gt;HSEARCH-5209&lt;/a&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Since the guide search entities are constructed from the information read from a file,
+we have to somehow pass the stream of these guides to the identifier loader.
+We could do this by using the &lt;code&gt;MassLoadingOptions options&lt;/code&gt;.
+These mass loading options provide access to the context objects passed to the mass indexer by the user.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Inject
+SearchMapping searchMapping; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+// ...
+
+var future = searchMapping.scope(Object.class) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    .context(GuideLoadingContext.class, guideLoadingContext) &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+    // ... &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+    .massIndexer() &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+    .start(); &lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;(6)&lt;/b&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Inject &lt;code&gt;SearchMapping&lt;/code&gt; somewhere in your application.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Create a scope, as usual.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Pass the context object to the mass indexer that knows how to read the files,
+and is able to provide the batches of &lt;code&gt;Guide&lt;/code&gt; search entities. See the following code snippet
+for an example of how such context can be implemented.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Set any other mass indexer configuration options as needed.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Create a mass indexer.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Start the indexing process.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;public class GuideLoadingContext {
+
+    private final Iterator&amp;lt;Guide&amp;gt; guides;
+
+    GuideLoadingContext(Stream&amp;lt;Guide&amp;gt; guides) {
+        this.guides = guides.iterator(); &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    }
+
+    public List&amp;lt;Guide&amp;gt; nextBatch(int batchSize) {
+        List&amp;lt;Guide&amp;gt; list = new ArrayList&amp;lt;&amp;gt;();
+        for (int i = 0; guides.hasNext() &amp;amp;&amp;amp; i &amp;lt; batchSize; i++) {
+            list.add(guides.next()); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+        }
+        return list;
+    }
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Get an iterator from the finite data stream of guides.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Read the next batch of the guides from the iterator. We are using the batch size limit
+that we will retrieve from the mass-loading options
+and checking the iterator to see if there are any more entities to pull.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now, having the way of reading the entities in batches from the stream
+and knowing how to pass it to the mass indexer, implementing the identifier loader
+can be as easy as:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;exampleblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;@Override
+public MassIdentifierLoader createIdentifierLoader(LoadingTypeGroup&amp;lt;Guide&amp;gt; includedTypes,
+        MassIdentifierSink&amp;lt;Guide&amp;gt; sink, MassLoadingOptions options) {
+    var context = options.context(GuideLoadingContext.class); &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    return new MassIdentifierLoader() {
+        @Override
+        public void close() {
+            // nothing to do
+        }
+
+        @Override
+        public long totalCount() {
+            return 0; &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+        }
+
+        @Override
+        public void loadNext() throws InterruptedException {
+            List&amp;lt;Guide&amp;gt; batch = context.nextBatch(options.batchSize()); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+            if (batch.isEmpty()) {
+                sink.complete();  &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+            } else {
+                sink.accept(batch); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+            }
+        }
+    };
+}&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Retrieve the guide loading context that is expected to be passed to the mass indexer.
+(e.g. &lt;code&gt;.context(GuideLoadingContext.class, guideLoadingContext)&lt;/code&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;We do not know how many guides there will be until we finish reading all the files
+and completing the indexing, so we&amp;#8217;ll just pass &lt;code&gt;0&lt;/code&gt; here.&lt;/p&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The information is not critical: it&amp;#8217;s only used to monitor progress.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+This is one of the areas that we plan to improve;
+see &lt;a href=&quot;https://hibernate.atlassian.net/browse/HSEARCH-5180&quot;&gt;one of the improvements we are currently working on&lt;/a&gt;.
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Request the next batch of guides. &lt;code&gt;options.batchSize()&lt;/code&gt; will provide us with the value configured
+for the current mass indexer.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;If the batch is empty, it means that the stream iterator has no more guides to return.
+Hence, we can notify the mass indexing sink that no more items will be provided by calling &lt;code&gt;.complete()&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;If there are any guides in the loaded batch, we&amp;#8217;ll pass them to the sink to be processed.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To sum up, here is a summary of the steps to take to index an unknown number of search entities from a datasource
+while reading each entity only once, and without relying on lookups by identifier:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Start by creating a loader binder and let Hibernate Search know about it via the &lt;code&gt;@SearchEntity&lt;/code&gt; annotation.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Implement a mass loading strategy (&lt;code&gt;MassLoadingStrategy&lt;/code&gt;) that includes:&lt;/p&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;An identifier loader that does all the heavy lifting and actually constructs entire entities.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;An entity loader that simply passes through the entities loaded by the identifier loader to the indexing sink.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Supply through the mass indexer context any helpful services, resources, helpers, etc., that are used to load the data.
+And access them in the loaders through &lt;code&gt;options.context(..);&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;With everything in place, run the mass indexing as usual.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For a complete working example of this approach, check out the
+&lt;a href=&quot;https://github.com/quarkusio/search.quarkus.io&quot;&gt;search.quarkus.io on GitHub&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Please note that some of the features discussed in this post are still incubating
+and may change in the future.
+In particular, we&amp;#8217;ve already identified and are working on possible &lt;a href=&quot;https://hibernate.atlassian.net/browse/HSEARCH-5180&quot;&gt;improvements&lt;/a&gt;
+for mass indexing of a finite data stream, where the total size of entities is unknown beforehand.
+If you find the approach described in the post interesting
+and have similar use cases, we encourage you to give it a try.
+Feel free to reach out to us to discuss your ideas and suggestions for other improvements, if any.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Stay tuned for more details in the coming weeks as we publish more blog posts
+exploring other interesting implementation aspects of this application.
+Happy searching and mass indexing!&lt;/p&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Thu, 01 Aug 2024 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/search-standalone-mapper/
+            </guid>
+            
+            
+            
+            <author>Marko Bekhta (https://twitter.com/that_java_guy)</author>
+            
+        </item>
         
         <item>
             <title>Quarkus 3.13 - OpenTelemetry Metrics, OpenTelemetry 1.39, TLS registry improvements and more...</title>
@@ -8618,329 +9077,6 @@ Once you upgraded to 3.0, also have a look at the &lt;a href=&quot;https://githu
             <pubDate>Thu, 08 Feb 2024 00:00:00 +0000</pubDate>
             <guid>
                 https://quarkus.io/blog/quarkus-3-7-2-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.7 - Java 17 baseline, Hibernate ORM 6.4, @MeterTag...</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-7-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It is with great pleasure that we are announcing the release of Quarkus 3.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;With Quarkus 3.7, we begin the journey that will lead to Quarkus 3.8 being the next LTS version of Quarkus.
-We strongly encourage you to update to this version and provide feedback to make our next LTS version strong and stable.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Major changes are:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37335&quot;&gt;#37335&lt;/a&gt; - Java 17 is the new baseline&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38190&quot;&gt;#38190&lt;/a&gt; - Rename RESTEasy Classic client extensions to resteasy-client&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/36978&quot;&gt;#36978&lt;/a&gt; - Upgrade to Hibernate ORM 6.4, Hibernate Search 7.0, Hibernate Reactive 2.2&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/35065&quot;&gt;#35065&lt;/a&gt; - Add Hibernate Search management endpoint&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/36945&quot;&gt;#36945&lt;/a&gt; - Support Micrometer &lt;code&gt;@MeterTag&lt;/code&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37152&quot;&gt;#37152&lt;/a&gt; - Support token verification with the inlined certificate chain&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37269&quot;&gt;#37269&lt;/a&gt; - Support certificate role mappings&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37472&quot;&gt;#37472&lt;/a&gt; - Provide a way to observe security events&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37730&quot;&gt;#37730&lt;/a&gt; - Introduce LinkedIn OIDC provider&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37891&quot;&gt;#37891&lt;/a&gt; - Split OIDC session cookie if its size is more than 4KB&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38029&quot;&gt;#38029&lt;/a&gt; - Allow applications using quakus-info to contribute data to the /info using CDI&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/38066&quot;&gt;#38066&lt;/a&gt; - Drop Okhttp/Okio from BOM&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;3.7.1 also fixes the following CVEs:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://access.redhat.com/security/cve/CVE-2023-5675&quot;&gt;CVE-2023-5675&lt;/a&gt; Authorization flaw in Quarkus RESTEasy Reactive and Classic when &lt;code&gt;quarkus.security.jaxrs.deny-unannotated-endpoints&lt;/code&gt; or &lt;code&gt;quarkus.security.jaxrs.default-roles-allowed&lt;/code&gt; properties are used&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://access.redhat.com/security/cve/CVE-2023-6267&quot;&gt;CVE-2023-6267&lt;/a&gt; JSON payload getting processed prior to security checks when REST resources are used with annotations&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We also released 3.6.9 to address these issues in 3.6, in case you encounter problems updating to 3.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As usual, this version also comes with bugfixes, performance improvements and documentation improvements.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As mentioned in the previous minor announcement, we currently maintain two version streams in the community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;3.7: it is the latest and greatest and it introduces new features&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;3.2: it is our current &lt;a href=&quot;/blog/lts-releases/&quot;&gt;LTS release&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus 2.x is not maintained in the community anymore.
-If you are using the community version, please upgrade to Quarkus 3.x (either 3.2 LTS or 3.7).
-We recommend using &lt;code&gt;quarkus update&lt;/code&gt; to do so.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.7, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To migrate from 3.6, please refer to &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.7&quot;&gt;our migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are not already using 3.x, please refer to the &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-0-final-released/&quot;&gt;3.0 announcement&lt;/a&gt; for all the details.
-You can also refer to &lt;a href=&quot;https://quarkus.io/blog/quarkus-3-upgrade/&quot;&gt;this blog post&lt;/a&gt; for additional details.
-Once you upgraded to 3.0, also have a look at the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.1&quot;&gt;3.1&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.2&quot;&gt;3.2&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.3&quot;&gt;3.3&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.4&quot;&gt;3.4&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.5&quot;&gt;3.5&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.6&quot;&gt;3.6&lt;/a&gt; migration guides.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;whats-new&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-new&quot;&gt;&lt;/a&gt;What&amp;#8217;s new?&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;java-17-is-the-new-baseline&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#java-17-is-the-new-baseline&quot;&gt;&lt;/a&gt;Java 17 is the new baseline&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As was announced at &lt;a href=&quot;https://quarkus.io/blog/java-17/&quot;&gt;the end of November&lt;/a&gt;, you will need a Java 17+ runtime (using Java 21 is encouraged!) to run Quarkus 3.7 applications.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;When we released Quarkus 3.0, we announced that Java 11 support was deprecated and would go away at some point.
-This is the time.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Most of the Java ecosystem is moving to Java 17 as the baseline so it wasn&amp;#8217;t sustainable for Quarkus to support Java 11 much longer.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If your Java 17 migration is ongoing, you can upgrade to the latest 3.6 but keep in mind that 3.6.9 released today is the latest 3.6.
-If you are stuck with Java 11 for some time, we recommend using Quarkus 3.2 LTS as it will be maintained longer.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;resteasy-classic-client-extensions-renamed&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#resteasy-classic-client-extensions-renamed&quot;&gt;&lt;/a&gt;RESTEasy Classic Client extensions renamed&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As part of the renaming of the RESTEasy Reactive extensions that will be spread across several releases, we renamed the &lt;code&gt;quarkus-rest-client*&lt;/code&gt; extensions (client extensions for RESTEasy Classic) to &lt;code&gt;quarkus-resteasy-client*&lt;/code&gt;, which makes it clearer that it is the client counterpart of &lt;code&gt;quarkus-resteasy&lt;/code&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Relocations have been put in place to not break your applications but we recommend that you adjust your applications already as these particular artifacts (&lt;code&gt;quarkus-rest-client*&lt;/code&gt;) will be switched to RESTEasy Reactive in Quarkus 3.9.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;See &lt;a href=&quot;https://github.com/quarkusio/quarkus/blob/main/adr/0002-reactive-rename.adoc&quot; class=&quot;bare&quot;&gt;https://github.com/quarkusio/quarkus/blob/main/adr/0002-reactive-rename.adoc&lt;/a&gt; for the full context of this change.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We encourage you to move to the new artifacts listed in the following table:&lt;/p&gt;
-&lt;/div&gt;
-&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
-&lt;colgroup&gt;
-&lt;col style=&quot;width: 50%;&quot;&gt;
-&lt;col style=&quot;width: 50%;&quot;&gt;
-&lt;/colgroup&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Old name&lt;/th&gt;
-&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;New name&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-rest-client&lt;/p&gt;&lt;/td&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-resteasy-client&lt;/p&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-rest-client-jackson&lt;/p&gt;&lt;/td&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-resteasy-client-jackson&lt;/p&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-rest-client-jaxb&lt;/p&gt;&lt;/td&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-resteasy-client-jaxb&lt;/p&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-rest-client-jsonb&lt;/p&gt;&lt;/td&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-resteasy-client-jsonb&lt;/p&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-rest-client-mutiny&lt;/p&gt;&lt;/td&gt;
-&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;quarkus-resteasy-client-mutiny&lt;/p&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;hibernate-orm-6-4-hibernate-search-7-0-hibernate-reactive-2-2&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#hibernate-orm-6-4-hibernate-search-7-0-hibernate-reactive-2-2&quot;&gt;&lt;/a&gt;Hibernate ORM 6.4, Hibernate Search 7.0, Hibernate Reactive 2.2&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We updated the Hibernate persistence stack to:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;Hibernate ORM 6.4 - see &lt;a href=&quot;https://in.relation.to/2023/11/23/orm-640-final/&quot;&gt;announcement&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Hibernate Search 7.0 - see &lt;a href=&quot;https://in.relation.to/2023/12/05/hibernate-search-7-0-0-Final/&quot;&gt;announcement&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Hibernate Reactive 2.2 - see &lt;a href=&quot;https://in.relation.to/2023/11/28/hibernate-reactive-2_2_Final/&quot;&gt;announcement&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We now expose a management endpoint for Hibernate Search, which allows to trigger mass indexing and other maintenance tasks.
-You can find out more about it in the &lt;a href=&quot;https://quarkus.io/guides/hibernate-search-orm-elasticsearch#management&quot;&gt;updated documentation&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;micrometer-metertag&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#micrometer-metertag&quot;&gt;&lt;/a&gt;Micrometer @MeterTag&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Micrometer &lt;code&gt;@MeterTag&lt;/code&gt; can now be used to dynamically assign tag values to metrics.
-See the &lt;a href=&quot;https://quarkus.io/guides/telemetry-micrometer#annotations&quot;&gt;dedicated doc section&lt;/a&gt; for more information.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;assorted-security-improvements&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#assorted-security-improvements&quot;&gt;&lt;/a&gt;Assorted security improvements&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Our security extensions got a bunch of new features, improvements:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37152&quot;&gt;#37152&lt;/a&gt; - Support token verification with the inlined certificate chain&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37269&quot;&gt;#37269&lt;/a&gt; - Support certificate role mappings&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37472&quot;&gt;#37472&lt;/a&gt; - Provide a way to observe security events&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37730&quot;&gt;#37730&lt;/a&gt; - Introduce LinkedIn OIDC provider&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/37891&quot;&gt;#37891&lt;/a&gt; - Split OIDC session cookie if its size is more than 4KB&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;contribute-data-to-info-endpoint&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#contribute-data-to-info-endpoint&quot;&gt;&lt;/a&gt;Contribute data to /info endpoint&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;All CDI beans implementing &lt;code&gt;InfoContributor&lt;/code&gt; will contribute to the &lt;code&gt;/info&lt;/code&gt; endpoint.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;okhttpokio-versions-not-enforced-anymore&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#okhttpokio-versions-not-enforced-anymore&quot;&gt;&lt;/a&gt;Okhttp/Okio versions not enforced anymore&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As we didn&amp;#8217;t want to rely on the Kotlin runtime for non-Kotlin-related extensions,
-we were enforcing a very old version of Okhttp in Quarkus,
-thus making using newer Okhttp version harder.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For several versions, we have been working on reducing our dependency to Okhttp
-to be able to avoid enforcing the version in Quarkus.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This is now effective in 3.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.7.0.CR1&quot;&gt;3.7.0.CR1&lt;/a&gt;, &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.7.0&quot;&gt;3.7.0&lt;/a&gt;, and &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.7.1&quot;&gt;3.7.1&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;contributors&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#contributors&quot;&gt;&lt;/a&gt;Contributors&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The Quarkus community is growing and has now &lt;a href=&quot;https://github.com/quarkusio/quarkus/graphs/contributors&quot;&gt;903 contributors&lt;/a&gt;.
-Many many thanks to each and everyone of them.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In particular for the 3.7 release, thanks to a29340, Abdul Rauf, Ales Justin, Alex Katlein, Alex Martel, Alexei Bratuhin, Alexey Loubyansky, Alexey Kovynev, Andrea Peruffo, Andreas Eberle, Andy Damevin, Anton Vasilev, Auri Munoz, barreiro, Bas Passon, Benedikt Schneppe, Bernhard Schuhmann, Björn Großewinkelmann, Björn Konrad, Bruno Baptista, Bruno Caballero, brunobat, Carles Arnal, Chris Laprun, Christian Thiel, Clement Escoffier, David Andlinger, David M. Lloyd, Davide D&amp;#8217;Alto, Debabrata Patnaik, elendis, Eric Deandrea, Erin Schnabel, Falko Modler, Fedor Dudinskiy, Foivos Zakkak, Fortran, Francesco Nigro, Frantisek Havel, Gasper Kojek, George Gastaldi, Georgios Andrianakis, Gero Müller, Guillaume Smet, Håkan Öström, Idryss Bourdier, Ioannis Canellos, Jakub Jedlicka, Jakub Scholz, Jan Martiska, Jerome Prinet, Jiří Locker, Jonathan Kolberg, Jorge Solórzano, Jose Carranza, jtama, Julien Ponge, Justin Lee, Katia Aresti, Ladislav Thon, Leonor Boga, Loïc Mathieu, luca-bassoricci, Luke Morfill, Maciej Lisowski, Marc Nuri, Marco Schaub, Marek Skacelik, Marko Bekhta, Martin Kofoed, Martin Kouba, Marvin B. Lillehaug, Matej Novotny, Matheus Cruz, Max Rydahl Andersen, mert18, Michael Edgar, Michael Musgrove, Michael Rasmussen, Michal Karm Babacek, Michal Maléř, Michal Vavřík, Michelle Purcell, Mickey Maler, Miroslav Vasko, Ozan Gunalp, Pablo Gonzalez Granados, Peter Palaga, Phillip Krüger, Radim Vansa, rmartinc, Roberto Cortez, rob.spoor, Rolfe Dlugy-Hegwer, Rostislav Svoboda, Sanne Grinovero, Sebastian Schuster, Sergey Beryozkin, Severin Gehwolf, shjones, SIMULATAN, Stephan Strate, stianst, Stuart Douglas, Stéphane Épardaud, Tamaro Skaljic, troosan, Vitaliy Baschlykoff, Waldemar Reusch, Welton Rodrigo Torres Nascimento, Wladimir Hofmann, wrongwrong, xstefank, and Yoann Rodière.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 31 Jan 2024 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-7-released/
             </guid>
             
             
