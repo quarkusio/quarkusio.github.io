@@ -49,7 +49,7 @@ The Quarkus team is expecting increased collaboration between Red Hat and other 
 
 ## What is changing in practice for contributors to Quarkus projects?
 
-Commonhaus requires Quarkus to adhere to its [policies](https://www.commonhaus.org/policies/), including in particular its [intellectual property policy]https://www.commonhaus.org/policies/ip-policy/) and [trademark policy](https://www.commonhaus.org/policies/trademark-policy/).
+Commonhaus requires Quarkus to adhere to its [policies](https://www.commonhaus.org/policies/), including in particular its [intellectual property policy](https://www.commonhaus.org/policies/ip-policy/) and [trademark policy](https://www.commonhaus.org/policies/trademark-policy/).
 
 This is great news for you all, as it legally binds the project to remain open source forever.
 
