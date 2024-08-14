@@ -1,6 +1,6 @@
 ---
 layout: working-groups
 title: Working Groups
-subtitle: This page lists the currently running working groups.
-permalink: /wg/
+subtitle: Organizing the community around a specific topics or goals.
+permalink: /working-groups/
 ---
