@@ -1,0 +1,374 @@
+---
+layout: post
+title: 'Leveraging Quarkus build-time metaprogramming capabilities to improve Jackson's serialization performance'
+date: 2024-08-19
+tags: gizmo,jandex,jackson,performances
+synopsis: 'Leveraging Quarkus build-time metaprogramming capabilities to improve Jackson's serialization performance'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/metaprogramming
+
+
+One of the key architectural decisions taken by Quarkus designers has been moving as much work as possible from the startup time to the build time. This choice implies a clear separation between the deployment (aka. build-time) and runtime parts of each extension, and allows to perform the biggest part of the work once and for all during the build, thus allowing the typical Quarkus application to have a smaller footprint and faster load time.
+
+A consequence of this architecture is the possibility of extensively leveraging https://en.wikipedia.org/wiki/Metaprogramming[metaprogramming], identifying and analyzing the Java classes implementing the domain model of a given application and generating other code intended to opportunely and efficiently manipulate those classes. In particular the goal of the improvement discussed in this article is replacing the standard Jackson serialization mechanism, based on reflection, with code generated at build time.
+
+Reflection is used (and abused) by many Java frameworks and libraries to support dynamic behavior. If more work is done at build time, this dynamism is no longer needed. Reducing reflection to a bare minimum gives performance improvements. It also makes the application more suitable for compilation to a native binary (the https://docs.oracle.com/en/learn/understanding-reflection-graalvm-native-image/index.html#step-2-the-closed-world-assumption[GraalVM closed world assumption]).
+
+A similar idea has been already implemented also in the area of object to JSON serialization by https://github.com/quarkusio/qson[Qson], a Quarkus extension that generates through Gizmo the bytecode of deserializer (parser) and serializer (writer) classes. However, this is a full replacement of Jackson and comes with some, quite significant, https://github.com/quarkusio/qson?tab=readme-ov-file#limitations[limitations].
+
+If you decide to remain on the most common choice and keep using Jackson for the JSON serialization of objects returned by the invocation of a REST endpoint, you will still pay the price of the heavily reflection-based implementation offered out of the box by that library. In this article I will illustrate how I filled this gap and, most importantly, what I learned on how to write a Quarkus extension, or in my case improve an existing one, and in particular on how to use tools like Jandex and Gizmo.
+
+== Out-of-the-box Jackson’s reflection-based serialization
+Before trying to remove the use of reflection from Jackson's serialization, let’s look at the current situation. To do so I added a https://github.com/franz1981/quarkus-profiling-workshop/blob/b0f1f61e2ed5f8b196d62bd74ad15d658e949d8c/src/main/java/profiling/workshop/json/CustomerLookupResource.java#L18[new REST endpoint] to the https://github.com/franz1981/quarkus-profiling-workshop[benchmark suite] written by https://x.com/forked_franz[Francesco Nigro] and myself that we also used for our https://www.youtube.com/watch?v=Cw4nN5L-2vU[Devoxx Belgium workshop on profiling]. The goal of this benchmark is stressing the JSON serialization, so this endpoint doesn’t do anything else other than returning and then serializing in JSON a fixed object, in essence, writing and returning a JSON like the following:
+
+[source, json]
+----
+{
+  "address": {
+    "street": "viale Michelangelo",
+    "town": "Mondragone"
+  },
+  "children": [
+    {
+      "age": 12,
+      "firstName": "Sofia",
+      "lastName": "Fusco"
+    },
+    {
+      "age": 9,
+      "firstName": "Marilena",
+      "lastName": "Fusco"
+    }
+  ],
+  "creditCards": [
+    {
+      "limit": 100,
+      "name": "Visa"
+    },
+    {
+      "limit": 150,
+      "name": "Amex"
+    }
+  ],
+  "age": 50,
+  "firstName": "Mario",
+  "lastName": "Fusco"
+}
+----
+
+Running the benchmark suite against that endpoint I got the following result.
+
+[source, console]
+----
+Profiling for 20 seconds
+Done
+  Thread Stats   Avg  	Stdev 	Max   +/- Stdev
+    Latency   115.82μs   77.29μs  14.88ms   93.27%
+    Req/Sec   79104.05  14774.96  101709.00 	87.80
+  3243266 requests in 40.001s,   1.30GB read
+Requests/sec: 81079.62
+Transfer/sec:  33.33MB
+----
+
+or in other words my laptop can process just a bit more than 81K requests per second when serving that endpoint. We will see how getting rid of reflection will bring a 12% improvement of this figure, allowing it to process more than 92K requests per second, and in particular producing the following result.
+
+[source, console]
+----
+Profiling for 20 seconds
+Done
+  Thread Stats   Avg  	Stdev 	Max   +/- Stdev
+    Latency   102.25μs   70.14μs  19.66ms   92.95%
+    Req/Sec   90045.27  15073.98  103537.00 	97.56
+  3691856 requests in 40.001s,   1.48GB read
+Requests/sec: 92294.09
+Transfer/sec:  37.94MB
+----
+
+Being intended to be used for profiling, our benchmark suite also automatically produces a flamegraph of the benchmark under investigation. Zooming the resulting flamegraph on the https://github.com/quarkusio/quarkus/blob/5f2d29b4500e88ebd6a3c7a8731f6165fb6b64e0/extensions/resteasy-reactive/rest-jackson/runtime/src/main/java/io/quarkus/resteasy/reactive/jackson/runtime/serialisers/FullyFeaturedServerJacksonMessageBodyWriter.java#L52[method of the rest-jackson extension] triggering the JSON serialization we find the following situation where we can see that the `ObjectWriter::writeValue` Jackson’s method actually converting the object to its JSON representation has been found on the stack of 252 samples during the benchmark execution.
+
+.Flamegraph of out of the box Jackson’s serialization
+image::f1.png[]
+
+Further zooming the flamegraph on the Jackson’s `BeanPropertyWriter::serializeAsField` method and searching for the word “reflect” it is possible to see in how many different places, evidenced in purple in this flamegraph, Jackson needs to use Java reflection in order to read the state of the object to be serialized and write it into a JSON string.
+
+.Use of reflection in out of the box Jackson’s serialization
+image::f2.png[]
+
+As expected this use case requires a quite heavy use of reflection which is the thing that we want to avoid. We have already found that the JSON serialization is performed by the rest-jackson extension, so let’s see how we can modify it to achieve this goal.
+
+== Overriding Jackson serialization
+
+Jackson makes it possible to override its standard reflection-based serialization behavior in a pretty simple way. It is sufficient to implement a class extending its `StdSerializer` thus defining how an instance of a given pojo should be rendered in JSON, something like:
+
+[source, java]
+----
+public class PersonSerializer extends StdSerializer {
+    public PersonSerializer() {
+        super(Person.class);
+    }
+
+    public void serialize(Object obj, JsonGenerator jsonGen, SerializerProvider serProv) throws IOException {
+        Person person = (Person)obj;
+        jsonGen.writeStartObject();
+        jsonGen.writeNumberField("age", person.getAge());
+        jsonGen.writeStringField("name", person.getName());
+        jsonGen.writeEndObject();
+   }
+}
+----
+
+and then to add this serializer to a module and register it on the ObjectMapper used by Jackson to perform the JSON serialization.
+
+[source, java]
+----
+SimpleModule module = new SimpleModule();
+module.addSerializer(Person.class, new PersonSerializer());
+ObjectMapper mapper = new ObjectMapper();
+mapper.registerModule(module);
+----
+
+With this setup everytime Jackson will have to convert an instance of the `Person` class into its JSON representation it will do this through this custom serializer instead of accessing the person’s fields via reflection.
+
+The strategy to implement reflection-free JSON serialization is then quite straightforward, but of course it would be great if the Quarkus extension could generate and register those serializers automatically and effortlessly. The first step to achieve this is discovering at deployment time for which classes we need to generate those serializers. In our case they are the classes returned by all the REST endpoints in our application, but of course the same approach could be extended to a wider scope.
+
+== Discovering and indexing the classes to be serialized with Jandex
+
+In general https://quarkus.io/guides/cdi-reference#bean_discovery[bean discovery] is performed by Quarkus, which indexes all the beans that are part of the CDI process through https://smallrye.io/jandex/[Jandex]. Since it finds all the bean classes having a https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bean_defining_annotations[bean defining annotation], this already includes all services exposing one or more REST endpoints that must have such an annotation. This means that all endpoints are already discovered by default. Even better, the https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bean_defining_annotations[quarkus-rest] extension already collects https://github.com/quarkusio/quarkus/blob/4ee036a19d64f537bea7836a25d5362091b0e8fc/extensions/resteasy-reactive/rest/deployment/src/main/java/io/quarkus/resteasy/reactive/server/deployment/ResteasyReactiveResourceMethodEntriesBuildItem.java#L30[an Entry for each rest method] in the `ResteasyReactiveResourceMethodEntriesBuildItem`.
+
+Here each of these entries contains an instance of the Jandex `MethodInfo` that carries all the necessary offline reflection information about the signature of a Java method implementing a specific REST endpoint. As anticipated we are interested in the types returned by those methods, because those are the classes of the objects that will require to be converted in JSON as response to the REST endpoints invocation.
+
+Now we have all the building blocks to start developing a https://quarkus.io/guides/writing-extensions#build-step-processors[`BuildStep`] that collects, without duplications, all those return types, represented as Jandex `ClassInfo` s, and pass them to another service that will have the responsibility of generating the bytecode of a Jackson serializer for each of them.
+
+[source, java]
+----
+@BuildStep
+public void handleEndpointParams(ResteasyReactiveResourceMethodEntriesBuildItem resourceMethodEntries, JaxRsResourceIndexBuildItem jaxRsIndex) {
+
+    	IndexView indexView = jaxRsIndex.getIndexView();
+
+    	Map<String, ClassInfo> jsonClasses = new HashMap<>();
+    	for (ResteasyReactiveResourceMethodEntriesBuildItem.Entry entry : resourceMethodEntries.getEntries()) {
+        	MethodInfo methodInfo = entry.getMethodInfo();
+        	ClassInfo returnClassInfo = indexView.getClassByName(methodInfo.returnType().name());
+        	if (returnClassInfo != null) {
+            	jsonClasses.put(returnClassInfo.name().toString(), returnClassInfo);
+        	}
+    	}
+
+    	if (!jsonClasses.isEmpty()) {
+        	// TODO: generate serializers for each returned type
+    	}
+}
+----
+
+where the `JaxRsResourceIndexBuildItem` provides the Jandex `IndexView` that allows access to all reflection information collected and indexed by Jandex. Since we already know that the JSON serialization will be triggered by the rest-jackson extension it is convenient to simply add this new `BuildStep` to the https://github.com/quarkusio/quarkus/blob/main/extensions/resteasy-reactive/rest-jackson/deployment/src/main/java/io/quarkus/resteasy/reactive/jackson/deployment/processor/ResteasyReactiveJacksonProcessor.java[BuildStepsProcessor already present in that extension].
+
+== Generating the Jackson serializers with Gizmo
+
+At this point we know the classes for which it will be necessary to automatically generate the bytecode implementing a Jackson serializer, something similar to the one sketched when discussing how to customize Jackson serialization.
+
+Quarkus makes heavy use of https://github.com/quarkusio/gizmo/blob/main/USAGE.adoc[Gizmo] in all the many cases when it needs to perform some bytecode generation. Generating bytecode is a relatively low level task, so using a library like Gizmo, with a convenient higher level API that abstracts lots of the underlying complexity, is practically mandatory to perform this difficult task with a reasonable level of productivity and to keep the code readable and maintainable.
+
+We don’t make an exception this time, so for each of the Jandex `ClassInfo` collected during the former step, Gizmo is used to generate the bytecode of a class extending the Jackson’s `StdSerializer` and having a name equal to the one of the bean to be serialized plus the `$quarkusjacksonserializer` suffix.
+
+[source, java]
+----
+public void generate(ClassInfo classInfo) {
+    String pojoClassName = classInfo.name().toString();
+    String generatedClassName = pojoClassName + "$quarkusjacksonserializer";
+
+	try (ClassCreator classCreator = new ClassCreator(
+        	new GeneratedClassGizmoAdaptor(generatedClassBuildItemBuildProducer, true), generatedClassName, null,
+        	StdSerializer.class.getName())) {
+
+		// TODO: generate the serialize method for the given pojo
+	}
+}
+----
+
+Without going into too many details the core logic of this serializer is contained in the `serialize` method that can be generated as follows
+
+[source, java]
+----
+String JSON_GEN_CLASS_NAME = JsonGenerator.class.getName();
+// public void serialize(Object var1, JsonGenerator var2, SerializerProvider var3) throws IOException { ...
+MethodCreator serialize = classCreator.getMethodCreator("serialize", "void", "java.lang.Object", JSON_GEN_CLASS_NAME, "com.fasterxml.jackson.databind.SerializerProvider");
+serialize.setModifiers(ACC_PUBLIC);
+serialize.addException(IOException.class);
+
+// jsonGenerator.writeStartObject();
+MethodDescriptor writeStartObject = MethodDescriptor.ofMethod(JSON_GEN_CLASS_NAME, "writeStartObject", "void");
+serialize.invokeVirtualMethod(writeStartObject, jsonGenerator);
+
+// TODO: generate fields serialization
+
+// jsonGenerator.writeEndObject();
+MethodDescriptor writeEndObject = MethodDescriptor.ofMethod(JSON_GEN_CLASS_NAME, "writeEndObject", "void");
+serialize.invokeVirtualMethod(writeEndObject, jsonGenerator);
+serialize.returnVoid();
+----
+
+Querying the `ClassInfo` it is possible to iterate all the fields to be serialized, together with their accessor methods, in order to generate the code serializing in JSON each of those fields. For instance if valueHandle is the handle to the object to be serialized, which is the first argument of the signature of the `serialize` method, and `getterMethod` is the `MethodInfo` of a getter returning a numeric field, the corresponding code generating the serialization of that field can be something like
+
+[source, java]
+----
+// int number = value.getNumber()
+ResultHandle fieldValueHandle = serialize.invokeVirtualMethod(MethodDescriptor.of(getterMethod), valueHandle);
+
+// jsonGen.writeNumberField("number", number);
+MethodDescriptor writerMethod = MethodDescriptor.ofMethod(JSON_GEN_CLASS_NAME, "writeNumberField", "void", "java.lang.String", "java.lang.Integer");
+serialize.invokeVirtualMethod(writerMethod, jsonGenerator, serialize.load(fieldName), fieldValueHandle);
+----
+
+Note that, doing so, the logic to decide whether a field should be serialized or not, and how, totally bypasses the one implemented in Jackson and could sometimes differ from it. In particular this behavior can be explicitly modified by users through some specific Jackson annotations. To play safe when the serializers generator https://github.com/quarkusio/quarkus/blob/b3e608507e3bdcbcebe15a3d45de1b6cc6945d10/extensions/resteasy-reactive/rest-jackson/deployment/src/main/java/io/quarkus/resteasy/reactive/jackson/deployment/processor/JacksonSerializerFactory.java#L312[meets any of those annotations], it simply gives up generating a serializer for the specific class containing it. In this circumstance the serialization of that class will be performed with the normal reflection-based mechanism employed by Jackson.
+
+Actually I see this as a defect and I tried to figure out if I could reuse Jackson's logic in some way also for this serializers generation. As discussed https://github.com/FasterXML/jackson-modules-base/issues/247[here], the main problem is that a library like Jackson, but also the vast majority of the Java frameworks, doesn’t have a clear separation between deployment and runtime as it happens with Quarkus. This however also demonstrates the clear advantage of this separation as implemented in Quarkus, that allows to develop features and optimizations that are otherwise simply impossible for other tools.
+
+Finally, we also need to take into account the fact that during the iteration of the fields of a class, the serializers generator also will very likely encounter other types belonging to the application’s business domain. In our original example the `Customer` has an `Address`, a `List<Person>` who are her children and a `CreditCard[]`. When this happens these new types are added to a queue of `ClassInfo` s for which another serializer has to be generated. The whole bytecode generation process terminates only when this queue is empty.
+
+At the end of this process all the newly created classes are passed back to the `BuildStep` that will record them in the `ResteasyReactiveServerJacksonRecorder` thus making them available also at runtime.
+
+[source, java]
+----
+@BuildStep
+@Record(ExecutionTime.STATIC_INIT)
+public void handleEndpointParams(CombinedIndexBuildItem index,
+ResteasyReactiveServerJacksonRecorder recorder,
+BuildProducer<GeneratedClassBuildItem> generatedClassBuildItemBuildProducer) {
+
+	Map<String, ClassInfo> jsonClasses = new HashMap<>();
+
+	// ... classes to be serialized discovery [omitted]
+
+	if (!jsonClasses.isEmpty()) {
+    	JacksonSerializerFactory factory = new JacksonSerializerFactory(
+            	generatedClassBuildItemBuildProducer, index.getComputingIndex());
+    	factory.create(jsonClasses.values())
+            	.forEach(recorder::recordGeneratedSerializer);
+	}
+}
+----
+
+For this reason it is necessary to add the `@Record` annotation to the `BuildStep` in order to indicate that it also outputs https://quarkus.io/guides/writing-extensions#bytecode-recording[recorded bytecode]. This concludes the description of all the steps necessary to the implementation of this new feature, that can be visually summarized as it follows.
+
+.Blocks diagram describing the implementation of the generated reflection-free Jackson serializers
+image::DeploymentVsRuntime.jpg[]
+
+== Making it optional
+
+Since it was not possible to reuse any of the heuristics used by Jackson to decide if and how a specific field should be serialized, and as discussed there could still exist some edge cases when the generated serializers produce a result that differs from what Jackson would do using reflection, we decided for now to disable this feature by default and give the possibility to users to opt-in. Considering that all the code implementing this new feature is self-contained in a single `BuildStep`, that is easily achievable using a https://quarkus.io/guides/writing-extensions#conditional-step-inclusion[conditional step inclusion].
+
+For this purpose it is sufficient to https://quarkus.io/guides/config-mappings[map a configuration to an interface] using the `@ConfigMapping` annotation
+
+[source, java]
+----
+@ConfigMapping(prefix = "quarkus.rest.jackson.optimization")
+@ConfigRoot(phase = ConfigPhase.BUILD_TIME)
+public interface JacksonOptimizationConfig {
+    @WithDefault("false")
+    boolean enableReflectionFreeSerializers();
+}
+----
+and also having an implementation of a `BooleanSupplier` reading that configuration
+
+[source, java]
+----
+class IsReflectionFreeSerializersEnabled implements BooleanSupplier {
+JacksonOptimizationConfig config;
+
+    	@Override public boolean getAsBoolean() {
+        	return config.enableReflectionFreeSerializers();
+    	}
+}
+----
+
+so that the `BuildStep` will be enabled only if this supplier returns true.
+
+[source, java]
+----
+@BuildStep(onlyIf = IsReflectionFreeSerializersEnabled.class)
+----
+
+In this way this optimization is turned off by default (note the `@WithDefault("false")` annotation on the boolean method) and can be enabled by simply adding the flag
+
+[source, properties]
+----
+quarkus.rest.jackson.optimization.enable-reflection-free-serializers=true
+----
+
+to the `application.properties` configuration file. With this last change, the final code of the complete `BuildStep` is available https://github.com/quarkusio/quarkus/blob/39ec43201a690e7895b643e6c328d9042e73ccf0/extensions/resteasy-reactive/rest-jackson/deployment/src/main/java/io/quarkus/resteasy/reactive/jackson/deployment/processor/ResteasyReactiveJacksonProcessor.java#L374[here].
+
+== Putting it at work and measuring the results
+
+Now that all the development has been done, let’s try to put this at work with the same benchmark from where we started and check if this change comes with a real performance gain as we hoped. First of all it is necessary to enable this feature by setting the above mentioned flag in the Quarkus `application.properties` file. Additionally it will be useful to also set a second flag enabling Quarkus to dump the decompiled bytecode generated at deployment time
+
+[source, properties]
+----
+quarkus.rest.jackson.optimization.enable-reflection-free-serializers=true
+quarkus.package.decompiler.enabled=true
+----
+
+In fact thanks to this second flag, after having recompiled our application, it is possible to find the bytecode of the generated classes under the folder `target/decompiled/generated-bytecode`
+
+.The Jackson serializers generated at deployment time
+image::generated.png[]
+
+Here, other than the code already generated by Quarkus to perform the invocation of the REST endpoints without reflection, you can see all the classes, terminating in `$quarkusjacksonserializer`, implementing the reflection-free JSON serialization of all the classes in our domain. For instance for the Customer class it generates a Jackson’s `StdSerializer` implementation like the following.
+
+[source, java]
+----
+public class Customer$quarkusjacksonserializer extends StdSerializer {
+    public Customer$quarkusjacksonserializer() {
+        super(Customer.class);
+    }
+
+   public void serialize(Object var1, JsonGenerator var2, SerializerProvider var3) throws IOException {
+  	Customer var4 = (Customer)var1;
+  	var2.writeStartObject();
+  	Address var5 = var4.getAddress();
+  	var2.writePOJOField("address", var5);
+  	List var6 = var4.getChildren();
+  	var2.writePOJOField("children", var6);
+  	CreditCard[] var7 = var4.getCreditCards();
+  	var2.writePOJOField("creditCards", var7);
+  	double var9 = var4.getIncome();
+  	String[] var8 = new String[]{"admin"};
+  	if (JacksonMapperUtil.includeSecureField(var8)) {
+     	    var2.writeNumberField("income", var9);
+  	}
+
+  	int var11 = var4.getAge();
+  	var2.writeNumberField("age", var11);
+  	String var12 = ((Person)var4).getFirstName();
+  	var2.writeStringField("firstName", var12);
+  	String var13 = ((Person)var4).getLastName();
+  	var2.writeStringField("lastName", var13);
+  	var2.writeEndObject();
+   }
+}
+----
+
+As already anticipated, running again the benchmark with this optimization in place I got the following result
+
+[source, console]
+----
+Profiling for 20 seconds
+Done
+  Thread Stats   Avg  	Stdev 	Max   +/- Stdev
+    Latency   102.25μs   70.14μs  19.66ms   92.95%
+    Req/Sec   90045.27  15073.98  103537.00 	97.56
+  3691856 requests in 40.001s,   1.48GB read
+Requests/sec: 92294.09
+Transfer/sec:  37.94MB
+----
+
+This time Quarkus can serve more than 92K requests per second, compared with the 81K we had before doing this work, quite an interesting improvement. Finally also the corresponding flamegraph helps to make sense of this improvement: there isn’t any trace of usage of Java reflection in it and now the `ObjectWriter::writeValue` Jackson’s method is sampled only 193 times instead of the 252 observed before.
+
+.Flamegraph of serialization using the generated Jackson’s serializers demonstrating the absence of any usage of reflection
+image::f3.png[]
+
+In fact in this case all the objects serializations, the one of the `Customer` instance returned by the rest endpoint plus all other objects referenced by it, are now performed by the serializers generated during the deployment phase, the ones with the class names terminating in `$quarkusjacksonserializer` and evidenced in purple in this last flamegraph.
+
+.Flamegraph of serialization demonstrating how all the necessary generated serializers are invoked
+image::f4.png[]
