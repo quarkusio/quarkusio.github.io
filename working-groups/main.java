@@ -176,7 +176,7 @@ public class main implements Callable<Integer> {
             LocalDateTime dateTime = LocalDateTime.ofInstant(updateDate, ZoneId.of("UTC"));
 
             // Define the formatter
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
             // Format the LocalDateTime
             return dateTime.format(formatter);
