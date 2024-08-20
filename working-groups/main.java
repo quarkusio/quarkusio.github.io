@@ -118,7 +118,10 @@ public class main implements Callable<Integer> {
                    }
                 """, variables);
 
-        System.out.println("Response:\n" + response.getData().toString());        
+
+        System.out.println("Response: " + response);        
+        System.out.println("Errors: " + response.getErrors());
+        System.out.println("Data:\n" + response.getData());        
         JsonArray array = response.getData().getJsonObject("organization").getJsonObject("projectsV2")
                 .getJsonArray("nodes");
         for (JsonValue value : array) {
