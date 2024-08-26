@@ -8,7 +8,6 @@
 //DEPS org.commonmark:commonmark:0.22.0
 //DEPS io.quarkus:quarkus-config-yaml
 //FILES templates/=templates/*
-//FILES application.yaml
 
 import java.io.File;
 import java.nio.file.Files;
