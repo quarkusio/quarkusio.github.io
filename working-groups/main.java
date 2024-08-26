@@ -60,7 +60,7 @@ public class main implements Callable<Integer> {
     DynamicGraphQLClient githubClient;
 
     @Inject
-    @Location("wg.yaml")
+    @Location("wg.yaml.template")
     Template yaml;
 
     @Override
