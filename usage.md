@@ -17,7 +17,7 @@ In order to get this information, beginning in Quarkus 3.2, when you run Quarkus
 
 By answering **"Yes"**, when you perform a quarkus build, anonymized data is sent to gather usage statistics on how Quarkus is being used and adopted.
 
-However if you anser **"No"**, then no usage data is sent and you will not be asked again.
+However if you answer **"No"**, then no usage data is sent and you will not be asked again.
 
 We will share what is learned from these anonymous usage data and plan on integrate things like usage and adoption into sites like [extensions.quarkus.io](https://extensions.quarkus.io) and [code.quarkus.io](https://code.quarkus.io).
 
