@@ -19,7 +19,7 @@ By answering **"Yes"**, when you perform a quarkus build, anonymized data is sen
 
 However if you anser **"No"**, then no usage data is sent and you will not be asked again.
 
-We will share what is learned from these anonymous usage data and plan on integrate things like usage and adoption into sites like [extensions.quarkus.io](extensions.quarkus.io) and [code.quarkus.io](code.quarkus.io).
+We will share what is learned from these anonymous usage data and plan on integrate things like usage and adoption into sites like [extensions.quarkus.io](https://extensions.quarkus.io) and [code.quarkus.io](https://code.quarkus.io).
 
 ## How can I enable and disable ?
 
