@@ -357,7 +357,7 @@ cd security-keycloak-authorization-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.13.3:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.14.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-keycloak-authorization-quickstart \
     -Dextensions='oidc,keycloak-authorization,rest-jackson' \
@@ -582,7 +582,7 @@ For more information, see the <a href="#keycloak-dev-mode">Running the applicati
 </div>
 </div>
 <div class="paragraph">
-<p>where <code>keycloak.version</code> must be <code>25.0.0</code> or later and the <code>keycloak-keystore.jks</code> can be found in <a href="https://github.com/quarkusio/quarkus-quickstarts/blob/main/security-keycloak-authorization-quickstart/config/keycloak-keystore.jks">quarkus-quickstarts/security-keycloak-authorization-quickstart/config</a>.</p>
+<p>where <code>keycloak.version</code> must be <code>25.0.2</code> or later and the <code>keycloak-keystore.jks</code> can be found in <a href="https://github.com/quarkusio/quarkus-quickstarts/blob/main/security-keycloak-authorization-quickstart/config/keycloak-keystore.jks">quarkus-quickstarts/security-keycloak-authorization-quickstart/config</a>.</p>
 </div>
 <div class="paragraph">
 <p>Try to access your Keycloak server at <a href="https://localhost:8543">localhost:8543</a>.</p>
@@ -1104,16 +1104,93 @@ quarkus.keycloak.webapp-tenant.policy-enforcer.paths.1.claim-information-point.c
 </div>
 </div>
 <div class="sect1">
+<h2 id="dynamic-tenant-configuration-resolution"><a class="anchor" href="#dynamic-tenant-configuration-resolution"></a>Dynamic tenant configuration resolution</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>If you need a more dynamic configuration for the different tenants you want to support and don’t want to end up
+with multiple entries in your configuration file, you can use the <code>io.quarkus.keycloak.pep.TenantPolicyConfigResolver</code>.</p>
+</div>
+<div class="paragraph">
+<p>This interface allows you to dynamically create tenant configurations at runtime:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.keycloak.authorization;
+
+import java.util.Map;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.keycloak.pep.TenantPolicyConfigResolver;
+import io.quarkus.keycloak.pep.runtime.KeycloakPolicyEnforcerConfig;
+import io.quarkus.keycloak.pep.runtime.KeycloakPolicyEnforcerTenantConfig;
+import io.quarkus.oidc.OidcRequestContext;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.smallrye.mutiny.Uni;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class CustomTenantPolicyConfigResolver implements TenantPolicyConfigResolver {
+
+    private final KeycloakPolicyEnforcerTenantConfig enhancedTenantConfig;
+    private final KeycloakPolicyEnforcerTenantConfig newTenantConfig;
+
+    public CustomTenantPolicyConfigResolver(KeycloakPolicyEnforcerConfig enforcerConfig) {
+        this.enhancedTenantConfig = KeycloakPolicyEnforcerTenantConfig.builder(config) <i class="conum" data-value="1"></i><b>(1)</b>
+            .paths("/enhanced-config")
+            .permissionName("Permission Name")
+            .get("read-scope")
+            .build();
+        this.newTenantConfig = KeycloakPolicyEnforcerTenantConfig.builder() <i class="conum" data-value="2"></i><b>(2)</b>
+            .paths("/new-config")
+            .claimInformationPoint(Map.of("claims", Map.of("grant", "{request.parameter['grant']}")))
+            .build();
+    }
+
+    @Override
+    public Uni&lt;KeycloakPolicyEnforcerTenantConfig&gt; resolve(RoutingContext routingContext, OidcTenantConfig tenantConfig,
+                                                OidcRequestContext&lt;KeycloakPolicyEnforcerTenantConfig&gt; requestContext) {
+        String path = routingContext.normalizedPath();
+        String tenantId = tenantConfig.tenantId.orElse(null);
+        if ("enhanced-config-tenant".equals(tenantId) &amp;&amp; path.equals("/enhanced-config")) {
+            return Uni.createFrom().item(enhancedTenantConfig);
+        } else if ("new-config-tenant".equals(tenantId) &amp;&amp; path.equals("/new-config")) {
+            return Uni.createFrom().item(newTenantConfig);
+        }
+        return Uni.createFrom().nullItem(); <i class="conum" data-value="3"></i><b>(3)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Create or update the <code>/enhanced-config</code> path in the default tenant config.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Add <code>/new-config</code> path into tenant config populated with documented configuration default values.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Use default static tenant configuration resolution based on the <code>application.properties</code> file and other SmallRye Config configuration sources.</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>Configuration reference</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>This configuration adheres to the official [Keycloak Policy Enforcer Configuration](<a href="https://www.keycloak.org/docs/latest/authorization_services/index.html#_enforcer_filter" class="bare">https://www.keycloak.org/docs/latest/authorization_services/index.html#_enforcer_filter</a>) guidelines.
 For detailed insights into various configuration options, see the following documentation:</p>
 </div>
-<div class="paragraph configuration-legend">
-<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime</p>
+<div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime <input type="search" id="config-search-0" placeholder="FILTER CONFIGURATION" disabled></p>
 </div>
-<table class="tableblock frame-all grid-all stretch configuration-reference configuration-reference-all-rows">
+<table class="tableblock frame-all grid-all stretch configuration-reference searchable configuration-reference-all-rows">
 <colgroup>
 <col style="width: 80%;">
 <col style="width: 10%;">
@@ -1121,123 +1198,21 @@ For detailed insights into various configuration options, see the following docu
 </colgroup>
 <tbody>
 <tr>
-<th class="tableblock halign-left valign-top"><p class="tableblock"><a id="quarkus-keycloak-keycloak-policy-enforcer-config_configuration"></a><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_configuration">Configuration property</a></p></th>
+<th class="tableblock halign-left valign-top"><p class="tableblock"><span class="header-title">Configuration property</span></p></th>
 <th class="tableblock halign-left valign-middle"><p class="tableblock">Type</p></th>
 <th class="tableblock halign-left valign-middle"><p class="tableblock">Default</p></th>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-connection-pool-size"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-connection-pool-size">quarkus.keycloak.connection-pool-size</a></code></p>
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-enable"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.enable</code></span></p>
 </div>
 <div id="conf-collapsible-desc-1" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>Adapters will make separate HTTP invocations to the Keycloak server to turn an access code into an access token. This config option defines how many connections to the Keycloak server should be pooled</p>
+<p>Enables policy enforcement.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8002">QUARKUS_KEYCLOAK_CONNECTION_POOL_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8002" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>20</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-enforcement-mode">quarkus.keycloak.policy-enforcer.enforcement-mode</a></code></p>
-</div>
-<div id="conf-collapsible-desc-2" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Specifies how policies are enforced.</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8003">QUARKUS_KEYCLOAK_POLICY_ENFORCER_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8003" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
-<p><code>permissive</code>, <code>enforcing</code>, <code>disabled</code></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-path-cache-max-entries"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-path-cache-max-entries">quarkus.keycloak.policy-enforcer.path-cache.max-entries</a></code></p>
-</div>
-<div id="conf-collapsible-desc-3" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Defines the limit of entries that should be kept in the cache</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8004">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATH_CACHE_MAX_ENTRIES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8004" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1000</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-path-cache-lifespan"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-path-cache-lifespan">quarkus.keycloak.policy-enforcer.path-cache.lifespan</a></code></p>
-</div>
-<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Defines the time in milliseconds when the entry should be expired</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8005">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATH_CACHE_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8005" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">long</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>30000</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-lazy-load-paths"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-lazy-load-paths">quarkus.keycloak.policy-enforcer.lazy-load-paths</a></code></p>
-</div>
-<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Specifies how the adapter should fetch the server for resources associated with paths in your application. If true, the policy enforcer is going to fetch resources on-demand accordingly with the path being requested</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8006">QUARKUS_KEYCLOAK_POLICY_ENFORCER_LAZY_LOAD_PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8006" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-http-method-as-scope"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-http-method-as-scope">quarkus.keycloak.policy-enforcer.http-method-as-scope</a></code></p>
-</div>
-<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Specifies how scopes should be mapped to HTTP methods. If set to true, the policy enforcer will use the HTTP method from the current request to check whether access should be granted</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8007">QUARKUS_KEYCLOAK_POLICY_ENFORCER_HTTP_METHOD_AS_SCOPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8007" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7646">QUARKUS_KEYCLOAK_POLICY_ENFORCER_ENABLE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7646" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1247,202 +1222,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-name"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-name">quarkus.keycloak.policy-enforcer.paths."paths".name</a></code></p>
-</div>
-<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>The name of a resource on the server that is to be associated with a given path</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8008">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8008" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-paths"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-paths">quarkus.keycloak.policy-enforcer.paths."paths".paths</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-connection-pool-size"></a> <span class="property-path"><code>quarkus.keycloak.connection-pool-size</code></span></p>
 </div>
-<div id="conf-collapsible-desc-8" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>HTTP request paths that should be protected by the policy enforcer</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8009">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8009" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-method"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-method">quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".method</a></code></p>
-</div>
-<div id="conf-collapsible-desc-9" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>The name of the HTTP method</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8010">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8010" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes">quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".scopes</a></code></p>
-</div>
-<div id="conf-collapsible-desc-10" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>An array of strings with the scopes associated with the method</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8011">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8011" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode">quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".scopes-enforcement-mode</a></code></p>
-</div>
-<div id="conf-collapsible-desc-11" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>A string referencing the enforcement mode for the scopes associated with a method</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8012">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8012" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
-<p><code>all</code>, <code>any</code>, <code>disabled</code></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>all</code></p></td>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-enforcement-mode">quarkus.keycloak.policy-enforcer.paths."paths".enforcement-mode</a></code></p>
-</div>
-<div id="conf-collapsible-desc-12" class="openblock description description-collapsed">
-<div class="content">
-<div class="paragraph">
-<p>Specifies how policies are enforced</p>
-</div>
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8013">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8013" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div>
-<div class="paragraph description-decoration">
-<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
-<p><code>permissive</code>, <code>enforcing</code>, <code>disabled</code></p>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
-</tr>
-<tr class=" odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-complex-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-complex-config">quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."complex-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-13" class="openblock description">
-<div class="content">
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8014">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8014" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class="">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-simple-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-simple-config">quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."simple-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-14" class="openblock description">
-<div class="content">
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8015">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8015" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class=" odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-claim-information-point-complex-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-claim-information-point-complex-config">quarkus.keycloak.policy-enforcer.claim-information-point."complex-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-15" class="openblock description">
-<div class="content">
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8016">QUARKUS_KEYCLOAK_POLICY_ENFORCER_CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8016" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class="">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-claim-information-point-simple-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-policy-enforcer-claim-information-point-simple-config">quarkus.keycloak.policy-enforcer.claim-information-point."simple-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-16" class="openblock description">
-<div class="content">
-<div class="paragraph">
-<p>Environment variable: <code id="env-var-8017">QUARKUS_KEYCLOAK_POLICY_ENFORCER_CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8017" title="Copy to clipboard" do-not-collapse="true"></button></p>
-</div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr>
-<th class="tableblock halign-left valign-top"><p class="tableblock"><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-named-tenants-additional-named-tenants"></a><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-named-tenants-additional-named-tenants">Additional named tenants</a></p></th>
-<th class="tableblock halign-left valign-middle"><p class="tableblock">Type</p></th>
-<th class="tableblock halign-left valign-middle"><p class="tableblock">Default</p></th>
-</tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-connection-pool-size"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-connection-pool-size">quarkus.keycloak."tenant".connection-pool-size</a></code></p>
-</div>
-<div id="conf-collapsible-desc-17" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-2" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Adapters will make separate HTTP invocations to the Keycloak server to turn an access code into an access token. This config option defines how many connections to the Keycloak server should be pooled</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8018">QUARKUS_KEYCLOAK__TENANT__CONNECTION_POOL_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8018" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7647">QUARKUS_KEYCLOAK_CONNECTION_POOL_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7647" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1452,17 +1242,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>20</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-enforcement-mode">quarkus.keycloak."tenant".policy-enforcer.enforcement-mode</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.enforcement-mode</code></span></p>
 </div>
-<div id="conf-collapsible-desc-18" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-3" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Specifies how policies are enforced.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8019">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8019" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7648">QUARKUS_KEYCLOAK_POLICY_ENFORCER_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7648" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1474,17 +1264,137 @@ For detailed insights into various configuration options, see the following docu
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
 </tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-path-cache-max-entries"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.path-cache.max-entries</code></span></p>
+</div>
+<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Defines the limit of entries that should be kept in the cache</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7649">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATH_CACHE_MAX_ENTRIES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7649" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1000</code></p></td>
+</tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-name"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-name">quarkus.keycloak."tenant".policy-enforcer.paths."paths".name</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-path-cache-lifespan"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.path-cache.lifespan</code></span></p>
 </div>
-<div id="conf-collapsible-desc-19" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Defines the time in milliseconds when the entry should be expired</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7650">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATH_CACHE_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7650" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">long</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>30000</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-lazy-load-paths"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.lazy-load-paths</code></span></p>
+</div>
+<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Specifies how the adapter should fetch the server for resources associated with paths in your application. If true, the policy enforcer is going to fetch resources on-demand accordingly with the path being requested</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7651">QUARKUS_KEYCLOAK_POLICY_ENFORCER_LAZY_LOAD_PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7651" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-claim-information-point-complex-config"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.claim-information-point."complex-config"</code></span></p>
+</div>
+<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Complex config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7652">QUARKUS_KEYCLOAK_POLICY_ENFORCER_CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7652" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,Map&lt;String,String&gt;&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-claim-information-point-simple-config"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.claim-information-point."simple-config"</code></span></p>
+</div>
+<div id="conf-collapsible-desc-8" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Simple config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7653">QUARKUS_KEYCLOAK_POLICY_ENFORCER_CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7653" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,String&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-http-method-as-scope"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.http-method-as-scope</code></span></p>
+</div>
+<div id="conf-collapsible-desc-9" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Specifies how scopes should be mapped to HTTP methods. If set to true, the policy enforcer will use the HTTP method from the current request to check whether access should be granted</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7654">QUARKUS_KEYCLOAK_POLICY_ENFORCER_HTTP_METHOD_AS_SCOPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7654" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-name"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".name</code></span></p>
+</div>
+<div id="conf-collapsible-desc-10" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>The name of a resource on the server that is to be associated with a given path</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8020">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8020" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7655">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7655" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1494,17 +1404,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
 <td class="tableblock halign-left valign-middle"></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-paths"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-paths">quarkus.keycloak."tenant".policy-enforcer.paths."paths".paths</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-paths"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".paths</code></span></p>
 </div>
-<div id="conf-collapsible-desc-20" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-11" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>HTTP request paths that should be protected by the policy enforcer</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8021">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8021" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7656">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7656" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1514,17 +1424,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
 <td class="tableblock halign-left valign-middle"></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-method"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-method">quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".method</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-method"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".method</code></span></p>
 </div>
-<div id="conf-collapsible-desc-21" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-12" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>The name of the HTTP method</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8022">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8022" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7657">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7657" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1534,17 +1444,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes">quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".scopes</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".scopes</code></span></p>
 </div>
-<div id="conf-collapsible-desc-22" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-13" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>An array of strings with the scopes associated with the method</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8023">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8023" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7658">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7658" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1554,17 +1464,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode">quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".scopes-enforcement-mode</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".methods."methods".scopes-enforcement-mode</code></span></p>
 </div>
-<div id="conf-collapsible-desc-23" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-14" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>A string referencing the enforcement mode for the scopes associated with a method</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8024">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8024" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7659">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7659" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1576,17 +1486,17 @@ For detailed insights into various configuration options, see the following docu
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>all</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-enforcement-mode"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-enforcement-mode">quarkus.keycloak."tenant".policy-enforcer.paths."paths".enforcement-mode</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".enforcement-mode</code></span></p>
 </div>
-<div id="conf-collapsible-desc-24" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-15" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Specifies how policies are enforced</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8025">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8025" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7660">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7660" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1598,45 +1508,268 @@ For detailed insights into various configuration options, see the following docu
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
 </tr>
-<tr class=" odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-complex-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-complex-config">quarkus.keycloak."tenant".policy-enforcer.paths."paths".claim-information-point."complex-config"</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-complex-config"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."complex-config"</code></span></p>
 </div>
-<div id="conf-non-collapsible-desc-25" class="openblock description">
+<div id="conf-collapsible-desc-16" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8026">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8026" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Complex config.</p>
 </div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class="">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-simple-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-simple-config">quarkus.keycloak."tenant".policy-enforcer.paths."paths".claim-information-point."simple-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-26" class="openblock description">
-<div class="content">
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8027">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8027" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7661">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7661" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,Map&lt;String,String&gt;&gt;&gt;</p></td>
 <td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-path-cache-max-entries"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-path-cache-max-entries">quarkus.keycloak."tenant".policy-enforcer.path-cache.max-entries</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-simple-config"></a> <span class="property-path"><code>quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."simple-config"</code></span></p>
+</div>
+<div id="conf-collapsible-desc-17" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Simple config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7662">QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7662" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,String&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr>
+<th class="tableblock halign-left valign-top"><p class="tableblock"><a id="quarkus-keycloak-authorization_section_quarkus-keycloak"></a> <span class="section-name section-level0">Additional named tenants</span></p></th>
+<th class="tableblock halign-left valign-middle"><p class="tableblock">Type</p></th>
+<th class="tableblock halign-left valign-middle"><p class="tableblock">Default</p></th>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-connection-pool-size"></a> <span class="property-path"><code>quarkus.keycloak."tenant".connection-pool-size</code></span></p>
+</div>
+<div id="conf-collapsible-desc-18" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Adapters will make separate HTTP invocations to the Keycloak server to turn an access code into an access token. This config option defines how many connections to the Keycloak server should be pooled</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7663">QUARKUS_KEYCLOAK__TENANT__CONNECTION_POOL_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7663" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>20</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.enforcement-mode</code></span></p>
+</div>
+<div id="conf-collapsible-desc-19" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Specifies how policies are enforced.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7664">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7664" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
+<p><code>permissive</code>, <code>enforcing</code>, <code>disabled</code></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-name"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".name</code></span></p>
+</div>
+<div id="conf-collapsible-desc-20" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The name of a resource on the server that is to be associated with a given path</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7665">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7665" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-paths"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".paths</code></span></p>
+</div>
+<div id="conf-collapsible-desc-21" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>HTTP request paths that should be protected by the policy enforcer</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7666">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7666" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-method"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".method</code></span></p>
+</div>
+<div id="conf-collapsible-desc-22" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The name of the HTTP method</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7667">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__METHOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7667" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">string</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".scopes</code></span></p>
+</div>
+<div id="conf-collapsible-desc-23" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>An array of strings with the scopes associated with the method</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7668">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7668" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">list of string</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">required <span class="icon"><i class="fa fa-exclamation-circle" title="Configuration property is required"></i></span></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-methods-methods-scopes-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".methods."methods".scopes-enforcement-mode</code></span></p>
+</div>
+<div id="conf-collapsible-desc-24" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>A string referencing the enforcement mode for the scopes associated with a method</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7669">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__METHODS__METHODS__SCOPES_ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7669" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
+<p><code>all</code>, <code>any</code>, <code>disabled</code></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>all</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-enforcement-mode"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".enforcement-mode</code></span></p>
+</div>
+<div id="conf-collapsible-desc-25" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Specifies how policies are enforced</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7670">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__ENFORCEMENT_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7670" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
+<p><code>permissive</code>, <code>enforcing</code>, <code>disabled</code></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>enforcing</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-complex-config"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".claim-information-point."complex-config"</code></span></p>
+</div>
+<div id="conf-collapsible-desc-26" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Complex config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7671">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7671" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,Map&lt;String,String&gt;&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-paths-paths-claim-information-point-simple-config"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.paths."paths".claim-information-point."simple-config"</code></span></p>
 </div>
 <div id="conf-collapsible-desc-27" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Simple config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7672">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7672" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,String&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-path-cache-max-entries"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.path-cache.max-entries</code></span></p>
+</div>
+<div id="conf-collapsible-desc-28" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Defines the limit of entries that should be kept in the cache</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8028">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATH_CACHE_MAX_ENTRIES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8028" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7673">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATH_CACHE_MAX_ENTRIES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7673" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1646,17 +1779,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1000</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-path-cache-lifespan"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-path-cache-lifespan">quarkus.keycloak."tenant".policy-enforcer.path-cache.lifespan</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-path-cache-lifespan"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.path-cache.lifespan</code></span></p>
 </div>
-<div id="conf-collapsible-desc-28" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-29" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Defines the time in milliseconds when the entry should be expired</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8029">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATH_CACHE_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8029" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7674">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_PATH_CACHE_LIFESPAN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7674" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1666,17 +1799,17 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">long</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>30000</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-lazy-load-paths"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-lazy-load-paths">quarkus.keycloak."tenant".policy-enforcer.lazy-load-paths</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-lazy-load-paths"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.lazy-load-paths</code></span></p>
 </div>
-<div id="conf-collapsible-desc-29" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-30" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Specifies how the adapter should fetch the server for resources associated with paths in your application. If true, the policy enforcer is going to fetch resources on-demand accordingly with the path being requested</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8030">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_LAZY_LOAD_PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8030" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7675">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_LAZY_LOAD_PATHS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7675" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1686,45 +1819,57 @@ For detailed insights into various configuration options, see the following docu
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
 </tr>
-<tr class="">
+<tr class="row-collapsible row-collapsed row-with-desc row-hidden odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-complex-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-complex-config">quarkus.keycloak."tenant".policy-enforcer.claim-information-point."complex-config"</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-complex-config"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.claim-information-point."complex-config"</code></span></p>
 </div>
-<div id="conf-non-collapsible-desc-30" class="openblock description">
+<div id="conf-collapsible-desc-31" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8031">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8031" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Complex config.</p>
 </div>
-</div>
-</div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
-<td class="tableblock halign-left valign-middle"></td>
-</tr>
-<tr class=" row-hidden odd">
-<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-simple-config"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-simple-config">quarkus.keycloak."tenant".policy-enforcer.claim-information-point."simple-config"</a></code></p>
-</div>
-<div id="conf-non-collapsible-desc-31" class="openblock description">
-<div class="content">
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8032">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8032" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7676">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7676" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/javase/8/docs/api/java/util/Map.html">Map</a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,Map&lt;String,String&gt;&gt;&gt;</p></td>
 <td class="tableblock halign-left valign-middle"></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc row-hidden">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-http-method-as-scope"></a><code><a href="#quarkus-keycloak-keycloak-policy-enforcer-config_quarkus-keycloak-tenant-policy-enforcer-http-method-as-scope">quarkus.keycloak."tenant".policy-enforcer.http-method-as-scope</a></code></p>
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-claim-information-point-simple-config"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.claim-information-point."simple-config"</code></span></p>
 </div>
 <div id="conf-collapsible-desc-32" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Simple config.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7677">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7677" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">Map&lt;String,Map&lt;String,String&gt;&gt;</p></td>
+<td class="tableblock halign-left valign-middle"></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc row-hidden odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-http-method-as-scope"></a> <span class="property-path"><code>quarkus.keycloak."tenant".policy-enforcer.http-method-as-scope</code></span></p>
+</div>
+<div id="conf-collapsible-desc-33" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Specifies how scopes should be mapped to HTTP methods. If set to true, the policy enforcer will use the HTTP method from the current request to check whether access should be granted</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-8033">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_HTTP_METHOD_AS_SCOPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8033" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7678">QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_HTTP_METHOD_AS_SCOPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7678" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1787,6 +1932,7 @@ For detailed insights into various configuration options, see the following docu
 <li><a href="#access-to-public-resources">Access to public resources</a></li>
 <li><a href="#checking-permission-scopes-programmatically">Checking permission scopes programmatically</a></li>
 <li><a href="#multi-tenancy">Multi-tenancy</a></li>
+<li><a href="#dynamic-tenant-configuration-resolution">Dynamic tenant configuration resolution</a></li>
 <li><a href="#configuration-reference">Configuration reference</a></li>
 <li><a href="#references">References</a></li>
 </ul></div>
