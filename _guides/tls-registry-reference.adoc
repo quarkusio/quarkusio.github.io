@@ -19,7 +19,7 @@ It allows to define the TLS configuration in a single place and to reference it 
 The TLS extension should be automatically added to your project as soon as you use a compatible extension.
 For example, if your application uses Quarkus REST, gRPC or reactive routes, the TLS registry is automatically added to your project.
 
-== Examples
+== Using TLS registry
 
 To configure a TLS connection, and more specifically the key stores and trust stores, you use the `quarkus.tls.*` properties.
 
@@ -102,6 +102,7 @@ quarkus.grpc.server.use-separate-server=false
 quarkus.grpc.server.plain-text=false
 ----
 
+[#referencing-a-tls-configuration]
 == Referencing a TLS configuration
 
 Once you have configured a _named_ configuration using `quarkus.tls.<name>`, you need to reference it.
@@ -348,7 +349,7 @@ To configure the cipher suites, use the following property:
 quarkus.tls.cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384
 ----
 
-==== TLS Protocol versions
+==== TLS protocol versions
 
 The TLS protocol versions are the list of protocols that can be used during the TLS handshake.
 You can configure the ordered list of enabled TLS protocols.
@@ -436,7 +437,7 @@ quarkus.tls.hostname-verification-algorithm=NONE
 
 The following table lists the supported properties:
 
-include::{generated-dir}/config/quarkus-tls.adoc[opts=optional, leveloffset=+1]
+include::{generated-dir}/config/quarkus-tls-registry.adoc[opts=optional, leveloffset=+1]
 
 == The registry API
 
@@ -520,12 +521,14 @@ When the application starts, the TLS registry performs some checks to ensure the
 
 If any of these checks fail, the application will fail to start.
 
-== Reloading Certificates
+[#reloading-certificates]
+== Reloading certificates
 
 The `TlsConfiguration` obtained from the `TLSConfigurationRegistry` includes a mechanism for reloading certificates.
 The `reload` method refreshes the key stores and trust stores, typically by reloading them from the file system.
 
-NOTE: The reload operation is not automatic and must be triggered manually. Additionally, the `TlsConfiguration` implementation must support reloading (which is the case for the configured certificate).
+NOTE: The reload operation is not automatic and must be triggered manually.
+Additionally, the `TlsConfiguration` implementation must support reloading (which is the case for the configured certificate).
 
 The `reload` method returns a `boolean` indicating whether the reload was successful.
 A value of `true` means the reload operation was successful, not necessarily that there were updates to the certificates.
@@ -692,6 +695,227 @@ To handle the renewal, you can use the periodic reloading mechanism:
 %prod.quarkus.http.tls-configuration-name=http
 %prod.quarkus.http.insecure-requests=disabled
 ----
+
+== Utilizing OpenShift serving certificates
+
+When running your application in OpenShift, you can leverage the https://docs.openshift.com/container-platform/4.16/security/certificates/service-serving-certificate.html[OpenShift serving certificates] to automatically generate and renew TLS certificates.
+The Quarkus TLS registry can use these certificates and Certificate Authority (CA) files to handle HTTPS traffic securely and to validate certificates.
+
+=== Acquiring a certificate
+
+To have OpenShift generate a certificate, you need to annotate an existing _Service_ object.
+The generated certificate will be stored in a secret, which you can then mount in your pod.
+
+Consider the following _Service_ example:
+
+[source, yaml]
+----
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: my-tls-secret
+  labels:
+    app.kubernetes.io/name: ...
+    app.kubernetes.io/version: ...
+    app.kubernetes.io/managed-by: quarkus
+  name: hero-service
+spec:
+  ports:
+    - name: http
+      port: 443
+      protocol: TCP
+      targetPort: 8443
+  selector:
+    app.kubernetes.io/name: ...
+    app.kubernetes.io/version: ...
+  type: ClusterIP
+----
+
+The annotation `service.beta.openshift.io/serving-cert-secret-name` instructs OpenShift to generate a certificate and store it in a secret named `my-tls-secret`. If your service is already running, you can add this annotation with the following command:
+
+[source, shell]
+----
+oc annotate service hero-service \
+     service.beta.openshift.io/serving-cert-secret-name=my-tls-secret
+----
+
+Next, mount the secret in your pod by updating your _Deployment_ configuration to include a volume and mount the secret:
+
+[source, yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ...
+    app.kubernetes.io/version: ...
+  name: my-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ...
+      app.kubernetes.io/version: ...
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ...
+        app.kubernetes.io/version: ...
+    spec:
+      volumes:
+        - name: my-tls-secret  # <1>
+          secret:
+            secretName: my-tls-secret
+      containers:
+        - env:
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT # <2>
+              value: /etc/tls/tls.crt
+            - name: QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY
+              value: /etc/tls/tls.key
+          image: ...
+          imagePullPolicy: Always
+          name: my-service
+          volumeMounts:  # <3>
+            - name: my-tls-secret
+              mountPath: /etc/tls
+              readOnly: true
+          ports:
+            - containerPort: 8443  # <4>
+              name: https
+              protocol: TCP
+----
+<1> Define a volume to mount the secret. Use the same name as the secret declared above.
+<2> Set up the key store with the paths to the certificate and private key. This can be configured using environment variables or configuration files. Here, we use environment variables. OpenShift serving certificates always create the `tls.crt` and `tls.key` files.
+<3> Mount the secret in the container. Ensure the path matches the one used in the configuration (here `/etc/tls`).
+<4> Configure the port to serve HTTPS.
+
+By setting the `quarkus.tls.key-store.pem.acme.cert` and `quarkus.tls.key-store.pem.acme.key` variables (or their environment variable variant as done above), the TLS registry will use the certificate and private key from the secret. This configures the default key store for the Quarkus HTTP server, allowing it to use the certificate.
+For using this certificate in a named configuration, refer to <<referencing-a-tls-configuration>>.
+
+Deploy your application, and it will utilize the certificate generated by OpenShift, making the service available over HTTPS.
+
+=== Trusting the Certificate Authority (CA)
+
+Now that your service uses a certificate issued by OpenShift, you might need to configure your client applications to trust this certificate.
+To accomplish this, create a _ConfigMap_ that holds the CA certificate and mount it in the application's pod.
+
+In this example, we'll use a Quarkus REST client, but the same principle applies to any client.
+
+First, create a _ConfigMap_ for the CA certificate.
+Start by defining an _empty_ ConfigMap, which will be populated with the CA certificate:
+
+[source, yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-tls-config
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+----
+
+The `service.beta.openshift.io/inject-cabundle` annotation is used to inject the CA certificate into the ConfigMap.
+Note that the ConfigMap initially has no data — it is empty.
+During its processing, OpenShift injects the CA certificate into the ConfigMap in the `service-ca.crt` file.
+
+Next, mount the ConfigMap by adding a volume and mount it in your _Deployment_ configuration:
+
+[source, yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-service-client
+  labels:
+    app.kubernetes.io/name: ...
+    app.kubernetes.io/version: ...
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ...
+      app.kubernetes.io/version: ...
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ...
+        app.kubernetes.io/version: ...
+    spec:
+      containers:
+        - name: my-service-client
+          image: ...
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts: # <1>
+            - name: my-client-volume
+              mountPath: /deployments/tls
+      volumes: # <2>
+        - name: my-client-volume
+          configMap:
+            name: client-tls-config
+----
+<1> Mount the ConfigMap in the container. Ensure the path matches the one used in the configuration (here `/deployments/tls`).
+<2> Define a volume to mount the ConfigMap and reference the ConfigMap that receives the CA certificate.
+
+Finally, configure the REST client to use this CA certificate. Consider the following REST client interface:
+
+[source, java]
+----
+package org.acme;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+
+@RegisterRestClient(baseUri = "https://hero-service.cescoffi-dev.svc", configKey = "hero") // <1>
+public interface HeroClient {
+
+    record Hero (Long id, String name, String otherName, int level, String picture, String powers) {
+    }
+
+    @GET
+    @Path("/api/heroes/random")
+    Hero getRandomHero();
+
+}
+----
+<1> Configure the base URI and the configuration key. The name must be in the format `<service-name>.<namespace>.svc`, otherwise the certificate will not be trusted. Ensure to also configure the `configKey`.
+
+Next, configure the REST client to trust the CA certificate:
+
+[source, properties]
+----
+quarkus.rest-client.hero.tls-configuration-name=my-service-tls # <1>
+quarkus.tls.my-service-tls.trust-store.pem.certs=/deployments/tls/service-ca.crt # <2>
+----
+<1> Configure the `hero` REST client with the TLS configuration named `my-service-tls`.
+<2> Set up the `my-service-tls` TLS configuration, specifically the trust store with the CA certificate. Ensure the path matches the one used in the Kubernetes _Deployment_ configuration. The file is always named `service-ca.crt`.
+
+Now, the REST client is configured to trust the certificate generated by OpenShift.
+
+=== Certificate renewal
+
+OpenShift automatically renews the certificates it generates.
+When the certificate is renewed, the secret is updated with the new certificate and private key.
+
+To ensure your application uses the new certificate, you can leverage the Quarkus TLS registry's periodic reloading feature.
+By setting the `reload-period` property, the TLS registry will periodically check the key stores and trust stores for changes and reload them if needed:
+
+[source, properties]
+----
+quarkus.tls.reload-period=24h
+----
+
+You can also implement a custom mechanism to reload the certificates when the secret is updated.
+See <<reloading-certificates>> for more information.
 
 == Quarkus CLI commands and development CA (Certificate Authority)
 
@@ -883,3 +1107,161 @@ On Mac, you can use the following command:
 ----
 sudo security -v remove-trusted-cert -d /Users/clement/.quarkus/quarkus-dev-root-ca.pem
 ----
+
+[[lets-encrypt]]
+== Automatic certificate management with Let's Encrypt
+
+https://letsencrypt.org[Let's Encrypt] is a free, automated certificate authority provided by https://www.abetterinternet.org/[Internet Security Research Group].
+
+Let's Encrypt uses https://datatracker.ietf.org/doc/html/rfc8555[Automated certificate management environment (ACME) protocol] to support an automatic certificate issuance and renewal. Please read https://letsencrypt.org/docs/[Let's Encrypt documentation] to learn more about Let's Encrypt and ACME.
+
+TLS registry project provides a CLI ACME client to issue and renew Let's Encrypt certificates.
+Your application uses TLS registry to resolve ACME protocol challenges.
+
+Follow the steps below to have your Quarkus application prepared and automatically updated with new and renewed Let's Encrypt certificates.
+
+[[lets-encrypt-prerequisites]]
+=== Prerequisites
+
+Make sure that a fully resolvable DNS domain name is available and can be used to access your application.
+This domain name is used for creating a Let's Encrypt account, and supporting Let's Encrypt ACME challenges to prove that you own this domain.
+You can use https://ngrok.com/[Ngrok] to start experimenting with the Quarkus Let's Encrypt ACME feature, see <<lets-encrypt-ngrok>> section below for more information.
+
+Your Quarkus HTTPS application must use a _build-time_ property to enable a Let's Encrypt ACME challenge route:
+
+[source, properties]
+----
+quarkus.tls.lets-encrypt.enabled=true
+----
+
+The TLS registry can manage the challenge process from either the main HTTP interface or from the management interface.
+Using a management interface is **strongly** recommended to let Quarkus deal with ACME challenge configuration separately to the main application's deployment and security requirements:
+
+[source, properties]
+----
+quarkus.tls.lets-encrypt.enabled=true
+quarkus.management.enabled=true
+----
+
+The challenge itself is served from the primary HTTP interface (the one accessible from your DNS domain name).
+
+IMPORTANT: Do not start your application yet.
+
+=== Application preparation
+
+Before you request a Let's Encrypt certificate, you must run TLS registry Let's Encrypt CLI `prepare` command to prepare your application:
+
+[source, shell]
+----
+quarkus tls lets-encrypt prepare --domain=<domain-dns-name>
+----
+
+IMPORTANT: Make sure you run a prepare command in the root directory of your application.
+
+The `prepare` command does the following:
+
+- Creates a `.letsencrypt` folder in your application's root directory
+- Creates a self-signed domain certificate and private key for your application configured in the previous <<lets-encrypt-prerequisites>> step to be able to start and accept HTTPS requests.
+- Create a `.env` configuration file in your application's root directory configure the application to use the self-signed domain certificate and private key (until we get the Let's Encrypt certificate).
+
+The following snippet shows an example of the generated `.env` file:
+
+[source, properties]
+----
+quarkus.tls.key-store.pem.acme.cert=.letsencrypt/lets-encrypt.crt
+quarkus.tls.key-store.pem.acme.key=.letsencrypt/lets-encrypt.key
+----
+
+NOTE: The `.env` file does not contain the `quarkus.tls.lets-encrypt.enabled` and `quarkus.management.enabled` properties as they are build-time properties requiring a rebuild of the application.
+
+=== Start your application
+
+You can start your application:
+
+[source, shell]
+----
+java -jar quarkus-run.jar
+----
+
+Access your application endpoint using `https://your-domain-name:8443/`, for example, `https://your-domain-name:8443/hello`, accept a self-signed certificate in the browser.
+
+Next, keep the application running and request your first Let's Encrypt certificate.
+
+[[lets-encrypt-issue-certificate]]
+=== Issue certificate
+
+From the application directory, run the `issue-certificate` command to acquire your first Let's Encrypt certificate:
+
+[source, shell]
+----
+quarkus tls lets-encrypt issue-certificate \
+  --domain=<domain-dns-name> \ <1>
+  --email=<your contact email> \ <2>
+  --management-url=https://localhost:9000 <3>
+----
+<1> Set your domain name.
+<2> Provide your contact email address that Let's Encrypt can use to contact you in case of any issues with your Let's Encrypt account.
+<3> Set your application management URL which can be used to handle ACME challenges. Use `https://localhost:8443/` if you chose not to enable a management router in the <<lets-encrypt-prerequisites>> step.
+
+During this command, the TLS registry CLI checks if the application is prepared to serve the challenge, creates and records Let's Encrypt account information, issues a Let's Encrypt certificate request, and interacts with the Quarkus application to resolve ACME challenges.
+
+Once the Let's Encrypt certificate chain and private key have been successfully acquired, they are converted to PEM format and copied to your application's `.letsencrypt` folder.
+The TLS registry is informed that a new certificate and private key are ready, and reloads them automatically.
+
+Now, access your application's endpoint using `https://your-domain-name:8443/` again.
+Confirm in the browser that your domain certificate is now signed by the Let's Encrypt certificate authority.
+
+Note that currently, a Let's Encrypt account is created implicitly by the `issue-certificate` command to make it easy for users to get started with the ACME protocol.
+Support for the Let's Encrypt account management will evolve further.
+
+[[lets-encrypt-renew-certificate]]
+=== Renew certificate
+
+Renewing certificates is similar to issuing the first certificate, but it requires an existing account created during the <<lets-encrypt-issue-certificate>> step.
+
+Run the following command to renew your Let's Encrypt certificate:
+
+[source, shell]
+----
+quarkus tls lets-encrypt renew-certificate \
+  --domain=<domain-dns-name> <1>
+----
+<1> Set your domain name.
+
+During this command, TLS registry CLI reads a Let's Encrypt account information recorded during the <<lets-encrypt-issue-certificate>> step, issues a Let's Encrypt certificate request, and communicates with a Quarkus application to have ACME challenges resolved.
+
+Once the Let's Encrypt certificate chain and private key have been successfully renewed, they are converted to PEM format and copied to your application's `.letsencrypt` folder.
+TLS registry is informed that a new certificate and private key are ready and it reloads them automatically.
+
+[[lets-encrypt-ngrok]]
+=== Use NGrok for testing
+
+https://ngrok.com/[Ngrok] can be used to provide a secure HTTPS tunnel to your application running on localhost, and make it easy to test HTTPS based applications.
+
+Using Ngrok provides an easiest option to get started with the Quarkus Let's Encrypt ACME feature.
+
+The first thing you have to do with Ngrok is to ask it to reserve a domain.
+You can use https://github.com/quarkiverse/quarkus-ngrok[Quarkiverse NGrok] in devmode, or have it reserved directly in the NGrok dashboard.
+
+Unfortunately, you can't use your NGrok domain to test the Quarkus Let's Encrypt ACME feature immediately.
+This is due to the fact that Ngrok is itself using Let's Encrypt and intercepts ACME challenges which are meant to be handled by the Quarkus application instead.
+
+Therefore, you need to remove an NGrok Let's Encrypt certificate policy from your NGrok domain:
+
+[source, shell]
+----
+ngrok api --api-key <YOUR-API-KEY> reserved-domains delete-certificate-management-policy <YOUR-RESERVED-DOMAIN-ID>
+----
+
+`YOUR-RESERVED-DOMAIN-ID` is your reserved domain's id which starts from `rd_`, you can find it in the https://dashboard.ngrok.com/cloud-edge/domains[NGrok dashboard domains section].
+
+Now, NGrok will forward ACME challenges over HTTP only, therefore you need to start Ngrok like this:
+
+[source, shell]
+----
+ngrok http --domain <YOUR-NGROK-DOMAIN> 8080 --scheme http
+----
+
+where `8080` is the localhost HTTP port that your application is listening on.
+
+You can now test the Quarkus Let's Encrypt ACME feature from your local machine.
