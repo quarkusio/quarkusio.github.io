@@ -1,3 +1,4 @@
+---
 ## Qute
 
 `io.quarkus.qute.api.VariantTemplate` was removed from the API. The functionality is now provided by an injected `io.quarkus.qute.Template`. Injected templates do not support the `getExpressions()`, `getGeneratedId()` and `getVariant()` methods.

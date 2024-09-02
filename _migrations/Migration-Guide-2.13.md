@@ -1,3 +1,7 @@
+---
+
+---
+
 ## GraalVM CE / Mandrel migration from 22.2 to 22.3
 
 Starting with 2.13.4.Final, Quarkus defaults to using GraalVM CE / Mandrel 22.3 for generating native executables.

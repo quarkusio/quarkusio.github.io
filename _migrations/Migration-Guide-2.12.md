@@ -1,3 +1,4 @@
+---
 ## `quarkus.hibernate-search-orm.enabled` was renamed to `quarkus.hibernate-search-orm.active`
 
 If you were previously using the configuration property `quarkus.hibernate-search-orm.enabled` to enable/disable Hibernate Search at runtime (by setting the config in deployment configuration files, environment variables or commandline parameters), then you should use the configuration property `quarkus.hibernate-search-orm.active` instead.

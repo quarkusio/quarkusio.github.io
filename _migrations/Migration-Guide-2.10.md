@@ -1,3 +1,4 @@
+---
 ## Keycloak Authorization and Keycloak 18.0.0
 
 Keycloak version has been bumped to [18.0.0](https://www.keycloak.org/2022/04/keycloak-1800-released.html). It may affect `quarkus-keycloak-authorization` users who have authorization policies represented as `Java Script` and uploaded to Keycloak because the `upload-scripts` feature has been removed in Keycloak 18.0.0.

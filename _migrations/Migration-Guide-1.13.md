@@ -1,3 +1,4 @@
+---
 ## Configuration
 
 All `application.properties` files found in the classpath are loaded in the Quarkus configuration. Files in the current application will have priority and files in dependencies will use the classloader order. This means, that your Quarkus application may pick up additional configuration that was not picked up previously and possible change the behaviour of your application.

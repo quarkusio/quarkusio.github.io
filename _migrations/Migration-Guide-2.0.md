@@ -1,3 +1,4 @@
+---
 ## JDK 11
 
 The minimal JDK version supported by Quarkus 2.0 is JDK 11.

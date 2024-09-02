@@ -1,3 +1,4 @@
+---
 ## Datasource configuration
 
 This is the last call to migrate your deprecated datasource configuration to the new one before it gets removed in Quarkus 1.9 - the new datasource configuration was introduced in Quarkus 1.3.

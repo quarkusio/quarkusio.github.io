@@ -1,3 +1,5 @@
+---
+
 ## Hibernate ORM - IN clause parameter padding
 
 The Hibernate ORM extension now enables IN clause parameter padding by default, improving the caching of queries containing IN clauses.

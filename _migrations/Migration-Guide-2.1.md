@@ -1,3 +1,4 @@
+---
 ## Hibernate with Panache split packages
 
 To avoid split packages:

@@ -1,3 +1,4 @@
+---
 ## Extensions moved to the Quarkiverse Hub
 
 Once upon a time, Quarkus was a young project and we didn't have a lot of infrastructure around it to host extensions.

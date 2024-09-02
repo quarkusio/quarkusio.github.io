@@ -1,3 +1,4 @@
+---
 ## Dev Mode Working Directory
 
 The working directory for dev mode has been changed from the build directory (`target/`) to the root of the project.

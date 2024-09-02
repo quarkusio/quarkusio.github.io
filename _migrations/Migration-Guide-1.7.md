@@ -1,3 +1,4 @@
+---
 ## Infinispan Embedded
 
 The Infinispan Embedded extension has been discontinued with no replacement.

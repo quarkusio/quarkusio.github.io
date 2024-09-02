@@ -1,3 +1,4 @@
+---
 ## Hibernate ORM
 
 * `quarkus.hibernate-orm.log.bind-param` is deprecated and has been renamed `quarkus.hibernate-orm.log.bind-parameters`. The former will be removed at a later stage.
