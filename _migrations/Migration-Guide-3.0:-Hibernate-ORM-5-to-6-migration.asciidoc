@@ -1,0 +1,410 @@
+:toc:
+
+== What is this?
+
+This guide is intended as a quick reference about the most common issues when migration from Hibernate ORM 5.6 to 6.2 in the context of Quarkus (Quarkus 2 to 3).
+
+It is *not* intended as a complete reference, but should be updated regularly based on issues most reported by the community.
+
+For a complete reference, refer to the official Hibernate ORM migration guides:
+
+* https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc[From Hibernate ORM 5.6 to 6.0]
+* https://github.com/hibernate/hibernate-orm/blob/6.1/migration-guide.adoc[From Hibernate ORM 6.0 to 6.1]
+* https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc[From Hibernate ORM 6.1 to 6.2]
+
+For changes related to Quarkus specifically, and not to the Hibernate ORM 5.6 -> 6.2 migration,
+see link:++https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0#jpa--hibernate-orm++[the main migration guide].
+
+== [[api]]API
+
+=== [[jakarta-persistence]]Packages and hints: `javax.persistence.*` becomes `jakarta.persistence.*`
+
+Affected applications::
+Any application using JPA directly. The vast majority of Hibernate ORM applications use JPA directly to some extent.
++
+Such application would import JPA packages (`import javax.persistence.&lt;something&gt;;`)
+or use JPA query hints (`query.setHint(&quot;javax.persistence.&lt;something&gt;&quot;, ...)`)
+Breaking changes::
+Hibernate ORM 6 implements Jakarta Persistence instead of Java EE Persistence API.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#jakarta-persistence[here] for more information.
+Symptoms::
+* Compilation failure.
+* Ignored query hints.
+Actions::
+* Replace all references to packages `javax.persistence.*` with `jakarta.persistence.*`
+* Replace all references to https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#jpql-query-hints[query hints] starting with `javax.persistence.*` with `jakarta.persistence.*`.
+Alternatively (and preferably), use constants from `org.hibernate.jpa.AvailableHints` instead of hardcoding the hint names.
+
+=== [[legacy-criteria]]Legacy Hibernate Criteria API
+
+Affected applications::
+Any application importing legacy Hibernate Criteria API types.
++
+Such applications would necessarily call `Session#createCriteria` at some point.
+Breaking changes::
+The deprecated, legacy Hibernate Criteria API (`org.hibernate.Criteria`) has been removed.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#legacy-hibernate-criteria-api[here] for more information.
+Symptoms::
+Compilation failure.
+Actions::
+Migrate existing code that relies on legacy Hibernate Criteria API to the https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#criteria[JPA Criteria API].
+
+=== [[type-system]]Type system changes
+
+Affected applications::
+Any application relying on custom types.
++
+Such application would include classes that implement `BasicType`, `UserType`, `CompositeUserType`, `JavaTypeDescriptor`, `SqlTypeDescriptor` or similar,
+or register such classes through custom dialects or `@TypeDef`,
+or refer to such classes with `@Type`/`@CollectionId#type`/`@AnyMetaDef#metaType`/`@AnyMetaDef#idType`.
+Breaking changes::
+Custom type interfaces and abstract classes changed, requiring adjustments to implementations.
++
+Type reference annotations changed (some were removed, some had their attributes change),
+requiring adjustments to explicit type uses.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#type-system[here] for more information.
+Symptoms::
+Compilation failure in custom type implementations and/or type references through `@TypeDef`/`@Type`/etc.
+Actions::
+. Double-check that you still need custom types. Hibernate ORM 6 provides more built-in types than ever:
+** https://github.com/hibernate/hibernate-orm/blob/6.1/migration-guide.adoc#basic-arraycollection-mapping[Collections/arrays of basic values are stored as native database arrays]
+where supported, by default.
+** https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#datatype-for-enums[Enums are stored as native database enums]
+where supported, by default.
+** https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#timezone-and-offset-storage[`ZonedDateTime`, `OffsetDateTime`]
+and https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#offsettime-mapping-changes[`OffsetTime`]
+are stored as a `timestamp with time zone` where supported, by default.
+** https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#instant-mapping-changes[`Instant` is stored as a `timestamp with time zone`]
+where supported, by default.
+** https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#uuid-mapping-changes[UUIDs are stored using native database types]
+where supported (e.g. https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#uuid-mapping-changes-on-mariadb[MariaDB]
+or https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#uuid-mapping-changes-on-sql-server[Microsoft SQL Server]), by default.
+** https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#basic-bytearray[Binary]/link:https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#basic-String[text] types are mapped to the most appropriate native database type depending on their length,
+so for example `@Column(length = org.hibernate.Length.LONG32)` will be mapped to `text` on PostgreSQL, by default.
+** You can https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#basic-bitset-jdbc-type[select database types explicitly]
+by annotating properties e.g. with `@JdbcTypeCode(SqlTypes.LONG32VARCHAR)`
+(which would map to `text` on PostgreSQL).
+** And more. In general, try removing your custom type and check (in a development environment) if Hibernate ORM generates what you need,
+and if not you can also try to force the database type with `@JdbcTypeCode(SqlTypes.<what you want>)`.
+. If you still need a custom type, refer to https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#basic-bitset[this guide]
+to find out the appropriate solution in Hibernate ORM 6.
+
+=== [[query]]Query syntax/behavior changes
+
+Affected applications::
+Any application using JPQL/HQL/SQL strings for queries, or equivalent `Criteria` queries, and relying on the syntax elements listed below.
+Breaking changes::
+Hibernate ORM 6 made a few changes to the HQL syntax:
+. The optional `from` keyword (`update from MyEntity e set e.attr = null`) https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#from-token-now-disallowed-for-update[is now disallowed for `update` queries].
+. Comparing entities directly to IDs is no longer allowed, be it https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#query-path-comparison[root entities] (`where myentity = :param`) or https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#association-comparisons[associations] (`where myentity.association = :param`).
+. `count()` in native queries https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#sql-bigintcount-mapping-changes[will now return a `Long` instead of a `BigInteger`].
+. Collection pseudo-attributes such as `.size`, `.elements`, `.indices`, `.index`, `.maxindex`, `.minindex`, `.maxelement`, `.minelement` https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#collection-pseudo-attributes[are not longer supported].
+Symptoms::
+Runtime exceptions, either while parsing the query (for no-longer-supported syntax elements) or when converting the result type (for `count()`).
+Actions::
+. Remove the `from` keyword from your `update` queries: `update from MyEntity e set e.attr = null` => `update MyEntity e set e.attr = null`.
+. Reference identifiers explicitly instead of referencing entities where identifier comparisons are involved: `where myentity = :param` => `where myentity.id = :param`, `where myentity.association = :param` => `where myentity.association.id = :param`.
+. Adjust your native queries returning `count()` to expect a result of type `Long` instead of `BigInteger`.
+. Replace collection pseudo-attributes with the equivalent functions:
+** `mycollection.size` => `size(mycollection)`
+** `mycollection.elements` => `value(mycollection)`
+** `mycollection.indices` => `index(mycollection)` (for lists) or `key(mycollection)` (for maps)
+** `mycollection.maxindex` => `maxindex(mycollection)`
+** `mycollection.minindex` => `minindex(mycollection)`
+** `mycollection.maxelement` => `maxelement(mycollection)`
+** `mycollection.minelement` => `minelement(mycollection)`
+
+== [[configuration]]Configuration
+
+=== [[dialect]]Dialect configuration changes
+
+Affected applications::
+Any application configuring a Hibernate ORM dialect explicitly.
++
+Such application would use the configuration property `quarkus.hibernate-orm.dialect` in `application.properties`/`application.yaml`,
+or the configuration property `hibernate.dialect` in `persistence.xml`.
+Breaking changes::
+Hibernate ORM 6 is now able to handle multiple versions and spatial variants of a database within a single dialect class;
+as a result, version-specific and spatial-specific dialect classes such as `org.hibernate.dialect.PostgreSQL91Dialect`
+or `org.hibernate.spatial.dialect.postgis.PostgisPG94Dialect`
+are deprecated and will lead to warnings on startup.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#version-specific-and-spatial-dialects[here] for more information.
++
+Additionally, some dialects have moved to a new Maven artifact, `org.hibernate.orm:hibernate-community-dialects`,
+because they are <<unsupported-databases,no longer supported in Hibernate ORM Core>>.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/dialects.adoc#dialects[here for more information about dialects that are supported in Hibernate ORM Core],
+and https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#removal-of-support-for-legacy-database-versions[here for more information about supported versions].
++
+Finally, the Quarkus-specific H2 dialect `io.quarkus.hibernate.orm.runtime.dialect.QuarkusH2Dialect`
+was removed as it is no longer necessary.
+Symptoms::
+* Deprecation warning about the dialect on startup.
+* Build or startup failure if the application attempts to use dialects that have been removed
+such as `io.quarkus.hibernate.orm.runtime.dialect.QuarkusH2Dialect`
+or that moved to `hibernate-community-dialects`.
+Actions::
+. Change the configuration property `quarkus.hibernate-orm.dialect` (in `application.properties`) / `hibernate.dialect` (in `persistence.xml`):
+** If you use `application.properties`,
+and your database is https://quarkus.io/version/main/guides/hibernate-orm#hibernate-dialect-supported-databases[officially supported in Quarkus],
+and you used the dialect for a <<unsupported-databases,database version that is still supported in Hibernate ORM Core>>:
+*** Remove the configuration property: it is no longer necessary and will be inferred automatically.
+** Otherwise, if you used a dialect for a <<unsupported-databases,database version that is still supported in Hibernate ORM Core>>:
+*** Switch to the corresponding version-independent dialect class,
+e.g. `org.hibernate.dialect.CockroachDialect` instead of `org.hibernate.dialect.CockroachDB201Dialect`.
+** Otherwise (i.e. you used a dialect for a <<unsupported-databases,database or database version that is no longer supported in Hibernate ORM Core>>,):
+*** Add a Maven/Gradle dependency to `org.hibernate.orm:hibernate-community-dialects`.
+*** Switch to the relevant version-independent dialect class,
+e.g. `org.hibernate.community.dialect.OracleLegacyDialect` instead of `org.hibernate.dialect.Oracle9iDialect`
+or `org.hibernate.community.dialect.MariaDBLegacyDialect` instead of `org.hibernate.dialect.MariaDB102Dialect`.
+*** Seriously consider <<unsupported-databases,upgrading your database to the latest version>>,
+because your application might stop working at any moment with the next versions of Quarkus.
+. Set the database version through configuration property https://quarkus.io/guides/datasource#quarkus-datasource_quarkus.datasource.db-version[`quarkus.datasource.db-version`] (in `application.properties`)
+/ `jakarta.persistence.database-product-version` (in `persistence.xml`).
+
+== [[database-schema]]Database schema and data serialization/deserialization changes
+
+=== [[database-orm-compatibility]]Best-effort Hibernate ORM 5.6 compatibility switch
+
+If you are in a hurry and want to address API/behavior issues and keep (most) schema changes for later,
+you can take advantage of the https://github.com/quarkusio/quarkus/pull/31540[Hibernate ORM 5.6 database compatibility switch]:
+
+```properties
+quarkus.hibernate-orm.database.orm-compatibility.version = 5.6
+```
+
+When this property is set, Quarkus attempts to configure Hibernate ORM
+to exchange data with the database as the given version of Hibernate ORM would have,
+*on a best-effort basis*.
+
+[WARNING]
+====
+* Schema validation may still fail in some cases:
+this attempts to make Hibernate ORM 6+ behave correctly at runtime,
+but it may still expect a different (but runtime-compatible) schema.
+* This does not address *every* breaking change.
+For example, <<unsupported-databases,older database versions that are no longer supported in Hibernate ORM Core>>
+will still not work correctly unless you take additional steps.
+* Robust test suites are still useful and recommended:
+you should still check that your application behaves as intended with your legacy schema.
+* This feature is inherently unstable:
+some aspects of it may stop working in future versions of Quarkus,
+and older versions will be dropped as Hibernate ORM changes pile up
+and support for those older versions becomes too unreliable.
+* You should still plan a migration of your schema to a newer version of Hibernate ORM.
+For help with migration, refer to the rest of this guide.
+====
+
+=== [[identifier-generator-structure]]One identifier generator (sequence/table) per entity hierarchy instead of a single `hibernate_sequence`
+
+NOTE: This is addressed by the <<database-orm-compatibility,5.6 compatibility switch>>.
+
+Affected applications::
+* Any application defining an entity that extends `PanacheEntity`
+* Any application defining an entity that uses `@GeneratedValue` on an entity identifier
+without assigning an identifier generator explicitly
+(no `@SequenceGenerator`/`@TableGenerator`/`@GenericGenerator`).
+Breaking changes::
+Hibernate ORM will now assign a distinct identifier generator
+to each entity hierarchy by default.
++
+This means Hibernate ORM will expect a different database schema,
+where each entity hierarchy has its own sequence, for example,
+instead of a single `hibernate_sequence` for all entities.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#implicit-identifier-sequence-and-table-name[here] for more information.
+Symptoms::
+* If schema validation is enabled, it will fail, mentioning missing or undefined sequences/tables, e.g. `ERROR: relation "hibernate_sequence" does not exist`.
+* Otherwise, SQL import scripts or persisting new entities will fail with exceptions referring to missing or undefined sequences/tables.
+Actions::
+. Start your application with the setting `quarkus.hibernate-orm.database.generation=validate`
+to have Hibernate ORM log all schema incompatibilities,
+which will list all sequences that are missing.
+Depending on your mapping (e.g. if your mapping defines an identifier generator explicitly for each entity),
+there may not be any.
+. Optionally, if the sequence/table names used by Hibernate ORM by default are not to your liking, configure the identifier generation of each entity explicitly:
+https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-sequence[sequence], https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-identity[identity column] or https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-table[table]. When using Panache, such (advanced) configuration requires https://quarkus.io/guides/hibernate-orm-panache#custom-ids[extending `PanacheEntityBase` instead of `PanacheEntity`].
+. Update your database schema:
+** Use DDL (SQL such as `create sequence [...]`) to create the missing sequences/tables.
+** Use DDL to initialize sequences/tables with the right value (essentially `max(id) + 1`).
+. Update any initialization script (e.g. `import.sql`) to work with the per-entity sequences instead of `hibernate_sequence`.
+
+=== [[sequence-increment-size]]Increment size for sequences defaults to 50 instead of 1
+
+NOTE: This is addressed by the <<database-orm-compatibility,5.6 compatibility switch>>.
+
+Affected applications::
+* Any application defining an entity that extends `PanacheEntity`
+* Any application defining an entity that uses `@GeneratedValue` on an entity identifier
+without assigning an identifier generator explicitly
+(no `@SequenceGenerator`/`@TableGenerator`/`@GenericGenerator`).
+* Any application defining an entity that uses `@GeneratedValue` on an entity identifier
+with the corresponding identifier generator defined with `@GenericGenerator`,
+using database sequences and an explicitly defined increment size.
+Breaking changes::
+Hibernate ORM will now default to 50 instead of 1 for the increment size of sequences.
++
+Upon retrieving the next value of a sequence,
+Hibernate ORM will https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-optimizer[pool the retrieved value as well as the 49 next ones] to use them as identifier IDs (Quarkus defaults to the `pooled-lo` optimizer).
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#defaults-for-implicit-sequence-generators[here] for more information.
+Symptoms::
+* If schema validation is enabled, it will fail, mentioning an incorrect increment size for your sequences (actual 1, expected 50).
+* Otherwise, SQL import scripts or persisting new entities will fail with exceptions referring to duplicate keys or violated primary key constraints.
+Actions::
+. Update your database schema:
+** Use DDL (SQL such as `alter sequence [...]`) to set the increment size of your sequences to the right value, i.e. to the allocation size of your identifier generators, which defaults to 50 since Hibernate ORM 6.
+. If your use data import scripts and your application/tests assume that certain entities have a certain identifier, **do not simply use `nextval('mysequence')` as its may no longer return the value you expect**. Just hardcode those entity identifiers in your data import scripts and reset the relevant sequences at the end of the script.
++
+E.g. this:
++
+```sql
+INSERT INTO hero(id, name, otherName, picture, powers, level)
+VALUES (nextval('hibernate_sequence'), 'Chewbacca', '', 'https://www.superherodb.com/pictures2/portraits/10/050/10466.jpg',
+        'Agility, Longevity, Marksmanship, Natural Weapons, Stealth, Super Strength, Weapons Master', 5);
+```
++
+Should become this:
++
+```sql
+-- Hardcode the ID of the first Hero to the value "1", since the tests expect that value.
+INSERT INTO hero(id, name, otherName, picture, powers, level)
+VALUES (1, 'Chewbacca', '', 'https://www.superherodb.com/pictures2/portraits/10/050/10466.jpg',
+        'Agility, Longevity, Marksmanship, Natural Weapons, Stealth, Super Strength, Weapons Master', 5);
+-- Set the current value of the sequence so that the IDs of newly
+-- created entities won't conflict with the hardcoded identifiers above.
+ALTER SEQUENCE hero_seq RESTART WITH (select max(id) + 1 from hero);
+```
+
++
+Alternatively, if you do not wish to benefit from pooled identifier generation,
+set increment sizes explicitly in your mapping when you define identifier generators,
+using for example `@SequenceGenerator(..., allocationSize = 1)` instead of `@GenericGenerator`.
+See https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-sequence-configured[here]
+for more information.
+
+=== [[property-sql-type]]`enum`, `Duration`, `UUID`, `Instant`, `ZonedDateTime`, `OffsetDateTime`, `OffsetTime` properties may be persisted/loaded differently
+
+NOTE: This is addressed by the <<database-orm-compatibility,5.6 compatibility switch>>,
+except for enum properties whose schema validation will fail but which should work correctly at runtime.
+
+Affected applications::
+Any application with an entity property of the following types,
+unless it overrides the SQL type with `@Type`/`@JdbcType`:
+* any enum type, unless the property is annotated with `@Enumerated(STRING)`
+* `Duration`
+* `UUID`
+* `Instant`
+* `ZonedDateTime`
+* `OffsetDateTime`
+* `OffsetTime`
+Breaking changes::
+Hibernate ORM will now map those Java types to different JDBC types, which depending on your database may map to a different SQL type:
+* enum types now map to `SqlTypes.TINYINT`, `SqlTypes.SMALLINT` or a native enum type depending on the number of values and database support for enums,
+instead of `Types.TINYINT` in Hibernate ORM 5.
+* `Duration` maps to `SqlTypes.INTERVAL_SECOND`, instead of `Types.BIGINT` in Hibernate ORM 5.
+* `UUID` maps to `SqlTypes.UUID`, instead of `Types.BINARY` in Hibernate ORM 5.
+* `Instant` maps to `SqlTypes.TIMESTAMP_UTC`, instead of `Types.TIMESTAMP` in Hibernate ORM 5.
+* `ZonedDateTime` and `OffsetDateTime` map to `SqlTypes.TIMESTAMP_WITH_TIMEZONE` instead of `Types.TIMESTAMP` in Hibernate ORM 5.
+Additionally, if the database does not properly store timezones, values are normalized to UTC upon persisting,
+instead of the Hibernate ORM 5 behavior that was to normalize to the timezone configured through `quarkus.hibernate-orm.jdbc.timezone`, defaulting to the JVM timezone.
+* `OffsetTime` maps to `SqlTypes.TIME_WITH_TIMEZONE` instead of `Types.TIME` in Hibernate ORM 5.
+Additionally, if the database does not properly store timezones, values are normalized to UTC upon persisting,
+instead of the Hibernate ORM 5 behavior that was to normalize to the timezone configured through `quarkus.hibernate-orm.jdbc.timezone`, defaulting to the JVM timezone.
++
+For more information, see https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#duration-mapping-changes[here for `Duration],
+https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#uuid-mapping-changes[here for `UUID`]
+(and more specifically https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#uuid-mapping-changes-on-mariadb[here for `UUID` on MariaDB]
+and https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#uuid-mapping-changes-on-sql-server[here for `UUID` on SQL Server]),
+https://github.com/hibernate/hibernate-orm/blob/6.0/migration-guide.adoc#instant-mapping-changes[here for `Instant`],
+https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#datatype-for-enums[here for enums]
+(more context https://github.com/hibernate/hibernate-orm/blob/6.1/migration-guide.adoc#enum-mapping-changes[here]),
+https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#timezone-and-offset-storage[here for `ZonedDateTime` and `OffsetDateTime`],
+https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#ddl-offset-time[here for `OffsetTime`].
+Symptoms::
+* If schema validation is enabled, it may fail, mentioning an incorrect type for your columns.
+* Otherwise:
+** For enum types, if your database supports native enum types (e.g. MySQL), persisting and loading entities will fail; otherwise they should work despite the discrepancy between your database schema and the one expected by Hibernate ORM.
+** For `ZonedDateTime`, `OffsetDateTime` and `OffsetTime`, if you were previously effectively using a normalization timezone (`quarkus.hibernate-orm.jdbc.timezone` or JVM timezone) different from UTC, values loaded from the database may be incorrect.
+** For all other types, persisting and loading should work correctly despite the discrepancy between your database schema and the one expected by Hibernate ORM.
+Actions::
+. Start your application with the setting `quarkus.hibernate-orm.database.generation=validate` to have Hibernate ORM log all schema incompatibilities, which will list all columns with an incorrect type.
+. Update your database schema:
+** Use DDL (SQL such as `alter table [...] alter column [...]`) to set the type of your columns to the right value.
+Depending on your database this might require multiple steps, e.g. renaming the old column, creating the new column, copying the data from the old to the new column, and finally deleting the old column.
+. For `ZonedDateTime`, `OffsetDateTime` and `OffsetTime`, if you were previously effectively using a normalization timezone (`quarkus.hibernate-orm.jdbc.timezone` or JVM timezone) different from UTC:
+** Use SQL `UPDATE` statements to convert data to the timezone expected by Hibernate ORM (UTC).
+** Alternatively, configure timezone storage explicitly through configuration property https://quarkus.io/guides/hibernate-orm#quarkus-hibernate-orm_quarkus.hibernate-orm.mapping.timezone.default-storage[`quarkus.hibernate-orm.mapping.timezone.default-storage`]; setting it to `normalize` will give you Hibernate ORM 5's behavior.
+
+=== [[unsupported-databases]]Some databases and older database versions are no longer supported in Hibernate ORM
+
+WARNING: This is **not** addressed by the <<database-orm-compatibility,5.6 compatibility switch>>.
+
+Affected applications::
+Any application configuring a Hibernate ORM dialect explicitly,
+and using a dialect that targets either a unsupported database or an unsupported version of a supported database
+(see below for databases and versions supported in Hibernate ORM).
++
+Such application would use the configuration property `quarkus.hibernate-orm.dialect` in `application.properties`/`application.yaml`,
+or the configuration property `hibernate.dialect` in `persistence.xml`.
+Breaking changes::
+Hibernate ORM 6 dropped official support for some databases,
+either fully or only for older versions.
++
+See https://github.com/hibernate/hibernate-orm/blob/6.0/dialects.adoc#dialects[here for more information about dialects that are supported in Hibernate ORM Core],
+and https://github.com/hibernate/hibernate-orm/blob/6.2/migration-guide.adoc#removal-of-support-for-legacy-database-versions[here for more information about supported versions].
++
+[NOTE]
+====
+Quarkus itself has stricter database and version restrictions.
+In Quarkus 3.0, we expect the following databases with the following minimum version to work out-of-the-box:
+
+* DB2 10.5 and later.
+* Apache Derby 10.14 and later.
+* MariaDB 10.6 and later.
+* Microsoft SQL Server 2016 and later.
+* MySQL 8 and later.
+* Oracle 12 and later.
+* PostgreSQL 10.0 and later.
+* H2 with the exact version defined in the Quarkus BOM.
+
+Other database and versions may or may not work,
+may require additional configuration,
+and may suffer from limitations such as not working in native mode.
+====
++
+Additionally, upgrades to newer database versions may involve schema changes,
+as Hibernate ORM dialects targeting newer database versions
+may have different default schema expectations:
+
+* MariaDB:
+** `MariaDBDialect` uses sequences by default for identifier generation,
+which is compatible with `MariaDB106Dialect` (the default in Quarkus 2) and `MariaDB103Dialect`,
+but not compatible with `MariaDB102Dialect` (which uses ID generation tables).
+* Other databases:
+** No information at the moment. Feel free to open an issue to suggest more information to add to this guide.
+Symptoms::
+* Deprecation warning about the dialect on startup.
+* Build or startup failure if the application attempts to use dialects that moved to `hibernate-community-dialects`.
+Actions::
+. Follow instructions to <<dialect,configure your dialect and database version>> for backwards-compatible behavior.
+. If you use an older version of a supported database, seriously consider upgrading
+because your application might stop working at any moment with the next versions of Quarkus.
+This may involve changes to your database schema:
+** MariaDB < 10.2 to 10.3 and newer:
+... Optionally, configure the identifier generation of each entity explicitly:
+https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-sequence[sequence], https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-identity[identity column] or https://docs.jboss.org/hibernate/orm/6.2/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators-table[table].
+... Start your application with the setting `quarkus.hibernate-orm.database.generation=validate`
+to have Hibernate ORM log all schema incompatibilities,
+which will list all sequences that are missing.
+Depending on your mapping (e.g. if your mapping defines an identifier generator explicitly for each entity),
+there may not be any.
+... Update your database schema:
+**** Use DDL (SQL such as `create sequence [...]`) to create the missing sequences.
+**** Use DDL to initialize sequences with the right value (essentially `max(id) + 1`).
+** Other databases:
+*** No information at the moment. Feel free to open an issue to suggest more information to add to this guide.
