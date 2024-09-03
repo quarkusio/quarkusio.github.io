@@ -1,4 +1,6 @@
 ---
+date: 2020-03-19
+---
 ## Maven
 
 You need to upgrade Maven to 3.6.2+ due to a bug in Maven resolver.

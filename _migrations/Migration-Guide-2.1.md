@@ -1,4 +1,6 @@
 ---
+date: 2021-07-29
+---
 ## Hibernate with Panache split packages
 
 To avoid split packages:

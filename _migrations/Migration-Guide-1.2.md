@@ -1,4 +1,6 @@
 ---
+date: 2020-01-22
+---
 ## Hibernate ORM
 
 In Quarkus, the bytecode enhancement of Hibernate ORM is always on.

@@ -1,4 +1,6 @@
 ---
+date: 2021-10-27
+---
 ## MicroProfile Config
 
 Injection points targeting beans annotated with `org.eclipse.microprofile.config.inject.ConfigProperties`, require to be annotated with the `org.eclipse.microprofile.config.inject.ConfigProperties` qualifier as stated in the MicroProfile specification. Previous Quarkus versions were only requiring a single `@Inject`. 

@@ -1,4 +1,6 @@
 ---
+date: 2021-01-20
+---
 ## Log min-level
 
 If you are using TRACE (or DEBUG too if using 1.11.0.Final or 1.11.1.Final - changed in 1.11.2.Final) log level, we made an important change in our logging layer: a new build-time `min-level` configuration property was introduced that sets the minimum log level you will be able to use at runtime.

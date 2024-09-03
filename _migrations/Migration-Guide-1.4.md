@@ -1,4 +1,6 @@
 ---
+date: 2020-04-27
+---
 ## Multi-module projects
 
 If your projects have multiple modules, for a number of extensions (Hibernate Validator for instance), we are not considering the combined index anymore (i.e. the one built of all the Jandex indexes present in your modules) but the bean archives index.

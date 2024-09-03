@@ -1,4 +1,6 @@
 ---
+date: 2021-11-24
+---
 ## Flyway
 
 We upgraded the Flyway dependency from 7.15 to version 8.0. Please refer to the [Flyway release notes](https://flywaydb.org/documentation/learnmore/releaseNotes#8.0.1) to see all the changes. 

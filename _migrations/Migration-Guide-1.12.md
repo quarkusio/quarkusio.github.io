@@ -1,4 +1,6 @@
 ---
+date: 2021-02-23
+---
 ## Fast-jar as default
 
 Fast-jar is a new Quarkus application packaging format that is faster to boot, compared to our legacy jar packaging. It was introduced several versions ago and it brings many improvements that made us make it the new default.

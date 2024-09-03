@@ -1,4 +1,6 @@
 ---
+date: 2022-07-27
+---
 ## GraphQL endpoints are singleton by default
 
 Previously, the default scope attached to a `@GraphQLApi` endpoint was `@Dependent`. Now, unless you explicitly add a scope annotation to your endpoint, it will act as a `@Singleton` bean. This is thus aligned with the default behavior of JAX-RS endpoints.

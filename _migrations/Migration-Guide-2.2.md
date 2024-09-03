@@ -1,4 +1,6 @@
 ---
+date: 2021-08-31
+---
 ## SmallRye Config
 
 SmallRye Config `@ConfigMapping` can now only be used on interfaces. Using it on classes results in a build-time exception.

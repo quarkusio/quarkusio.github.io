@@ -1,4 +1,6 @@
 ---
+date: 2020-08-13
+---
 ## Infinispan Embedded
 
 The Infinispan Embedded extension has been discontinued with no replacement.

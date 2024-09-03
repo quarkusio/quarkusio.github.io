@@ -1,4 +1,7 @@
 ---
+date: 2023-01-25
+---
+
 ## Config
 
 Configuration property names set in `.env` files are now converted to their expected name, following the Environment Variables naming rules detailed in https://quarkus.io/version/2.16/guides/config-reference#environment-variables.

@@ -1,4 +1,6 @@
 ---
+date: 2020-10-21
+---
 ## Datasource Configuration
 
 In 1.3, we introduced a new much more flexible datasource configuration supporting both JDBC and reactive datasources in a unified way.

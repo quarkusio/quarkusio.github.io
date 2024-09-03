@@ -1,4 +1,6 @@
 ---
+date: 2022-02-02
+---
 ## JNDI disabled by default
 
 Except if one of the extensions you are using in your application requires it, JNDI is now disabled by default.

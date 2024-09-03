@@ -1,4 +1,6 @@
 ---
+date: 2022-04-12
+---
 ## RESTEasy Reactive by default
 
 RESTEasy Reactive is now our default REST layer.

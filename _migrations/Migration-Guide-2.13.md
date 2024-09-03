@@ -1,5 +1,5 @@
 ---
-
+date: 2022-09-28
 ---
 
 ## GraalVM CE / Mandrel migration from 22.2 to 22.3
