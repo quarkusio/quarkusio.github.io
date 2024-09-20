@@ -131,7 +131,7 @@ quarkus.oidc-client.grant.type=refresh
 
 Then you can use the `OidcClient.refreshTokens` method with a provided refresh token to get the access token.
 
-Using the `urn:ietf:params:oauth:grant-type:token-exchange` or `urn:ietf:params:oauth:grant-type:jwt-bearer` grants might be required if you are building a complex microservices application and want to avoid the same `Bearer` token be propagated to and used by more than one service. See <<token-propagation-reactive,Token Propagation in MicroProfile RestClient Reactive filter>> and <<token-propagation,Token Propagation in MicroProfile RestClient filter>> for more details.
+Using the `urn:ietf:params:oauth:grant-type:token-exchange` or `urn:ietf:params:oauth:grant-type:jwt-bearer` grants might be required if you are building a complex microservices application and want to avoid the same `Bearer` token be propagated to and used by more than one service. See <<token-propagation-rest,Token Propagation for Quarkus REST>> and <<token-propagation-resteasy,Token Propagation for RESTEasy Classic>> for more details.
 
 Using `OidcClient` to support the `authorization code` grant might be required if, for some reason, you cannot use the xref:security-oidc-code-flow-authentication.adoc[Quarkus OIDC extension] to support Authorization Code Flow. If there is a very good reason for you to implement Authorization Code Flow, then you can configure `OidcClient` as follows:
 
@@ -786,7 +786,7 @@ quarkus.oidc-client.credentials.jwt.key-file=privateKey.pem
 ----
 quarkus.oidc-client.auth-server-url=http://localhost:8180/auth/realms/quarkus/
 quarkus.oidc-client.client-id=quarkus-app
-quarkus.oidc-client.credentials.jwt.key-store-file=keystore.jks
+quarkus.oidc-client.credentials.jwt.key-store-file=keystore.pkcs12
 quarkus.oidc-client.credentials.jwt.key-store-password=mypassword
 quarkus.oidc-client.credentials.jwt.key-password=mykeypassword
 
@@ -917,22 +917,61 @@ Some OpenID Connect Providers require that a client is authenticated as part of 
 
 [source,properties]
 ----
-quarkus.oidc-client.tls.verification=certificate-validation
+quarkus.oidc-client.tls.tls-configuration-name=oidc-client
+
+# configure hostname verification if necessary
+#quarkus.tls.oidc-client.hostname-verification-algorithm=NONE
 
 # Keystore configuration
-quarkus.oidc-client.tls.key-store-file=client-keystore.jks
-quarkus.oidc-client.tls.key-store-password=${key-store-password}
+quarkus.tls.oidc-client.key-store.p12.path=client-keystore.p12
+quarkus.tls.oidc-client.key-store.p12.password=${key-store-password}
 
 # Add more keystore properties if needed:
-#quarkus.oidc-client.tls.key-store-alias=keyAlias
-#quarkus.oidc-client.tls.key-store-alias-password=keyAliasPassword
+#quarkus.tls.oidc-client.key-store.p12.alias=keyAlias
+#quarkus.tls.oidc-client.key-store.p12.alias-password=keyAliasPassword
 
 # Truststore configuration
-quarkus.oidc-client.tls.trust-store-file=client-truststore.jks
-quarkus.oidc-client.tls.trust-store-password=${trust-store-password}
+quarkus.tls.oidc-client.trust-store.p12.path=client-truststore.p12
+quarkus.tls.oidc-client.trust-store.p12.password=${trust-store-password}
 # Add more truststore properties if needed:
-#quarkus.oidc-client.tls.trust-store-alias=certAlias
+#quarkus.tls.oidc-client.trust-store.p12.alias=certAlias
 ----
+
+=== OIDC Client SPI
+
+When your custom extension must acquire OIDC tokens using one of the OIDC token grants supported by OIDC client, this extension can depend on the OIDC Client SPI only and let OIDC client itself acquire and refresh access tokens as necessary.
+
+Add the following dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc-client-spi</artifactId>
+</dependency>
+----
+
+Next update your extension to use `io.quarkus.oidc.client.spi.TokenProvider` CDI bean as required, for example:
+
+[source,java]
+----
+package org.acme.extension;
+
+import jakarta.inject.Inject;
+import io.quarkus.oidc.client.spi.TokenProvider;
+
+public class ExtensionOAuth2Support {
+
+   @Inject
+   TokenProvider tokenProvider;
+
+   public Uni<String> getAccessToken() {
+       return tokenProvider.getAccessToken();
+   }
+}
+----
+
+Currently, `io.quarkus.oidc.client.spi.TokenProvider` is only available for default OIDC clients, since custom extensions are unlikely to be aware of multiple named OIDC clients.
 
 [[integration-testing-oidc-client]]
 === Testing
@@ -1068,7 +1107,9 @@ quarkus.log.category."io.quarkus.oidc.client.runtime.OidcClientRecorder".min-lev
 [[oidc-client-ref-oidc-request-filters]]
 == OIDC request filters
 
-You can filter OIDC requests made by Quarkus to the OIDC provider by registering one or more `OidcRequestFilter` implementations, which can update or add new request headers. For example, a filter can analyze the request body and add its digest as a new header value:
+You can filter OIDC requests made by OIDC client to the OIDC provider by registering one or more `OidcRequestFilter` implementations, which can update or add new request headers, or analyze the request body.
+
+You can have a single filter intercepting requests to all OIDC provider endpoints, or use an `@OidcEndpoint` annotation to apply this filter to requests to specific endpoints only. For example:
 
 [source,java]
 ----
@@ -1077,22 +1118,21 @@ package io.quarkus.it.keycloak;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import io.quarkus.arc.Unremovable;
-import io.quarkus.oidc.common.OidcRequestContextProperties;
+import io.quarkus.oidc.common.OidcEndpoint;
 import io.quarkus.oidc.common.OidcRequestFilter;
 import io.vertx.core.http.HttpMethod;
-import io.vertx.mutiny.core.buffer.Buffer;
-import io.vertx.mutiny.ext.web.client.HttpRequest;
 
 @ApplicationScoped
+@OidcEndpoint(value = Type.TOKEN)
 @Unremovable
 public class OidcRequestCustomizer implements OidcRequestFilter {
 
     @Override
-    public void filter(HttpRequest<Buffer> request, Buffer buffer, OidcRequestContextProperties contextProperties) {
-        HttpMethod method = request.method();
-        String uri = request.uri();
-        if (method == HttpMethod.POST && uri.endsWith("/service") && buffer != null) {
-            request.putHeader("Digest", calculateDigest(buffer.toString()));
+    public void filter(OidcRequestContext requestContext) {
+        HttpMethod method = requestContext.request().method();
+        String uri = requestContext.request().uri();
+        if (method == HttpMethod.POST && uri.endsWith("/token") && requestContext.requestBody() != null) {
+            requestContext.request().putHeader("Digest", calculateDigest(requestContext.requestBody().toString()));
         }
     }
 
@@ -1102,10 +1142,57 @@ public class OidcRequestCustomizer implements OidcRequestFilter {
 }
 ----
 
-[[token-propagation-reactive]]
-== Token Propagation Reactive
+`OidcRequestContextProperties` can be used to access request properties.
+Currently, you can use a `client_id` key to access the client tenant id and a `grant_type` key to access the grant type which the OIDC client uses to acquire tokens.
 
-The `quarkus-rest-client-oidc-token-propagation` extension provides a REST Client, `io.quarkus.oidc.token.propagation.reactive.AccessTokenRequestReactiveFilter`, that simplifies the propagation of authentication information. This client propagates the xref:security-oidc-bearer-token-authentication.adoc[bearer token] present in the currently active request or the token acquired from the xref:security-oidc-code-flow-authentication.adoc[authorization code flow mechanism] as the HTTP `Authorization` header's `Bearer` scheme value.
+[[oidc-client-ref-oidc-response-filters]]
+== OIDC response filters
+
+You can filter responses to the OIDC client requests by registering one or more `OidcResponseFilter` implementations, which can check the response status, headers and body, in order to log them or perform other actions.
+
+You can have a single filter intercepting responses to all OIDC client requests, or use an `@OidcEndpoint` annotation to apply this filter to the responses to the specific OIDC client requests only. For example:
+
+[source,java]
+----
+package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.jboss.logging.Logger;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.common.OidcEndpoint;
+import io.quarkus.oidc.common.OidcEndpoint.Type;
+import io.quarkus.oidc.common.OidcResponseFilter;
+import io.quarkus.oidc.common.runtime.OidcConstants;
+
+@ApplicationScoped
+@Unremovable
+@OidcEndpoint(value = Type.TOKEN) <1>
+public class TokenEndpointResponseFilter implements OidcResponseFilter {
+    private static final Logger LOG = Logger.getLogger(TokenEndpointResponseFilter.class);
+
+    @Override
+    public void filter(OidcResponseContext rc) {
+        String contentType = rc.responseHeaders().get("Content-Type"); <2>
+        if (contentType.equals("application/json")
+                && "refresh_token".equals(rc.requestProperties().get(OidcConstants.GRANT_TYPE)) <3>
+                && rc.responseBody().toJsonObject().containsKey("refresh_token")) { <4>
+            LOG.debug("Tokens have been refreshed");
+        }
+    }
+
+}
+----
+<1> Restrict this filter to requests targeting the OIDC token endpoint only.
+<2> Check the response `Content-Type` header.
+<3> Use `OidcRequestContextProperties` request properties to confirm it is a `refresh_grant` token grant response.
+<4> Confirm the response JSON contains a `refresh_token` property.
+
+[[token-propagation-rest]]
+== Token Propagation for Quarkus REST
+
+The `quarkus-rest-client-oidc-token-propagation` extension provides a REST Client filter, `io.quarkus.oidc.token.propagation.reactive.AccessTokenRequestReactiveFilter`, that simplifies the propagation of authentication information. This client propagates the xref:security-oidc-bearer-token-authentication.adoc[bearer token] present in the currently active request or the token acquired from the xref:security-oidc-code-flow-authentication.adoc[authorization code flow mechanism] as the HTTP `Authorization` header's `Bearer` scheme value.
 
 You can selectively register `AccessTokenRequestReactiveFilter` by using either `io.quarkus.oidc.token.propagation.AccessToken` or `org.eclipse.microprofile.rest.client.annotation.RegisterProvider` annotation, for example:
 
@@ -1178,8 +1265,8 @@ quarkus.resteasy-client-oidc-token-propagation.exchange-token=true
 
 `AccessTokenRequestReactiveFilter` uses a default `OidcClient` by default. A named `OidcClient` can be selected with a `quarkus.rest-client-oidc-token-propagation.client-name` configuration property or with the `io.quarkus.oidc.token.propagation.AccessToken#exchangeTokenClient` annotation attribute.
 
-[[token-propagation]]
-== Token Propagation
+[[token-propagation-resteasy]]
+== Token Propagation for RESTEasy Classic
 
 The `quarkus-resteasy-client-oidc-token-propagation` extension provides two Jakarta REST `jakarta.ws.rs.client.ClientRequestFilter` class implementations that simplify the propagation of authentication information.
 `io.quarkus.oidc.token.propagation.AccessTokenRequestFilter` propagates the xref:security-oidc-bearer-token-authentication.adoc[Bearer token] present in the current active request or the token acquired from the xref:security-oidc-code-flow-authentication.adoc[Authorization code flow mechanism], as the HTTP `Authorization` header's `Bearer` scheme value.
@@ -1330,26 +1417,10 @@ As mentioned, use `AccessTokenRequestFilter` if you work with Keycloak or an Ope
 [[integration-testing-token-propagation]]
 === Testing
 
-You can generate the tokens as described in xref:security-oidc-bearer-token-authentication.adoc#bearer-token-integration-testing[OpenID Connect Bearer Token Integration testing] section.
-Prepare the REST test endpoints. You can have the test front-end endpoint, which uses the injected MP REST client with a registered token propagation filter, call the downstream endpoint. For example, see the `integration-tests/resteasy-client-oidc-token-propagation` in the `main` Quarkus repository.
+Typically, you must prepare two REST test endpoints.
+The first endpoint uses the injected MP REST client with a registered token propagation filter to call the second endpoint.
 
-[[reactive-token-propagation]]
-== Token Propagation Reactive
-
-Add the following Maven Dependency:
-
-[source,xml]
-----
-<dependency>
-    <groupId>io.quarkus</groupId>
-    <artifactId>quarkus-rest-client-resteasy-client-oidc-token-propagation</artifactId>
-</dependency>
-----
-
-The `quarkus-rest-client-resteasy-client-oidc-token-propagation` extension provides `io.quarkus.oidc.token.propagation.reactive.AccessTokenRequestReactiveFilter` which can be used to propagate the current `Bearer` or `Authorization Code Flow` access tokens.
-
-The `quarkus-rest-client-resteasy-client-oidc-token-propagation` extension (as opposed to the non-reactive `quarkus-resteasy-client-oidc-token-propagation` extension) does not currently support the exchanging or resigning of the tokens before the propagation.
-However, these features might be added in the future.
+To learn how it can be done, please follow the xref:security-openid-connect-client.adoc[OpenID Connect client and token propagation] quickstart, and its xref:security-openid-connect-client.adoc#testing[Testing] section in particular.
 
 ifndef::no-quarkus-oidc-client-graphql[]
 [[quarkus-oidc-client-graphql]]

@@ -203,6 +203,11 @@ public class main implements Callable<Integer> {
             return readme.replaceAll("\n", "\n        ").trim();
         }
 
+        public String getIndentedLastUpdate() {
+            String lastUpdateBody = getLastUpdate().body();
+            return lastUpdateBody.replaceAll("\n", "\n        ").trim();
+        }
+
         public Status getStatus() {
             if (statusUpdates.isEmpty()) {
                 return Status.INACTIVE;
