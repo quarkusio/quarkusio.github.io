@@ -1455,7 +1455,10 @@ quarkus.log.category."io.quarkus.oidc.client.runtime.OidcClientRecorder".min-lev
 <h2 id="oidc-client-ref-oidc-request-filters"><a class="anchor" href="#oidc-client-ref-oidc-request-filters"></a>OIDC request filters</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>You can filter OIDC requests made by Quarkus to the OIDC provider by registering one or more <code>OidcRequestFilter</code> implementations, which can update or add new request headers. For example, a filter can analyze the request body and add its digest as a new header value:</p>
+<p>You can filter OIDC requests made by OIDC client to the OIDC provider by registering one or more <code>OidcRequestFilter</code> implementations, which can update or add new request headers, or analyze the request body.</p>
+</div>
+<div class="paragraph">
+<p>You can have a single filter intercepting requests to all OIDC provider endpoints, or use an <code>@OidcEndpoint</code> annotation to apply this filter to requests to specific endpoints only. For example:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -1464,11 +1467,12 @@ quarkus.log.category."io.quarkus.oidc.client.runtime.OidcClientRecorder".min-lev
 import jakarta.enterprise.context.ApplicationScoped;
 
 import io.quarkus.arc.Unremovable;
-import io.quarkus.oidc.common.OidcRequestContext;
+import io.quarkus.oidc.common.OidcEndpoint;
 import io.quarkus.oidc.common.OidcRequestFilter;
 import io.vertx.core.http.HttpMethod;
 
 @ApplicationScoped
+@OidcEndpoint(value = Type.TOKEN)
 @Unremovable
 public class OidcRequestCustomizer implements OidcRequestFilter {
 
@@ -1476,7 +1480,7 @@ public class OidcRequestCustomizer implements OidcRequestFilter {
     public void filter(OidcRequestContext requestContext) {
         HttpMethod method = requestContext.request().method();
         String uri = requestContext.request().uri();
-        if (method == HttpMethod.POST &amp;&amp; uri.endsWith("/service") &amp;&amp; requestContext.requestBody() != null) {
+        if (method == HttpMethod.POST &amp;&amp; uri.endsWith("/token") &amp;&amp; requestContext.requestBody() != null) {
             requestContext.request().putHeader("Digest", calculateDigest(requestContext.requestBody().toString()));
         }
     }
@@ -1486,6 +1490,74 @@ public class OidcRequestCustomizer implements OidcRequestFilter {
     }
 }</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p><code>OidcRequestContextProperties</code> can be used to access request properties.
+Currently, you can use a <code>client_id</code> key to access the client tenant id and a <code>grant_type</code> key to access the grant type which the OIDC client uses to acquire tokens.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="oidc-client-ref-oidc-response-filters"><a class="anchor" href="#oidc-client-ref-oidc-response-filters"></a>OIDC response filters</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>You can filter responses to the OIDC client requests by registering one or more <code>OidcResponseFilter</code> implementations, which can check the response status, headers and body, in order to log them or perform other actions.</p>
+</div>
+<div class="paragraph">
+<p>You can have a single filter intercepting responses to all OIDC client requests, or use an <code>@OidcEndpoint</code> annotation to apply this filter to the responses to the specific OIDC client requests only. For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.keycloak;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.jboss.logging.Logger;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.common.OidcEndpoint;
+import io.quarkus.oidc.common.OidcEndpoint.Type;
+import io.quarkus.oidc.common.OidcResponseFilter;
+import io.quarkus.oidc.common.runtime.OidcConstants;
+
+@ApplicationScoped
+@Unremovable
+@OidcEndpoint(value = Type.TOKEN) <i class="conum" data-value="1"></i><b>(1)</b>
+public class TokenEndpointResponseFilter implements OidcResponseFilter {
+    private static final Logger LOG = Logger.getLogger(TokenEndpointResponseFilter.class);
+
+    @Override
+    public void filter(OidcResponseContext rc) {
+        String contentType = rc.responseHeaders().get("Content-Type"); <i class="conum" data-value="2"></i><b>(2)</b>
+        if (contentType.equals("application/json")
+                &amp;&amp; "refresh_token".equals(rc.requestProperties().get(OidcConstants.GRANT_TYPE)) <i class="conum" data-value="3"></i><b>(3)</b>
+                &amp;&amp; rc.responseBody().toJsonObject().containsKey("refresh_token")) { <i class="conum" data-value="4"></i><b>(4)</b>
+            LOG.debug("Tokens have been refreshed");
+        }
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Restrict this filter to requests targeting the OIDC token endpoint only.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Check the response <code>Content-Type</code> header.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Use <code>OidcRequestContextProperties</code> request properties to confirm it is a <code>refresh_grant</code> token grant response.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Confirm the response JSON contains a <code>refresh_token</code> property.</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
@@ -4311,6 +4383,7 @@ context can be found in <a href="duplicated-context">this guide</a>.</p>
 </ul>
 </li>
 <li><a href="#oidc-client-ref-oidc-request-filters">OIDC request filters</a></li>
+<li><a href="#oidc-client-ref-oidc-response-filters">OIDC response filters</a></li>
 <li><a href="#token-propagation-rest">Token Propagation for Quarkus REST</a></li>
 <li><a href="#token-propagation-resteasy">Token Propagation for RESTEasy Classic</a>
 <ul class="sectlevel2">
