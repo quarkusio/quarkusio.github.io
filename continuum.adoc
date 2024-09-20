@@ -1,0 +1,380 @@
+---
+layout: feature
+title: Continuum
+subtitle:
+permalink: /continuum/
+intro: The client-server architecture has been the de-facto standard for building applications for years. But a significant shift happened. The <em>one model rules them all</em> age is over. A new range of applications and architectural styles have emerged and transformed how code is written and how applications are deployed and executed. HTTP microservices, reactive applications, event-driven architecture, function as a service, and AI-infused applications are now central players in modern systems.
+icon-light: assets/images/about/icon-reactive.svg
+icon-dark: assets/images/about/icon-reactive-dark.svg
+---
+
+Quarkus has been designed with this new world in mind and provides first-class support for these paradigms.
+That does not mean you cannot build monoliths with Quarkus; you can do it smoothly.
+On the contrary, it means that the Quarkus development model morphs to adapt itself to the type of application you are developing: monoliths, microservices, CLIs, event-driven applications, functions, Kubernetes operators...
+
+== HTTP microservices
+
+Let’s start with the basics: HTTP microservices. You need to develop an HTTP endpoint, often called REST.
+You process incoming HTTP requests, and to do so, you usually need to rely on other services, such as databases or other HTTP services.
+Let’s take a very simple application handling _elements_ from the https://en.wikipedia.org/wiki/Periodic_table[periodic table].
+
+Using Quarkus REST and Hibernate ORM with Panache, the code would be something like:
+
+[source,java,role="primary"]
+.Using Quarkus REST
+----
+@Path("/elements")
+public class ElementResource {
+
+   @GET
+   public List<Element> getAll() {
+       return Element.listAll();
+   }
+
+   @GET
+   @Path("/{position}")
+   public Element getOne(int position) {
+       Element element = Element.find("position",
+             position).firstResult();
+       if (element == null) {
+           throw  new NotFoundException();
+       }
+       return element;
+   }
+
+   @POST
+   @Transactional
+   public Response create(Element element) {
+       element.persist();
+       return Response.ok(element).status(201).build();
+   }
+
+   //...
+}
+----
+
+[source,java,role="secondary"]
+.Using the Spring MVC compatibility layer
+----
+@RestController
+public class ElementController {
+
+
+   @GetMapping("/elements")
+   public List<Element> getAll() {
+       return Element.listAll();
+   }
+
+
+   @GetMapping("/elements/{position}")
+   public Element getOne(int position) {
+       Element element = Element.find("position",
+             position).firstResult();
+       if (element == null) {
+           throw new ResponseStatusException(NOT_FOUND);
+       }
+       return element;
+   }
+
+
+   @PostMapping("/elements")
+   @Transactional
+   public Response create(Element element) {
+       element.persist();
+       return Response.ok(element).status(201).build();
+   }
+
+
+   //...
+}
+----
+
+This development model should look familiar if you are a Java EE or Spring user.
+You expose a resource containing methods annotated with `@GET`, `@POST` to handle the different requests.
+Quarkus also proposes a https://quarkus.io/guides/spring-web[compatibility layer with Spring APIs], so you can also use `@GetMapping` and `@RestController`.
+
+You can use the JPA entity manager directly.
+You can also use Panache, an alternative that removes boilerplate and exposes active records or repository models.
+With Panache, the `Element` class would be as simple as:
+
+[source, java]
+----
+@Entity
+public class Element extends PanacheEntity {
+
+   public String name;
+   public String symbol;
+   @Column(unique = true)
+   public int position;
+}
+
+----
+
+Microservices tend to come in systems.
+Let’s now imagine you need to access another HTTP endpoint.
+You can use a _low-level_ HTTP client directly; this is nothing more than repeating boilerplate code.
+Quarkus provides a way to call HTTP endpoints easily using the https://quarkus.io/guides/rest-client[MicroProfile Rest Client API].
+First, declare your service as follows:
+
+[source,java]
+----
+@RegisterRestClient(configKey="element-service")
+@Path("/elements")
+public interface ElementService {
+
+   @GET
+   @Path("/{position}")
+   Element getElement(int position);
+}
+----
+
+Just add a method and use annotations to describe the behavior for each call you intend to do.
+Then, in your resource/controller, just use the `ElementService` interface:
+
+[source, java]
+----
+@RestClient ElementService service;
+public void invokeRemoteService() {
+   Element element = service.getElement(1);
+}
+----
+
+You may wonder where the URL is configured, as it’s not in the code.
+It should not be hard-coded because the URL likely depends on the environment.
+The URL is configured in the application configuration:
+
+[source,properties]
+----
+quarkus.rest-client.element-service.url=http://localhost:9001
+----
+
+The URL can be updated during the deployment or at launch time using system properties or environment variables.
+You can even use https://quarkus.io/guides/stork[service discovery and selection].
+Quarkus is not limited to HTTP.
+You can use https://quarkus.io/guides/grpc-getting-started[gRPC] or https://quarkus.io/guides/smallrye-graphql[GraphQL], two prominent alternatives in the microservice space.
+
+== Being reactive
+
+Application requirements have changed drastically over the last few years.
+Reactive architecture is increasingly becoming the preferred approach for any application to succeed in the era of cloud computing, Big Data, or IoT.
+Today’s users embrace applications with milliseconds of response time, 100% uptime, lower latency, push data instead of pull, higher throughput, resilience, and elasticity.
+However, these features are nearly impossible to achieve using yesterday’s software architecture without a considerable investment in resources, infrastructure, and tooling.
+The world has changed, and having dozens of servers, long response times (> 500 ms), and downtime due to maintenance or waterfalls of failures does not meet the expected user experience.
+We need to build _better_ distributed systems, and that’s the motto of _reactive systems._
+
+Quarkus aids you on your journey to build reactive systems.
+Quarkus is based on a https://quarkus.io/version/main/guides/quarkus-reactive-architecture[reactive core].
+Every Quarkus application is a reactive application.
+It uses the system resources efficiently and can handle large throughput.
+But, your code does not have to use reactive programming.
+You can mix and match three alternatives: plain imperative code, imperative code using virtual threads, or reactive code.
+Depending on your requirements, you will pick one or another or even mix them.
+
+[source,java,role="primary"]
+.Imperative
+----
+@Path("/elements")
+public class ElementResource {
+
+   @GET
+   public List<Element> getAll() {
+       return Element.listAll();
+   }
+}
+----
+
+[source,java,role="secondary"]
+.Reactive
+----
+@Path("/elements")
+public class ReactiveElementResource {
+
+   @Inject
+   ElementRepository repository;
+
+   @GET
+   public Uni<List<Element>> getAll() {
+       return repository.listAll();
+   }
+}
+----
+
+[source,java,role="secondary"]
+.Virtual Threads
+----
+@Path("/elements")
+@RunOnVirtualThread
+public class ElementResource {
+
+   @GET
+   public List<Element> getAll() {
+       return Element.listAll();
+   }
+}
+----
+
+== Event-driven Architectures
+
+However, HTTP characteristics prohibit implementing fully https://www.reactivemanifesto.org/[reactive systems], where all the components interact using asynchronous messages passing.
+You can consume messages from various brokers, such as Apache Kafka, Apache Pulsar, or RabbitMQ, and process these messages smoothly:
+
+[source,java]
+----
+@ApplicationScoped
+public class MeasurementProcessor {
+
+   @Inject
+   LocationRepository repository;
+
+   @Incoming("raw-measurement")
+   @Outgoing("temperatures")
+   public Record<String, Temperature> process(Measurement m) {
+       var location = repository
+               .getLocationForDevice(m.device());
+       var outcome = new Temperature(location, m.temp());
+       return Record.of(location, outcome);
+   }
+
+}
+----
+
+The `@Incoming` and `@Outgoing` annotations are part of https://www.smallrye.io/smallrye-reactive-messaging[Reactive Messaging].
+They are used to express from which _channel_ you are consuming and to which _channel_ you are sending.
+Thanks to https://smallrye.io/smallrye-reactive-messaging/latest/[SmallRye Reactive Messaging], you can consume and send messages from and to different brokers and transports such as HTTP, Pulsar, Kafka, RabbitMQ, JMS, or http://camel.apache.org/[Apache Camel].
+
+As mentioned above, you can select among the three execution models: imperative (like shown above), reactive (using the Mutiny API, including stream manipulation), or virtual threads:
+
+[source,java,role="primary"]
+.Imperative message processing
+----
+@Incoming("raw-measurement")
+@Outgoing("temperatures")
+public Record<String, Temperature> process(Measurement m) {
+   var location = repository
+           .getLocationForDevice(m.device());
+   var outcome = new Temperature(location, m.temp());
+   return Record.of(location, outcome);
+}
+----
+
+[source,java,role="secondary"]
+.Reactive message processing
+----
+@Incoming("raw-measurement")
+@Outgoing("temperatures")
+public Uni<Record<String, Temperature>> process(Measurement m) {
+   return repository.getLocationForDevice(m.device())
+           .map(location -> Record.of(location,
+                   new Temperature(location, m.temp())
+           ));
+}
+----
+
+[source,java,role="secondary"]
+.Stream processing
+----
+@Incoming("raw-measurement")
+@Outgoing("temperatures")
+public Multi<Record<String, Temperature>> transform(Multi<Measurement> stream) {
+   return stream
+           .onItem().transformToUniAndMerge(m ->
+             repository.getLocationForDevice(m.device())
+                 .map(location -> Record.of(location,
+                   new Temperature(location, m.temp())
+                 )
+             )
+       );
+}
+----
+
+[source,java,role="secondary"]
+.Message processing using virtual threads
+----
+@Incoming("raw-measurement")
+@Outgoing("temperatures")
+@RunOnVirtualThread
+public Record<String, Temperature> process(Measurement m) {
+       var location = repository
+               .getLocationForDevice(m.device());
+       var outcome = new Temperature(location, m.temp());
+       return Record.of(location, outcome);
+}
+----
+
+== Functions as a Service and Serverless
+
+Thanks to their stellar startup time and low memory usage, you can implement functions using Quarkus in serverless environments.
+Quarkus provides Funqy, an approach to writing functions that are deployable to various FaaS environments like AWS Lambda, Azure Functions, Knative, and Knative Events (Cloud Events).
+It is also usable as a standalone service.
+With Funqy, a function is just:
+
+[source,java]
+----
+import io.quarkus.funqy.Funq;
+
+public class GreetingFunction {
+    @Funq
+    public String greet(String name) {
+       return "Hello " + name;
+    }
+}
+----
+
+You can use any of the Quarkus features in your function and benefit from the fast startup and low memory utilization.
+With Quarkus, you can embrace this new world without changing your programming language.
+Packaging and deployment are a breeze. Quarkus tailors your packaging to the environment you are targeting.
+
+== AI-Infused application
+
+In recent years, AI has evolved from a niche technology to one of the most transformative innovations in IT.
+The rise of large language models has opened new opportunities for building more intelligent, personalized, and adaptive applications.
+Predictive and generative AI models are increasingly being integrated to provide smarter user experiences, automate decision-making, and enhance productivity.
+However, developing AI-infused applications is not without its challenges.
+These models are often non-deterministic, meaning they can produce different outputs given the same input.
+They can also exhibit behaviors such as hallucination, where the model generates inaccurate or nonsensical results.
+Furthermore, AI systems are vulnerable to intentional or accidental misuse, leading to privacy violations, security risks, or biased outcomes.
+
+To address these complexities, developers must ensure that their AI-powered applications are both robust and secure.
+This includes implementing mechanisms to handle unpredictable behavior, validating and sanitizing inputs, monitoring outputs for potential issues, and auditing AI interactions for compliance and transparency.
+
+Quarkus offers a seamless solution for building AI-infused applications.
+It automatically manages communication with the AI model, ensuring that inputs and outputs are adequately guarded and processed.
+Quarkus also provides built-in auditing and observability features.
+
+[source,java]
+----
+@RegisterAiService(retrievalAugmentor = MovieMuseRetrievalAugmentor.class)
+@SessionScoped
+public interface MovieMuse {
+
+   @SystemMessage("""
+           You are MovieMuse, an AI answering questions about
+           the top 100 movies from IMDB.
+           Your response must be polite, use the same language
+           as the question, and be relevant to the question.
+           Don't use any knowledge that is not in the
+           database.
+           """)
+   String chat(@UserMessage String question);
+}
+----
+
+By leveraging Quarkus, you can focus on delivering intelligent, cutting-edge applications while ensuring they remain secure, reliable, and compliant with industry standards.
+
+== Continuum
+
+Quarkus' core principles offer a versatile foundation that empowers developers to build virtually any type of modern application, from traditional monoliths to cloud-native, serverless architectures.
+Its flexibility makes it ideal for applications of all sizes and complexities, enabling organizations to adapt to evolving business needs and technological landscapes.
+One of the standout features of Quarkus is its reactive core. This allows applications to handle today’s most demanding challenges with remarkable efficiency.
+By optimizing resource usage, Quarkus ensures that applications can scale seamlessly, even under high loads, while minimizing infrastructure costs.
+The framework supports both imperative and reactive programming models, giving developers the freedom to choose the right approach based on the specific requirements of their project.
+This flexibility enables the creation of high-performance applications that can react to real-time events and handle asynchronous workflows with ease.
+
+In addition, Quarkus excels in its ability to interact with a broad range of protocols and communication styles.
+Whether your application needs to connect to legacy systems, microservices, or emerging cloud technologies, Quarkus facilitates smooth integration and interaction, enhancing the overall adaptability of your solutions.
+Its support for event-driven architectures, RESTful APIs, gRPC, and other modern protocols ensures that Quarkus-powered applications are well-equipped to thrive in distributed and dynamic environments.
+
+In summary, Quarkus is not only a robust and efficient framework but also a future-proof solution for building diverse, scalable, and resilient applications in today’s fast-paced digital world.
+With its reactive core, adaptable development models, and broad protocol support, Quarkus provides the tools necessary to meet modern application development's diverse and growing demands.
+
+
