@@ -438,10 +438,13 @@ follow the instructions in the <a href="#using-the-elasticsearch-java-client">Us
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
@@ -463,13 +466,49 @@ public class FruitService {
         restClient.performRequest(request); <i class="conum" data-value="4"></i><b>(4)</b>
     }
 
+    public void index(List&lt;Fruit&gt; list) throws IOException {
+
+        var entityList = new ArrayList&lt;JsonObject&gt;();
+
+        for (var fruit : list) {
+
+            entityList.add(new JsonObject().put("index", new JsonObject()<i class="conum" data-value="5"></i><b>(5)</b>
+                    .put("_index", "fruits").put("_id", fruit.id)));
+            entityList.add(JsonObject.mapFrom(fruit));
+        }
+
+        Request request = new Request(
+                "POST", "fruits/_bulk?pretty");
+        request.setEntity(new StringEntity(
+                toNdJsonString(entityList),<i class="conum" data-value="6"></i><b>(6)</b>
+                ContentType.create("application/x-ndjson")));<i class="conum" data-value="7"></i><b>(7)</b>
+        restClient.performRequest(request);
+    }
+
+    public void delete(List&lt;String&gt; identityList) throws IOException {
+
+        var entityList = new ArrayList&lt;JsonObject&gt;();
+
+        for (var id : identityList) {
+            entityList.add(new JsonObject().put("delete",
+                    new JsonObject().put("_index", "fruits").put("_id", id)));<i class="conum" data-value="8"></i><b>(8)</b>
+        }
+
+        Request request = new Request(
+                "POST", "fruits/_bulk?pretty");
+        request.setEntity(new StringEntity(
+                toNdJsonString(entityList),
+                ContentType.create("application/x-ndjson")));
+        restClient.performRequest(request);
+    }
+
     public Fruit get(String id) throws IOException {
         Request request = new Request(
                 "GET",
                 "/fruits/_doc/" + id);
         Response response = restClient.performRequest(request);
         String responseBody = EntityUtils.toString(response.getEntity());
-        JsonObject json = new JsonObject(responseBody); <i class="conum" data-value="5"></i><b>(5)</b>
+        JsonObject json = new JsonObject(responseBody); <i class="conum" data-value="9"></i><b>(9)</b>
         return json.getJsonObject("_source").mapTo(Fruit.class);
     }
 
@@ -503,6 +542,12 @@ public class FruitService {
         }
         return results;
     }
+
+    private static String toNdJsonString(List&lt;JsonObject&gt; objects) {
+        return objects.stream()
+                .map(JsonObject::encode)
+                .collect(Collectors.joining("\n", "", "\n"));
+    }
 }</code></pre>
 </div>
 </div>
@@ -526,7 +571,40 @@ public class FruitService {
 </tr>
 <tr>
 <td><i class="conum" data-value="5"></i><b>5</b></td>
-<td>In order to deserialize the object from Elasticsearch, we again use Vert.x <code>JsonObject</code>.</td>
+<td>As we <code>index</code> collection of objects we should use <code>index</code>, <code>create</code> or <code>update</code> action.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>We use <code>toNdJsonString(entityList)</code> call to produce output like below
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">{"index", {"_index" : "fruits", "_id", "1"}}
+{"id": "1", "name": "apple", "color": "red"}
+...           ...             ...        ...
+{"create", {"_index" : "fruits", "_id", "N"}}
+{"id": "N", "name": "dragonfruit", "color": "pink"}</code></pre>
+</div>
+</div></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="7"></i><b>7</b></td>
+<td>Pass the content type that is expected by the search backend for bulk requests.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="8"></i><b>8</b></td>
+<td>The bulk API&#8217;s delete operation JSON already contains all the required information; hence, there is no request body following this operation in the Bulk API request body.
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">{"delete", {"_index" : "fruits", "_id", "1"}}
+{"delete", {"_index" : "fruits", "_id", "2"}}
+...           ...             ...        ...
+{"delete", {"_index" : "fruits", "_id", "N"}}</code></pre>
+</div>
+</div></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="9"></i><b>9</b></td>
+<td>In order to deserialize the object from Elasticsearch, we again use Vert.x JsonObject.</td>
 </tr>
 </table>
 </div>
@@ -537,18 +615,20 @@ public class FruitService {
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.elasticsearch;
 
-import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
-import org.jboss.resteasy.reactive.RestQuery;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.BadRequestException;
 
 @Path("/fruits")
 public class FruitResource {
@@ -563,6 +643,20 @@ public class FruitResource {
         }
         fruitService.index(fruit);
         return Response.created(URI.create("/fruits/" + fruit.id)).build();
+    }
+
+    @Path("bulk")
+    @DELETE
+    public Response delete(List&lt;String&gt; identityList) throws IOException {
+        fruitService.delete(identityList);
+        return Response.ok().build();
+    }
+
+    @Path("bulk")
+    @POST
+    public Response index(List&lt;Fruit&gt; list) throws IOException {
+        fruitService.index(list);
+        return Response.ok().build();
     }
 
     @GET
@@ -772,18 +866,26 @@ if you have a local running instance on this port, there is nothing more to do b
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch._types.FieldValue;
-import co.elastic.clients.elasticsearch._types.query_dsl.QueryBuilders;
-import co.elastic.clients.elasticsearch.core.*;
-import co.elastic.clients.elasticsearch.core.search.HitsMetadata;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.acme.elasticsearch.Fruit;
-
-import java.io.IOException;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.io.IOException;
+import java.io.StringReader;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.IndexRequest;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.query_dsl.QueryBuilders;
+import co.elastic.clients.elasticsearch.core.search.Hit;
+import co.elastic.clients.elasticsearch.core.search.HitsMetadata;
+import co.elastic.clients.elasticsearch.core.GetRequest;
+import co.elastic.clients.elasticsearch.core.GetResponse;
+import co.elastic.clients.elasticsearch.core.SearchRequest;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
+import co.elastic.clients.elasticsearch.core.BulkResponse;
 
 @ApplicationScoped
 public class FruitService {
@@ -796,6 +898,37 @@ public class FruitService {
                 .id(fruit.id)
                 .document(fruit)); <i class="conum" data-value="3"></i><b>(3)</b>
         client.index(request);  <i class="conum" data-value="4"></i><b>(4)</b>
+    }
+
+    public void index(List&lt;Fruit&gt; list) throws IOException {
+
+        BulkRequest.Builder br = new BulkRequest.Builder();
+
+        for (var fruit : list) {
+            br.operations(op -&gt; op
+                    .index(idx -&gt; idx.index("fruits").id(fruit.id).document(fruit)));
+        }
+
+        BulkResponse result = client.bulk(br.build());
+
+        if (result.errors()) {
+            throw new RuntimeException("The indexing operation encountered errors.");
+        }
+    }
+
+    public void delete(List&lt;String&gt; list) throws IOException {
+
+        BulkRequest.Builder br = new BulkRequest.Builder();
+
+        for (var id : list) {
+            br.operations(op -&gt; op.delete(idx -&gt; idx.index("fruits").id(id)));
+        }
+
+        BulkResponse result = client.bulk(br.build());
+
+        if (result.errors()) {
+            throw new RuntimeException("The indexing operation encountered errors.");
+        }
     }
 
     public Fruit get(String id) throws IOException {
@@ -1059,7 +1192,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1S</code></p></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
@@ -1079,7 +1212,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>30S</code></p></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
@@ -1182,7 +1315,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>5M</code></p></td>
 </tr>
 <tr>
