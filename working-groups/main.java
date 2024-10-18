@@ -208,6 +208,11 @@ public class main implements Callable<Integer> {
             return lastUpdateBody.replaceAll("\n", "\n        ").trim();
         }
 
+        public boolean isCompleted() {
+            var last = getLastUpdate();
+            return last != null && last.status().equals("COMPLETE");
+        }
+
         public Status getStatus() {
             if (statusUpdates.isEmpty()) {
                 return Status.INACTIVE;

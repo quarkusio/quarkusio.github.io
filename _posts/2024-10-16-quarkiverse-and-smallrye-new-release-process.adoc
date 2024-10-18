@@ -1,0 +1,220 @@
+---
+layout: post
+title: 'Strengthening the Release Process for Quarkiverse and SmallRye'
+date: 2024-10-17
+tags: security
+synopsis: 'A description of the new Quarkiverse and SmallRye release process.'
+author: cescoffier
+---
+:imagesdir: /assets/images/posts/release_process
+
+
+In May, we were alerted about a potential leak in the https://smallrye.io/[SmallRye] release process.
+We acted swiftly to mitigate the issue; fortunately, no damage was done.
+Even if Quarkiverse has no reported leak, during our investigation, we uncovered a deeper flaw that affected not only SmallRye but also Quarkiverse.
+
+In this blog post, we’ll explain the vulnerability we discovered and introduce a more secure release pipeline for both Quarkiverse and SmallRye repositories.
+
+**TL;DR:** We’ve uncovered a security flaw in the release process for Quarkiverse and SmallRye that could have allowed malicious actors to impersonate projects and publish compromised artifacts.
+We’ve implemented a new, more secure release pipeline to address this.
+If you’re a maintainer, you’ve received a pull request to migrate to the new process.
+Quarkus itself is not affected by this issue, only SmallRye and Quarkiverse.
+
+Please act immediately, as the old release process will be retired by October 16th, 2024.
+So make sure to merge the pull request before then to avoid any disruptions in your releases.
+If you have any questions or concerns, please contact us on https://quarkusio.zulipchat.com/#narrow/stream/187038-dev[Zulip] or https://github.com/quarkusio/quarkus/discussions[GitHub Discussions].
+Details on this change are <<Call for action: Migrating to the new release process, below>>.
+
+For more details on the issue, the solution, and how to adapt, read on!
+
+==  The Flaw: A Closer Look at the Release Process
+
+To understand the flaw, it’s important to outline the release process Quarkiverse and SmallRye used first.
+Quarkiverse and SmallRye offer development facilities to ease the development of Quarkus extensions and SmallRye projects used in Quarkus, respectively.
+There is no central supervision of all these repositories; they evolve at their own pace, individually.
+
+Both organizations use GitHub repositories and GitHub Actions as CI and automation framework.
+Here’s how the release project worked:
+
+1. A developer opens a pull request in the repository, updating the version number in the project’s `project.yaml` file (See https://github.com/quarkiverse/quarkus-langchain4j/pull/904[this PR] as an example).
+2. The regular build workflow runs to ensure it builds successfully.
+A specific pre-release flow also runs to verify that the YAML file is correctly formatted.
+3. Once the pull request is merged, a release workflow is triggered.
+4. The release workflow starts by _preparing_ the release.
+It sets the project's version to the configured version and creates a tag with the new updated code.
+It also updates the main branch (or the source branch of the pull request) to the next development version and commits this change to the branch.
+5. Once the preparation step is complete, the tag is checked out, and the release artifacts are created.
+This phase is called _release perform_.
+During that phase, binary artifacts are created from the tagged sources.
+The artifacts are signed and pushed to Maven Central.
+
+image::original-release-process.png[The release process used by Quarkiverse and SmallRye,float="center",align="center"]
+
+The last step, the _release perform_, is where the flaw exists. Here’s why:
+
+* To sign the artifacts, the workflow uses an organization-wide GPG key
+* To publish the artifacts, the workflow uses organization-wide credentials
+
+image::flaw.png[The flaw in the release process,float="center",align="center"]
+
+The GPG passphrase and the Maven Central credential are stored as secrets in the project’s GitHub repository but shared across the entire organization.
+They are not freely accessible.
+You cannot print them in the log (without a bit of magic), and cannot be accessed from forks.
+
+At this point, everything seems fine.
+Both SmallRye and Quarkiverse provide maintainers with great freedom to customize GitHub Action workflows to fit their needs.
+This flexibility, while empowering, also introduces risks.
+And ... here we go....
+
+== The Problem: A Risk of Credential Exposure (and Impersonification)
+
+We said that secrets are not freely accessible.
+That’s true, except for one case.
+GitHub Actions (see Github Action Security overview) running in the project itself can access them.
+Even tests can access them.
+Anything running during the workflow (actions, scripts...) can access these secrets... and leak them.
+
+When a developer includes an external or third-party GitHub Action, Maven / Gradle plugin, or Junit Extension...  in their workflow, that code gains access to the organization-wide credentials.
+Any code running during the workflow on the repository — not a fork — can potentially expose these secrets.
+The ramifications are severe:
+
+* An attacker could release compromised yet legitimate-looking project versions signed with the organization’s GPG key to Maven Central.
+* Worse still, they could push malicious artifacts to Maven Central under the Quarkiverse or SmallRye banner, impersonating the entire organization.
+
+In short, with access to these credentials, an attacker could impersonate Quarkiverse or SmallRye, bypassing typical protections like signed commits or branch protection.
+The vulnerability arises from the fact that these credentials are shared and available to any code running during the workflow.
+
+Despite quickly mitigating the initial SmallRye leak, discovering this larger flaw prompted us to reevaluate our release process.
+It became clear that we needed a more secure and resilient approach to prevent such risks in the future.
+
+== The Solution: A new release process
+
+After careful consideration, we concluded that relying on organization-wide secrets for releases was no longer viable.
+We needed a more secure approach.
+
+At first, we explored the idea of using repository-specific credentials.
+While this would limit the blast radius in case of a leak, it would be difficult to manage at scale and slow down the onboarding process.
+Additionally, an individual repository could still be compromised and impersonated even with this approach.
+Therefore, we decided against this solution.
+
+Instead, we devised a more robust and secure solution involving two repositories: one for the code being released and a separate one for executing the release perform phase itself.
+Crucially, the repository with the source code no longer has access to organization-wide credentials—only the second repository does.
+
+image::new-release-process.png[The new release process,float="center",align="center"]
+
+When the second workflow (red) is complete, it unblocks the first one (blue).
+Thus, you know when the second workflow is completed and if it was successful.
+
+=== How It Works: A Step-by-Step Breakdown
+
+With this new approach, the initial stages of the release process remain unchanged.
+Here’s what happens now:
+
+1. A developer opens a pull request, updating the version number in the `project.yaml` file.
+2. The pre-release workflow is triggered within the repository, ensuring the build is correct and the version is appropriately updated.
+3. Once the pull request is merged, the release process diverges from the previous approach:
+
+  * The first repository executes the preparation steps, such as version updates, tag creation, and setting the next development version.
+  * The release artifacts are generated but not signed or pushed to Maven Central.
+
+At this point, a second workflow is triggered in a separate repository.
+This is where the critical actions happen:
+
+* The second repository, which contains the necessary credentials (Maven Central credentials and GPG passphrase), downloads the release artifacts.
+* It verifies the integrity of the artifacts using attestations.
+* The artifacts are then signed and pushed to Maven Central.
+
+This second repository is crucial for security.
+It’s locked down and non-modifiable, meaning no developer can customize the workflow or inadvertently introduce a vulnerability.
+By isolating the sensitive release steps in this secured environment, we’ve significantly reduced the risk of leaks or unauthorized access.
+
+This new process provides a much-needed layer of separation, ensuring that the credentials remain protected and that the possibility of a leak is greatly diminished.
+
+=== Balancing Security with Developer Freedom
+
+As highlighted earlier, both Quarkiverse and SmallRye strongly emphasize empowering developers by minimizing the overhead of maintaining open-source components.
+Our new release process maintains this philosophy, ensuring developers still have the flexibility to adjust workflows in their component repositories as needed.
+
+Developers and maintainers can continue to modify workflows, introduce custom CI steps, and tailor their processes to meet specific project needs.
+The only significant change is that part of the release process—the critical signing and publishing steps—now occurs in a separate, secured repository.
+
+Importantly, maintainers retain the ability to trigger a release at any time, from any branch, just as they could before.
+The handoff to the second repository happens seamlessly, so the developer experience remains largely the same.
+
+This flexibility remains intact for projects that have heavily customized their release pipelines (for example, incorporating pre-release validations or automating tasks like website updates, release note generation, or breaking change detection).
+These projects can still trigger:
+
+* Validation workflows when the `project.yaml` file is updated via a pull request.
+* Post-release workflows, triggered when a new tag is created, allow tasks such as documentation updates or notifications to continue unhindered.
+
+By preserving this level of freedom, we ensure that developers can adapt their workflows to the needs of their projects while benefiting from a more secure release pipeline.
+
+=== Resilience: Preparing for the Unexpected
+
+
+The release process, by its nature, is a complex and multi-step operation where things can occasionally go wrong.
+While the new release pipeline adds another layer of complexity due to its split-repository design, we have built resilience into the system to mitigate potential issues.
+
+To address this, we’ve ensured that the new process is idempotent, meaning it can be safely retried without causing inconsistencies or errors.
+If a failure occurs at any point during the release — whether due to network issues, build failures, or artifact verification problems — the process can be restarted from the failed workflow.
+This allows the release to proceed without needing to repeat previous steps unnecessarily.
+
+Additionally, we have built in various checks and verifications at key stages of the release process, such as verifying artifact integrity (using attestation) are completed before moving on to the next stage.
+These safeguards help reduce the risk of an incomplete or erroneous release.
+
+Should any unexpected issues arise, both the component repository and the secured release repository provide detailed logs, allowing developers to diagnose and resolve problems quickly.
+This transparency ensures that maintainers remain in control, even when things don’t go as planned.
+
+These measures aim to provide a more resilient, fault-tolerant release process that doesn’t compromise on security or developer experience.
+
+== Call for action: Migrating to the new release process
+
+If you are a Quarkiverse or SmallRye project maintainer, you’ve received a pull request that updates your project to the new, more secure release process.
+For most maintainers, this update will be seamless and require no other changes.
+
+However, as mentioned earlier, if your project uses a customized or more sophisticated release pipeline, you may need to make a few adjustments to ensure compatibility with the new system.
+This could involve updating custom workflows that handle pre-validation steps, website publishing, or release note generation.
+Please take the time to review and test the changes in your repository to ensure everything works as expected.
+
+== Important Timeline: Deprecation of the Old Release Process
+
+The previous release process has now been deprecated and will be fully blocked by October 16th, 2024.
+After this date, releasing your project using the old pipeline will no longer be possible.
+Thus, you must adopt the new release process pull request before this deadline to avoid disrupting your project’s release cycle.
+
+For maintainers with more complex setups, we encourage you to start the migration as soon as possible to ensure a smooth transition.
+Roberto Cortez, George Gastaldi, and the rest of the Quarkus and SmallRye teams are here to help if you need assistance.
+
+__Next Steps:__
+
+* Review the Pull Request: Check the automated pull request in your repository and verify that it updates your release process to the new system.
+* Merge the Changes: Merge the changes before the deprecation date to avoid release interruptions.
+* Test Your Workflow: If you’ve customized your release process, run tests to ensure everything still functions as expected under the new pipeline.
+* Reach Out for Support: If you have any questions or need help with the migration, please contact us on https://quarkusio.zulipchat.com/#narrow/stream/187038-dev[Zulip] or https://github.com/quarkusio/quarkus/discussions[GitHub Discussions].
+
+This new release process is a vital step in improving the security of Quarkiverse and SmallRye, and your swift action in migrating will help us ensure the integrity of these projects moving forward.
+
+== Summary: Nothing Changes for You — It’s Just More Secure
+
+From a Smallrye and Quarkiverse developer’s perspective, the release process for Quarkiverse and SmallRye remains essentially the same.
+You still have the freedom to modify workflows, customize release steps, and trigger releases as needed.
+The flexibility and control you’ve come to rely on haven’t changed.
+
+The main difference is behind the scenes: a separate, secured repository now handles the critical steps of signing and publishing your release.
+This means the process is more robust, with sensitive credentials locked down, and the risk of leaks or impersonation significantly reduced.
+
+In short, while we’ve enhanced the security of the release pipeline, we’ve done so in a way that minimizes disruption.
+You’ll still enjoy the same developer experience — only now, with the added peace of mind that your releases are more secure than ever.
+
+== A Special Thank You
+
+Redefining a more secure and reliable release process was no small feat, and it certainly wasn’t something we could accomplish without some dedicated and enthusiastic developers.
+I’d like to extend our heartfelt thanks to George Gastaldi and Roberto Cortez for carrying out much of the heavy lifting throughout this process.
+Your dedication and expertise were invaluable.
+
+I’d also like to give a special shoutout to Andres Almiray, whose support with JReleaser was absolutely instrumental.
+The new release process simply wouldn’t have been possible without his reactivity and guidance.
+
+
+
+
