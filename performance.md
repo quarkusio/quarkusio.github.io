@@ -1,7 +1,7 @@
 ---
 layout: performance
 title: Quarkus Performance
-subtitle: Designed for speed and efficiency with minimal footprint.
+subtitle: Designed for Fast Startup, High Throughput, and Low Resource Consumption
 permalink: /performance/
 ---
 
