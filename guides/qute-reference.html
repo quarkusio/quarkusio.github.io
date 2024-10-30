@@ -809,7 +809,8 @@ You can learn more about virtual methods in the <a href="#virtual_methods">follo
 <div class="sect3">
 <h4 id="expression_resolution"><a class="anchor" href="#expression_resolution"></a>3.4.2. Resolution</h4>
 <div class="paragraph">
-<p>The first part of the expression is always resolved against the <a href="#current_context_object">current context object</a>.
+<p>When evaluating expressions a list of registered <a href="#value-resolvers">value resolvers</a> is used.
+The first part of the expression is always resolved against the <a href="#current_context_object">current context object</a>.
 If no result is found for the first part, it&#8217;s resolved against the parent context object (if available).
 For an expression that starts with a namespace the current context object is found using all the available <code>NamespaceResolver</code>s.
 For an expression that does not start with a namespace the current context object is <strong>derived from the position</strong> of the tag.
@@ -2739,7 +2740,13 @@ The template rendering is divided in two phases. During the first phase, which i
 <h4 id="value-resolvers"><a class="anchor" href="#value-resolvers"></a>3.7.1. Value Resolvers</h4>
 <div class="paragraph">
 <p>Value resolvers are used when evaluating expressions.
-A custom <code>io.quarkus.qute.ValueResolver</code> can be registered programmatically via <code>EngineBuilder.addValueResolver()</code>.</p>
+First the resolvers that apply to the given <code>EvalContext</code> are filtered.
+Then the resolver with <em>highest priority</em> is used to resolve the data.
+If a <code>io.quarkus.qute.Results.NotFound</code> object is returned then the next available resolver is used instead.
+However, <code>null</code> return value is considered a valid result.</p>
+</div>
+<div class="paragraph">
+<p>A custom <code>io.quarkus.qute.ValueResolver</code> can be registered programmatically via <code>EngineBuilder.addValueResolver()</code>.</p>
 </div>
 <div class="listingblock">
 <div class="title"><code>ValueResolver</code> Builder Example</div>
@@ -2749,6 +2756,30 @@ A custom <code>io.quarkus.qute.ValueResolver</code> can be registered programmat
     .resolveSync(ctx -&gt; (Long) ctx.getBase() * 10)
     .build());</code></pre>
 </div>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+In Quarkus, the <a href="#engine-customization"><code>@EngineConfiguration</code></a> annotation can be used to register a <code>ValueResolver</code> implemented as a CDI bean.
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Keep in mind that the reflection-based value resolver has priority <code>-1</code> and the max priority value for resolvers generated from <a href="#template_data"><code>@TemplateData</code></a> and <a href="#typesafe_expressions">type-safe expressions</a> is <code>10</code>.
+</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect3">
@@ -3136,13 +3167,9 @@ For more information, see the <a href="#rest_integration"> REST Integration</a> 
 </table>
 </div>
 <div class="paragraph">
-<p>All expressions with <code>cdi</code> and <code>inject</code> namespaces are validated during build.</p>
-</div>
-<div class="paragraph">
-<p>For the expression <code>cdi:personService.findPerson(10).name</code>, the implementation class of the injected bean must either declare the <code>findPerson</code> method or a matching <a href="#template_extension_methods">template extension method</a> must exist.</p>
-</div>
-<div class="paragraph">
-<p>For the expression <code>inject:foo.price</code>, the implementation class of the injected bean must either have the <code>price</code> property (e.g. a <code>getPrice()</code> method) or a matching <a href="#template_extension_methods">template extension method</a> must exist.</p>
+<p>All expressions with <code>cdi</code> and <code>inject</code> namespaces are validated during build.
+For the expression <code>cdi:personService.findPerson(10).name</code>, the implementation class of the injected bean must either declare the <code>findPerson</code> method or a matching <a href="#template_extension_methods">template extension method</a> must exist.
+For the expression <code>inject:foo.price</code>, the implementation class of the injected bean must either have the <code>price</code> property (e.g. a <code>getPrice()</code> method) or a matching <a href="#template_extension_methods">template extension method</a> must exist.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -3167,6 +3194,39 @@ If your application serves <a href="http-reference">HTTP requests</a> you can al
 </td>
 </tr>
 </table>
+</div>
+<div class="paragraph">
+<p>Sometimes it may be necessary to access public methods and properties of a CDI bean that is not annotated with <code>@Named</code>.
+However, if you don&#8217;t control the source of the bean it is not possible to add the <code>@Named</code> annotation.
+Nevertheless, it is possible to create an intermediate CDI bean annotated with <code>@Named</code>.
+This intermediate bean can inject the bean in question and make it accessible.
+A Java record is a very convenient way to define such an intermediate CDI bean.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Named <i class="conum" data-value="1"></i><b>(1)</b> <i class="conum" data-value="2"></i><b>(2)</b>
+public record UserData(UserInfo info, @LoggedIn String username) { <i class="conum" data-value="3"></i><b>(3)</b>
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>If no name is explicitly specified by the <code>value</code> member the <a href="https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1#default_name">default name is assigned</a> - the simple name of the bean class, after converting the first character to lower case. In this particular case, the default name is <code>userData</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The <code>@Singleton</code> scope is added automatically.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>All parameters of the canonical constructor are injection points. The accessor methods can be used to obtain the injected bean.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>And then in a template you can simply use <code>{cdi:userData.info}</code> or <code>{cdi:userData.username}</code>.</p>
 </div>
 </div>
 <div class="sect2">
@@ -5515,7 +5575,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>By default, <code>engine.getTemplate("foo")</code> would result in several lookups: <code>foo</code>, <code>foo.html</code>, <code>foo.txt</code>, etc.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7385">QUARKUS_QUTE_SUFFIXES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7385" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7400">QUARKUS_QUTE_SUFFIXES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7400" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5535,7 +5595,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>The additional map of suffixes to content types. This map is used when working with template variants. By default, the <code>java.net.URLConnection#getFileNameMap()</code> is used to determine the content type of a template file.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7386">QUARKUS_QUTE_CONTENT_TYPES__FILE_SUFFIX_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7386" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7401">QUARKUS_QUTE_CONTENT_TYPES__FILE_SUFFIX_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7401" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5574,7 +5634,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7387">QUARKUS_QUTE_TYPE_CHECK_EXCLUDES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7387" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7402">QUARKUS_QUTE_TYPE_CHECK_EXCLUDES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7402" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5600,7 +5660,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>By default, the hidden files are excluded. The name of a hidden file starts with a dot.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7388">QUARKUS_QUTE_TEMPLATE_PATH_EXCLUDE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7388" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7403">QUARKUS_QUTE_TEMPLATE_PATH_EXCLUDE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7403" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5636,7 +5696,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7389">QUARKUS_QUTE_ITERATION_METADATA_PREFIX</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7389" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7404">QUARKUS_QUTE_ITERATION_METADATA_PREFIX</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7404" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5656,7 +5716,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>The list of content types for which the <code>'</code>, <code>"</code>, <code>&lt;</code>, <code>&gt;</code> and <code>&amp;</code> characters are escaped if a template variant is set.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7390">QUARKUS_QUTE_ESCAPE_CONTENT_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7390" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7405">QUARKUS_QUTE_ESCAPE_CONTENT_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7405" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5676,7 +5736,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>The default charset of the templates files.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7391">QUARKUS_QUTE_DEFAULT_CHARSET</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7391" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7406">QUARKUS_QUTE_DEFAULT_CHARSET</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7406" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5702,7 +5762,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>The matched input is the template path that starts with a template root, and the <code>/</code> is used as a path separator. For example, <code>templates/foo.html</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7392">QUARKUS_QUTE_DEV_MODE_NO_RESTART_TEMPLATES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7392" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7407">QUARKUS_QUTE_DEV_MODE_NO_RESTART_TEMPLATES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7407" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5722,7 +5782,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>By default, the rendering results of injected and type-safe templates are recorded in the managed <code>RenderedResults</code> which is registered as a CDI bean.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7393">QUARKUS_QUTE_TEST_MODE_RECORD_RENDERED_RESULTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7393" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7408">QUARKUS_QUTE_TEST_MODE_RECORD_RENDERED_RESULTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7408" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5748,7 +5808,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>By default, the <code>NOT_FOUND</code> constant is written to the output. However, in the development mode the <code>PropertyNotFoundStrategy#THROW_EXCEPTION</code> is used by default, i.e. when the strategy is not specified.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7394">QUARKUS_QUTE_PROPERTY_NOT_FOUND_STRATEGY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7394" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7409">QUARKUS_QUTE_PROPERTY_NOT_FOUND_STRATEGY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7409" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5770,7 +5830,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>Specify whether the parser should remove standalone lines from the output. A standalone line is a line that contains at least one section tag, parameter declaration, or comment but no expression and no non-whitespace character.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7395">QUARKUS_QUTE_REMOVE_STANDALONE_LINES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7395" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7410">QUARKUS_QUTE_REMOVE_STANDALONE_LINES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7410" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5793,7 +5853,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>Note that the <code>quarkus.qute.property-not-found-strategy</code> config property is completely ignored if strict rendering is enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7396">QUARKUS_QUTE_STRICT_RENDERING</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7396" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7411">QUARKUS_QUTE_STRICT_RENDERING</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7411" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5813,7 +5873,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>The global rendering timeout in milliseconds. It is used if no <code>timeout</code> template instance attribute is set.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7397">QUARKUS_QUTE_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7397" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7412">QUARKUS_QUTE_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7412" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -5833,7 +5893,7 @@ goodbye=Best regards, {name} <i class="conum" data-value="1"></i><b>(1)</b></cod
 <p>If set to <code>true</code> then the timeout should also be used for asynchronous rendering methods, such as <code>TemplateInstance#createUni()</code> and <code>TemplateInstance#renderAsync()</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7398">QUARKUS_QUTE_USE_ASYNC_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7398" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7413">QUARKUS_QUTE_USE_ASYNC_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7413" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>

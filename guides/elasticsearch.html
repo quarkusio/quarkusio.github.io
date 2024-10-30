@@ -276,7 +276,7 @@ but was removed as this client has been deprecated by Elastic and has some licen
 <p>JDK 17+ installed with <code>JAVA_HOME</code> configured appropriately</p>
 </li>
 <li>
-<p>Apache Maven 3.9.8</p>
+<p>Apache Maven 3.9.9</p>
 </li>
 <li>
 <p>Optionally the <a href="cli-tooling">Quarkus CLI</a> if you want to use it</p>
@@ -335,7 +335,7 @@ cd elasticsearch-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.15.1:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.16.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=elasticsearch-quickstart \
     -Dextensions='rest-jackson,elasticsearch-rest-client' \
@@ -463,10 +463,13 @@ follow the instructions in the <a href="#using-the-elasticsearch-java-client">Us
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
@@ -488,13 +491,49 @@ public class FruitService {
         restClient.performRequest(request); <i class="conum" data-value="4"></i><b>(4)</b>
     }
 
+    public void index(List&lt;Fruit&gt; list) throws IOException {
+
+        var entityList = new ArrayList&lt;JsonObject&gt;();
+
+        for (var fruit : list) {
+
+            entityList.add(new JsonObject().put("index", new JsonObject()<i class="conum" data-value="5"></i><b>(5)</b>
+                    .put("_index", "fruits").put("_id", fruit.id)));
+            entityList.add(JsonObject.mapFrom(fruit));
+        }
+
+        Request request = new Request(
+                "POST", "fruits/_bulk?pretty");
+        request.setEntity(new StringEntity(
+                toNdJsonString(entityList),<i class="conum" data-value="6"></i><b>(6)</b>
+                ContentType.create("application/x-ndjson")));<i class="conum" data-value="7"></i><b>(7)</b>
+        restClient.performRequest(request);
+    }
+
+    public void delete(List&lt;String&gt; identityList) throws IOException {
+
+        var entityList = new ArrayList&lt;JsonObject&gt;();
+
+        for (var id : identityList) {
+            entityList.add(new JsonObject().put("delete",
+                    new JsonObject().put("_index", "fruits").put("_id", id)));<i class="conum" data-value="8"></i><b>(8)</b>
+        }
+
+        Request request = new Request(
+                "POST", "fruits/_bulk?pretty");
+        request.setEntity(new StringEntity(
+                toNdJsonString(entityList),
+                ContentType.create("application/x-ndjson")));
+        restClient.performRequest(request);
+    }
+
     public Fruit get(String id) throws IOException {
         Request request = new Request(
                 "GET",
                 "/fruits/_doc/" + id);
         Response response = restClient.performRequest(request);
         String responseBody = EntityUtils.toString(response.getEntity());
-        JsonObject json = new JsonObject(responseBody); <i class="conum" data-value="5"></i><b>(5)</b>
+        JsonObject json = new JsonObject(responseBody); <i class="conum" data-value="9"></i><b>(9)</b>
         return json.getJsonObject("_source").mapTo(Fruit.class);
     }
 
@@ -528,6 +567,12 @@ public class FruitService {
         }
         return results;
     }
+
+    private static String toNdJsonString(List&lt;JsonObject&gt; objects) {
+        return objects.stream()
+                .map(JsonObject::encode)
+                .collect(Collectors.joining("\n", "", "\n"));
+    }
 }</code></pre>
 </div>
 </div>
@@ -551,7 +596,40 @@ public class FruitService {
 </tr>
 <tr>
 <td><i class="conum" data-value="5"></i><b>5</b></td>
-<td>In order to deserialize the object from Elasticsearch, we again use Vert.x <code>JsonObject</code>.</td>
+<td>As we <code>index</code> collection of objects we should use <code>index</code>, <code>create</code> or <code>update</code> action.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>We use <code>toNdJsonString(entityList)</code> call to produce output like below
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">{"index", {"_index" : "fruits", "_id", "1"}}
+{"id": "1", "name": "apple", "color": "red"}
+...           ...             ...        ...
+{"create", {"_index" : "fruits", "_id", "N"}}
+{"id": "N", "name": "dragonfruit", "color": "pink"}</code></pre>
+</div>
+</div></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="7"></i><b>7</b></td>
+<td>Pass the content type that is expected by the search backend for bulk requests.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="8"></i><b>8</b></td>
+<td>The bulk API&#8217;s delete operation JSON already contains all the required information; hence, there is no request body following this operation in the Bulk API request body.
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">{"delete", {"_index" : "fruits", "_id", "1"}}
+{"delete", {"_index" : "fruits", "_id", "2"}}
+...           ...             ...        ...
+{"delete", {"_index" : "fruits", "_id", "N"}}</code></pre>
+</div>
+</div></td>
+</tr>
+<tr>
+<td><i class="conum" data-value="9"></i><b>9</b></td>
+<td>In order to deserialize the object from Elasticsearch, we again use Vert.x JsonObject.</td>
 </tr>
 </table>
 </div>
@@ -562,18 +640,20 @@ public class FruitService {
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.elasticsearch;
 
-import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
-import org.jboss.resteasy.reactive.RestQuery;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.BadRequestException;
 
 @Path("/fruits")
 public class FruitResource {
@@ -588,6 +668,20 @@ public class FruitResource {
         }
         fruitService.index(fruit);
         return Response.created(URI.create("/fruits/" + fruit.id)).build();
+    }
+
+    @Path("bulk")
+    @DELETE
+    public Response delete(List&lt;String&gt; identityList) throws IOException {
+        fruitService.delete(identityList);
+        return Response.ok().build();
+    }
+
+    @Path("bulk")
+    @POST
+    public Response index(List&lt;Fruit&gt; list) throws IOException {
+        fruitService.index(list);
+        return Response.ok().build();
     }
 
     @GET
@@ -797,18 +891,26 @@ if you have a local running instance on this port, there is nothing more to do b
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch._types.FieldValue;
-import co.elastic.clients.elasticsearch._types.query_dsl.QueryBuilders;
-import co.elastic.clients.elasticsearch.core.*;
-import co.elastic.clients.elasticsearch.core.search.HitsMetadata;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.acme.elasticsearch.Fruit;
-
-import java.io.IOException;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.io.IOException;
+import java.io.StringReader;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.IndexRequest;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.query_dsl.QueryBuilders;
+import co.elastic.clients.elasticsearch.core.search.Hit;
+import co.elastic.clients.elasticsearch.core.search.HitsMetadata;
+import co.elastic.clients.elasticsearch.core.GetRequest;
+import co.elastic.clients.elasticsearch.core.GetResponse;
+import co.elastic.clients.elasticsearch.core.SearchRequest;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
+import co.elastic.clients.elasticsearch.core.BulkResponse;
 
 @ApplicationScoped
 public class FruitService {
@@ -821,6 +923,37 @@ public class FruitService {
                 .id(fruit.id)
                 .document(fruit)); <i class="conum" data-value="3"></i><b>(3)</b>
         client.index(request);  <i class="conum" data-value="4"></i><b>(4)</b>
+    }
+
+    public void index(List&lt;Fruit&gt; list) throws IOException {
+
+        BulkRequest.Builder br = new BulkRequest.Builder();
+
+        for (var fruit : list) {
+            br.operations(op -&gt; op
+                    .index(idx -&gt; idx.index("fruits").id(fruit.id).document(fruit)));
+        }
+
+        BulkResponse result = client.bulk(br.build());
+
+        if (result.errors()) {
+            throw new RuntimeException("The indexing operation encountered errors.");
+        }
+    }
+
+    public void delete(List&lt;String&gt; list) throws IOException {
+
+        BulkRequest.Builder br = new BulkRequest.Builder();
+
+        for (var id : list) {
+            br.operations(op -&gt; op.delete(idx -&gt; idx.index("fruits").id(id)));
+        }
+
+        BulkResponse result = client.bulk(br.build());
+
+        if (result.errors()) {
+            throw new RuntimeException("The indexing operation encountered errors.");
+        }
     }
 
     public Fruit get(String id) throws IOException {
@@ -977,7 +1110,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>Whether a health check is published in case the smallrye-health extension is present.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6128">QUARKUS_ELASTICSEARCH_HEALTH_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6128" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6120">QUARKUS_ELASTICSEARCH_HEALTH_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6120" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -997,7 +1130,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The list of hosts of the Elasticsearch servers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6129">QUARKUS_ELASTICSEARCH_HOSTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6129" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6121">QUARKUS_ELASTICSEARCH_HOSTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6121" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1017,7 +1150,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The protocol to use when contacting Elasticsearch servers. Set to "https" to enable SSL/TLS.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6130">QUARKUS_ELASTICSEARCH_PROTOCOL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6130" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6122">QUARKUS_ELASTICSEARCH_PROTOCOL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6122" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1037,7 +1170,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The username for basic HTTP authentication.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6131">QUARKUS_ELASTICSEARCH_USERNAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6131" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6123">QUARKUS_ELASTICSEARCH_USERNAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6123" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1057,7 +1190,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The password for basic HTTP authentication.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6132">QUARKUS_ELASTICSEARCH_PASSWORD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6132" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6124">QUARKUS_ELASTICSEARCH_PASSWORD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6124" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1077,14 +1210,14 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The connection timeout.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6133">QUARKUS_ELASTICSEARCH_CONNECTION_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6133" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6125">QUARKUS_ELASTICSEARCH_CONNECTION_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6125" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1S</code></p></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
@@ -1097,14 +1230,14 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The socket timeout.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6134">QUARKUS_ELASTICSEARCH_SOCKET_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6134" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6126">QUARKUS_ELASTICSEARCH_SOCKET_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6126" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>30S</code></p></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
@@ -1117,7 +1250,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The maximum number of connections to all the Elasticsearch servers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6135">QUARKUS_ELASTICSEARCH_MAX_CONNECTIONS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6135" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6127">QUARKUS_ELASTICSEARCH_MAX_CONNECTIONS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6127" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1137,7 +1270,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>The maximum number of connections per Elasticsearch server.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6136">QUARKUS_ELASTICSEARCH_MAX_CONNECTIONS_PER_ROUTE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6136" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6128">QUARKUS_ELASTICSEARCH_MAX_CONNECTIONS_PER_ROUTE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6128" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1160,7 +1293,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>Thread counts higher than the number of processors should not be necessary because the I/O threads rely on non-blocking operations, but you may want to use a thread count lower than the number of processors.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6137">QUARKUS_ELASTICSEARCH_IO_THREAD_COUNTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6137" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6129">QUARKUS_ELASTICSEARCH_IO_THREAD_COUNTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6129" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1180,7 +1313,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>Defines if automatic discovery is enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6138">QUARKUS_ELASTICSEARCH_DISCOVERY_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6138" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6130">QUARKUS_ELASTICSEARCH_DISCOVERY_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6130" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1200,14 +1333,14 @@ It uses the cluster health endpoint, the check will be down if the status of the
 <p>Refresh interval of the node list.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6139">QUARKUS_ELASTICSEARCH_DISCOVERY_REFRESH_INTERVAL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6139" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6131">QUARKUS_ELASTICSEARCH_DISCOVERY_REFRESH_INTERVAL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6131" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
 <div class="paragraph description-decoration">
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-{summaryTableId}"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-elasticsearch-rest-client_quarkus-elasticsearch"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>5M</code></p></td>
 </tr>
 <tr>
@@ -1229,7 +1362,7 @@ It uses the cluster health endpoint, the check will be down if the status of the
 unless connection configuration (e.g. <code>quarkus.elasticsearch.hosts</code>) is set explicitly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6140">QUARKUS_ELASTICSEARCH_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6140" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6132">QUARKUS_ELASTICSEARCH_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6132" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1252,7 +1385,7 @@ unless connection configuration (e.g. <code>quarkus.elasticsearch.hosts</code>) 
 <p>If not defined, the port will be chosen randomly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6141">QUARKUS_ELASTICSEARCH_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6141" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6133">QUARKUS_ELASTICSEARCH_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6133" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1277,7 +1410,7 @@ or by default to the distribution configured in depending extensions (e.g. Hiber
 or by default to <code>elastic</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6142">QUARKUS_ELASTICSEARCH_DEVSERVICES_DISTRIBUTION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6142" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6134">QUARKUS_ELASTICSEARCH_DEVSERVICES_DISTRIBUTION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6134" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1312,7 +1445,7 @@ or by default to <code>elastic</code>.</p>
 </ul>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6143">QUARKUS_ELASTICSEARCH_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6143" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6135">QUARKUS_ELASTICSEARCH_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6135" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1332,7 +1465,7 @@ or by default to <code>elastic</code>.</p>
 <p>The value for the ES_JAVA_OPTS env variable.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6144">QUARKUS_ELASTICSEARCH_DEVSERVICES_JAVA_OPTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6144" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6136">QUARKUS_ELASTICSEARCH_DEVSERVICES_JAVA_OPTS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6136" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1361,7 +1494,7 @@ or by default to <code>elastic</code>.</p>
 <p>Container sharing is only used in dev mode.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6145">QUARKUS_ELASTICSEARCH_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6145" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6137">QUARKUS_ELASTICSEARCH_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6137" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1387,7 +1520,7 @@ or by default to <code>elastic</code>.</p>
 <p>This property is used when you need multiple shared Elasticsearch servers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6146">QUARKUS_ELASTICSEARCH_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6146" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6138">QUARKUS_ELASTICSEARCH_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6138" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1407,7 +1540,7 @@ or by default to <code>elastic</code>.</p>
 <p>Environment variables that are passed to the container.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6147">QUARKUS_ELASTICSEARCH_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6147" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6139">QUARKUS_ELASTICSEARCH_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6139" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1456,7 +1589,7 @@ if you enabled it in <code>testcontainers.properties</code>
 but only want to use it for some of your Quarkus applications.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6148">QUARKUS_ELASTICSEARCH_DEVSERVICES_REUSE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6148" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6140">QUARKUS_ELASTICSEARCH_DEVSERVICES_REUSE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6140" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
