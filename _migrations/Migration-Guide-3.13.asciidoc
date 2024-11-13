@@ -1,0 +1,123 @@
+---
+date: 2024-07-31
+---
+:toc:
+
+[NOTE]
+====
+We highly recommend the use of https://quarkus.io/guides/update-quarkus[`quarkus update`] to update to a new version of Quarkus.
+
+Items marked below with :gear: :white_check_mark: are automatically handled by https://quarkus.io/guides/update-quarkus[`quarkus update`].
+====
+
+== Redis Client
+
+=== Fixed parameter ordering in JSON.MGET
+
+The `JsonCommands.jsonMget()` method (and similar methods like `ReactiveJsonCommands.jsonMget()`) declare parameters in the following order:
+
+- `String path`
+- `K\... keys`
+
+This is opposite to the Redis JSON.MGET command, which accepts keys first and path last.
+
+The implementation of the `jsonMget()` method used to follow the Redis order, despite its own declaration.
+That is, the `path` had to be _last_, even though it should be first.
+
+This is now fixed.
+All users of this method have to check and fix the call sites.
+
+== OpenTelemetry
+
+Many changes on this release, affecting documentation, Metrics support and breaking changes due to the new semantic conventions for HTTP.
+
+=== OpenTelemetry metrics support
+
+Added with experimental status, please set `quarkus.otel.metrics.enabled=true` to enable it at build time.
+
+Now you can create OpenTelemetry Metrics by following the https://quarkus.io/version/main/guides/opentelemetry-metrics[Metrics Guide].
+
+There are no automatic OpenTelemetry metrics instrumentation in Quarkus, for now. Metrics in Quarkus are implemented by the Micrometer extension. We plan to provide, in the future, a bridge for those metrics to be available in OpenTelemetry as well.
+
+=== Documentation updates
+
+The old OpenTelemetry guide has been split into this https://quarkus.io/version/main/guides/opentelemetry[generic guide], the OpenTelemetry https://quarkus.io/version/main/guides/opentelemetry-tracing[Tracing Guide] and the new OpenTelemetry https://quarkus.io/version/main/guides/opentelemetry-metrics[Metrics Guide] has been created.
+
+=== Breaking Changes
+
+* Upgrade to OpenTelemetry SDK 1.39.0 and OpenTelemetry instrumentation 2.5.0.
+We haven't upgraded OpenTelemetry for a while to allow a transition period from the old, deprecated HTTP semantic conventions, as announced in this https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.9#semantic-convention-changes[wiki migration guide] for Quarkus 3.9 and the https://groups.google.com/g/quarkus-dev/c/MsU_KWwKgoo/m/klx-yLwDAQAJ[Dev mailing list]. 
+The transition period has now ended with the upgrade of the OpenTelemetry SDK to 1.39.0 and OpenTelemetry instrumentation to 2.5.0. These versions require the new semantic conventions for HTTP. The full https://github.com/open-telemetry/semantic-conventions/blob/main/docs/http/migration-guide.md#summary-of-changes[list of changes].
+
+* `quarkus.otel.semconv-stability.opt-in` system property was removed because users cannot opt-in anymore;
+
+* DB Span names have changed in the case of table creation;
+
+* Deprecated annotation for `io.opentelemetry.extension.annotations.WithSpan` has been removed. Please use the new `io.opentelemetry.instrumentation.annotations.WithSpan`, as previously announced.
+
+== Grafana LGTM (all-in-one) Observability Dev Service
+
+The extension now detects which extensions (Otel, Micrometer OTLP registry) are being used and sets their properties accordingly.
+No need to configure the `application.properties` file for this anymore. The https://quarkus.io/version/main/guides/observability-devservices-lgtm[documentation] was also updated. 
+
+*Breaking Change* 
+
+The following properties are removed because they are not needed anymore:
+
+* `quarkus.otel-collector.url`
+* `quarkus.grafana.url`
+
+
+== Hibernate ORM
+
+=== Auto-flush optimization
+
+Starting with Quarkus 3.13, before executing a JPQL/HQL or native query, Hibernate ORM will only flush pending changes to the database if it detects that the query results may be impacted by these changes.
+
+This optimization was https://docs.jboss.org/hibernate/orm/6.5/userguide/html_single/Hibernate_User_Guide.html#_auto_flush_on_jpqlhql_query[available for a long time in Hibernate ORM], but was https://github.com/quarkusio/quarkus/pull/14305/files#diff-3c3d11a887a43713907202d00e1d26f8d664c00c408de92e21904f76f10d7b84R35[disabled by mistake] in Quarkus 1.13, causing https://github.com/quarkusio/quarkus/issues/41115[performance issues] ever since.
+
+Most applications should only experience performance improvements (better batching), but some might run into problems:
+
+* if using native queries, which require specific care; see https://docs.jboss.org/hibernate/orm/6.5/userguide/html_single/Hibernate_User_Guide.html#_auto_flush_on_native_sql_query[this section of the Hibernate ORM documentation].
+* if Hibernate ORM somehow fails to automatically detect that pending changes impact a JPQL/HQL query; please report any such problem with a reproducer https://github.com/hibernate/hibernate-test-case-templates/blob/main/orm/hibernate-orm-6/src/test/java/org/hibernate/bugs/QuarkusLikeORMUnitTestCase.java[based on this template].
+
+== +++<s>@QuarkusTestResource replaced by @WithTestResource</s>+++
+
+While we initially planned replacing `@QuarkusTestResource` with `@WithTestResource`, some severe issues led us to reconsider this plan.
+
+Thus, while you will see that `@QuarkusTestResource` has been deprecated in 3.13, we will undeprecate it in 3.14 so please keep using it and don't move to `@WithTestResource`.
+
+You can have a look at https://groups.google.com/g/quarkus-dev/c/rS8-WN6b7XQ for more details.
+
+== Quarkus CLI
+
+The default behaviour of calling `quarkus config` is to display the help text for all subcommands instead of calling `set`.
+
+=== `config set`
+
+- The Options `name` and `value` are now Parameters. For instance, to set the configuration `foo=bar`, the previous command was `quarkus config set --name=foo --value=bar`. The new command is `quarkus config set foo bar`.
+- No longer removes the configuration if it exists from `application.properties` when the `value` parameter is omitted from the command. Now, there is a specific subcommand to remove configuration `quarkus config remove NAME`
+
+=== `config encrypt`
+
+- The Option `secret` is now a Parameter. For instance, to encrypt a value, the previous command was `quarkus config encrypt --secret=12345678`. The new command is `quarkus config encrypt 1234578`.
+
+== Dev Services startup detection change
+
+The way we check if Dev Services should be started has changed.
+We used to check if a property was defined to know if we should start the Dev Services or not without expanding it but it was causing issues if in the end the property was empty when expanded.
+We now check that the expanded property is empty, which might lead to the Dev Services being started while they weren't in some cases.
+
+For instance, people using the `quarkus-test-oidc-server` component to mock the OIDC server will have to adjust their configuration due to https://github.com/quarkusio/quarkus/pull/41326[a change in how we check the presence of configuration property in the Dev Services startup code].
+Note that this particular example that is quite common is handled by `quarkus update` :gear: :white_check_mark:.
+
+If you have this in your `application.properties`:
+
+```
+%test.quarkus.oidc.auth-server-url=${keycloak.url}/realms/quarkus/
+```
+
+You should change it to this:
+```
+%test.quarkus.oidc.auth-server-url=${keycloak.url:replaced-by-test-resource}/realms/quarkus/
+```
