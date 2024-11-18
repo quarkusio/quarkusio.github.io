@@ -5,7 +5,7 @@
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-smallrye-graphql-client
 //DEPS io.quarkus:quarkus-qute
-//DEPS org.commonmark:commonmark:0.22.0
+//DEPS org.commonmark:commonmark:0.23.0
 //DEPS io.quarkus:quarkus-config-yaml
 //FILES templates/=templates/*
 //FILES application.yaml
@@ -26,6 +26,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import org.commonmark.node.Node;
+import org.commonmark.node.Paragraph;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -196,6 +197,71 @@ public class main implements Callable<Integer> {
             Node document = parser.parse(longDescription());
             HtmlRenderer renderer = HtmlRenderer.builder().build();
             return renderer.render(document);
+        }
+
+        private static boolean isMetadata(String singular, String plural, String line) {
+            var l = line.toLowerCase().trim();
+            return l.startsWith("* " + singular.toLowerCase() + ":") 
+                || l.startsWith("* " + plural.toLowerCase() + ":");
+        }
+
+        public String getDeliverable() {
+            String line = longDescription().lines()
+                .filter(s -> isMetadata("Deliverable", "Deliverables", s))
+                .findFirst()
+                .orElse(null);
+                
+            if (line != null) {
+                var content = line.substring(line.indexOf(":") + 1).trim();
+                Parser parser = Parser.builder().build();
+                Node document = parser.parse(content);        
+                HtmlRenderer renderer = HtmlRenderer.builder()
+                    .omitSingleParagraphP(true)
+                    .escapeHtml(false)
+                    .sanitizeUrls(true)
+                .build();
+                return renderer.render(document);
+            }   
+
+            return null;
+        }
+
+        public String getPointOfContact() {
+            String line = longDescription().lines()
+                .filter(s -> isMetadata("Point of contact", "Points of contact", s))            
+                .findFirst()
+                .orElse(null);
+                
+            if (line != null) {
+                var content = line.substring(line.indexOf(":") + 1).trim();
+                Parser parser = Parser.builder().build();
+                Node document = parser.parse(content);                
+                HtmlRenderer renderer = HtmlRenderer.builder()
+                    .omitSingleParagraphP(true)
+                    .build();
+                return renderer.render(document);
+            }   
+
+            return null;
+        }
+
+        public String getDiscussionLink() {
+            String line = longDescription().lines()
+            .filter(s -> isMetadata("Discussion", "Discussions", s))
+            .findFirst()
+            .orElse(null);
+            
+        if (line != null) {
+            var content = line.substring(line.indexOf(":") + 1).trim();
+            Parser parser = Parser.builder().build();
+            Node document = parser.parse(content);        
+            HtmlRenderer renderer = HtmlRenderer.builder()
+                .omitSingleParagraphP(true)
+                .build();
+            return renderer.render(document);
+        }   
+
+        return null;
         }
 
         public String getIndentedReadme() {
