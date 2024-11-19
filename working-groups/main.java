@@ -24,9 +24,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.commonmark.node.AbstractVisitor;
+import org.commonmark.node.BlockQuote;
+import org.commonmark.node.BulletList;
+import org.commonmark.node.Code;
+import org.commonmark.node.CustomBlock;
+import org.commonmark.node.CustomNode;
+import org.commonmark.node.Document;
+import org.commonmark.node.Emphasis;
+import org.commonmark.node.FencedCodeBlock;
+import org.commonmark.node.HardLineBreak;
+import org.commonmark.node.Heading;
+import org.commonmark.node.HtmlBlock;
+import org.commonmark.node.HtmlInline;
+import org.commonmark.node.Image;
+import org.commonmark.node.IndentedCodeBlock;
+import org.commonmark.node.Link;
+import org.commonmark.node.LinkReferenceDefinition;
+import org.commonmark.node.ListItem;
 import org.commonmark.node.Node;
+import org.commonmark.node.OrderedList;
 import org.commonmark.node.Paragraph;
+import org.commonmark.node.SoftLineBreak;
+import org.commonmark.node.StrongEmphasis;
+import org.commonmark.node.Text;
+import org.commonmark.node.ThematicBreak;
+import org.commonmark.node.Visitor;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -119,10 +144,9 @@ public class main implements Callable<Integer> {
                    }
                 """, variables);
 
-
-        System.out.println("Response: " + response);        
+        System.out.println("Response: " + response);
         System.out.println("Errors: " + response.getErrors());
-        System.out.println("Data:\n" + response.getData());        
+        System.out.println("Data:\n" + response.getData());
         JsonArray array = response.getData().getJsonObject("organization").getJsonObject("projectsV2")
                 .getJsonArray("nodes");
         for (JsonValue value : array) {
@@ -201,67 +225,105 @@ public class main implements Callable<Integer> {
 
         private static boolean isMetadata(String singular, String plural, String line) {
             var l = line.toLowerCase().trim();
-            return l.startsWith("* " + singular.toLowerCase() + ":") 
-                || l.startsWith("* " + plural.toLowerCase() + ":");
+            return l.startsWith("* " + singular.toLowerCase() + ":")
+                    || l.startsWith("* " + plural.toLowerCase() + ":");
+        }
+
+        private static boolean isMetadata(String singular, String line) {
+            var l = line.toLowerCase().trim();
+            return l.startsWith("* " + singular.toLowerCase() + ":");
         }
 
         public String getDeliverable() {
             String line = longDescription().lines()
-                .filter(s -> isMetadata("Deliverable", "Deliverables", s))
-                .findFirst()
-                .orElse(null);
-                
+                    .filter(s -> isMetadata("Deliverable", "Deliverables", s))
+                    .findFirst()
+                    .orElse(null);
+
             if (line != null) {
                 var content = line.substring(line.indexOf(":") + 1).trim();
                 Parser parser = Parser.builder().build();
-                Node document = parser.parse(content);        
+                Node document = parser.parse(content);
                 HtmlRenderer renderer = HtmlRenderer.builder()
-                    .omitSingleParagraphP(true)
-                    .escapeHtml(false)
-                    .sanitizeUrls(true)
-                .build();
+                        .omitSingleParagraphP(true)
+                        .escapeHtml(false)
+                        .sanitizeUrls(true)
+                        .build();
                 return renderer.render(document);
-            }   
+            }
 
             return null;
         }
 
         public String getPointOfContact() {
             String line = longDescription().lines()
-                .filter(s -> isMetadata("Point of contact", "Points of contact", s))            
-                .findFirst()
-                .orElse(null);
-                
+                    .filter(s -> isMetadata("Point of contact", "Points of contact", s))
+                    .findFirst()
+                    .orElse(null);
+
             if (line != null) {
                 var content = line.substring(line.indexOf(":") + 1).trim();
                 Parser parser = Parser.builder().build();
-                Node document = parser.parse(content);                
+                Node document = parser.parse(content);
                 HtmlRenderer renderer = HtmlRenderer.builder()
-                    .omitSingleParagraphP(true)
-                    .build();
+                        .omitSingleParagraphP(true)
+                        .build();
                 return renderer.render(document);
-            }   
+            }
+
+            return null;
+        }
+
+        public String getProposal() {
+            String line = longDescription().lines()
+                    .filter(s -> isMetadata("Proposal", s))
+                    .findFirst()
+                    .orElse(null);
+
+            if (line != null) {
+                var content = line.substring(line.indexOf(":") + 1).trim();
+                Parser parser = Parser.builder().build();
+                Node document = parser.parse(content);
+                HtmlRenderer renderer = HtmlRenderer.builder()
+                        .omitSingleParagraphP(true)
+                        .build();
+                return renderer.render(document);
+            }
 
             return null;
         }
 
         public String getDiscussionLink() {
             String line = longDescription().lines()
-            .filter(s -> isMetadata("Discussion", "Discussions", s))
-            .findFirst()
-            .orElse(null);
-            
-        if (line != null) {
-            var content = line.substring(line.indexOf(":") + 1).trim();
-            Parser parser = Parser.builder().build();
-            Node document = parser.parse(content);        
-            HtmlRenderer renderer = HtmlRenderer.builder()
-                .omitSingleParagraphP(true)
-                .build();
-            return renderer.render(document);
-        }   
+                    .filter(s -> isMetadata("Discussion", s))
+                    .findFirst()
+                    .orElse(null);
 
-        return null;
+            if (line != null) {
+                var content = line.substring(line.indexOf(":") + 1).trim();
+                Parser parser = Parser.builder().build();
+                Node document = parser.parse(content);
+                AtomicReference<String> dest = new AtomicReference<>();
+                document.accept(new AbstractVisitor() {
+
+                    @Override
+                    public void visit(Link link) {
+                        dest.compareAndSet(null, link.getDestination());
+                    }
+
+                });
+
+                if (dest.get() != null) {
+                    return dest.get();
+                } else {
+                    HtmlRenderer renderer = HtmlRenderer.builder()
+                            .omitSingleParagraphP(true)
+                            .build();
+                    return renderer.render(document);
+                }
+            }
+
+            return null;
         }
 
         public String getIndentedReadme() {
@@ -338,6 +400,15 @@ public class main implements Callable<Integer> {
 
     record Update(String id, String body, String bodyHtml, String status, Instant updateAt) {
 
+        public String getUpdateDate() {
+            LocalDateTime dateTime = LocalDateTime.ofInstant(updateAt, ZoneId.of("UTC"));
+
+            // Define the formatter
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+            // Format the LocalDateTime
+            return dateTime.format(formatter);
+        }
     }
 
 }
