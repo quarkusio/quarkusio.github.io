@@ -1721,7 +1721,6 @@ In the following example, <a href="security-customization#security-identity-cust
 <div class="title">Example of adding the <code>LibraryPermission</code> programmatically to <code>SecurityIdentity</code></div>
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.security.Permission;
-import java.util.function.Function;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -1747,16 +1746,8 @@ public class PermissionsIdentityAugmentor implements SecurityIdentityAugmentor {
     }
 
     SecurityIdentity build(SecurityIdentity identity) {
-        Permission possessedPermission = new MediaLibraryPermission("media-library",
-                new String[] { "read", "write", "list"}); <i class="conum" data-value="1"></i><b>(1)</b>
         return QuarkusSecurityIdentity.builder(identity)
-                .addPermissionChecker(new Function&lt;Permission, Uni&lt;Boolean&gt;&gt;() { <i class="conum" data-value="2"></i><b>(2)</b>
-                    @Override
-                    public Uni&lt;Boolean&gt; apply(Permission requiredPermission) {
-                        boolean accessGranted = possessedPermission.implies(requiredPermission);
-                        return Uni.createFrom().item(accessGranted);
-                    }
-                })
+                .addPermission(new MediaLibraryPermission("media-library", new String[] { "read", "write", "list"}); <i class="conum" data-value="1"></i><b>(1)</b>
                 .build();
     }
 
@@ -1767,12 +1758,8 @@ public class PermissionsIdentityAugmentor implements SecurityIdentityAugmentor {
 <table>
 <tr>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>The permission <code>media-library</code> that was created can perform <code>read</code>, <code>write</code>, and <code>list</code> actions.
+<td>Add a <code>media-library</code> permission that was created can perform <code>read</code>, <code>write</code>, and <code>list</code> actions.
 Because <code>MediaLibrary</code> is the <code>TvLibrary</code> class parent, a user with the <code>admin</code> role is also permitted to modify <code>TvLibrary</code>.</td>
-</tr>
-<tr>
-<td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>You can add a permission checker through <code>io.quarkus.security.runtime.QuarkusSecurityIdentity.Builder#addPermissionChecker</code>.</td>
 </tr>
 </table>
 </div>
@@ -1788,9 +1775,133 @@ Annotation-based permissions do not work with custom <a href="security-customiza
 </tr>
 </table>
 </div>
+<div class="sect3">
+<h4 id="permission-checker"><a class="anchor" href="#permission-checker"></a>Create permission checkers</h4>
+<div class="paragraph">
+<p>By default, <code>SecurityIdentity</code> must be configured with permissions which can be used to check if this identity passes <code>@PermissionAllowed</code> authorization restrictions.
+Alternatively, you can use a <code>@PermissionChecker</code> annotation to mark any CDI bean method as a permission checker.
+The <code>@PermissionChecker</code> annotation value should match required permission declared by the <code>@PermissionsAllowed</code> annotation value.
+For example, a permission checker can be created like this:</p>
 </div>
-<div class="sect2">
-<h3 id="permission-meta-annotation"><a class="anchor" href="#permission-meta-annotation"></a>Create permission meta-annotations</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.rest.resource;
+
+import io.quarkus.security.PermissionChecker;
+import io.quarkus.security.PermissionsAllowed;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+
+import org.jboss.resteasy.reactive.RestForm;
+import org.jboss.resteasy.reactive.RestPath;
+
+@Path("/project/{projectName}")
+public class ProjectResource {
+
+    @PermissionsAllowed("rename-project") <i class="conum" data-value="1"></i><b>(1)</b>
+    @POST
+    public void renameProject(@RestPath String projectName, @RestForm String newName) {
+        Project project = Project.findByName(projectName);
+        project.name = newName;
+    }
+
+    @PermissionChecker("rename-project") <i class="conum" data-value="2"></i><b>(2)</b>
+    boolean canRenameProject(SecurityIdentity identity, String projectName) { <i class="conum" data-value="3"></i><b>(3)</b> <i class="conum" data-value="4"></i><b>(4)</b>
+        var principalName = identity.getPrincipal().getName();
+        var user = User.getUserByName(principalName);
+        return userOwnsProject(projectName, user);
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The permission required to access the <code>ProjectResource#renameProject</code> is the <code>rename-project</code> permission.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The <code>ProjectResource#canRenameProject</code> method authorizes access to the <code>ProjectResource#renameProject</code> endpoint.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The <code>SecurityIdentity</code> instance can be injected into any permission checker method.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>In this example, the <code>rename-project</code> permission checker is declared on the same resource.
+However, there is no restriction on where this permission checker can be declared as demonstrated in the next example.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Permission checker methods can be declared on a normal scoped CDI bean or on a <code>@Singleton</code> bean.
+The <code>@Dependent</code> CDI bean scope is currently not supported.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The permission checker above requires the <code>SecurityIdentity</code> instance to authorize the <code>renameProject</code> endpoint.
+Instead of declaring the <code>rename-project</code> permission checker directly on the resource, you can declare it on any CDI bean like in this example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.rest.resource;
+
+import io.quarkus.security.PermissionChecker;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+@ApplicationScoped <i class="conum" data-value="1"></i><b>(1)</b>
+public class ProjectPermissionChecker {
+
+    @PermissionChecker("rename-project")
+    boolean canRenameProject(String projectName, SecurityIdentity identity) {   <i class="conum" data-value="2"></i><b>(2)</b>
+        var principalName = identity.getPrincipal().getName();
+        var user = User.getUserByName(principalName);
+        return userOwnsProject(projectName, user);
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>A CDI bean with the permission checker must be either a normal scoped bean or a <code>@Singleton</code> bean.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The permission checker method must return either <code>boolean</code> or <code>Uni&lt;Boolean&gt;</code>. Private checker methods are not supported.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+Permission checks run by default on event loops.
+Annotate a permission checker method with the <code>io.smallrye.common.annotation.Blocking</code> annotation if you want to run the check on a worker thread.
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect3">
+<h4 id="permission-meta-annotation"><a class="anchor" href="#permission-meta-annotation"></a>Create permission meta-annotations</h4>
 <div class="paragraph">
 <p><code>@PermissionsAllowed</code> can also be used in meta-annotations.
 For example, a new <code>@CanWrite</code> security annotation can be created like this:</p>
@@ -1821,8 +1932,8 @@ public @interface CanWrite {
 </table>
 </div>
 </div>
-<div class="sect2">
-<h3 id="permission-bean-params"><a class="anchor" href="#permission-bean-params"></a>Pass <code>@BeanParam</code> parameters into a custom permission</h3>
+<div class="sect3">
+<h4 id="permission-bean-params"><a class="anchor" href="#permission-bean-params"></a>Pass <code>@BeanParam</code> parameters into a custom permission</h4>
 <div class="paragraph">
 <p>Quarkus can map fields of a secured method parameters to a custom permission constructor parameters.
 You can use this feature to pass <code>jakarta.ws.rs.BeanParam</code> parameters into your custom permission.
@@ -1838,10 +1949,9 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 
 @Path("/hello")
-public class SimpleResource {
+public class HelloResource {
 
-    @PermissionsAllowed(value = "say:hello", permission = BeanParamPermission.class,
-        params = "beanParam.securityContext.userPrincipal.name") <i class="conum" data-value="1"></i><b>(1)</b>
+    @PermissionsAllowed(value = "say-hello", params = "beanParam.securityContext.userPrincipal.name") <i class="conum" data-value="1"></i><b>(1)</b>
     @GET
     public String sayHello(@BeanParam SimpleBeanParam beanParam) {
         return "Hello from " + beanParam.uriInfo.getPath();
@@ -1854,9 +1964,9 @@ public class SimpleResource {
 <table>
 <tr>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>The <code>params</code> annotation attribute specifies that user principal name should be passed to the <code>BeanParamPermission</code> constructor.
-Other <code>BeanParamPermission</code> constructor parameters like <code>customAuthorizationHeader</code> and <code>query</code> are matched automatically.
-Quarkus identifies the <code>BeanParamPermission</code> constructor parameters among <code>beanParam</code> fields and their public accessors.
+<td>The <code>params</code> annotation attribute specifies that user principal name should be passed to the <code>BeanParamPermissionChecker#canSayHello</code> method.
+Other <code>BeanParamPermissionChecker#canSayHello</code> method parameters like <code>customAuthorizationHeader</code> and <code>query</code> are matched automatically.
+Quarkus identifies the <code>BeanParamPermissionChecker#canSayHello</code> method parameters among <code>beanParam</code> fields and their public accessors.
 To avoid ambiguous resolution, automatic detection only works for the <code>beanParam</code> fields.
 For that reason, we had to specify path to the user principal name explicitly.</td>
 </tr>
@@ -1919,40 +2029,24 @@ That is particularly useful with Java records, where generated accessors are not
 </table>
 </div>
 <div class="paragraph">
-<p>Here is an example of the <code>BeanParamPermission</code> permission that checks user principal, custom header and query parameter:</p>
+<p>Here is an example of a <code>@PermissionChecker</code> method that checks the <code>say-hello</code> permission based on a user principal, custom header and query parameter:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.security.permission;
 
-import java.security.Permission;
+import jakarta.enterprise.context.ApplicationScoped;
+import io.quarkus.security.PermissionChecker;
 
-public class BeanParamPermission extends Permission {
+@ApplicationScoped
+public class BeanParamPermissionChecker {
 
-    private final String actions;
-
-    public BeanParamPermission(String permissionName, String customAuthorizationHeader, String name, String query) {
-        super(permissionName);
-        this.actions = computeActions(customAuthorizationHeader, name, query);
-    }
-
-    @Override
-    public boolean implies(Permission p) {
-        boolean nameMatches = getName().equals(p.getName());
-        boolean actionMatches = actions.equals(p.getActions());
-        return nameMatches &amp;&amp; actionMatches;
-    }
-
-    private static String computeActions(String customAuthorizationHeader, String name, String query) {
+    @PermissionChecker("say-hello")
+    boolean canSayHello(String customAuthorizationHeader, String name, String query) {
         boolean queryParamAllowedForPermissionName = checkQueryParams(query);
         boolean usernameWhitelisted = isUserNameWhitelisted(name);
         boolean customAuthorizationMatches = checkCustomAuthorization(customAuthorizationHeader);
-        var isAuthorized = queryParamAllowedForPermissionName &amp;&amp; usernameWhitelisted &amp;&amp; customAuthorizationMatches;
-        if (isAuthorized) {
-            return "hello";
-        } else {
-            return "goodbye";
-        }
+        return queryParamAllowedForPermissionName &amp;&amp; usernameWhitelisted &amp;&amp; customAuthorizationMatches;
     }
 
     ...
@@ -1966,11 +2060,12 @@ public class BeanParamPermission extends Permission {
 <i class="fa icon-note" title="Note"></i>
 </td>
 <td class="content">
-You can pass <code>@BeanParam</code> directly into a custom permission constructor and access its fields programmatically in the constructor instead.
+You can pass <code>@BeanParam</code> directly into a <code>@PermissionChecker</code> method and access its fields programmatically.
 Ability to reference <code>@BeanParam</code> fields with the <code>@PermissionsAllowed#params</code> attribute is useful when you have multiple differently structured <code>@BeanParam</code> classes.
 </td>
 </tr>
 </table>
+</div>
 </div>
 </div>
 </div>
@@ -2025,8 +2120,6 @@ Ability to reference <code>@BeanParam</code> fields with the <code>@PermissionsA
 <ul class="sectlevel2">
 <li><a href="#endpoint-security-annotations-and-jakarta-rest-inheritance">Endpoint security annotations and Jakarta REST inheritance</a></li>
 <li><a href="#permission-annotation">Permission annotation</a></li>
-<li><a href="#permission-meta-annotation">Create permission meta-annotations</a></li>
-<li><a href="#permission-bean-params">Pass <code>@BeanParam</code> parameters into a custom permission</a></li>
 </ul>
 </li>
 <li><a href="#references">References</a></li>
