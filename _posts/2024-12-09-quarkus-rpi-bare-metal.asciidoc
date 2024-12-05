@@ -1,0 +1,185 @@
+---
+layout: post
+title: 'Quarkus and Raspberry Pi - this time on bare metal'
+date: 2024-12-09
+tags: arm raspberrypi native
+synopsis: 'We bring you some tips on how to develop Quarkus applications deployed to a Raspberry Pi.'
+author: mkouba
+---
+
+== Quarkus and Raspberry Pi - this time on bare metal
+
+Four years ago, Andrea Battaglia wrote an excellent https://quarkus.io/blog/quarkus-native-on-a-raspberry-pi/[blog post] about running a Quarkus application (that is compiled to a native executable) in a container on a Raspberry Pi.
+This is an interesting use case but it’s not the only one.
+Since Raspberry Pi is often used for home and science projects I was particularly interested in the developer experience when you want to develop your application locally on your laptop but run it on a bare metal Raspberry Pi server, i.e. no containers involved.
+Raspberry Pi is not infrequently extended with various sensors and pheripherals.
+And it's very practical to be able to communicate with these devices direcly, during development.
+That's why we focused in this direction.
+
+TIP: There is a https://github.com/mkouba/rpi-sample[sample application] that is referenced in the text below. The app periodically executes a command that reads the CPU temperature and writes the value in the log. Obviously, this is not something RPi-specific but it can be replaced with a command that reads a value from any other device file or even GPIO.
+
+=== Step 1 - Prepare your development environment
+
+==== Install Raspberry Pi OS
+
+Nothing special is needed.
+You can use the convenient https://projects.raspberrypi.org/en/projects/raspberry-pi-setting-up/2[Raspberry Pi Imager] to prepare the SD card.
+If you don't need the GUI (and in most cases you don't) there's the Raspberry Pi OS Lite image available.
+This version will save some resources.
+Furthermore, you'll need to enable SSH and configure the wireless LAN.
+
+==== Install JDK
+
+For development, you'll need to install the JDK.
+
+[source,bash]
+----
+sudo apt-get install default-jdk 
+----
+
+=== Step 2 - Build and deploy
+
+First of all, we need to build the sample app locally but run it on the target Raspberry Pi.
+It's quite straightforward with a little bit of bash-fu.
+
+.Build and deploy script
+[source,bash]
+----
+# Build the app
+mvn clean package
+
+# Copy the app to the target rpi; you can use rsync or sftp as well
+scp -r target/quarkus-app $RPI_HOST:$RPI_PROJECT_PATH <1> <2>
+
+# Start the app on the target host; CTRL+C stops the app
+ssh -t $RPI_HOST "cd $RPI_PROJECT_PATH; java -jar quarkus-app/quarkus-run.jar" <3>
+----
+<1> The content of the `target/quarkus-app` directory contains all the Quarkus application bits.
+<2> `RPI_HOST` and `RPI_PROJECT_PATH` are environment variables. The first defines the host/address of the target Raspberry Pi. The latter defines the path where to deploy the app; e.g. something like `/home/username/rpi-sample`.
+<3> `-t` is crucial and it's used to force the allocation of a pseudo-terminal. We need an interactive shell for the remote command.
+
+TIP: See also the https://github.com/mkouba/rpi-sample/blob/main/build-deploy.sh[build-deploy.sh] file in the sample app.
+
+This way you can build your application locally and run it on the Raspberry Pi easily.
+However, whenever you change the app you need to re-build, copy and restart the app which is a bit tedious.
+Especially if you're used to the quick turnaround with Quarkus development mode.
+So are there any other options?
+
+=== Step 3 - Remote development mode
+
+As you may know Quarkus has a https://quarkus.io/guides/maven-tooling#remote-development-mode[remote development mode] .
+It is usually used to run a Quarkus app in a container environment (such as OpenShift) and have the changes made to your local files immediately visible in the remote app.
+But there's no reason not to try it for our use case.
+
+First, we'll need to build a mutable application, using the `mutable-jar` format.
+Let's adapt our build&deploy script.
+
+.Build and deploy script - mutable app
+[source,bash]
+----
+# Build the app
+# quarkus.live-reload.password=foo must be set in application.properties or passed as system property when the remote side starts
+# See https://github.com/quarkusio/quarkus/issues/44933
+mvn clean package -Dquarkus.package.jar.type=mutable-jar <1>
+
+# Copy the app to the target rpi; you can use rsync or sftp as well
+scp -r target/quarkus-app $RPI_HOST:$RPI_PROJECT_PATH
+
+# Start the app on the target host; CTRL+C stops the app
+ssh -t $RPI_HOST "export QUARKUS_LAUNCH_DEVMODE=true; cd $RPI_PROJECT_PATH; java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Dquarkus.live-reload.password=foo -jar quarkus-app/quarkus-run.jar" <2> <3>
+----
+<1> Mutable applications can be started in the dev mode.
+<2> We set the `QUARKUS_LAUNCH_DEVMODE` environment variable to `true` in order to start the app in the dev mode.
+<3> The `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005` part enables the debug mode so that you can also debug your application in the same way as if it was running locally. The only difference is that you need to use the host/address of your Raspberry Pi when attaching the debugger.
+
+TIP: See also the https://github.com/mkouba/rpi-sample/blob/main/build-deploy-mutable.sh[build-deploy-mutable.sh] file in the sample app.
+
+NOTE: Keep in mind that your Quarkus app must include the `quarkus-vertx-http` extension in order to support remote dev mode. If you don't need this extension in production, you can add a Maven profile with this dependency that is only activated during development. See also the https://github.com/mkouba/rpi-sample/blob/main/pom.xml#L105-L119[pom.xml] file in the sample app.
+
+Once we run the script the remote side is up and listening.
+It takes a little bit more time than before because we start the app in the development mode.
+Also mutable applications include the deployment parts of Quarkus, so they take up a bit more disk space.
+
+Let's run the local part and connect to the remote host:
+
+[source,bash]
+----
+mvn quarkus:remote-dev -Dquarkus.package.jar.type=mutable-jar -Dquarkus.live-reload.password=foo -Dquarkus.live-reload.url=http://$RPI_HOST:8080 <1>
+----
+<1> `RPI_HOST` is an environment variable and it defines the host/address of the target Raspberry Pi.
+
+TIP: See also the https://github.com/mkouba/rpi-sample/blob/main/run-remote-dev-mode.sh[run-remote-dev-mode.sh] file in the sample app.
+
+That's it.
+Now every time you send an HTTP request to your app you should see any changes you have made locally in the remote app.
+If your app does not expose an HTTP endpoint you can just hit `s` in the terminal where the deploy script was executed.
+This will refresh the remote app as well.
+
+NOTE: Currently, the Dev UI is not available in the remote dev mode for security reasons. However, there's an https://github.com/quarkusio/quarkus/issues/44570[open issue] to reintroduce the Dev UI, probably guarded by a configuration knob.
+
+=== Step 4 - Run in production
+
+Of course, you can run your Quarkus app in a JVM on the target Raspberry Pi.
+But the startup is a bit slow, more than ten seconds even for simple apps.
+Also Raspberry Pi is not endowed with a large amount of memory.
+So what about native image?
+That might be a perfect fit.
+However, there's one problem - Raspberry Pi is an ARM-based single-board computer (`aarch64` architecture for Raspberry Pi 4 Model B).
+But your machine might be Intel-based (`x86_64` architecture).
+In other words, usually you cannot build the native image of your machine and run it on Raspberry Pi.
+
+==== Option A - build the native image on Pi
+
+In theory, you can build the native image directly on your Raspberry Pi.
+I didn't succeed though and got the infamous _"The Native Image build process ran out of memory. Please make sure your build system has more memory available."_ error message on my Raspberry Pi 4 Model B with 2GB RAM.
+But if you have a model with more RAM, plenty of time, and a good active cooler, it should be possible.
+
+Feeling brave?
+Ok, you've been warned.
+But first, you'll need to turn your Raspberry Pi in a full-fledged development machine.
+Simply said, JDK is not enough.
+You'll need a build tool, such as Maven.
+You'll also need the GraalVM native-image, or https://github.com/graalvm/mandrel/releases[Mandrel] native-image, or Docker/Podman to build the native image in the container.
+And probably also Git to checkout your project.
+Once you're ready it's simple:
+
+[source,bash]
+----
+mvn clean build -Dnative
+----
+
+So the downside of this approach is obvious.
+Are there any other options?
+
+==== Option B - use QEMU
+
+You can also try to build the native image in a container using an ARM-based container image.
+Quarkus provides multi-platform builder images that can be used for this task.
+
+NOTE: The following steps work on a Linux machine (Ubuntu 22.04) with Docker installed for target environment Raspberry Pi 4 Model B with OS Lite 12 (Bookworm).
+
+[source,bash]
+----
+sudo apt-get install binfmt-support qemu-user-static <1>
+
+mvn clean package -Dnative -DskipTests -Dquarkus.native.container-build=true -Dquarkus.native.container-runtime-options=--platform=linux/arm64 -Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:23.1.5.0-Final-java21-arm64 <2> <3> <4>
+----
+<1> We need to install https://www.qemu.org/[qemu] first. 
+<2> `-Dquarkus.native.container-build=true` instructs Quarkus to build the native image using a container.
+<3> `-Dquarkus.native.container-runtime-options=--platform=linux/arm64` instructs Docker to use QEMU to emulate the ARM environment.
+<4> `-Dquarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:23.1.5.0-Final-java21-arm6` specifies an ARM-based container image that should be used to build the native image.
+
+TIP: See also the https://github.com/mkouba/rpi-sample/blob/main/build-native-image.sh[build-native-image.sh] file in the sample app.
+
+The downside of this approach is that it's very slooooow.
+It took approximately 20 mins to build a native image from the sample app with common hardware.
+On the other hand, you typically only need to build the native image for production.
+So it seems to be acceptable.
+
+== Conclusion
+
+A Quarkus application is a good fit for Raspberry Pi.
+If you're a Java developer there's no need to be afraid that Raspberry Pi will not be able to run your Quarkus app flawlessly.
+Especially when you use a native image in production.
+Furthermore, the remote development mode provides a very nice UX.
+To infinity and beyond!
