@@ -9,22 +9,30 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 #### Using Docker
 
 1. Install [Docker Desktop](https://docs.docker.com/install/).
-2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
+2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork:
 
         git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
 
 3. Change into the project directory:
 
         cd quarkusio.github.io
-4. Run Docker Composer
+
+4. Run Docker Compose:
 
         docker compose up
 
-    If any error occurs mentioning the name conflict, try
-        
+    > **Note:** The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
+
+    ```
+    jekyll-1  |   Server address: http://0.0.0.0:4000/
+    jekyll-1  |   Server running... press ctrl-c to stop.
+    ```
+
+    If any error occurs mentioning a name conflict, try:
+
         docker compose up --force-recreate
 
-5. Now browse to http://localhost:4000
+5. Now browse to [http://localhost:4000](http://localhost:4000).
 #### Using a local Ruby environment
 [Jekyll static site generator docs](https://jekyllrb.com/docs/).
 
