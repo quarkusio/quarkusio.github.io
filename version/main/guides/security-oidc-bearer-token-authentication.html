@@ -1745,6 +1745,114 @@ quarkus.oidc.token.audience=${quarkus.oidc.client-id}</code></pre>
 </div>
 </div>
 <div class="sect1">
+<h2 id="mutual-tls-token-binding"><a class="anchor" href="#mutual-tls-token-binding"></a>Mutual TLS token binding</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><a href="https://datatracker.ietf.org/doc/html/rfc8705">RFC8705</a> describes a mechanism for binding access tokens to Mutual TLS (mTLS) client authentication certificates.
+It requires that a client certificate&#8217;s SHA256 thumbprint matches a JWT token or token introspection confirmation <code>x5t#S256</code> certificate thumbprint.</p>
+</div>
+<div class="paragraph">
+<p>For example, see <a href="https://datatracker.ietf.org/doc/html/rfc8705#section-3.1">JWT Certificate Thumbprint Confirmation Method</a> and <a href="https://datatracker.ietf.org/doc/html/rfc8705#section-3.2">Confirmation Method for Token Introspection</a> sections of <a href="https://datatracker.ietf.org/doc/html/rfc8705">RFC8705</a>.</p>
+</div>
+<div class="paragraph">
+<p>MTLS token binding supports a <code>holder of key</code> concept, and can be used to confirm that the current access token was issued to the current authenticated client who presents this token.</p>
+</div>
+<div class="paragraph">
+<p>When you use both mTLS and OIDC bearer authentication mechanisms, you can enforce that the access tokens must be certificate bound with a single property, after configuring your Quarkus endpoint and Quarkus OIDC to require the use of mTLS.</p>
+</div>
+<div class="paragraph">
+<p>For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=${your_oidc_provider_url}
+quarkus.oidc.token.binding.certificate=true <i class="conum" data-value="1"></i><b>(1)</b>
+quarkus.oidc.tls.tls-configuration-name=oidc-client-tls <i class="conum" data-value="2"></i><b>(2)</b>
+
+quarkus.tls.oidc-client-tls.key-store.p12.path=target/certificates/oidc-client-keystore.p12 <i class="conum" data-value="2"></i><b>(2)</b>
+quarkus.tls.oidc-client-tls.key-store.p12.password=password
+quarkus.tls.oidc-client-tls.trust-store.p12.path=target/certificates/oidc-client-truststore.p12
+quarkus.tls.oidc-client-tls.trust-store.p12.password=password
+
+quarkus.http.tls-configuration-name=oidc-server-mtls <i class="conum" data-value="3"></i><b>(3)</b>
+quarkus.tls.oidc-server-mtls.key-store.p12.path=target/certificates/oidc-keystore.p12
+quarkus.tls.oidc-server-mtls.key-store.p12.password=password
+quarkus.tls.oidc-server-mtls.trust-store.p12.path=target/certificates/oidc-server-truststore.p12
+quarkus.tls.oidc-server-mtls.trust-store.p12.password=password</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Require that bearer access tokens must be bound to the client certificates.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>TLS registry configuration for Quarkus OIDC be able to communicate with the OIDC provider over MTLS</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>TLS registry configuration requiring external clients to authenticate to the Quarkus endpoint over MTLS</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The above configuration is sufficient to require that OIDC bearer tokens are bound to the client certificates.</p>
+</div>
+<div class="paragraph">
+<p>Next, if you need to access both mTLS and OIDC bearer security identities, consider enabling <a href="security-authentication-mechanisms#combining-authentication-mechanisms">Inclusive authentication</a> with <code>quarkus.http.auth.inclusive=true</code>.</p>
+</div>
+<div class="paragraph">
+<p>Now you can access both MTLS and OIDC security identities as follows:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.oidc;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import io.quarkus.security.Authenticated;
+import io.quarkus.security.credential.CertificateCredential;
+import io.quarkus.security.identity.SecurityIdentity;
+
+@Path("/service")
+@Authenticated
+public class OidcMtlsEndpoint {
+
+    @Inject
+    SecurityIdentity mtlsIdentity; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @Inject
+    JsonWebToken oidcAccessToken; <i class="conum" data-value="2"></i><b>(2)</b>
+
+    @GET
+    public String getIdentities() {
+        var cred = identity.getCredential(CertificateCredential.class).getCertificate();
+        return "Identities: " + cred.getSubjectX500Principal().getName().split(",")[0]
+                + ", " + accessToken.getName();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>SecurityIdentity</code> always represents the primary mTLS authentication when mTLS is used and an inclusive authentication is enabled.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>OIDC security identity is also available because enabling an inclusive authentication requires all registered mechanisms to produce the security identity.</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="authentication-after-an-http-request-has-completed"><a class="anchor" href="#authentication-after-an-http-request-has-completed"></a>Authentication after an HTTP request has completed</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -2022,6 +2130,7 @@ public class DiscoveryEndpointResponseFilter implements OidcResponseFilter {
 <li><a href="#using-client-id">Using the <code>client-id</code> property</a></li>
 </ul>
 </li>
+<li><a href="#mutual-tls-token-binding">Mutual TLS token binding</a></li>
 <li><a href="#authentication-after-an-http-request-has-completed">Authentication after an HTTP request has completed</a></li>
 <li><a href="#bearer-token-oidc-request-filters">OIDC request filters</a>
 <ul class="sectlevel2">
