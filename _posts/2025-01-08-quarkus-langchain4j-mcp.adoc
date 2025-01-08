@@ -1,0 +1,208 @@
+---
+layout: post
+title: 'Using the Model Context Protocol with Quarkus+LangChain4j'
+date: 2025-01-08
+tags: langchain4j llm ai
+synopsis: 'Executing tools via the Model Context Protocol with Quarkus+LangChain4j'
+author: jmartisk
+---
+:imagesdir: /assets/images/posts/mcp
+
+We are thrilled to announce that starting with version 0.23.0, the Quarkus
+LangChain4j project integrates calling tools using the
+https://modelcontextprotocol.io[Model Context Protocol (MCP)].
+
+== What is the Model Context Protocol?
+
+MCP is an open protocol that standardizes how applications provide context
+to LLMs. An MCP server is an application that can provide tools, resources
+(be it a set of static documents or dynamically accessed data, for example
+from a database), or pre-defined prompts that your AI-infused application
+can use when talking to LLMs. When you package such functionality into an
+MCP server, it can be plugged into and used by any LLM client toolkit that
+supports MCP, including Quarkus and LangChain4j. There is also already a
+growing ecosystem of reusable MCP servers that you can use out of the box,
+and Quarkus also offers the
+https://github.com/quarkiverse/quarkus-mcp-server[quarkus-mcp-server extension] that allows you
+to create MCP servers, but in this article, we will focus on the client
+side. More on creating MCP servers later.
+
+In version 0.23.x,
+https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j]
+implements the client side of the MCP protocol to allow tool execution.
+Support for resources and prompts is planned for future releases.
+
+In this article, we will show you how to use Quarkus and LangChain4j to
+easily create an application that connects to an MCP server providing
+filesystem-related tools and exposes a chatbot that a user can use to
+interact with the local filesystem, that means read and write files as
+instructed by the user.
+
+There is no need to set up an MCP server separately, we will configure
+Quarkus to run one as a subprocess. As you will see, setting up MCP with
+Quarkus is extremely easy.
+
+NOTE: To download the final project, visit the
+https://github.com/quarkiverse/quarkus-langchain4j/tree/0.23.0/samples/mcp-tools[
+quarkus-langchain4j samples]. That sample contains the final functionality
+developed in this article, plus some stuff on top, like a JavaScript-based
+UI. In this article, for simplicity, we will skip the creation of that UI,
+and we will only use the Dev UI chat page that comes bundled in Quarkus out
+of the box.
+
+== Prerequisites
+
+* Apache Maven 3.9+
+* The `npm` package manager installed on your machine
+
+== Creating a Filesystem assistant project
+
+We will assume that you are using OpenAI as the LLM provider. If you are
+using a different provider, you will need to swap out the
+`quarkus-langchain4j-openai` extension and use something else.
+
+Start by generating a Quarkus project. If you are using the Quarkus CLI, you can do it like this:
+
+[source, shell]
+----
+quarkus create app org.acme:filesystem-assistant:1.0-SNAPSHOT \
+  --extensions="langchain4j-openai,langchain4j-mcp,vertx-http" -S 3.17
+----
+
+If you prefer to use the web-based project generator, go to
+https://code.quarkus.io/[code.quarkus.io] and select the same extensions.
+
+Whenever you run the application, make sure the
+`QUARKUS_LANGCHAIN4J_OPENAI_API_KEY` environment variable is set to your
+OpenAI API key.
+
+=== Create the directory to be used by the agent
+
+Under the root directory of the Maven project, create a directory named `playground`.
+This will be the only directory that the agent will be allowed to interact with.
+
+Inside that directory, create any files that you want for testing. For
+example, create a file named `playground/hello.txt` with the following
+contents:
+
+----
+Hello, world!
+----
+
+=== Create the AI service
+
+Next, we need to define an AI service that will define how the bot should
+behave. The interface will look like this:
+
+[source, java]
+----
+@RegisterAiService
+@SessionScoped
+public interface Bot {
+
+    @SystemMessage("""
+            You have tools to interact with the local filesystem and the users
+            will ask you to perform operations like reading and writing files.
+
+            The only directory allowed to interact with is the 'playground' directory relative
+            to the current working directory. If a user specifies a relative path to a file and
+            it does not start with 'playground', prepend the 'playground'
+            directory to the path.
+
+            If the user asks, tell them you have access to a tool server
+            via the Model Context Protocol (MCP) and that they can find more
+            information about it on https://modelcontextprotocol.io/.
+            """
+    )
+    String chat(@UserMessage String question);
+}
+----
+
+Feel free to adjust the system message to your liking, but this one should
+be suitable to get the application working as expected.
+
+=== Configure the MCP server and the connection to it
+
+We will use
+https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem[server-filesystem]
+MCP server that comes as an NPM package, this is why you need to have `npm`
+installed on your machine. It is assumed that you have the `npm` binary
+available on your `PATH` (the `PATH` variable that the Quarkus process
+sees).
+
+Starting the server and configuring the connection to it is extremely easy.
+We will simply tell Quarkus to start up a `server-filesystem` MCP server as
+a subprocess and then communicate with it over the `stdio` transport. All
+you need to do is to add two lines into your `application.properties`:
+
+[source, properties]
+----
+quarkus.langchain4j.mcp.filesystem.transport-type=stdio
+quarkus.langchain4j.mcp.filesystem.command=npm,exec,@modelcontextprotocol/server-filesystem@0.6.2,playground
+----
+
+With this configuration, Quarkus will know that it should create a MCP
+client that will be backed by a server that will be started by executing
+`npm exec @modelcontextprotocol/server-filesystem@0.6.2 playground` as a
+subprocess. The `playground` argument denotes the path to the directory that
+the agent will be allowed to interact with. The `stdio` transport means that
+the client will communicate with the server over standard input and output.
+
+When you configure one or more MCP connections this way, Quarkus also
+automatically generates a `ToolProvider`. Any AI service that does not
+explicitly specify a tool provider will be automatically wired up to this
+generated one, so you don't need to do anything else to make the MCP
+functionality available to the AI service.
+
+Optionally, if you want to see the actual traffic between the application
+and the MCP server, add these three additional lines to your
+`application.properties`:
+
+[source, properties]
+----
+quarkus.langchain4j.mcp.filesystem.log-requests=true
+quarkus.langchain4j.mcp.filesystem.log-responses=true
+quarkus.log.category.\"dev.langchain4j\".level=DEBUG
+----
+
+And that's all! Now, let's test it.
+
+=== Try it out
+
+Since we didn't create any UI for our application that a user could use,
+let's use the Dev UI that comes with Quarkus out of the box. With the
+application running in development mode, access
+http://localhost:8080/q/dev-ui in your browser and click the `Chat` link in
+the `LangChain4j` card (either that, or go to
+http://localhost:8080/q/dev-ui/io.quarkiverse.langchain4j.quarkus-langchain4j-core/chat
+directly).
+
+Try a prompt to ask the agent to read a file that you created previously, such as:
+
+----
+Read the contents of the file hello.txt.
+----
+
+If all is set up correctly, the agent will respond with the contents of the
+file, like in this screenshot:
+
+image::devui.png[Dev UI chat page after asking about a file,400,float="right",align="center"]
+
+The bot can also write files, so try a prompt such as:
+
+----
+Write a Python script that prints "Hello, world!" and save it as hello.py.
+----
+
+Then have a look into your `playground` directory, and you should see the new Python file there!
+
+=== Conclusion
+
+The Model Context Protocol allows you to easily integrate reusable sets of
+tools and resources to AI-infused applications in a portable way. With the
+Quarkus LangChain4j extension, you can instruct Quarkus to run a server
+locally as a subprocess, and configuring application to use it is just a
+matter of adding a few configuration properties.
+
+And that's not all. Stay tuned, because Quarkus also has an extension that
+allows you to create MCP servers! More about that soon.
