@@ -5225,9 +5225,7 @@ If you use Hibernate Reactive, look at <a href="#writing-entities-managed-by-hib
 <div class="paragraph">
 <p>Because we write to a database, we must run this method in a transaction.
 Yet, sending the entity to Kafka happens asynchronously.
-The operation returns a <code>CompletionStage</code> (or a <code>Uni</code> if you use a <code>MutinyEmitter</code>) reporting when the operation completes.
-We must be sure that the transaction is still running until the object is written.
-Otherwise, you may access the object outside the transaction, which is not allowed.</p>
+We can achieve this by using <code>.sendAndAwait()</code> or <code>.sendAndForget()</code> on the <code>MutinyEmitter</code>, or <code>.send().toCompletableFuture().join()</code> on the <code>Emitter</code>.</p>
 </div>
 <div class="paragraph">
 <p>To implement this process, you need the following approach:</p>
@@ -5243,19 +5241,19 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 
 import org.eclipse.microprofile.reactive.messaging.Channel;
-import org.eclipse.microprofile.reactive.messaging.Emitter;
+import io.smallrye.reactive.messaging.MutinyEmitter;
 
 @Path("/")
 public class ResourceSendingToKafka {
 
-    @Channel("kafka") Emitter&lt;Fruit&gt; emitter;
+    @Channel("kafka") MutinyEmitter&lt;Fruit&gt; emitter;
 
     @POST
     @Path("/fruits")
-    @Transactional                                                      <i class="conum" data-value="1"></i><b>(1)</b>
-    public CompletionStage&lt;Void&gt; storeAndSendToKafka(Fruit fruit) {     <i class="conum" data-value="2"></i><b>(2)</b>
+    @Transactional                                               <i class="conum" data-value="1"></i><b>(1)</b>
+    public void storeAndSendToKafka(Fruit fruit) {               <i class="conum" data-value="2"></i><b>(2)</b>
         fruit.persist();
-        return emitter.send(new FruitDto(fruit));                       <i class="conum" data-value="3"></i><b>(3)</b>
+        emitter.sendAndAwait(new FruitDto(fruit));               <i class="conum" data-value="3"></i><b>(3)</b>
     }
 }</code></pre>
 </div>
@@ -5268,12 +5266,25 @@ public class ResourceSendingToKafka {
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>The method receives the fruit instance to persist. It returns a <code>CompletionStage</code> which is used for the transaction demarcation. The transaction is committed when the return <code>CompletionStage</code> completes. In our case, it&#8217;s when the message is written to Kafka.</td>
+<td>The method receives the fruit instance to persist.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="3"></i><b>3</b></td>
 <td>Wrap the managed entity inside a Data transfer object and send it to Kafka.
-This makes sure that managed entity is not impacted by the Kafka serialization.</td>
+This makes sure that managed entity is not impacted by the Kafka serialization.
+Then await the completion of the operation before returning.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+You should not return a <code>CompletionStage</code> or <code>Uni</code> when using <code>@Transactional</code>, as all transaction commits will happen on a single thread, which impacts performance.
+</td>
 </tr>
 </table>
 </div>
@@ -5551,12 +5562,10 @@ public class FruitProducer {
     @Consumes(MediaType.APPLICATION_JSON)
     @Bulkhead(1)
     public Uni&lt;Void&gt; post(Fruit fruit) {
-        Context context = Vertx.currentContext(); <i class="conum" data-value="2"></i><b>(2)</b>
-        return sf.withTransaction(session -&gt; <i class="conum" data-value="3"></i><b>(3)</b>
-                kafkaTx.withTransaction(emitter -&gt; <i class="conum" data-value="4"></i><b>(4)</b>
-                        session.persist(fruit).invoke(() -&gt; emitter.send(fruit)) <i class="conum" data-value="5"></i><b>(5)</b>
-                ).emitOn(context::runOnContext) <i class="conum" data-value="6"></i><b>(6)</b>
-        );
+        return sf.withTransaction(session -&gt; <i class="conum" data-value="2"></i><b>(2)</b>
+                kafkaTx.withTransaction(emitter -&gt; <i class="conum" data-value="3"></i><b>(3)</b>
+                        session.persist(fruit).invoke(() -&gt; emitter.send(fruit)) <i class="conum" data-value="4"></i><b>(4)</b>
+                ));
     }
 }</code></pre>
 </div>
@@ -5569,24 +5578,133 @@ public class FruitProducer {
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>Capture the caller Vert.x context.</td>
-</tr>
-<tr>
-<td><i class="conum" data-value="3"></i><b>3</b></td>
 <td>Begin a Hibernate Reactive transaction.</td>
 </tr>
 <tr>
-<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
 <td>Begin a Kafka transaction.</td>
 </tr>
 <tr>
-<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
 <td>Persist the payload and send the entity to Kafka.</td>
 </tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Alternatively, you can use the <code>@WithTransaction</code> annotation to start a transaction and commit it when the method returns:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.MediaType;
+
+import org.eclipse.microprofile.faulttolerance.Bulkhead;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@Path("/")
+public class FruitProducer {
+
+    @Channel("kafka") KafkaTransactions&lt;Fruit&gt; kafkaTx;
+
+    @POST
+    @Path("/fruits")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Bulkhead(1)
+    @WithTransaction <i class="conum" data-value="1"></i><b>(1)</b>
+    public Uni&lt;Void&gt; post(Fruit fruit) {
+        return kafkaTx.withTransaction(emitter -&gt; <i class="conum" data-value="2"></i><b>(2)</b>
+            fruit.persist().invoke(() -&gt; emitter.send(fruit)) <i class="conum" data-value="3"></i><b>(3)</b>
+        );
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
 <tr>
-<td><i class="conum" data-value="6"></i><b>6</b></td>
-<td>The Kafka transaction terminates on the Kafka producer sender thread.
-We need to switch to the Vert.x context previously captured in order to terminate the Hibernate Reactive transaction on the same context we started it.</td>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Start a Hibernate Reactive transaction and commit it when the method returns.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Begin a Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Persist the payload and send the entity to Kafka.</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="chaining-kafka-transactions-with-hibernate-orm-transactions"><a class="anchor" href="#chaining-kafka-transactions-with-hibernate-orm-transactions"></a>28.8. Chaining Kafka Transactions with Hibernate ORM transactions</h3>
+<div class="paragraph">
+<p>While <code>KafkaTransactions</code> provide a reactive API on top of Mutiny to manage Kafka transactions,
+you can still chain Kafka transactions with blocking Hibernate ORM transactions.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.transaction.Transactional;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import io.quarkus.logging.Log;
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@Path("/")
+public class FruitProducer {
+
+    @Channel("kafka") KafkaTransactions&lt;Pet&gt; emitter;
+
+    @POST
+    @Path("/fruits")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Bulkhead(1)
+    @Transactional <i class="conum" data-value="1"></i><b>(1)</b>
+    public void post(Fruit fruit) {
+        emitter.withTransaction(e -&gt; { <i class="conum" data-value="2"></i><b>(2)</b>
+            // if id is attributed by the database, will need to flush to get it
+            // fruit.persistAndFlush();
+            fruit.persist(); <i class="conum" data-value="3"></i><b>(3)</b>
+            Log.infov("Persisted fruit {0}", p);
+            e.send(p); <i class="conum" data-value="4"></i><b>(4)</b>
+            return Uni.createFrom().voidItem();
+        }).await().indefinitely(); <i class="conum" data-value="5"></i><b>(5)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Start a Hibernate ORM transaction. The transaction is committed when the method returns.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Begin a Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Persist the payload.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Send the entity to Kafka inside the Kafka transaction.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Wait on the returned <code>Uni</code> for the Kafka transaction to complete.</td>
 </tr>
 </table>
 </div>
@@ -6044,6 +6162,7 @@ It utilizes Quarkus Messaging to build data streaming applications.</p>
 <li><a href="#writing-entities-managed-by-hibernate-reactive-to-kafka">28.5. Writing entities managed by Hibernate Reactive to Kafka</a></li>
 <li><a href="#streaming-kafka-topics-as-server-sent-events">28.6. Streaming Kafka topics as server-sent events</a></li>
 <li><a href="#chaining-kafka-transactions-with-hibernate-reactive-transactions">28.7. Chaining Kafka Transactions with Hibernate Reactive transactions</a></li>
+<li><a href="#chaining-kafka-transactions-with-hibernate-orm-transactions">28.8. Chaining Kafka Transactions with Hibernate ORM transactions</a></li>
 </ul>
 </li>
 <li><a href="#logging">29. Logging</a></li>
