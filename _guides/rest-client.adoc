@@ -9,6 +9,7 @@ include::_attributes.adoc[]
 :summary: This guide explains how to use the REST Client.
 :topics: rest,rest-client,resteasy-reactive
 :extensions: io.quarkus:quarkus-rest-client,io.quarkus:quarkus-rest-client-jackson,io.quarkus:quarkus-rest-client-jsonb
+:jaxrsapi: https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs
 
 This guide explains how to use the REST Client in order to interact with REST APIs.
 REST Client is the REST Client implementation compatible with Quarkus REST (formerly RESTEasy Reactive).
@@ -492,18 +493,33 @@ quarkus.rest-client.extensions-api.scope=jakarta.inject.Singleton
 Setting the base URL of the client is **mandatory**, however the REST Client supports per-invocation overrides of the base URL using the `@io.quarkus.rest.client.reactive.Url` annotation.
 ====
 
-=== Disabling Hostname Verification
+=== Trusting all certificates and Disabling SSL hostname verification
 
-To disable the SSL hostname verification for a specific REST client, add the following property to your configuration:
-
-[source,properties]
-----
-quarkus.rest-client.extensions-api.verify-host=false
-----
 [WARNING]
 ====
-This setting should not be used in production as it will disable the SSL hostname verification.
+This properties set should not be used in production.
 ====
+
+You can configure TLS connection of specific REST client to trust all certificates and disable the hostname verification using tls extension.
+First of all, you should configure tls configuration bucket.
+
+To trust all certificates:
+[source,properties]
+----
+quarkus.tls.tls-disabled.trust-all=true
+----
+
+To disable SSL hostname verification:
+[source,properties]
+----
+quarkus.tls.tls-disabled.hostname-verification-algorithm=NONE
+----
+
+Finally, lets configure our REST client with apropriate tls configuration name:
+[source,properties]
+----
+quarkus.rest-client.extensions-api.tls-configuration-name=tls-disabled
+----
 
 === HTTP/2 Support
 
@@ -1469,6 +1485,34 @@ public interface EchoClient {
 }
 ----
 
+=== Disabling the default mapper
+
+As mandated by the REST Client specification, a default exception mapper is included, that throws an exception when HTTP status code is higher than 400.
+While this behavior is fine when the client returns a regular object, it is however very unintuitive when the client needs to return a `jakarta.ws.rs.core.Response`
+(with the intention of allowing the caller to decide how to handle the HTTP status code).
+
+For this reason, the REST Client includes a property named `disable-default-mapper` which can be used to disable the default mapper when using a REST client in a declarative manner.
+
+For example, with a client like so:
+
+[source, java]
+----
+    @Path("foo")
+    @RegisterRestClient(configKey = "bar")
+    public interface Client {
+        @GET
+        Response get();
+    }
+----
+
+The default exception mapper can be disabled by setting `quarkus.rest-client.bar.disable-default-mapper=true` to disable the exception mapper for the REST Client configured with the key `bar`.
+
+[NOTE]
+====
+When using the programmatic approach for creating a REST Client, `QuarkusRestClientBuilder` provides a method named `disableDefaultMapper`
+that provides the same feature.
+====
+
 [[multipart]]
 == Multipart Form support
 
@@ -1802,6 +1846,9 @@ As HTTP messages can have large bodies, we limit the amount of body characters l
 
 NOTE: REST Client is logging the traffic with level DEBUG and does not alter logger properties. You may need to adjust your logger configuration to use this feature.
 
+These configuration properties work globally for all clients injected by CDI.
+If you want configure logging for a specific declarative client, you should do it by specifying named "client" properties, also known as `quarkus.rest-client."client".logging.*` properties.
+
 An example logging configuration:
 
 [source,properties]
@@ -1809,7 +1856,10 @@ An example logging configuration:
 quarkus.rest-client.logging.scope=request-response
 quarkus.rest-client.logging.body-limit=50
 
+quarkus.rest-client.extensions-api.scope=all
+
 quarkus.log.category."org.jboss.resteasy.reactive.client.logging".level=DEBUG
+quarkus.log.console.level=DEBUG
 ----
 
 [TIP]
@@ -2058,7 +2108,7 @@ and limitations:
 
 - the default scope of the client for the new extension is `@ApplicationScoped` while the `quarkus-resteasy-client` defaults to `@Dependent`
 To change this behavior, set the `quarkus.rest-client.scope` property to the fully qualified scope name.
-- it is not possible to set `HostnameVerifier` or `SSLContext`
+- it is not possible to set `SSLContext`
 - a few things that don't make sense for a non-blocking implementations, such as setting the `ExecutorService`, don't work
 
 == Further reading
