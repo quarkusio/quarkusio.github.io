@@ -912,7 +912,7 @@ public class StreamProcessor {
 </div>
 </div>
 <div class="sect1">
-<h2 id="execution-model"><a class="anchor" href="#execution-model"></a>Execution Model</h2>
+<h2 id="execution_model"><a class="anchor" href="#execution_model"></a>Execution Model</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Quarkus Messaging sits on top of the <a href="quarkus-reactive-architecture#engine">reactive engine</a> of Quarkus and leverages <a href="https://vertx.io/">Eclipse Vert.x</a> to dispatch messages for processing.
@@ -1021,6 +1021,113 @@ You can override this behavior by using <code>@Blocking(ordered = false)</code> 
 Depending on the broker technology, this can be useful to increase the application&#8217;s throughput by processing multiple messages concurrently
 while still preserving the partial order of messages received in different copies.
 This is the case, for example, for Kafka, where multiple consumers can consume different topic partitions.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="context-propagation"><a class="anchor" href="#context-propagation"></a>Context Propagation</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>In Quarkus Messaging, the default mechanism for propagating context between different processing stages is the
+<a href="https://smallrye.io/smallrye-reactive-messaging/latest/concepts/message-context">message context</a>.
+This provides a consistent way to pass context information along with the message as it flows through different stages.</p>
+</div>
+<div class="sect2">
+<h3 id="interaction-with-mutiny-and-microprofile-context-propagation"><a class="anchor" href="#interaction-with-mutiny-and-microprofile-context-propagation"></a>Interaction with Mutiny and MicroProfile Context Propagation</h3>
+<div class="paragraph">
+<p>Mutiny, which is the foundation of reactive programming in Quarkus, is integrated with the MicroProfile Context Propagation.
+This integration enables automatic capturing and restoring of context across asynchronous boundaries.
+To learn more about context propagation in Quarkus and Mutiny, refer to the <a href="context-propagation">Context Propagation</a> guide.</p>
+</div>
+<div class="paragraph">
+<p>However, Quarkus Messaging needs to coordinate multiple asynchronous boundaries.
+This is why the default context propagation can result in unexpected behavior in some cases, especially using <code>Emitters</code>.</p>
+</div>
+<div class="paragraph">
+<p>To ensure consistent behavior, Quarkus Messaging disables the propagation of any context during message dispatching, through internal channels or connectors.
+This means that Emitters won&#8217;t capture the caller context, and incoming channels won&#8217;t dispatch messages by activating a context (ex. the request context).</p>
+</div>
+<div class="paragraph">
+<p>For example, you might want to propagate the caller context from an incoming HTTP request to the message processing stage.
+For emitters, instead of using the regular <code>Emitter</code> or <code>MutinyEmitter</code>, you can inject the <code>ContextualEmitter</code> to make sure the message captures the caller context.
+This ensures consistent and predictable behaviour by relying on the message context handling provided by the framework.</p>
+</div>
+<div class="paragraph">
+<p>For example, let <code>RequestScopedBean</code> a request-scoped bean, <code>ContextualEmitter</code> can be used to dispatch messages locally through the internal channel <code>app</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.MediaType;
+
+import org.eclipse.microprofile.reactive.messaging.Channel;
+
+import io.quarkus.logging.Log;
+import io.quarkus.smallrye.reactivemessaging.runtime.ContextualEmitter;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.Context;
+import io.vertx.core.Vertx;
+
+@Path("/")
+public class Resource {
+
+    @Channel("app")
+    ContextualEmitter&lt;String&gt; emitter;
+
+    @Inject
+    RequestScopedBean requestScopedBean;
+
+    @POST
+    @Path("/send")
+    public void send(String message) {
+        requestScopedBean.setValue("Hello");
+        emitter.sendAndAwait(message);
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then the request-scoped bean can be accessed in the message processing stage, regardless of the <a href="#execution_model">Execution Model</a>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+
+import io.quarkus.logging.Log;
+import io.smallrye.reactive.messaging.annotations.Blocking;
+
+
+@ApplicationScoped
+public class Processor {
+
+    @Inject
+    RequestScopedBean requestScopedBean;
+
+    @Incoming("app")
+    @Blocking
+    public void process(String message) {
+        Log.infof("Message %s from request %s", message, requestScopedBean.getValue());
+    }
+
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="request-context-activation"><a class="anchor" href="#request-context-activation"></a>Request Context Activation</h3>
+<div class="paragraph">
+<p>In some cases, you might need to activate the request context while processing messages consumed from a broker.
+While using <code>@ActivateRequestContext</code> on the <code>@Incoming</code> method is an option, it&#8217;s lifecycle does not follow that of a Quarkus Messaging message.
+For incoming channels, you can enable the request scope activation with the build time property <code>quarkus.messaging.request-scoped.enabled=true</code>.
+This will activate the request context for each message processed by the incoming channel, and close the context once the message is processed.</p>
 </div>
 </div>
 </div>
@@ -1418,9 +1525,15 @@ which has in-depth documentation for each of these concepts and more.</p>
 <li><a href="#channel-wiring-and-messaging-patterns">Channel wiring and Messaging patterns</a></li>
 </ul>
 </li>
-<li><a href="#execution-model">Execution Model</a>
+<li><a href="#execution_model">Execution Model</a>
 <ul class="sectlevel2">
 <li><a href="#incoming-channel-concurrency">Incoming Channel Concurrency</a></li>
+</ul>
+</li>
+<li><a href="#context-propagation">Context Propagation</a>
+<ul class="sectlevel2">
+<li><a href="#interaction-with-mutiny-and-microprofile-context-propagation">Interaction with Mutiny and MicroProfile Context Propagation</a></li>
+<li><a href="#request-context-activation">Request Context Activation</a></li>
 </ul>
 </li>
 <li><a href="#health-checks">Health Checks</a></li>
