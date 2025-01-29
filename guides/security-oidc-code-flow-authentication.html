@@ -468,6 +468,27 @@ quarkus.oidc.credentials.jwt.key-id=mykeyAlias</code></pre>
 <div class="paragraph">
 <p>Using <code>client_secret_jwt</code> or <code>private_key_jwt</code> authentication methods ensures that a client secret does not get sent to the OIDC provider, therefore avoiding the risk of a secret being intercepted by a  'man-in-the-middle' attack.</p>
 </div>
+<div class="listingblock">
+<div class="title">Example how JWT Bearer token can be used to authenticate client</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.jwt.source=bearer <i class="conum" data-value="1"></i><b>(1)</b>
+quarkus.oidc.credentials.jwt.token-path=/var/run/secrets/tokens <i class="conum" data-value="2"></i><b>(2)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Use JWT bearer token to authenticate OIDC provider client, see the <a href="https://www.rfc-editor.org/rfc/rfc7523#section-2.2">Using JWTs for Client Authentication</a> section for more information.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Path to a JWT bearer token. Quarkus loads a new token from a filesystem and reloads it when the token has expired.</td>
+</tr>
+</table>
+</div>
 <div class="sect3">
 <h4 id="additional-jwt-authentication-options"><a class="anchor" href="#additional-jwt-authentication-options"></a>Additional JWT authentication options</h4>
 <div class="paragraph">
@@ -1666,6 +1687,48 @@ For more information, refer to the <a href="hibernate-orm">Hibernate ORM</a> gui
 </table>
 </div>
 </div>
+<div class="sect3">
+<h4 id="redis-token-state-manager"><a class="anchor" href="#redis-token-state-manager"></a>Redis TokenStateManager</h4>
+<div class="paragraph">
+<p>Another approach for a stateful token storage strategy is a custom <code>TokenStateManager</code> provided by Quarkus to have your application store tokens in a Redis cache.
+If you decided to use the OIDC Redis Token State Manager, you must add the following dependency:</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-oidc-redis-token-state-manager&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-oidc-redis-token-state-manager")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Quarkus stores tokens in the default Redis client.
+If you prefer to use different Redis client, you can configure it like in the example below:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.redis-token-state-manager.redis-client-name=my-redis-client <i class="conum" data-value="1"></i><b>(1)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The <code>my-redis-client</code> name must correspond to the Redis client config key specified with <code>quarkus.redis.my-redis-client.*</code> configuration properties.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Please refer to the <a href="redis-reference">Quarkus Redis Client reference</a> for information how to configure the Redis client.</p>
+</div>
+</div>
 </div>
 <div class="sect2">
 <h3 id="logout-and-expiration"><a class="anchor" href="#logout-and-expiration"></a>Logout and expiration</h3>
@@ -2264,6 +2327,70 @@ You can listen to other security events as described in the <a href="security-cu
 </div>
 </div>
 <div class="sect2">
+<h3 id="oidc-token-revocation"><a class="anchor" href="#oidc-token-revocation"></a>Token revocation</h3>
+<div class="paragraph">
+<p>Sometimes, you may want to revoke the current authorization code flow access and/or refresh tokens.
+You can revoke tokens with <code>quarkus.oidc.OidcProviderClient</code> which provides access to the OIDC provider&#8217;s UserInfo, token introspection and revocation endpoints.</p>
+</div>
+<div class="paragraph">
+<p>For example, when a local logout with <a href="#oidc-session">OidcSession</a> is performed, you can use an injected <code>OidcProviderClient</code> to revoke access and refresh tokens associated with the current session:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import io.quarkus.oidc.AccessTokenCredential;
+import io.quarkus.oidc.OidcProviderClient;
+import io.quarkus.oidc.OidcSession;
+import io.quarkus.oidc.RefreshToken;
+
+import io.smallrye.mutiny.Uni;
+
+@Path("/service")
+public class ServiceResource {
+
+    @Inject
+    OidcSession oidcSession;
+
+    @Inject
+    OidcProviderClient oidcProviderClient;
+
+    @Inject
+    AccessTokenCredential accessToken;
+
+    @Inject
+    RefreshToken refreshToken;
+
+    @GET
+    public Uni&lt;String&gt; logout() {
+        return oidcSession.logout() <i class="conum" data-value="1"></i><b>(1)</b>
+                   .chain(() -&gt; oidcClient.revokeAccessToken(accessToken.getToken())) <i class="conum" data-value="2"></i><b>(2)</b>
+                   .chain(() -&gt; oidcClient.revokeRefreshToken(refreshToken.getToken())) <i class="conum" data-value="3"></i><b>(3)</b>
+                   .map((result) -&gt; "You are logged out");
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Do the local logout by clearing the session cookie.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Revoke the authorization code flow access token.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Revoke the authorization code flow refresh token.</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
 <h3 id="propagating-tokens-to-downstream-services"><a class="anchor" href="#propagating-tokens-to-downstream-services"></a>Propagating tokens to downstream services</h3>
 <div class="paragraph">
 <p>For information about Authorization Code Flow access token propagation to downstream services, see the <a href="security-openid-connect-client-reference#token-propagation-rest">Token Propagation</a> section.</p>
@@ -2573,6 +2700,63 @@ testImplementation("io.quarkus:quarkus-junit5")</code></pre>
 </div>
 </div>
 <div class="sect2">
+<h3 id="code-flow-integration-testing-keycloak-devservices"><a class="anchor" href="#code-flow-integration-testing-keycloak-devservices"></a>Dev Services for Keycloak</h3>
+<div class="paragraph">
+<p>For integration testing against Keycloak, use <a href="security-openid-connect-dev-services">Dev services for Keycloak</a>.
+This service initializes a test container, creates a <code>quarkus</code> realm, and configures a <code>quarkus-app</code> client with the secret <code>secret</code>.
+It also sets up two users: <code>alice</code> with <code>admin</code> and <code>user</code> roles, and <code>bob</code> with the <code>user</code> role.</p>
+</div>
+<div class="paragraph">
+<p>First, prepare the <code>application.properties</code> file.</p>
+</div>
+<div class="paragraph">
+<p>If starting from an empty <code>application.properties</code> file, <code>Dev Services for Keycloak</code> automatically registers the following properties:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>quarkus.oidc.auth-server-url</code>, which points to the running test container.</p>
+</li>
+<li>
+<p><code>quarkus.oidc.client-id=quarkus-app</code>.</p>
+</li>
+<li>
+<p><code>quarkus.oidc.credentials.secret=secret</code>.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>If you already have the required <code>quarkus-oidc</code> properties configured, associate <code>quarkus.oidc.auth-server-url</code> with the <code>prod</code> profile.
+This ensures that <code>Dev Services for Keycloak</code> starts the container as expected.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>To import a custom realm file into Keycloak before running the tests, configure <code>Dev services for Keycloak</code> as shown:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus
+quarkus.keycloak.devservices.realm-path=quarkus-realm.json</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Finally, write the test code as described in the <a href="#code-flow-integration-testing-wiremock">Wiremock</a> section.
+The only difference is that <code>@QuarkusTestResource</code> is no longer required:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTest
+public class CodeFlowAuthorizationTest {
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
 <h3 id="code-flow-integration-testing-wiremock"><a class="anchor" href="#code-flow-integration-testing-wiremock"></a>Wiremock</h3>
 <div class="paragraph">
 <p>Add the following dependency:</p>
@@ -2634,12 +2818,12 @@ public class CodeFlowAuthorizationTest {
             // the test REST endpoint listens on '/code-flow'
             HtmlPage page = webClient.getPage("http://localhost:8081/code-flow");
 
-            HtmlForm form = page.getFormByName("form");
+            HtmlForm form = page.getForms().get(0);
             // user 'alice' has the 'user' role
             form.getInputByName("username").type("alice");
             form.getInputByName("password").type("alice");
 
-            page = form.getInputByValue("login").click();
+            page = form.getButtonByName("login").click();
 
             assertEquals("alice", page.getBody().asNormalizedText());
         }
@@ -2663,46 +2847,6 @@ The user <code>admin</code> has the <code>user</code> and <code>admin</code> rol
 </div>
 <div class="paragraph">
 <p><code>OidcWiremockTestResource</code> can be used to emulate all OIDC providers.</p>
-</div>
-</div>
-<div class="sect2">
-<h3 id="code-flow-integration-testing-keycloak-devservices"><a class="anchor" href="#code-flow-integration-testing-keycloak-devservices"></a>Dev Services for Keycloak</h3>
-<div class="paragraph">
-<p>Using <a href="security-openid-connect-dev-services">Dev Services for Keycloak</a> is recommended for integration testing against Keycloak.
-<code>Dev Services for Keycloak</code> will start and initialize a test container: it will create a <code>quarkus</code> realm, a <code>quarkus-app</code> client (<code>secret</code> secret), and add <code>alice</code> (<code>admin</code> and <code>user</code> roles) and <code>bob</code> (<code>user</code> role) users, where all of these properties can be customized.</p>
-</div>
-<div class="paragraph">
-<p>First, prepare <code>application.properties</code>.
-You can start with a completely empty <code>application.properties</code> file as <code>Dev Services for Keycloak</code> will register <code>quarkus.oidc.auth-server-url</code> pointing to the running test container as well as <code>quarkus.oidc.client-id=quarkus-app</code> and <code>quarkus.oidc.credentials.secret=secret</code>.</p>
-</div>
-<div class="paragraph">
-<p>However, if you already have all the required <code>quarkus-oidc</code> properties configured, then you only need to associate <code>quarkus.oidc.auth-server-url</code> with the <code>prod</code> profile for <code>Dev Services for Keycloak</code> to start a container.
-For example:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>If a custom realm file has to be imported into Keycloak before running the tests, then you can configure <code>Dev Services for Keycloak</code> as follows:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus
-quarkus.keycloak.devservices.realm-path=quarkus-realm.json</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Finally, write a test code the same way as it is described in the <a href="#code-flow-integration-testing-wiremock">Wiremock</a> section.
-The only difference is that <code>@QuarkusTestResource</code> is no longer needed:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTest
-public class CodeFlowAuthorizationTest {
-}</code></pre>
-</div>
 </div>
 </div>
 <div class="sect2">
@@ -2829,6 +2973,70 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE</cod
 </div>
 </div>
 <div class="sect1">
+<h2 id="programmatic-oidc-start-up"><a class="anchor" href="#programmatic-oidc-start-up"></a>Programmatic OIDC start-up</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>OIDC tenants can be created programmatically like in the example below:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.oidc;
+
+import io.quarkus.oidc.Oidc;
+import jakarta.enterprise.event.Observes;
+
+public class OidcStartup {
+
+    void observe(@Observes Oidc oidc) {
+        oidc.createWebApp("http://localhost:8180/realms/quarkus", "quarkus-app", "mysecret");
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The code above is a programmatic equivalent to the following configuration in the <code>application.properties</code> file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus
+quarkus.oidc.application-type=web-app
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.secret=mysecret</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Should you need to configure more OIDC tenant properties, use the <code>OidcTenantConfig</code> builder like in the example below:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.oidc;
+
+import io.quarkus.oidc.Oidc;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.common.runtime.config.OidcClientCommonConfig.Credentials.Secret.Method;
+import jakarta.enterprise.event.Observes;
+
+public class OidcStartup {
+
+    void createDefaultTenant(@Observes Oidc oidc) {
+        var defaultTenant = OidcTenantConfig
+                .authServerUrl("http://localhost:8180/realms/quarkus/")
+                .clientId("quarkus-app")
+                .credentials().clientSecret("mysecret", Method.POST).end()
+                .build();
+        oidc.create(defaultTenant);
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For more complex setup involving multiple tenants please see the <a href="security-openid-connect-multitenancy#programmatic-startup">Programmatic OIDC start-up for multitenant application</a>
+section of the OpenID Connect Multi-Tenancy guide.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="references"><a class="anchor" href="#references"></a>References</h2>
 <div class="sectionbody">
 <div class="ulist">
@@ -2916,6 +3124,7 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE</cod
 <li><a href="#token-state-manager">Session cookie and default TokenStateManager</a></li>
 <li><a href="#custom-token-state-manager">Session cookie and custom TokenStateManager</a></li>
 <li><a href="#db-token-state-manager">Database TokenStateManager</a></li>
+<li><a href="#redis-token-state-manager">Redis TokenStateManager</a></li>
 </ul>
 </li>
 <li><a href="#logout-and-expiration">Logout and expiration</a>
@@ -2930,6 +3139,7 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE</cod
 </li>
 <li><a href="#oauth2">Integration with GitHub and non-OIDC OAuth2 providers</a></li>
 <li><a href="#listen-to-authentication-events">Listening to important authentication events</a></li>
+<li><a href="#oidc-token-revocation">Token revocation</a></li>
 <li><a href="#propagating-tokens-to-downstream-services">Propagating tokens to downstream services</a></li>
 </ul>
 </li>
@@ -2950,13 +3160,14 @@ quarkus.log.category."io.quarkus.oidc.runtime.OidcRecorder".min-level=TRACE</cod
 <li><a href="#oidc-saml-broker">OIDC SAML identity broker</a></li>
 <li><a href="#code-flow-integration-testing">Testing</a>
 <ul class="sectlevel2">
-<li><a href="#code-flow-integration-testing-wiremock">Wiremock</a></li>
 <li><a href="#code-flow-integration-testing-keycloak-devservices">Dev Services for Keycloak</a></li>
+<li><a href="#code-flow-integration-testing-wiremock">Wiremock</a></li>
 <li><a href="#code-flow-integration-testing-keycloak">Using KeycloakTestResourceLifecycleManager</a></li>
 <li><a href="#code-flow-integration-testing-security-annotation">TestSecurity annotation</a></li>
 <li><a href="#checking-errors-in-the-logs">Checking errors in the logs</a></li>
 </ul>
 </li>
+<li><a href="#programmatic-oidc-start-up">Programmatic OIDC start-up</a></li>
 <li><a href="#references">References</a></li>
 </ul></div>
     </div>
