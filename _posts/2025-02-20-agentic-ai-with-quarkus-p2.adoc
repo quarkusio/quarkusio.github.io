@@ -1,0 +1,312 @@
+---
+layout: post
+title: 'Agentic AI with Quarkus - part 2'
+date: 2025-02-20T00:00:00Z
+tags: ai llm agents
+synopsis: 'Agentic AI with Quarkus - part 2'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/agentic
+
+The https://quarkus.io/blog/agentic-ai-with-quarkus/[first part] of this blog post gave a quick introduction on agentic AI and discussed the workflow patterns in which the coordination of the multiple AI services in use is defined programmatically through predefined code paths. In this second part we will explore how agents works and use them in practice with a set of examples.
+
+== Agents
+
+Agents differ from the workflow patterns because the control flow, instead of being implemented programmatically, is entirely delegated to LLMs, which typically invoke tools to complete determinate subtasks. These tools can be seen as functions, opportunistically invoked by the LLM to achieve its goal and implemented in various technologies, like simple imperative methods, external web services, or even other LLMs.
+
+=== The weather forecast agent
+
+This https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool[first example] of agentic AI implements the following https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool/WeatherForecastAgent.java[weather forecast agent]
+
+[source, java]
+----
+@RegisterAiService(modelName = "tool-use")
+public interface WeatherForecastAgent {
+
+    @SystemMessage("""
+        You are a meteorologist, and you need to answer questions asked by the user about weather using at most 3 lines.
+
+        The weather information is a JSON object and has the following fields:
+
+        maxTemperature is the maximum temperature of the day in Celsius degrees
+        minTemperature is the minimum temperature of the day in Celsius degrees
+        precipitation is the amount of water in mm
+        windSpeed is the speed of wind in kilometers per hour
+        weather is the overall weather.
+    """)
+    @ToolBox({CityExtractorAgent.class, WeatherForecastService.class, GeoCodingService.class})
+    String chat(String query);
+}
+----
+
+The `@ToolBox` annotation allows to declaratively provide to this intelligent agent the three different tools that it will need to achieve its goal:
+
+1 . https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool/CityExtractorAgent.java[another LLM] specialized in extracting the name of a city from the user's prompt (thus also demonstrating how easily an LLM can be configured to become a tool for another LLM).
+
+[source, java]
+----
+@ApplicationScoped
+@RegisterAiService(chatMemoryProviderSupplier = RegisterAiService.NoChatMemoryProviderSupplier.class)
+public interface CityExtractorAgent {
+
+	@UserMessage("""
+    	You are given one question and you have to extract city name from it
+    	Only reply the city name if it exists or reply 'unknown_city' if there is no city name in question
+
+    	Here is the question: {question}
+    	""")
+	@Tool("Extracts the city from a question")
+	String extractCity(String question);
+}
+----
+
+2 .  a https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool/geo/GeoCodingService.java[web service] returning the geographic coordinates of a given city.
+
+[source, java]
+----
+@RegisterRestClient(configKey = "geocoding")
+@Path("/v1")
+public interface GeoCodingService {
+
+	@GET
+	@Path("/search")
+	@ClientQueryParam(name = "count", value = "1")
+	@Tool("Finds the latitude and longitude of a given city")
+	GeoResults findCity(@RestQuery String name);
+}
+----
+
+
+3 . a https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool/weather/WeatherForecastService.java[second web service] providing the weather forecast for the given latitude and longitude.
+
+[source, java]
+----
+@RegisterRestClient(configKey = "openmeteo")
+@Path("/v1")
+public interface WeatherForecastService {
+
+	@GET
+	@Path("/forecast")
+	@Tool("Forecasts the weather for the given latitude and longitude")
+	@ClientQueryParam(name = "forecast_days", value = "7")
+	@ClientQueryParam(name = "daily", value = {
+        	"temperature_2m_max",
+        	"temperature_2m_min",
+        	"precipitation_sum",
+        	"wind_speed_10m_max",
+        	"weather_code"
+	})
+	WeatherForecast forecast(@RestQuery double latitude, @RestQuery double longitude);
+}
+----
+
+.Weather agent architecture
+image::weather-agent.png[]
+
+It's possible to invoke the https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/aiastool/WeatherResource.java[HTTP endpoint] exposing this agent-based weather service, for example asking it what's the weather in Rome:
+
+[source, shell]
+----
+curl http://localhost:8080/weather/city/Rome
+----
+
+The response will be something like:
+
+----
+The weather in Rome today will have a maximum temperature of 14.3°C, minimum temperature of 2.0°C.
+No precipitation expected, and the wind speed will be up to 5.6 km/h.
+The overall weather condition is expected to be cloudy.
+----
+
+In essence, this control flow is quite similar to what is described in the prompt chaining workflow, where the user input is sequentially transformed in steps (in this case, going from the prompt to the name of the city contained in that prompt to the geographical coordinates of that city, to the weather forecasts at those coordinates). The significant difference is that the LLM directly orchestrates the sequence of steps instead of being externally orchestrated programmatically.
+
+=== A more general purpose AI agent
+
+An AI agent can have even more freedom to operate, thus being more flexible and covering a wider range of tasks. Typically, these scenarios requires a bigger model, so https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/searchastool[this second example] has been configured with `qwen2.5-14b` and a longer timeout to give it a chance to complete its task.
+
+[source, properties]
+----
+quarkus.langchain4j.ollama.big-model.chat-model.model-id=qwen2.5:14b
+quarkus.langchain4j.ollama.big-model.chat-model.temperature=0
+quarkus.langchain4j.ollama.big-model.timeout=600s
+----
+
+The https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/searchastool/IntelligentAgent.java[intelligent agent] of this example can be configured to use this bigger model passing its name to the `@RegisterAiService` annotation.
+
+[source, java]
+----
+@RegisterAiService(modelName = "big-model")
+public interface IntelligentAgent {
+
+    @SystemMessage("""
+        You are a chatbot, and you need to answer questions asked by the user.
+        Perform a web search for information that you don't know and use the result to answer to the initial user's question.
+    """)
+    @ToolBox({WebSearchService.class})
+    String chat(String question);
+}
+----
+
+This service has been provided with only https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/searchastool/WebSearchService.java[one tool] that can perform a web search on _DuckDuckGo_ and returns the result in plain text.
+
+[source, java]
+----
+@ApplicationScoped
+public class WebSearchService {
+
+	@Tool("Perform a web search to retrieve information online")
+	String webSearch(String q) throws IOException {
+    	String webUrl = "https://html.duckduckgo.com/html/?q=" + q;
+    	return Jsoup.connect(webUrl).get().text();
+	}
+}
+----
+
+The AI agent uses this tool to retrieve online information for everything it ignores and arrange that data together to provide an answer to a generic user question.
+
+These more capable agents require two main ingredients:
+
+1. A model able to reason and decide which tools to call with which parameter
+2. A set of tools (toolbox in the Quarkus lingo) giving the LLM more data and capabilities
+
+For instance, consider the following question: How many seconds would it take for a leopard at full speed to run through the Pont des Arts? Using this https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/searchastool/AgenticChatbotResource.java[HTTP endpoint], it would be executed using:
+
+[source, shell]
+----
+curl http://localhost:8080/ask/how%20many%20seconds%20would%20it%20take%20for%20a%20leopard%20at%20full%20speed%20to%20run%20through%20Pont%20des%20Arts
+----
+
+To reply to this question, the agent invokes the web search tool twice: once to find the length of Pont des Arts and once to retrieve a leopard's speed.
+
+.An agent using an external web search tool
+image::ai-agent.png[]
+
+Then, the agent puts this information together and  generates an output like:
+
+----
+The length of Pont des Arts is approximately 155 meters. A leopard can run at speeds up to about 58 kilometers per hour (36 miles per hour). To calculate how many seconds it would take for a leopard running at full speed to cross the bridge, we need to convert its speed into meters per second and then divide the length of the bridge by this speed.
+
+1 kilometer = 1000 meters
+58 kilometers/hour = 58 * 1000 / 3600 ≈ 16.11 meters/second
+
+Now, we can calculate the time it would take for a leopard to run through Pont des Arts:
+
+Time (seconds) = Distance (meters) / Speed (m/s)
+= 155 / 16.11
+≈ 9.62 seconds
+
+So, it would take approximately 9.62 seconds for a leopard running at full speed to run through Pont des Arts.
+----
+
+=== Agents and Conversational AI
+
+The flexibility of AI agents can become even more relevant when used in services that are not intended to fulfill a single request but need to have a longer conversation with the user to achieve their goal. For instance, agents can function as chatbots, enabling them to handle multiple users in parallel, each with their own independent conversation. This requires managing the state of each conversation, often referred to as memories (the set of messages already exchanged with the LLM).
+
+A https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/restaurant/RestaurantAgent.java[chatbot of a restaurant booking system], designed to chat with customers and collect their data and requirements, represents an interesting practical application of this pattern.
+
+[source, java]
+----
+@RegisterAiService(modelName = "tool-use")
+@SystemMessage("""
+    	You are an AI dealing with the booking for a restaurant.
+    	Do not invent the customer name or party size, but explicitly ask for them if not provided.
+    	If the user specifies a preference (indoor/outdoor), you should book the table with the preference.  However, please check the weather forecast before booking the table.
+    	""")
+@SessionScoped
+public interface RestaurantAgent {
+
+	@UserMessage("""
+        	You receive request from customer and need to book their table in the restaurant.
+        	Please be polite and try to handle the user request.
+
+        	Before booking the table, makes sure to have valid date for the reservation, and that the user explicitly provided his name and party size.
+        	If the booking is successful just notify the user.
+
+        	Today is: {current_date}.
+        	Request: {request}
+        	""")
+	@ToolBox({BookingService.class, WeatherService.class})
+	String handleRequest(String request);
+}
+----
+
+[TIP]
+====
+Note that the user message is passed not only with the customer request but also with the current date. This allows the LLM to understand relative dates often used by human like "tomorrow" or "in three days". Originally I put that current date in the system message, but doing so often caused the LLM to _forget_ it and hallucinate using a different date. Moving it to the user message empirically proved to work much better, possibly because in this way it is passed not only once, but in every message in the chat memory.
+====
+
+When the agent completes that information-gathering process, the chatbot uses a https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/restaurant/booking/BookingService.java[tool accessing the database] of existing reservations to both check if there is still a table available for the customers needs and to place a booking of that table if so.
+
+[source, java]
+----
+@ApplicationScoped
+public class BookingService {
+
+	private final int capacity;
+
+	public BookingService(@ConfigProperty(name = "restaurant.capacity") int capacity) {
+    	this.capacity = capacity;
+	}
+
+	public boolean hasCapacity(LocalDate date, int partySize) {
+    	int sum = Booking.find("date", date).list().stream().map(b -> (Booking) b)
+            	.mapToInt(b -> b.partySize)
+            	.sum();
+    	return sum + partySize <= capacity;
+	}
+
+	@Transactional
+	@Tool("Books a table for a given name, date (passed as day fo the month, month and year), party size and preference (indoor/outdoor). If the restaurant is full, an exception is thrown. If preference is not specified, `UNSET` is used.")
+	public String book(String name, int day, int month, int year, int partySize, Booking.Preference preference) {
+    	var date = LocalDate.of(year, month, day);
+    	if (hasCapacity(date, partySize)) {
+        	Booking booking = new Booking();
+        	booking.date = date;
+        	booking.name = name;
+        	booking.partySize = partySize;
+        	if (preference == null) {
+            	preference = Booking.Preference.UNSET;
+        	}
+        	booking.preference = preference;
+        	booking.persist();
+        	String result = String.format("%s successfully booked a %s table for %d persons on %s", name, preference, partySize, date);
+        	Log.info(result);
+        	return result;
+    	}
+    	return "The restaurant is full for that day";
+	}
+}
+----
+
+To assist the customer in deciding whether it is appropriate to eat outside or not, the agent can also reuse, as a second tool, the https://github.com/mariofusco/quarkus-agentic-ai/blob/main/src/main/java/org/agenticai/restaurant/weather/WeatherService.java[weather forecast service] implemented in one of the former examples, passing to it the geographic coordinates of the restaurant.
+
+[source, properties]
+----
+restaurant.location.latitude=45
+restaurant.location.longitude=5
+----
+
+The final architectural design of the chatbot could be visualized in this way.
+
+.The restaurant chatbot agent
+image::restaurant-agent.png[]
+
+Once the customer provides all necessary details, the chatbot confirms the booking and presents a reservation summary. The final booking is then stored in the database. It is possible to give this a try by accessing the URL:
+
+http://localhost:8080/restaurant.html
+
+A typical example of user interaction could be something like this:
+
+.An example of interaction with the restaurant chatbot agent
+image::restaurant.png[]
+
+== Conclusions and next steps
+
+This article demonstrated how simple, yet powerful and flexible, intelligent applications based on agentic AI patterns can be implemented with Quarkus and its LangChain4j extension. Nevertheless, the use cases discussed here can be improved and further generalized with other techniques that will be introduced in future works, like:
+
+. memory management across LLM calls
+. improved observability
+. dynamic tools (and tools registry)
+. agentic pattern and MCP
+
+
