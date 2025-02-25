@@ -62,7 +62,7 @@ First we need a Google Gemini API key. You can get one for free, see more detail
 
 [source,bash]
 ----
-export GOOGLE_AI_GEMINI_API_KEY=<your-google-ai-gemini-api-key>
+export QUARKUS_LANGCHAIN4J_AI_GEMINI_API_KEY=<your-google-ai-gemini-api-key>
 ----
 
 Next we need to install the LangChain4j dependencies:
@@ -71,13 +71,14 @@ Next we need to install the LangChain4j dependencies:
 ----
 <dependency>
     <groupId>io.quarkiverse.langchain4j</groupId>
-    <artifactId>quarkus-langchain4j-core</artifactId>
-    <version>0.24.0</version>
+    <artifactId>quarkus-langchain4j-ai-gemini</artifactId>
+    <version>0.25.0</version>
 </dependency>
 <dependency>
-    <groupId>dev.langchain4j</groupId>
-    <artifactId>langchain4j-google-ai-gemini</artifactId>
-    <version>1.0.0-beta1</version>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-core-deployment</artifactId>
+    <version>0.25.0</version>
+    <scope>provided</scope>
 </dependency>
 ----
 
@@ -87,24 +88,31 @@ Next we need to wire up the Gemini LLM to the application (using your Google AI 
 
 [source,java]
 ----
-@ApplicationScoped
-public class GoogleGeminiConfig {
-
-    @Produces
-    @ApplicationScoped
-    ChatLanguageModel model() {
-        return GoogleAiGeminiChatModel.builder()
-                .apiKey(System.getenv("GOOGLE_AI_GEMINI_API_KEY"))
-                .modelName("gemini-2.0-flash")
-                .build();
-    }
-}
+quarkus.langchain4j.ai.gemini.chat-model.model-id=gemini-2.0-flash
+quarkus.langchain4j.log-requests=true
+quarkus.langchain4j.log-responses=true
 ----
 
-[NOTE]
-====
-Quarkus LangChain4j will provide autoconfiguration for Gemini in a future release. Currently, manual configuration is required since the Gemini integration is still evolving, with upstream LangChain4j offering three different modules for Google's AI APIs.
-====
+Logging the request and response is optional but can be helpful for debugging.
+
+=== Register the AI service
+
+We must register the AI service to use the `LeaseAnalyzer` interface.
+
+[source,java]
+----
+import dev.langchain4j.data.pdf.PdfFile;
+import dev.langchain4j.service.UserMessage;
+import io.quarkiverse.langchain4j.PdfUrl;
+import io.quarkiverse.langchain4j.RegisterAiService;
+
+@RegisterAiService(chatMemoryProviderSupplier = RegisterAiService.NoChatMemoryProviderSupplier.class)
+public interface LeaseAnalyzer {
+
+    @UserMessage("Analyze the given document")
+    LeaseReport analyze(@PdfUrl PdfFile pdfFile);
+}
+----
 
 === Define your data structure
 
@@ -132,7 +140,7 @@ Lastly, we need to create a `LeaseAnalyzerResource` class that will use the LLM 
 [source,java]
 ----
 @Inject
-ChatLanguageModel model;
+LeaseAnalyzer analyzer;
 
 @PUT
 @Consumes(MediaType.MULTIPART_FORM_DATA)
@@ -148,27 +156,15 @@ public String upload(@RestForm("file") FileUpload fileUploadRequest) {
         // Encode PDF content to base64 for transmission
         String documentEncoded = Base64.getEncoder().encodeToString(fileBytes);
 
-        // Create user message with PDF content for analysis
-        UserMessage userMessage = UserMessage.from(
-                TextContent.from("Analyze the given document"),
-                PdfFileContent.from(documentEncoded, "application/pdf"));
-
-        // Build chat request with JSON response format
-        ChatRequest chatRequest = ChatRequest.builder()
-                .messages(userMessage)
-                .parameters(ChatRequestParameters.builder()
-                        .responseFormat(responseFormatFrom(LeaseReport.class))
-                        .build())
-                .build();
-
         log.info("Google Gemini analyzing....");
         long startTime = System.nanoTime();
-        ChatResponse chatResponse = model.chat(chatRequest);
-        long endTime = System.nanoTime();
-        String response = chatResponse.aiMessage().text();
-        log.infof("Google Gemini analyzed in %.2f seconds: %s", (endTime - startTime) / 1_000_000_000.0, response);
 
-        return response;
+        LeaseReport result = analyzer.analyze(PdfFile.builder().base64Data(documentEncoded).build());
+
+        long endTime = System.nanoTime();
+        log.infof("Google Gemini analyzed in %.2f seconds: %s", (endTime - startTime) / 1_000_000_000.0, result);
+
+        return result;
     } catch (IOException e) {
         throw new RuntimeException(e);
     }
