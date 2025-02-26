@@ -224,6 +224,9 @@
 <p>This guide explains how your Quarkus application can utilize <a href="https://opentelemetry.io/">OpenTelemetry</a> (OTel) to provide
 distributed tracing for interactive web applications.</p>
 </div>
+<div class="paragraph">
+<p>This document is part of the <a href="observability">Observability in Quarkus reference guide</a> which features this and other observability related components.</p>
+</div>
 <div class="admonitionblock note">
 <table>
 <tr>
@@ -333,7 +336,7 @@ cd opentelemetry-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.18.4:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.19.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=opentelemetry-quickstart \
     -Dextensions='rest,quarkus-opentelemetry' \
@@ -1121,6 +1124,73 @@ public void tracedWork() {
 </div>
 </div>
 <div class="sect2">
+<h3 id="mutiny"><a class="anchor" href="#mutiny"></a>Mutiny</h3>
+<div class="paragraph">
+<p>Methods returning reactive types can also be annotated with <code>@WithSpan</code> and <code>@AddingSpanAttributes</code> to create a new span or add attributes to the current span.</p>
+</div>
+<div class="paragraph">
+<p>If you need to create spans manually within a mutiny pipeline, use <code>wrapWithSpan</code> method from <code>io.quarkus.opentelemetry.runtime.tracing.mutiny.MutinyTracingHelper</code>.</p>
+</div>
+<div class="paragraph">
+<p>Example. Assuming you have the following pipeline:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">Uni&lt;String&gt; uni = Uni.createFrom().item("hello")
+        //start trace here
+        .onItem().transform(item -&gt; item + " world")
+        .onItem().transform(item -&gt; item + "!")
+        //end trace here
+        .subscribe().with(
+                item -&gt; System.out.println("Received: " + item),
+                failure -&gt; System.out.println("Failed with " + failure)
+        );</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>wrap it like this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import static io.quarkus.opentelemetry.runtime.tracing.mutiny.MutinyTracingHelper.wrapWithSpan;
+...
+@Inject
+Tracer tracer;
+...
+Context context = Context.current();
+Uni&lt;String&gt; uni = Uni.createFrom().item("hello")
+        .transformToUni(m -&gt; wrapWithSpan(tracer, Optional.of(context), "my-span-name",
+                                Uni.createFrom().item(m)
+                                    .onItem().transform(item -&gt; item + " world")
+                                    .onItem().transform(item -&gt; item + "!")
+        ))
+        .subscribe().with(
+                item -&gt; System.out.println("Received: " + item),
+                failure -&gt; System.out.println("Failed with " + failure)
+        );</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>for multi-pipelines it works similarly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">Multi.createFrom().items("Alice", "Bob", "Charlie")
+        .transformToMultiAndConcatenate(m -&gt; TracingHelper.withTrace("my-span-name",
+                                Multi.createFrom().item(m)
+                                    .onItem().transform(name -&gt; "Hello " + name)
+        ))
+        .subscribe().with(
+                item -&gt; System.out.println("Received: " + item),
+                failure -&gt; System.out.println("Failed with " + failure)
+        );</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Instead of <code>transformToMultiAndConcatenate</code> you can use <code>transformToMultiAndMerge</code> if you don&#8217;t care about the order of the items.</p>
+</div>
+</div>
+<div class="sect2">
 <h3 id="quarkus-messaging-kafka"><a class="anchor" href="#quarkus-messaging-kafka"></a>Quarkus Messaging - Kafka</h3>
 <div class="paragraph">
 <p>When using the Quarkus Messaging extension for Kafka,
@@ -1181,13 +1251,16 @@ which retrieves the OpenTelemetry <code>Context</code> to extract the current sp
 <p><a href="https://quarkus.io/guides/redis"><code>quarkus-redis-client</code></a></p>
 </li>
 <li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-rest-client-jaxrs"><code>quarkus-rest-client-jaxrs</code></a></p>
-</li>
-<li>
 <p><a href="https://quarkus.io/guides/rest"><code>quarkus-rest</code></a></p>
 </li>
 <li>
-<p><a href="https://quarkus.io/guides/resteasy"><code>quarkus-resteasy-jackson</code></a></p>
+<p><a href="https://quarkus.io/guides/rest"><code>quarkus-rest-client</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-rest-client-jaxrs"><code>quarkus-rest-client-jaxrs</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/resteasy"><code>quarkus-resteasy</code></a></p>
 </li>
 <li>
 <p><a href="https://quarkus.io/guides/resteasy-client"><code>quarkus-resteasy-client</code></a></p>
@@ -1333,6 +1406,7 @@ quarkus.otel.traces.suppress-application-uris=trace,ping,people*</code></pre>
 <ul class="sectlevel2">
 <li><a href="#cdi">CDI</a></li>
 <li><a href="#available-opentelemetry-cdi-injections">Available OpenTelemetry CDI injections</a></li>
+<li><a href="#mutiny">Mutiny</a></li>
 <li><a href="#quarkus-messaging-kafka">Quarkus Messaging - Kafka</a></li>
 <li><a href="#quarkus-security-events">Quarkus Security Events</a></li>
 </ul>
@@ -1355,7 +1429,13 @@ quarkus.otel.traces.suppress-application-uris=trace,ping,people*</code></pre>
       <ul class="related-content">
       
         
+        <li class="guide"><a href="/guides/centralized-log-management">Centralized log management (Graylog, Logstash, Fluentd)</a></li>
+      
+        
         <li class="tutorial"><a href="/guides/telemetry-opentracing-to-otel-tutorial">Migrate from OpenTracing to OpenTelemetry tracing</a></li>
+      
+        
+        <li class="reference"><a href="/guides/observability">Observability in Quarkus</a></li>
       
         
         <li class="reference"><a href="/guides/opentelemetry">Using OpenTelemetry</a></li>
@@ -1372,7 +1452,16 @@ quarkus.otel.traces.suppress-application-uris=trace,ping,people*</code></pre>
       <ul class="related-content">
       
         
+        <li class="reference"><a href="/guides/telemetry-micrometer-to-opentelemetry">Micrometer and OpenTelemetry extension</a></li>
+      
+        
         <li class="tutorial"><a href="/guides/telemetry-opentracing-to-otel-tutorial">Migrate from OpenTracing to OpenTelemetry tracing</a></li>
+      
+        
+        <li class="reference"><a href="/guides/observability">Observability in Quarkus</a></li>
+      
+        
+        <li class="guide"><a href="/guides/observability-devservices-lgtm">Observability Dev Services with Grafana OTel LGTM</a></li>
       
         
         <li class="reference"><a href="/guides/opentelemetry">Using OpenTelemetry</a></li>

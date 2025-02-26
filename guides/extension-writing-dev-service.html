@@ -218,16 +218,41 @@
       <a class="editlink" href="https://github.com/quarkusio/quarkus/edit/main/docs/src/main/asciidoc/extension-writing-dev-service.adoc">Edit this Page</a>
       
       <h1 class="text-caps">Writing a Dev Service </h1>
-      <div class="sect1">
+      <div id="preamble">
+<div class="sectionbody">
+<div class="paragraph">
+<p>Learn how to develop a <a href="dev-services">Dev Service</a> for your extension in order to replace an external service in development mode.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="prerequisites"><a class="anchor" href="#prerequisites"></a>Prerequisites</h2>
 <div class="sectionbody">
+<div class="paragraph">
+<p>To complete this guide, you need:</p>
+</div>
 <div class="ulist">
 <ul>
 <li>
-<p>You should already have an <a href="building-my-first-extension">extension structure</a> in place</p>
+<p>Roughly 15 minutes</p>
 </li>
 <li>
-<p>You should have a containerised version of your external service (not all Dev Services rely on containers, but most do)</p>
+<p>An IDE</p>
+</li>
+<li>
+<p>JDK 17+ installed with <code>JAVA_HOME</code> configured appropriately</p>
+</li>
+<li>
+<p>Apache Maven 3.9.9</p>
+</li>
+<li>
+<p>A working container runtime (Docker or <a href="podman">Podman</a>)</p>
+</li>
+<li>
+<p>An <a href="building-my-first-extension">extension structure</a> in place</p>
+</li>
+<li>
+<p>A containerised version of your external service (not all Dev Services rely on containers, but most do)</p>
 </li>
 </ul>
 </div>
@@ -237,46 +262,68 @@
 <h2 id="creating-a-dev-service"><a class="anchor" href="#creating-a-dev-service"></a>Creating a Dev Service</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If your extension provides APIs for connecting to an external service, it&#8217;s a good idea to provide a <a href="dev-services">Dev Service</a> implementation.</p>
+<p>If your extension provides APIs for connecting to an external service, it&#8217;s a good idea to provide a dev service implementation.</p>
 </div>
 <div class="paragraph">
-<p>To create a Dev Service, add a new build step into the extension processor class that returns a <code>DevServicesResultBuildItem</code>.
+<p>First, you must add the following dependency to the build file, in your <a href="writing-extensions#project-setup">deployement</a> module :</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-devservices-deployment&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-devservices-deployment")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then, add a new build step into the extension processor class that returns a <code>DevServicesResultBuildItem</code>.
 Here, the <a href="https://hub.docker.com/_/hello-world"><code>hello-world</code></a> image is used, but you should set up the right image for your service.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">    @BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
-    public DevServicesResultBuildItem createContainer() {
-        DockerImageName dockerImageName = DockerImageName.parse("hello-world");
-        GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
-                                         .withExposedPorts(SERVICE_PORT, OTHER_SERVICE_PORT)
-                                         .waitingFor(Wait.forLogMessage(".*" + "Started" + ".*", 1))
-                                         .withReuse(true);
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
+public DevServicesResultBuildItem createContainer() {
+    DockerImageName dockerImageName = DockerImageName.parse("hello-world");
+    GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
+                                     .withExposedPorts(SERVICE_PORT, OTHER_SERVICE_PORT)
+                                     .waitingFor(Wait.forLogMessage(".*Started.*", 1))
+                                     .withReuse(true);
 
-        container.start();
+    container.start();
 
-        String newUrl = "http://" + container.getHost() + ":" + container.getMappedPort(SERVICE_PORT);
-        Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url", newUrl);
+    String newUrl = "http://%s:%d".formatted(container.getHost(),
+            container.getMappedPort(SERVICE_PORT));
+    Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url", newUrl);
 
-        return new DevServicesResultBuildItem.RunningDevService(FEATURE, container.getContainerId(),
-            container::close, configOverrides)
-            .toBuildItem();
-    }</code></pre>
+    return new DevServicesResultBuildItem.RunningDevService(FEATURE,
+            container.getContainerId(),
+            container::close,
+            configOverrides).toBuildItem();
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p>With this code, you should be able to see your container starting if you add your extension to a test application and run <code>quarkus dev</code>.
-However, the application will not be able to connect to it, because no ports are exposed. To expose ports, add <code>withExposedPorts</code> to the container construction.
+However, the application will not be able to connect to it, because no ports are exposed.
+To expose ports, add <code>withExposedPorts</code> to the container construction.
 For example,</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
                                  .withExposedPorts(SERVICE_PORT, OTHER_SERVICE_PORT);</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Testcontainers will map these ports to random ports on the host. This avoids port conflicts, but presents a new problem – how do applications connect to the service in the container?</p>
+<p><code>Testcontainers</code> will map these ports to random ports on the host.
+This avoids port conflicts, but presents a new problem – how do applications connect to the service in the container?</p>
 </div>
 <div class="paragraph">
 <p>To allow applications to connect, the extension should override the default configuration for the service with the mapped ports.
@@ -285,9 +332,11 @@ For example,</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">    container.start();
-    Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url",
-         "http://" + container.getHost() + ":" + container.getMappedPort(SERVICE_PORT));</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.start();
+String serviceUrl = "http://%s:%d".formatted(container.getHost(),
+        container.getMappedPort(SERVICE_PORT));
+Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url",
+    serviceUrl);</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -299,15 +348,17 @@ For example,</p>
 <h2 id="waiting-for-the-container-to-start"><a class="anchor" href="#waiting-for-the-container-to-start"></a>Waiting for the container to start</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>You should add a <code>.waitingFor</code> call to the container construction, to wait for the container to start. For example</p>
+<p>You should add a <code>.waitingFor</code> call to the container construction, to wait for the container to start.
+For example</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">            .waitingFor(Wait.forLogMessage(".*" + "Started" + ".*", 1))</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.waitingFor(Wait.forLogMessage(".*Started.*", 1));</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Waiting for a port to be open is another option. See the <a href="https://java.testcontainers.org/features/startup_and_waits/">Testcontainers documentation</a> for a full discussion of wait strategies.</p>
+<p>Waiting for a port to be open is another option.
+See the <a href="https://java.testcontainers.org/features/startup_and_waits/">Testcontainers documentation</a> for a full discussion on wait strategies.</p>
 </div>
 </div>
 </div>
@@ -320,8 +371,8 @@ For example,</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">    @BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
-    public DevServicesResultBuildItem createContainer(MyConfig config) {</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
+public DevServicesResultBuildItem createContainer(MyConfig config) {}</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -329,9 +380,10 @@ For example,</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">    if (config.port.isPresent()) {
-        container.setPortBindings(List.of(config.port.get() + ":" + SERVICE_PORT));
-    }</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">if (config.port.isPresent()) {
+    String portBinding = "%d:%d".formatted(config.port.get(), SERVICE_PORT);
+    container.setPortBindings(List.of(portBinding));
+}</code></pre>
 </div>
 </div>
 </div>
@@ -340,13 +392,14 @@ For example,</p>
 <h2 id="controlling-re-use"><a class="anchor" href="#controlling-re-use"></a>Controlling re-use</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>In dev mode, with live reload, Quarkus may restart frequently. By default, this will also restart test containers.
+<p>In dev mode, with live reload, Quarkus may restart frequently.
+By default, this will also restart test containers.
 Quarkus restarts are usually very fast, but containers may take much longer to restart.
 To prevent containers restarting on every code change, you can mark the container as reusable:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">         .withReuse(true)</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.withReuse(true);</code></pre>
 </div>
 </div>
 <div class="paragraph">

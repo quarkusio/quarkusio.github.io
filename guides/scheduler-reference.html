@@ -917,7 +917,89 @@ A CDI event is fired synchronously and asynchronously when the scheduler or a sc
 </div>
 </div>
 <div class="sect1">
-<h2 id="programmatic_scheduling"><a class="anchor" href="#programmatic_scheduling"></a>3. Programmatic Scheduling</h2>
+<h2 id="scheduling_long_running_tasks"><a class="anchor" href="#scheduling_long_running_tasks"></a>3. Scheduling Long-Running Tasks</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Executing a long-running task might yield a warning message similar to the following:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">WARN  [io.ver.cor.imp.BlockedThreadChecker] (vertx-blocked-thread-checker) Thread Thread[vert.x-worker-thread-1,5,main] has been blocked for 81879 ms, time limit is 60000 ms: io.vertx.core.VertxException: Thread blocked</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This is happening because the default worker thread pool is coming from Vert.x which guards against threads being blocked for far too long.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+The amount of time for which a Vert.x worker thread can be blocked is also <a href="https://quarkus.io/guides/all-config#quarkus-vertx_quarkus-vertx-max-worker-execute-time">configurable</a>.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Therefore, a proper way to execute long tasks is to offload them from the scheduled method to a custom executor service.
+Here&#8217;s an example of such setup for a long-running task that we do not expect to execute often:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class LongRunner implements Runnable {
+
+    private ExecutorService executorService;
+
+    @PostConstruct
+    void init() {
+        executorService = Executors.newThreadPerTaskExecutor(Executors.defaultThreadFactory()); <i class="conum" data-value="1"></i><b>(1)</b>
+    }
+
+    @PreDestroy
+    void destroy() {
+        executorService.shutdown(); <i class="conum" data-value="2"></i><b>(2)</b>
+    }
+
+
+    @Scheduled(cron = "{my.schedule}")
+    public void update() {
+        executorService.execute(this); <i class="conum" data-value="3"></i><b>(3)</b>
+    }
+
+    @Override
+    public void run() { <i class="conum" data-value="4"></i><b>(4)</b>
+        // perform the actual task here
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Create a fitting executor. In this case, a new thread is created per scheduled task and stopped once the task finishes.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td><code>@PreDestroy</code> callback is used to shut down the executor service.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Scheduled method only delegates the job to the custom executor - this prevent Vert.x thread from being blocked.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>The bean implements <code>Runnable</code>, a format we can directly pass to the executor service as a parameter.</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="programmatic_scheduling"><a class="anchor" href="#programmatic_scheduling"></a>4. Programmatic Scheduling</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>An injected <code>io.quarkus.scheduler.Scheduler</code> can be also used to schedule a job programmatically.</p>
@@ -1013,7 +1095,7 @@ However, these executors are used by other Quarkus extensions and therefore shou
 </div>
 </div>
 <div class="sect1">
-<h2 id="scheduled-methods-and-testing"><a class="anchor" href="#scheduled-methods-and-testing"></a>4. Scheduled Methods and Testing</h2>
+<h2 id="scheduled-methods-and-testing"><a class="anchor" href="#scheduled-methods-and-testing"></a>5. Scheduled Methods and Testing</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>It is often desirable to disable the scheduler when running the tests.
@@ -1024,7 +1106,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 </div>
 </div>
 <div class="sect1">
-<h2 id="metrics"><a class="anchor" href="#metrics"></a>5. Metrics</h2>
+<h2 id="metrics"><a class="anchor" href="#metrics"></a>6. Metrics</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Some basic metrics are published out of the box if <code>quarkus.scheduler.metrics.enabled</code> is set to <code>true</code> and a metrics extension is present.</p>
@@ -1038,7 +1120,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 </div>
 </div>
 <div class="sect1">
-<h2 id="opentelemetry-tracing"><a class="anchor" href="#opentelemetry-tracing"></a>6. OpenTelemetry Tracing</h2>
+<h2 id="opentelemetry-tracing"><a class="anchor" href="#opentelemetry-tracing"></a>7. OpenTelemetry Tracing</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>If <code>quarkus.scheduler.tracing.enabled</code> is set to <code>true</code> and the <a href="opentelemetry">OpenTelemetry extension</a> is present then every job execution, either defined with the <code>@Scheduled</code> annotation or scheduled programmatically, automatically creates a span named after the job&#8217;s <a href="#identity">Identity</a>.</p>
@@ -1046,7 +1128,7 @@ You can even disable the scheduler for particular <a href="getting-started-testi
 </div>
 </div>
 <div class="sect1">
-<h2 id="virtual_threads"><a class="anchor" href="#virtual_threads"></a>7. Run @Scheduled methods on virtual threads</h2>
+<h2 id="virtual_threads"><a class="anchor" href="#virtual_threads"></a>8. Run @Scheduled methods on virtual threads</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Methods annotated with <code>@Scheduled</code> can also be annotated with <code>@RunOnVirtualThread</code>.
@@ -1059,7 +1141,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 </div>
 </div>
 <div class="sect1">
-<h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>8. Configuration Reference</h2>
+<h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>9. Configuration Reference</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime <input type="search" id="config-search-0" placeholder="FILTER CONFIGURATION" disabled></p>
@@ -1087,7 +1169,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>The syntax used in CRON expressions.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7775">QUARKUS_SCHEDULER_CRON_TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7775" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7737">QUARKUS_SCHEDULER_CRON_TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7737" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1110,7 +1192,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>Scheduled task metrics will be enabled if a metrics extension is present and this value is true.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7776">QUARKUS_SCHEDULER_METRICS_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7776" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7738">QUARKUS_SCHEDULER_METRICS_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7738" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1131,7 +1213,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>Controls whether tracing is enabled. If set to true and the OpenTelemetry extension is present, tracing will be enabled, creating automatic Spans for each scheduled task.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7777">QUARKUS_SCHEDULER_TRACING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7777" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7739">QUARKUS_SCHEDULER_TRACING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7739" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1155,7 +1237,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>Scheduler implementations will be started depending on the value of <code>quarkus.scheduler.start-mode</code>, i.e. the scheduler is not started unless a relevant <code>io.quarkus.scheduler.Scheduled</code> business method is found.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7778">QUARKUS_SCHEDULER_USE_COMPOSITE_SCHEDULER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7778" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7740">QUARKUS_SCHEDULER_USE_COMPOSITE_SCHEDULER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7740" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1176,7 +1258,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>If schedulers are enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7779">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7779" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7741">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7741" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1197,7 +1279,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>Scheduled task will be flagged as overdue if next execution time is exceeded by this period.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7780">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7780" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7742">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7742" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1218,7 +1300,7 @@ Read <a href="./virtual-threads">the virtual thread guide</a> for more details.<
 <p>Scheduler can be started in different modes. By default, the scheduler is not started unless a <code>io.quarkus.scheduler.Scheduled</code> business method is found.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7781">QUARKUS_SCHEDULER_START_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7781" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7743">QUARKUS_SCHEDULER_START_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7743" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1294,12 +1376,13 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 </ul>
 </li>
 <li><a href="#scheduler">2. Scheduler</a></li>
-<li><a href="#programmatic_scheduling">3. Programmatic Scheduling</a></li>
-<li><a href="#scheduled-methods-and-testing">4. Scheduled Methods and Testing</a></li>
-<li><a href="#metrics">5. Metrics</a></li>
-<li><a href="#opentelemetry-tracing">6. OpenTelemetry Tracing</a></li>
-<li><a href="#virtual_threads">7. Run @Scheduled methods on virtual threads</a></li>
-<li><a href="#configuration-reference">8. Configuration Reference</a></li>
+<li><a href="#scheduling_long_running_tasks">3. Scheduling Long-Running Tasks</a></li>
+<li><a href="#programmatic_scheduling">4. Programmatic Scheduling</a></li>
+<li><a href="#scheduled-methods-and-testing">5. Scheduled Methods and Testing</a></li>
+<li><a href="#metrics">6. Metrics</a></li>
+<li><a href="#opentelemetry-tracing">7. OpenTelemetry Tracing</a></li>
+<li><a href="#virtual_threads">8. Run @Scheduled methods on virtual threads</a></li>
+<li><a href="#configuration-reference">9. Configuration Reference</a></li>
 </ul></div>
     </div>
   </div>

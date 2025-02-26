@@ -229,12 +229,11 @@
 Fluentd (inside EFK - Elasticsearch, Fluentd, Kibana).</p>
 </div>
 <div class="paragraph">
-<p>There are a lot of different ways to centralize your logs (if you are using Kubernetes, the simplest way is to log to the console and ask you cluster administrator to integrate a central log manager inside your cluster).
-In this guide, we will expose how to send them to an external tool using the <code>quarkus-logging-gelf</code> extension that can use TCP or UDP to send logs in the Graylog Extended Log Format (GELF).</p>
+<p>This document is part of the <a href="observability">Observability in Quarkus reference guide</a> which features this and other observability related components.</p>
 </div>
 <div class="paragraph">
-<p>The <code>quarkus-logging-gelf</code> extension will add a GELF log handler to the underlying logging backend that Quarkus uses (jboss-logmanager).
-By default, it is disabled, if you enable it but still use another handler (by default the console handler is enabled), your logs will be sent to both handlers.</p>
+<p>There are a lot of different ways to centralize your logs (if you are using Kubernetes, the simplest way is to log to the console and ask your cluster administrator to integrate a central log manager inside your cluster).
+In this guide, we will expose how to send them to an external tool using supported Quarkus extensions in supported standard formats like Graylog Extended Log Format (GELF), Elastic Common Schema (ECS) or the OpenTelemetry Log signal.</p>
 </div>
 </div>
 </div>
@@ -278,17 +277,17 @@ By default, it is disabled, if you enable it but still use another handler (by d
 <p>The following examples will all be based on the same example application that you can create with the following steps.</p>
 </div>
 <div class="paragraph">
-<p>Create an application with the <code>quarkus-logging-gelf</code> extension. You can use the following command to create it:</p>
+<p>Create an application with the REST extension. You can use the following command to create it:</p>
 </div>
 <div class="sidebarblock primary asciidoc-tabs-sync-cli">
 <div class="content">
 <div class="title">CLI</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus create app org.acme:gelf-logging \
-    --extension='rest,logging-gelf' \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">quarkus create app org.acme:centralized-logging \
+    --extension='rest' \
     --no-code
-cd gelf-logging</code></pre>
+cd centralized-logging</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -304,12 +303,12 @@ cd gelf-logging</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.18.4:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.19.1:create \
     -DprojectGroupId=org.acme \
-    -DprojectArtifactId=gelf-logging \
-    -Dextensions='rest,logging-gelf' \
+    -DprojectArtifactId=centralized-logging \
+    -Dextensions='rest' \
     -DnoCode
-cd gelf-logging</code></pre>
+cd centralized-logging</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -326,13 +325,327 @@ cd gelf-logging</code></pre>
 <p>If using cmd, (don&#8217;t use backward slash <code>\</code> and put everything on the same line)</p>
 </li>
 <li>
-<p>If using Powershell, wrap <code>-D</code> parameters in double quotes e.g. <code>"-DprojectArtifactId=gelf-logging"</code></p>
+<p>If using Powershell, wrap <code>-D</code> parameters in double quotes e.g. <code>"-DprojectArtifactId=centralized-logging"</code></p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>If you already have your Quarkus project configured, you can add the <code>logging-gelf</code> extension
-to your project by running the following command in your project base directory:</p>
+<p>For demonstration purposes, we create an endpoint that does nothing but log a sentence. You don&#8217;t need to do this inside your application.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import org.jboss.logging.Logger;
+
+@Path("/logging")
+@ApplicationScoped
+public class LoggingResource {
+    private static final Logger LOG = Logger.getLogger(LoggingResource.class);
+
+    @GET
+    public void log() {
+        LOG.info("Some useful log message");
+    }
+
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="send-logs-to-the-elastic-stack-elk-in-the-ecs-elastic-common-schema-format-with-the-socket-handler"><a class="anchor" href="#send-logs-to-the-elastic-stack-elk-in-the-ecs-elastic-common-schema-format-with-the-socket-handler"></a>Send logs to the Elastic Stack (ELK) in the ECS (Elastic Common Schema) format with the Socket handler</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>You can send your logs to Logstash using a TCP input in the <a href="https://www.elastic.co/guide/en/ecs-logging/overview/current/intro.html">ECS</a> format.
+To achieve this, we will use the <code>quarkus-logging-json</code> extension to format the logs in JSON format and the socket handler to send them to Logstash.</p>
+</div>
+<div class="paragraph">
+<p>Create the following file  in <code>$HOME/pipelines/ecs.conf</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">input {
+  tcp {
+    port =&gt; 4560
+    codec =&gt; json
+  }
+}
+
+filter {
+  if ![span][id] and [mdc][spanId] {
+    mutate { rename =&gt; { "[mdc][spanId]" =&gt; "[span][id]" } }
+  }
+  if ![trace][id] and [mdc][traceId] {
+    mutate { rename =&gt; {"[mdc][traceId]" =&gt; "[trace][id]"} }
+  }
+}
+
+output {
+  stdout {}
+  elasticsearch {
+    hosts =&gt; ["http://elasticsearch:9200"]
+  }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then configure your application to log in JSON format</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-logging-json&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-logging-json")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>and specify the host and port of your Logstash endpoint. To be ECS compliant, specify the log format.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># to keep the logs in the usual format in the console
+quarkus.log.console.json=false
+
+quarkus.log.socket.enable=true
+quarkus.log.socket.json=true
+quarkus.log.socket.endpoint=localhost:4560
+
+# to have the exception serialized into a single text element
+quarkus.log.socket.json.exception-output-type=formatted
+
+# specify the format of the produced JSON log
+quarkus.log.socket.json.log-format=ECS</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Finally, launch the components that compose the Elastic Stack:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Elasticsearch</p>
+</li>
+<li>
+<p>Logstash</p>
+</li>
+<li>
+<p>Kibana</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>You can do this via the following <code>docker-compose.yml</code> file that you can launch via <code>docker-compose up -d</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-yaml hljs" data-lang="yaml"># Launch Elasticsearch
+version: '3.2'
+
+services:
+  elasticsearch:
+    image: docker.io/elastic/elasticsearch:8.15.0
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      discovery.type: "single-node"
+      cluster.routing.allocation.disk.threshold_enabled: false
+    networks:
+      - elk
+
+  logstash:
+    image: docker.io/elastic/logstash:8.15.0
+    volumes:
+      - source: $HOME/pipelines
+        target: /usr/share/logstash/pipeline
+        type: bind
+    ports:
+      - "12201:12201/udp"
+      - "5000:5000"
+      - "9600:9600"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.io/elastic/kibana:8.15.0
+    ports:
+      - "5601:5601"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+networks:
+  elk:
+    driver: bridge</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Launch your application, you should see your logs arriving inside the Elastic Stack; you can use Kibana available at <a href="http://localhost:5601/" class="bare">http://localhost:5601/</a> to access them.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="send-logs-to-fluentd-with-the-syslog-handler"><a class="anchor" href="#send-logs-to-fluentd-with-the-syslog-handler"></a>Send logs to Fluentd with the Syslog handler</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>You can send your logs to Fluentd using a Syslog input.
+As opposed to the GELF input, the Syslog input will not render multiline logs in one event.</p>
+</div>
+<div class="paragraph">
+<p>First, you need to create a Fluentd image with the Elasticsearch plugin.
+You can use the following Dockerfile that should be created inside a <code>fluentd</code> directory.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM fluent/fluentd:v1.3-debian
+RUN ["gem", "install", "fluent-plugin-elasticsearch", "--version", "3.7.0"]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then, you need to create a Fluentd configuration file inside <code>$HOME/fluentd/fluent.conf</code></p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-none hljs">&lt;source&gt;
+  @type syslog
+  port 5140
+  bind 0.0.0.0
+  message_format rfc5424
+  tag system
+&lt;/source&gt;
+
+&lt;match **&gt;
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  logstash_format true
+&lt;/match&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then, launch the components that compose the EFK Stack:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Elasticsearch</p>
+</li>
+<li>
+<p>Fluentd</p>
+</li>
+<li>
+<p>Kibana</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>You can do this via the following <code>docker-compose.yml</code> file that you can launch via <code>docker-compose up -d</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-yaml hljs" data-lang="yaml">version: '3.2'
+
+services:
+  elasticsearch:
+    image: docker.io/elastic/elasticsearch:8.15.0
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      discovery.type: "single-node"
+      cluster.routing.allocation.disk.threshold_enabled: false
+    networks:
+      - efk
+
+  fluentd:
+    build: fluentd
+    ports:
+      - "5140:5140/udp"
+    volumes:
+      - source: $HOME/fluentd
+        target: /fluentd/etc
+        type: bind
+    networks:
+      - efk
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.io/elastic/kibana:8.15.0
+    ports:
+      - "5601:5601"
+    networks:
+      - efk
+    depends_on:
+      - elasticsearch
+
+networks:
+  efk:
+    driver: bridge</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Finally, configure your application to send logs to EFK using Syslog:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.log.syslog.enable=true
+quarkus.log.syslog.endpoint=localhost:5140
+quarkus.log.syslog.protocol=udp
+quarkus.log.syslog.app-name=quarkus
+quarkus.log.syslog.hostname=quarkus-test</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Launch your application, you should see your logs arriving inside EFK: you can use Kibana available at <a href="http://localhost:5601/" class="bare">http://localhost:5601/</a> to access them.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="send-logs-with-opentelemetry-logging"><a class="anchor" href="#send-logs-with-opentelemetry-logging"></a>Send logs with OpenTelemetry Logging</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>OpenTelemetry Logging is able to send logs to a compatible OpenTelemetry collector. Its usage is described in the guide <a href="opentelemetry-logging">Using OpenTelemetry Logging</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="send-logs-with-the-logging-gelf-extension"><a class="anchor" href="#send-logs-with-the-logging-gelf-extension"></a>Send logs with the <code>logging-gelf</code> extension</h2>
+<div class="sectionbody">
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+This extension is deprecated, we advise considering the alternatives described above in this guide.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <code>quarkus-logging-gelf</code> extension will add a GELF log handler to the underlying logging backend that Quarkus uses (jboss-logmanager).
+By default, it is disabled, if you enable it but still use another handler (by default the console handler is enabled), your logs will be sent to both handlers.</p>
+</div>
+<div class="paragraph">
+<p>You can add the <code>logging-gelf</code> extension to your project by running the following command in your project base directory:</p>
 </div>
 <div class="listingblock primary asciidoc-tabs-sync-cli">
 <div class="title">CLI</div>
@@ -371,31 +684,7 @@ to your project by running the following command in your project base directory:
 </div>
 </div>
 <div class="paragraph">
-<p>For demonstration purposes, we create an endpoint that does nothing but log a sentence. You don&#8217;t need to do this inside your application.</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-
-import org.jboss.logging.Logger;
-
-@Path("/gelf-logging")
-@ApplicationScoped
-public class GelfLoggingResource {
-    private static final Logger LOG = Logger.getLogger(GelfLoggingResource.class);
-
-    @GET
-    public void log() {
-        LOG.info("Some useful log message");
-    }
-
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Configure the GELF log handler to send logs to an external UDP endpoint on the port 12201:</p>
+<p>Configure the GELF log handler to send logs to an external UDP endpoint on port 12201:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -404,11 +693,20 @@ quarkus.log.handler.gelf.host=localhost
 quarkus.log.handler.gelf.port=12201</code></pre>
 </div>
 </div>
+<div class="sect2">
+<h3 id="send-logs-to-graylog"><a class="anchor" href="#send-logs-to-graylog"></a>Send logs to Graylog</h3>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+It is advised to use the Syslog handler instead.
+</td>
+</tr>
+</table>
 </div>
-</div>
-<div class="sect1">
-<h2 id="send-logs-to-graylog"><a class="anchor" href="#send-logs-to-graylog"></a>Send logs to Graylog</h2>
-<div class="sectionbody">
 <div class="paragraph">
 <p>To send logs to Graylog, you first need to launch the components that compose the Graylog stack:</p>
 </div>
@@ -490,10 +788,20 @@ http://localhost:9000/api/system/inputs</code></pre>
 <p>Launch your application, you should see your logs arriving inside Graylog.</p>
 </div>
 </div>
+<div class="sect2">
+<h3 id="send-logs-to-logstash-the-elastic-stack-elk"><a class="anchor" href="#send-logs-to-logstash-the-elastic-stack-elk"></a>Send logs to Logstash / the Elastic Stack (ELK)</h3>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+It is advised to use <a href="opentelemetry-logging">OpenTelemetry Logging</a> or the Socket handler instead.
+</td>
+</tr>
+</table>
 </div>
-<div class="sect1">
-<h2 id="send-logs-to-logstash-the-elastic-stack-elk"><a class="anchor" href="#send-logs-to-logstash-the-elastic-stack-elk"></a>Send logs to Logstash / the Elastic Stack (ELK)</h2>
-<div class="sectionbody">
 <div class="paragraph">
 <p>Logstash comes by default with an Input plugin that can understand the GELF format, we will first create a pipeline that enables this plugin.</p>
 </div>
@@ -585,85 +893,20 @@ networks:
 <p>Launch your application, you should see your logs arriving inside the Elastic Stack; you can use Kibana available at <a href="http://localhost:5601/" class="bare">http://localhost:5601/</a> to access them.</p>
 </div>
 </div>
+<div class="sect2">
+<h3 id="send-logs-to-fluentd-efk"><a class="anchor" href="#send-logs-to-fluentd-efk"></a>Send logs to Fluentd (EFK)</h3>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+It is advised to use <a href="opentelemetry-logging">OpenTelemetry Logging</a> or the Socket handler instead.
+</td>
+</tr>
+</table>
 </div>
-<div class="sect1">
-<h2 id="logstash_ecs"><a class="anchor" href="#logstash_ecs"></a>GELF alternative: Send logs to Logstash in the ECS (Elastic Common Schema) format</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>You can also send your logs to Logstash using a TCP input in the <a href="https://www.elastic.co/guide/en/ecs-logging/overview/current/intro.html">ECS</a> format.
-To achieve this we will use the <code>quarkus-logging-json</code> extension to format the logs in JSON format and the socket handler to send them to Logstash.</p>
-</div>
-<div class="paragraph">
-<p>For this you can use the same <code>docker-compose.yml</code> file as above but with a different Logstash pipeline configuration.</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-none hljs">input {
-  tcp {
-    port =&gt; 4560
-    codec =&gt; json
-  }
-}
-
-filter {
-  if ![span][id] and [mdc][spanId] {
-    mutate { rename =&gt; { "[mdc][spanId]" =&gt; "[span][id]" } }
-  }
-  if ![trace][id] and [mdc][traceId] {
-    mutate { rename =&gt; {"[mdc][traceId]" =&gt; "[trace][id]"} }
-  }
-}
-
-output {
-  stdout {}
-  elasticsearch {
-    hosts =&gt; ["http://elasticsearch:9200"]
-  }
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Then configure your application to log in JSON format instead of GELF</p>
-</div>
-<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
-<div class="title">pom.xml</div>
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
-    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
-    &lt;artifactId&gt;quarkus-logging-json&lt;/artifactId&gt;
-&lt;/dependency&gt;</code></pre>
-</div>
-</div>
-<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
-<div class="title">build.gradle</div>
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-logging-json")</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>and specify the host and port of your Logstash endpoint. To be ECS compliant, specify the log format.</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># to keep the logs in the usual format in the console
-quarkus.log.console.json=false
-
-quarkus.log.socket.enable=true
-quarkus.log.socket.json=true
-quarkus.log.socket.endpoint=localhost:4560
-
-# to have the exception serialized into a single text element
-quarkus.log.socket.json.exception-output-type=formatted
-
-# specify the format of the produced JSON log
-quarkus.log.socket.json.log-format=ECS</code></pre>
-</div>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="send-logs-to-fluentd-efk"><a class="anchor" href="#send-logs-to-fluentd-efk"></a>Send logs to Fluentd (EFK)</h2>
-<div class="sectionbody">
 <div class="paragraph">
 <p>First, you need to create a Fluentd image with the needed plugins: elasticsearch and input-gelf.
 You can use the following Dockerfile that should be created inside a <code>fluentd</code> directory.</p>
@@ -765,128 +1008,8 @@ networks:
 <p>Launch your application, you should see your logs arriving inside EFK: you can use Kibana available at <a href="http://localhost:5601/" class="bare">http://localhost:5601/</a> to access them.</p>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="gelf-alternative-use-syslog"><a class="anchor" href="#gelf-alternative-use-syslog"></a>GELF alternative: use Syslog</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>You can also send your logs to Fluentd using a Syslog input.
-As opposed to the GELF input, the Syslog input will not render multiline logs in one event, that&#8217;s why we advise to use the GELF input that we implement in Quarkus.</p>
-</div>
-<div class="paragraph">
-<p>First, you need to create a Fluentd image with the elasticsearch plugin.
-You can use the following Dockerfile that should be created inside a <code>fluentd</code> directory.</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM fluent/fluentd:v1.3-debian
-RUN ["gem", "install", "fluent-plugin-elasticsearch", "--version", "3.7.0"]</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Then, you need to create a fluentd configuration file inside <code>$HOME/fluentd/fluent.conf</code></p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-none hljs">&lt;source&gt;
-  @type syslog
-  port 5140
-  bind 0.0.0.0
-  message_format rfc5424
-  tag system
-&lt;/source&gt;
-
-&lt;match **&gt;
-  @type elasticsearch
-  host elasticsearch
-  port 9200
-  logstash_format true
-&lt;/match&gt;</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Then, launch the components that compose the EFK Stack:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Elasticsearch</p>
-</li>
-<li>
-<p>Fluentd</p>
-</li>
-<li>
-<p>Kibana</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>You can do this via the following <code>docker-compose.yml</code> file that you can launch via <code>docker-compose up -d</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-yaml hljs" data-lang="yaml">version: '3.2'
-
-services:
-  elasticsearch:
-    image: docker.io/elastic/elasticsearch:8.15.0
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    environment:
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-      discovery.type: "single-node"
-      cluster.routing.allocation.disk.threshold_enabled: false
-    networks:
-      - efk
-
-  fluentd:
-    build: fluentd
-    ports:
-      - "5140:5140/udp"
-    volumes:
-      - source: $HOME/fluentd
-        target: /fluentd/etc
-        type: bind
-    networks:
-      - efk
-    depends_on:
-      - elasticsearch
-
-  kibana:
-    image: docker.io/elastic/kibana:8.15.0
-    ports:
-      - "5601:5601"
-    networks:
-      - efk
-    depends_on:
-      - elasticsearch
-
-networks:
-  efk:
-    driver: bridge</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Finally, configure your application to send logs to EFK using Syslog:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.log.syslog.enable=true
-quarkus.log.syslog.endpoint=localhost:5140
-quarkus.log.syslog.protocol=udp
-quarkus.log.syslog.app-name=quarkus
-quarkus.log.syslog.hostname=quarkus-test</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Launch your application, you should see your logs arriving inside EFK: you can use Kibana available at <a href="http://localhost:5601/" class="bare">http://localhost:5601/</a> to access them.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="elasticsearch-indexing-consideration"><a class="anchor" href="#elasticsearch-indexing-consideration"></a>Elasticsearch indexing consideration</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="elasticsearch-indexing-consideration"><a class="anchor" href="#elasticsearch-indexing-consideration"></a>Elasticsearch indexing consideration</h3>
 <div class="paragraph">
 <p>Be careful that, by default, Elasticsearch will automatically map unknown fields (if not disabled in the index settings) by detecting their type.
 This can become tricky if you use log parameters (which are included by default), or if you enable MDC inclusion (disabled by default),
@@ -914,10 +1037,8 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>See the following documentation for Graylog (but the same issue exists for the other central logging stacks): <a href="https://docs.graylog.org/en/3.2/pages/configuration/elasticsearch.html#custom-index-mappings">Custom Index Mappings</a>.</p>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>Configuration Reference</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>Configuration Reference</h3>
 <div class="paragraph">
 <p>Configuration is done through the usual <code>application.properties</code> file.</p>
 </div>
@@ -947,7 +1068,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Determine whether to enable the GELF logging handler</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4273">QUARKUS_LOG_HANDLER_GELF_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4273" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4196">QUARKUS_LOG_HANDLER_GELF_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4196" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -968,7 +1089,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Hostname/IP-Address of the Logstash/Graylog Host By default it uses UDP, prepend tcp: to the hostname to switch to TCP, example: "tcp:localhost"</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4274">QUARKUS_LOG_HANDLER_GELF_HOST</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4274" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4197">QUARKUS_LOG_HANDLER_GELF_HOST</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4197" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -989,7 +1110,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>The port</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4275">QUARKUS_LOG_HANDLER_GELF_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4275" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4198">QUARKUS_LOG_HANDLER_GELF_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4198" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1010,7 +1131,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>GELF version: 1.0 or 1.1</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4276">QUARKUS_LOG_HANDLER_GELF_VERSION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4276" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4199">QUARKUS_LOG_HANDLER_GELF_VERSION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4199" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1031,7 +1152,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Whether to post Stack-Trace to StackTrace field.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4277">QUARKUS_LOG_HANDLER_GELF_EXTRACT_STACK_TRACE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4277" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4200">QUARKUS_LOG_HANDLER_GELF_EXTRACT_STACK_TRACE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4200" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1052,7 +1173,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Only used when <code>extractStackTrace</code> is <code>true</code>. A value of 0 will extract the whole stack trace. Any positive value will walk the cause chain: 1 corresponds with exception.getCause(), 2 with exception.getCause().getCause(), &#8230;&#8203; Negative throwable reference walk the exception chain from the root cause side: -1 will extract the root cause, -2 the exception wrapping the root cause, &#8230;&#8203;</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4278">QUARKUS_LOG_HANDLER_GELF_STACK_TRACE_THROWABLE_REFERENCE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4278" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4201">QUARKUS_LOG_HANDLER_GELF_STACK_TRACE_THROWABLE_REFERENCE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4201" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1073,7 +1194,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Whether to perform Stack-Trace filtering</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4279">QUARKUS_LOG_HANDLER_GELF_FILTER_STACK_TRACE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4279" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4202">QUARKUS_LOG_HANDLER_GELF_FILTER_STACK_TRACE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4202" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1094,7 +1215,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Java date pattern, see <code>java.text.SimpleDateFormat</code></p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4280">QUARKUS_LOG_HANDLER_GELF_TIMESTAMP_PATTERN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4280" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4203">QUARKUS_LOG_HANDLER_GELF_TIMESTAMP_PATTERN</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4203" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1115,7 +1236,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>The logging-gelf log level.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4281">QUARKUS_LOG_HANDLER_GELF_LEVEL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4281" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4204">QUARKUS_LOG_HANDLER_GELF_LEVEL</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4204" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1136,7 +1257,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Name of the facility.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4282">QUARKUS_LOG_HANDLER_GELF_FACILITY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4282" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4205">QUARKUS_LOG_HANDLER_GELF_FACILITY</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4205" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1162,7 +1283,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Additional field value.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4283">QUARKUS_LOG_HANDLER_GELF_ADDITIONAL_FIELD__FIELD_NAME__VALUE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4283" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4206">QUARKUS_LOG_HANDLER_GELF_ADDITIONAL_FIELD__FIELD_NAME__VALUE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4206" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1183,7 +1304,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Additional field type specification. Supported types: String, long, Long, double, Double and discover. Discover is the default if not specified, it discovers field type based on parseability.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4284">QUARKUS_LOG_HANDLER_GELF_ADDITIONAL_FIELD__FIELD_NAME__TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4284" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4207">QUARKUS_LOG_HANDLER_GELF_ADDITIONAL_FIELD__FIELD_NAME__TYPE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4207" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1204,7 +1325,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Whether to include all fields from the MDC.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4285">QUARKUS_LOG_HANDLER_GELF_INCLUDE_FULL_MDC</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4285" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4208">QUARKUS_LOG_HANDLER_GELF_INCLUDE_FULL_MDC</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4208" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1225,7 +1346,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Send additional fields whose values are obtained from MDC. Name of the Fields are comma-separated. Example: mdcFields=Application,Version,SomeOtherFieldName</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4286">QUARKUS_LOG_HANDLER_GELF_MDC_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4286" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4209">QUARKUS_LOG_HANDLER_GELF_MDC_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4209" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1246,7 +1367,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Dynamic MDC Fields allows you to extract MDC values based on one or more regular expressions. Multiple regexes are comma-separated. The name of the MDC entry is used as GELF field name.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4287">QUARKUS_LOG_HANDLER_GELF_DYNAMIC_MDC_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4287" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4210">QUARKUS_LOG_HANDLER_GELF_DYNAMIC_MDC_FIELDS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4210" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1267,7 +1388,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Pattern-based type specification for additional and MDC fields. Key-value pairs are comma-separated. Example: my_field.*=String,business\..*\.field=double</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4288">QUARKUS_LOG_HANDLER_GELF_DYNAMIC_MDC_FIELD_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4288" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4211">QUARKUS_LOG_HANDLER_GELF_DYNAMIC_MDC_FIELD_TYPES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4211" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1288,7 +1409,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Maximum message size (in bytes). If the message size is exceeded, the appender will submit the message in multiple chunks.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4289">QUARKUS_LOG_HANDLER_GELF_MAXIMUM_MESSAGE_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4289" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4212">QUARKUS_LOG_HANDLER_GELF_MAXIMUM_MESSAGE_SIZE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4212" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1309,7 +1430,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Include message parameters from the log event</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4290">QUARKUS_LOG_HANDLER_GELF_INCLUDE_LOG_MESSAGE_PARAMETERS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4290" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4213">QUARKUS_LOG_HANDLER_GELF_INCLUDE_LOG_MESSAGE_PARAMETERS</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4213" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1330,7 +1451,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Include source code location</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4291">QUARKUS_LOG_HANDLER_GELF_INCLUDE_LOCATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4291" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4214">QUARKUS_LOG_HANDLER_GELF_INCLUDE_LOCATION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4214" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1351,7 +1472,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Origin hostname</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4292">QUARKUS_LOG_HANDLER_GELF_ORIGIN_HOST</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4292" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4215">QUARKUS_LOG_HANDLER_GELF_ORIGIN_HOST</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4215" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1372,7 +1493,7 @@ or you can configure your Elasticsearch index to store those fields as text or k
 <p>Bypass hostname resolution. If you didn&#8217;t set the <code>originHost</code> property, and resolution is disabled, the value “unknown” will be used as hostname</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4293">QUARKUS_LOG_HANDLER_GELF_SKIP_HOSTNAME_RESOLUTION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4293" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-4216">QUARKUS_LOG_HANDLER_GELF_SKIP_HOSTNAME_RESOLUTION</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4216" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -1386,7 +1507,8 @@ or you can configure your Elasticsearch index to store those fields as text or k
 </table>
 <div class="paragraph">
 <p>This extension uses the <code>logstash-gelf</code> library that allow more configuration options via system properties,
-you can access its documentation here: <a href="https://logging.paluch.biz/" class="bare">https://logging.paluch.biz/</a> .</p>
+you can access its documentation here: <a href="https://logging.paluch.biz/" class="bare">https://logging.paluch.biz/</a>.</p>
+</div>
 </div>
 </div>
 </div>
@@ -1395,24 +1517,55 @@ you can access its documentation here: <a href="https://logging.paluch.biz/" cla
       <div class="hide-mobile toc"><ul class="sectlevel1">
 <li><a href="#prerequisites">Prerequisites</a></li>
 <li><a href="#example-application">Example application</a></li>
+<li><a href="#send-logs-to-the-elastic-stack-elk-in-the-ecs-elastic-common-schema-format-with-the-socket-handler">Send logs to the Elastic Stack (ELK) in the ECS (Elastic Common Schema) format with the Socket handler</a></li>
+<li><a href="#send-logs-to-fluentd-with-the-syslog-handler">Send logs to Fluentd with the Syslog handler</a></li>
+<li><a href="#send-logs-with-opentelemetry-logging">Send logs with OpenTelemetry Logging</a></li>
+<li><a href="#send-logs-with-the-logging-gelf-extension">Send logs with the <code>logging-gelf</code> extension</a>
+<ul class="sectlevel2">
 <li><a href="#send-logs-to-graylog">Send logs to Graylog</a></li>
 <li><a href="#send-logs-to-logstash-the-elastic-stack-elk">Send logs to Logstash / the Elastic Stack (ELK)</a></li>
-<li><a href="#logstash_ecs">GELF alternative: Send logs to Logstash in the ECS (Elastic Common Schema) format</a></li>
 <li><a href="#send-logs-to-fluentd-efk">Send logs to Fluentd (EFK)</a></li>
-<li><a href="#gelf-alternative-use-syslog">GELF alternative: use Syslog</a></li>
 <li><a href="#elasticsearch-indexing-consideration">Elasticsearch indexing consideration</a></li>
 <li><a href="#configuration-reference">Configuration Reference</a></li>
+</ul>
+</li>
 </ul></div>
     </div>
   </div>
   <h2>Related content</h2>
   <div class="grid-wrapper relations">
     <div class="grid__item width-6-12 width-12-12-m">
+      <h3>On the same extensions</h3>
+      <ul class="related-content">
+      
+        
+        <li class="tutorial"><a href="/guides/telemetry-opentracing-to-otel-tutorial">Migrate from OpenTracing to OpenTelemetry tracing</a></li>
+      
+        
+        <li class="reference"><a href="/guides/observability">Observability in Quarkus</a></li>
+      
+        
+        <li class="reference"><a href="/guides/opentelemetry">Using OpenTelemetry</a></li>
+      
+        
+        <li class="guide"><a href="/guides/opentelemetry-logging">Using OpenTelemetry Logging</a></li>
+      
+        
+        <li class="guide"><a href="/guides/opentelemetry-metrics">Using OpenTelemetry Metrics</a></li>
+      
+        
+        <li class="guide"><a href="/guides/opentelemetry-tracing">Using OpenTelemetry Tracing</a></li>
+      </ul>
+    </div>
+    <div class="grid__item width-6-12 width-12-12-m">
       <h3>On the same topics</h3>
       <ul class="related-content">
       
         
         <li class="reference"><a href="/guides/logging">Logging configuration</a></li>
+      
+        
+        <li class="reference"><a href="/guides/observability">Observability in Quarkus</a></li>
       
         
         <li class="guide"><a href="/guides/opentelemetry-logging">Using OpenTelemetry Logging</a></li>
@@ -1424,6 +1577,9 @@ you can access its documentation here: <a href="https://logging.paluch.biz/" cla
         <li class="reference"><a href="/guides/management-interface-reference">Management interface reference</a></li>
       
         
+        <li class="reference"><a href="/guides/telemetry-micrometer-to-opentelemetry">Micrometer and OpenTelemetry extension</a></li>
+      
+        
         <li class="reference"><a href="/guides/telemetry-micrometer">Micrometer Metrics</a></li>
       
         
@@ -1431,6 +1587,9 @@ you can access its documentation here: <a href="https://logging.paluch.biz/" cla
       
         
         <li class="guide"><a href="/guides/observability-devservices">Observability Dev Services</a></li>
+      
+        
+        <li class="guide"><a href="/guides/observability-devservices-lgtm">Observability Dev Services with Grafana OTel LGTM</a></li>
       
         
         <li class="guide"><a href="/guides/smallrye-health">SmallRye Health</a></li>
