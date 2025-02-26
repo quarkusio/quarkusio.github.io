@@ -185,8 +185,12 @@ public class MyWebSocket {
 
 ==== Request context
 
-If an endpoint is annotated with `@RequestScoped`, or with a security annotation (such as `@RolesAllowed`), or depends directly or indirectly on a `@RequestScoped` bean, or on a bean annotated with a security annotation, then each WebSocket endpoint callback method execution is associated with a new _request context_.
-The request context is active during endpoint callback invocation.
+Each WebSocket endpoint callback method execution is associated with a new CDI _request context_ if the endpoint is:
+
+* Annotated with the `@RequestScoped` annotation.
+* Has a method annotated with a security annotation such as `@RolesAllowed`.
+* Depends directly or indirectly on a `@RequestScoped` bean.
+* Depends directly or indirectly on a CDI beans secured with a standard security annotation.
 
 TIP: It is also possible to set the `quarkus.websockets-next.server.activate-request-context` config property to `always`. In this case, the request context is always activated when an endpoint callback is invoked.
 
@@ -783,60 +787,19 @@ class MyBean {
 [[websocket-next-security]]
 === Security
 
-WebSocket endpoint callback methods can be secured with security annotations such as `io.quarkus.security.Authenticated`,
-`jakarta.annotation.security.RolesAllowed` and other annotations listed in the xref:security-authorize-web-endpoints-reference.adoc#standard-security-annotations[Supported security annotations] documentation.
+Security capabilities are provided by the Quarkus Security extension.
+Any xref:security-identity-providers.adoc[Identity provider] can be used to convert authentication credentials on the initial HTTP request into a `SecurityIdentity` instance.
+The `SecurityIdentity` is then associated with the websocket connection.
+Authorization options are demonstrated in following sections.
 
-For example:
+NOTE: When an OpenID Connect extension, `quarkus-oidc`, is used and token expires, Quarkus automatically closes connection.
 
-[source, java]
-----
-package io.quarkus.websockets.next.test.security;
+[[secure-http-upgrade]]
+==== Secure HTTP upgrade
 
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-
-import io.quarkus.security.ForbiddenException;
-import io.quarkus.security.identity.SecurityIdentity;
-import io.quarkus.websockets.next.OnError;
-import io.quarkus.websockets.next.OnOpen;
-import io.quarkus.websockets.next.OnTextMessage;
-import io.quarkus.websockets.next.WebSocket;
-
-@WebSocket(path = "/end")
-public class Endpoint {
-
-    @Inject
-    SecurityIdentity currentIdentity;
-
-    @OnOpen
-    String open() {
-        return "ready";
-    }
-
-    @RolesAllowed("admin")
-    @OnTextMessage
-    String echo(String message) { <1>
-        return message;
-    }
-
-    @OnError
-    String error(ForbiddenException t) { <2>
-        return "forbidden:" + currentIdentity.getPrincipal().getName();
-    }
-}
-----
-<1> The echo callback method can only be invoked if the current security identity has an `admin` role.
-<2> The error handler is invoked in case of the authorization failure.
-
-`SecurityIdentity` is initially created during a secure HTTP upgrade and associated with the websocket connection.
-
-NOTE: When OpenID Connect extension is used and token expires, Quarkus automatically closes connection.
-
-=== Secure HTTP upgrade
-
-An HTTP upgrade is secured when standard security annotation is placed on an endpoint class or an HTTP Security policy is defined.
+An HTTP upgrade is secured when a standard security annotation is placed on an endpoint class or an HTTP Security policy is defined.
 The advantage of securing HTTP upgrade is less processing, the authorization is performed early and only once.
-You should always prefer HTTP upgrade security unless, like in th example above, you need to perform action on error.
+You should always prefer HTTP upgrade security unless you need to perform an action on error (see <<secure-callback-methods>>) or a security check based on the payload (see <<secure-endpoints-with-permission-checkers>>).
 
 .Use standard security annotation to secure an HTTP upgrade
 [source, java]
@@ -882,6 +845,200 @@ You must always verify that your endpoint is secured as intended.
 quarkus.http.auth.permission.http-upgrade.paths=/end
 quarkus.http.auth.permission.http-upgrade.policy=authenticated
 ----
+
+[[secure-callback-methods]]
+==== Secure WebSocket endpoint callback methods
+
+WebSocket endpoint callback methods can be secured with security annotations such as `io.quarkus.security.Authenticated`,
+`jakarta.annotation.security.RolesAllowed` and other annotations listed in the xref:security-authorize-web-endpoints-reference.adoc#standard-security-annotations[Supported security annotations] documentation.
+
+For example:
+
+[source, java]
+----
+package io.quarkus.websockets.next.test.security;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+
+import io.quarkus.security.ForbiddenException;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.websockets.next.OnError;
+import io.quarkus.websockets.next.OnOpen;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+
+@WebSocket(path = "/end")
+public class Endpoint {
+
+    @Inject
+    SecurityIdentity currentIdentity;
+
+    @OnOpen
+    String open() {
+        return "ready";
+    }
+
+    @RolesAllowed("admin")
+    @OnTextMessage
+    String echo(String message) { <1>
+        return message;
+    }
+
+    @OnError
+    String error(ForbiddenException t) { <2>
+        return "forbidden:" + currentIdentity.getPrincipal().getName();
+    }
+}
+----
+<1> The echo callback method can only be invoked if the current security identity has an `admin` role.
+<2> The error handler is invoked in case of the authorization failure.
+
+[[secure-endpoints-with-permission-checkers]]
+==== Secure server endpoints with permission checkers
+
+WebSocket endpoints can be secured with the xref:security-authorize-web-endpoints-reference.adoc#permission-checker[permission checkers].
+We recommend to <<secure-http-upgrade>> rather than individual endpoint methods. For example:
+
+.Example of a WebSocket endpoint with secured HTTP upgrade
+[source, java]
+----
+package io.quarkus.websockets.next.test.security;
+
+import io.quarkus.security.PermissionsAllowed;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+
+@PermissionsAllowed("product:premium")
+@WebSocket(path = "/product/premium")
+public class PremiumProductEndpoint {
+
+    @OnTextMessage
+    PremiumProduct getPremiumProduct(int productId) {
+        return new PremiumProduct(productId);
+    }
+
+}
+----
+
+.Example of a permission checker authorizing the HTTP upgrade
+[source, java]
+----
+package io.quarkus.websockets.next.test.security;
+
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.security.PermissionChecker;
+import io.quarkus.vertx.http.runtime.security.HttpSecurityUtils;
+import io.vertx.ext.web.RoutingContext;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class PermissionChecker {
+
+    @PermissionChecker("product:premium")
+    public boolean canGetPremiumProduct(SecurityIdentity securityIdentity) { <1>
+        String username = currentIdentity.getPrincipal().getName();
+
+        RoutingContext routingContext = HttpSecurityUtils.getRoutingContextAttribute(securityIdentity);
+        String initialHttpUpgradePath = routingContext == null ? null : routingContext.normalizedPath();
+        if (!isUserAllowedToAccessPath(initialHttpUpgradePath, username)) {
+            return false;
+        }
+
+        return isPremiumCustomer(username);
+    }
+
+}
+----
+<1> A permission checker authorizing an HTTP upgrade must declare exactly one method parameter, the `SecurityIdentity`.
+
+It is also possible to run security checks on every message. For example, a message payload can be accessed like this:
+
+[source, java]
+----
+package io.quarkus.websockets.next.test.security;
+
+import io.quarkus.security.PermissionChecker;
+import io.quarkus.security.PermissionsAllowed;
+import jakarta.inject.Inject;
+
+import io.quarkus.security.ForbiddenException;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.websockets.next.OnError;
+import io.quarkus.websockets.next.OnOpen;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+
+@WebSocket(path = "/product")
+public class ProductEndpoint {
+
+    private record Product(int id, String name) {}
+
+    @Inject
+    SecurityIdentity currentIdentity;
+
+    @PermissionsAllowed("product:get")
+    @OnTextMessage
+    Product getProduct(int productId) { <1>
+        return new Product(productId, "Product " + productId);
+    }
+
+    @OnError
+    String error(ForbiddenException t) { <2>
+        return "forbidden:" + currentIdentity.getPrincipal().getName();
+    }
+
+    @PermissionChecker("product:get")
+    boolean canGetProduct(int productId) {
+        String username = currentIdentity.getPrincipal().getName();
+        return currentIdentity.hasRole("admin") || canUserGetProduct(productId, username);
+    }
+}
+----
+<1> The `getProduct` callback method can only be invoked if the current security identity has an `admin` role or the user is allowed to get the product detail.
+<2> The error handler is invoked in case of the authorization failure.
+
+==== Bearer token authentication
+
+The xref:security-oidc-bearer-token-authentication.adoc[OIDC Bearer token authentication] expects that the bearer token is passed in the `Authorization` header during the initial HTTP handshake.
+Java WebSocket clients such as <<client-api, WebSockets Next Client>> and https://vertx.io/docs/vertx-core/java/#_websockets_on_the_client[Vert.x WebSocketClient] support adding custom headers to the WebSocket opening handshake.
+However, JavaScript clients that follow the https://websockets.spec.whatwg.org/#the-websocket-interface[WebSockets API] do not support adding custom headers.
+Therefore, passing a bearer access token using a custom `Authorization` header is impossible with JavaScript-based WebSocket clients.
+The JavaScript WebSocket client only allows to configure the HTTP https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-WebSocket-Protocol[Sec-WebSocket-Protocol] request header for negotiating a sub-protocol.
+If absolutely necessary, the `Sec-WebSocket-Protocol` header might be used as a carrier for custom headers, to provide a workaround the https://websockets.spec.whatwg.org/#the-websocket-interface[WebSockets API] restrictions.
+Here is an example of a JavaScript client propagating the `Authorization` header as a sub-protocol value:
+
+[source,javascript]
+----
+const token = getBearerToken()
+const quarkusHeaderProtocol = encodeURIComponent("quarkus-http-upgrade#Authorization#Bearer " + token) <1>
+const socket = new WebSocket("wss://" + location.host + "/chat/" + username, ["bearer-token-carrier", quarkusHeaderProtocol]) <2>
+----
+<1> Expected format for the Quarkus Header sub-protocol is `quarkus-http-upgrade#header-name#header-value`.
+Do not forget to encode the sub-protocol value as a URI component to avoid encoding issues.
+<2> Indicate 2 sub-protocols supported by the client, the sub-protocol of your choice and the Quarkus HTTP upgrade sub-protocol.
+
+For the WebSocket server to accept the `Authorization` passed as a sub-protocol, we must:
+
+* Configure our WebSocket server with the supported sub-protocols. When the WebSocket client provides a lists of supported sub-protocols in the HTTP `Sec-WebSocket-Protocol` request header, the WebSocket server must agree to serve content with one of them.
+* Enable Quarkus HTTP upgrade sub-protocol mapping to the opening WebSocket handshake request headers.
+
+[source, properties]
+----
+quarkus.websockets-next.server.supported-subprotocols=bearer-token-carrier
+quarkus.websockets-next.server.propagate-subprotocol-headers=true
+----
+
+[WARNING]
+====
+WebSocket security model is origin-based and is not designed for the client-side authentication with headers or cookies.
+For example, web browsers do not enforce the Same-origin policy for the opening WebSocket handshake request.
+When you plan to use bearer access tokens during the opening WebSocket handshake request, we strongly recommend to follow the additional security measures listed below to minimize the security risks:
+
+* Restrict supported Origins to trusted Origins only with the xref:security-cors.adoc#cors-filter[CORS filter].
+* Use the `wss` protocol to enforce encrypted HTTP connection via TLS.
+* Use a custom WebSocket ticket system which supplies a random token with the HTML page which hosts the JavaScript WebSockets client which must provide this token during the initial handshake request as a query parameter.
+====
 
 === Inspect and/or reject HTTP upgrade
 
