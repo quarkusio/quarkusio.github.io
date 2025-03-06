@@ -1,0 +1,122 @@
+---
+layout: post
+title: 'Running SQLite in Pure Java with Quarkus'
+date: 2025-03-11T00:00:00Z
+tags: sqlite java wasm webassembly
+synopsis: 'Running SQLite in Pure Java with Quarkus'
+author: andreatp
+---
+:imagesdir: /assets/images/posts/sqlite
+
+What if you could run a C-based database in pure Java, with zero configuration, and even compile it to a native image effortlessly? With the new Quarkiverse extension https://github.com/quarkiverse/quarkus-jdbc-sqlite4j[quarkus-jdbc-sqlite4j], you can do exactly that.
+
+Traditionally, embedded databases in Java require reimplementing their C counterparts, often leading to differences in behavior, missing optimizations, and delayed bug fixes. However, https://github.com/roastedroot/sqlite4j[sqlite4j] provides a JDBC driver that leverages the original SQLite C implementation while running safely inside a sandbox.
+
+== Hands-on Example
+
+To see https://github.com/quarkiverse/quarkus-jdbc-sqlite4j[quarkus-jdbc-sqlite4j] in action, you can start with any existing Quarkus application or one of the https://github.com/quarkusio/quarkus-quickstarts[quickstarts]. If you prefer a ready-made example, check out https://github.com/andreaTP/demo-hibernate-orm-quickstart-wasm[this demo repository], which integrates SQLite within a Quarkus application using Hibernate ORM.
+
+By simply changing the JDBC driver dependency, you can embed a fully functional SQLite database inside your application while retaining all the benefits of the native SQLite implementation.
+
+To get started, add the extension dependency to your _pom.xml_:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.jdbc</groupId>
+    <artifactId>quarkus-jdbc-sqlite4j</artifactId>
+</dependency>
+----
+
+Then, configure your Quarkus application to use SQLite with standard JDBC settings:
+
+[source,properties]
+----
+quarkus.datasource.db-kind=sqlite
+quarkus.datasource.jdbc.url=jdbc:sqlite:sample.db
+quarkus.datasource.jdbc.min-size=1
+----
+
+You can now use your datasource as you normally would with Hibernate and Panache.
+Note that we keep a minimum connection pool size > 0 to avoid redundant copies from disk to memory of the database.
+
+== Running in a Secure Sandbox
+
+Under the hood, SQLite runs in a fully in-memory sandboxed environment, ensuring security and isolation. 
+
+image::vfs.png[width=80%, align="center", alt="Virtual FileSystem Usage"]
+
+When a connection to a local file is opened, the following occurs:
+
+. The database file is copied from disk to an in-memory Virtual FileSystem.
+. A connection is established to the in-memory database.
+
+While this approach is highly secure, many users need to persist database changes. One recommended solution is to periodically back up the in-memory database to disk. This can be achieved through a scheduled job that:
+
+. Backs up the in-memory database to a new file.
+. Copies the backup to the host file system.
+. Atomically replaces the old database file with the new backup.
+
+This setup ensures a seamless experience while maintaining SQLite's sandboxed security. You can adapt this approach to fit your specific needs.
+
+Here's a sample implementation:
+
+[source,java]
+----
+@ApplicationScoped
+public class SQLiteBackup {
+    @ConfigProperty(name = "quarkus.datasource.jdbc.url")
+    String jdbcUrl;
+
+    @Inject
+    AgroalDataSource dataSource;
+
+    // Execute a backup every 10 seconds
+    @Scheduled(delay=10, delayUnit=TimeUnit.SECONDS, every="10s")
+    void scheduled() { backup(); }
+
+    // Execute a backup during shutdown
+    public void onShutdown(@Observes ShutdownEvent event) { backup(); }
+
+    void backup() {
+        String dbFile = jdbcUrl.substring("jdbc:sqlite:".length());
+
+        var originalDbFilePath = Paths.get(dbFile);
+        var backupDbFilePath = originalDbFilePath
+                                    .toAbsolutePath()
+                                    .getParent()
+                                    .resolve(originalDbFilePath.getFileName() + "_backup");
+
+        try (var conn = dataSource.getConnection();
+                var stmt = conn.createStatement()) {
+            // Execute the backup
+            stmt.executeUpdate("backup to " + backupDbFilePath);
+            // Atomically replace the DB file with its backup
+            Files.move(backupDbFilePath, originalDbFilePath,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException | SQLException e) {
+            throw new RuntimeException("Failed to back up the database", e);
+        }
+    }
+}
+----
+
+== Technical Deep Dive
+
+https://github.com/roastedroot/sqlite4j[sqlite4j] compiles the official SQLite C https://www.sqlite.org/amalgamation.html[amalgamation] to WebAssembly (Wasm), which is then translated into Java bytecode using the https://chicory.dev/docs/experimental/aot[Chicory AOT compiler].
+This enables SQLite to run in a pure Java environment while maintaining its full functionality.
+
+image::sqlite-compilation.png[width=80%, align="center", alt="SQLite compilation"]
+
+== Security and Isolation
+
+One of the key benefits of this approach is security.
+Running SQLite inside a Wasm sandbox ensures memory safety and isolates it from the host system, making it an excellent choice for applications that require embedded databases while avoiding the risks of native code execution.
+
+== Conclusion
+
+With the new https://github.com/quarkiverse/quarkus-jdbc-sqlite4j[quarkus-jdbc-sqlite4j] extension, you get the best of both worlds: the power and reliability of SQLite combined with the safety and portability of Java.
+This extension seamlessly integrates SQLite into Quarkus applications while maintaining a lightweight and secure architecture. Best of all, everything compiles effortlessly with __native-image__.
+
+Ready to try it out? Give https://github.com/quarkiverse/quarkus-jdbc-sqlite4j[quarkus-jdbc-sqlite4j] a spin in your projects and experience the benefits of running SQLite in pure Java with Quarkus!
