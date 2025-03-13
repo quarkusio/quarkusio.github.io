@@ -3864,6 +3864,10 @@ are assumed to point to a database of the same vendor (same <code>db-kind</code>
 <div class="paragraph">
 <p>Mismatches will not be detected, and may result in unpredictable behavior.</p>
 </div>
+<div class="paragraph">
+<p>The list of datasources is defined at build time, so with this approach the <strong>list</strong> of tenants is <strong>fixed at build time</strong>.
+If the list of tenants needs to change at runtime, you must <a href="#programmatically-resolving-tenants-connections">resolve the tenant connections programmatically</a>.</p>
+</div>
 </td>
 </tr>
 </table>
@@ -4010,6 +4014,71 @@ Creating an application-scoped bean that implements this interface
 and annotating it with <code>@PersistenceUnitExtension</code> (or <code>@PersistenceUnitExtension("nameOfYourPU")</code> for a <a href="#multiple-persistence-units">named persistence unit</a>)
 will replace the current Quarkus default implementation <code>io.quarkus.hibernate.orm.runtime.tenant.DataSourceTenantConnectionResolver</code>.
 Your custom connection resolver would allow for example to read tenant information from a database and create a connection per tenant at runtime based on it.</p>
+</div>
+<div class="admonitionblock caution">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-caution" title="Caution"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><a href="#automatic-integration">Automatic integrations</a> will <strong>not</strong> work with programmatically-created <code>ConnectionProvider</code>.
+This implies all these integrations, including those from other Quarkus modules (e.g. <a href="smallrye-health">SmallRye Health</a>) must be done manually.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Here is an implementation example of a <code>TenantConnectionResolver</code> implementation using standard Quarkus technologies – Agroal for pooling and Narayana for transactions:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+@PersistenceUnitExtension
+public class ExampleTenantConnectionResolver implements TenantConnectionResolver {
+
+    private final jakarta.transaction.TransactionManager transactionManager;
+    private final TransactionSynchronizationRegistry transactionSynchronizationRegistry;
+
+    public ExampleTenantConnectionResolver(
+            TransactionManager transactionManager,
+            TransactionSynchronizationRegistry transactionSynchronizationRegistry) {
+        this.transactionManager = transactionManager;
+        this.transactionSynchronizationRegistry = transactionSynchronizationRegistry;
+    }
+
+    @Override
+    public ConnectionProvider resolve(String tenantId) {
+        // Use your own ConnectionProvider implementation here
+        return new YourOwnCustomConnectionProviderImpl(createDatasource(tenantId));
+    }
+
+    private AgroalDataSource createDatasource(String tenantId) {
+        try {
+            final var txIntegration = new NarayanaTransactionIntegration(
+                    transactionManager, transactionSynchronizationRegistry, null, false, null);
+            // Fetch JDBC URL, username, password &amp; other values from a per-tenant dynamic source
+            final var dataSourceConfig = new AgroalDataSourceConfigurationSupplier()
+                    .connectionPoolConfiguration(pc -&gt; pc.initialSize(2)
+                            .maxSize(10)
+                            .minSize(2)
+                            .maxLifetime(Duration.of(5, ChronoUnit.MINUTES))
+                            .acquisitionTimeout(Duration.of(30, ChronoUnit.SECONDS))
+                            .transactionIntegration(txIntegration)
+                            .connectionFactoryConfiguration(
+                                    cf -&gt; cf.jdbcUrl("jdbc:postgresql://postgres:5432/" + tenantId)
+                                            .credential(new NamePrincipal(username))
+                                            .credential(new SimplePassword(password))));
+            return AgroalDataSource.from(dataSourceConfig.get());
+        } catch (SQLException ex) {
+            throw new IllegalStateException(
+                    "Failed to create a new data source based on the existing datasource configuration", ex);
+        }
+    }
+}</code></pre>
+</div>
 </div>
 </div>
 </div>
