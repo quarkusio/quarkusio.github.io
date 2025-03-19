@@ -1,0 +1,77 @@
+---
+layout: post
+title: 'Sender-constraining access tokens with Quarkus OIDC'
+date: 2025-03-19
+tags: oidc dpop mtls
+synopsis: 'Explain how MTLS Binding and Demonstrating Proof-Of-Possession can be used to prove ownership of access tokens'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/sender-constraining-tokens
+
+== Introduction
+
+Single-page application (SPA) runs in the browser and uses https://quarkus.io/guides/security-oidc-code-flow-authentication#overview-of-the-oidc-authorization-code-flow-mechanism[OIDC authorization code flow] to log-in users, without depending on Quarkus OIDC. When the authentication is complete, SPA sends the access token to access Quarkus on behalf of the authenticated user.
+
+Have a look at the simple diagram showing how this process works, copied to this post from the https://quarkus.io/guides/security-oidc-bearer-token-authentication[OIDC Bearer token guide]:
+
+image::security-bearer-token-spa.png[SPA and Quarkus Service,align="center"]
+
+As illustrated in the picture above, the OIDC provider authenticates the current user, SPA receives ID and access tokens and uses the access token to access the Quarkus endpoint.
+
+The security challenge that the OAuth2 experts have been trying to address is how to prove that the client such as SPA which is sending the token actually owns this token ? There is nothing in the HTTP `Authorization: Bearer <token>` header that proves that SPA did not leak the token.
+
+Two specifications for sender-constraining access tokens have emerged over the years, https://datatracker.ietf.org/doc/html/rfc8705[RFC 8705: Mutual TLS Client Authentication and Certificate-Bound Access Tokens] and https://datatracker.ietf.org/doc/html/rfc9449[RFC 9449: OAuth 2.0 Demonstrating Proof-of-Possession (DPoP)].
+
+== Mutual TLS Client Authentication and Certificate-Bound Access Tokens
+
+https://datatracker.ietf.org/doc/html/rfc8705[Mutual TLS Client Authentication and Certificate-Bound Access Tokens] specification describes how access tokens can be cryptographically bound to the MTLS client certificate.
+
+By proving that the access token is bound to the client certificate, the Quarkus application can get a high degree of confidence that the current access token is constrained to, owned by the client which authenticated to Quarkus over MTLS.
+
+image::oidc-mtls-binding.png[OIDC DPoP,align="center"]
+
+Implementing the cryptographic binding is not complex in this case. The current access token is expected to contain a confirmation with the SHA-256 certificate thumbprint and it must match the thumbprint of the current MTLS client certificate. If the token is in JWT format, then it must include a confirmation claim. If the token is binary then the confirmation must be included in the remote token introspection response. 
+
+Such a binding can only be successful if the OpenId Connect provider has access to the same client certificate which is used during the MTLS authentication to Quarkus.
+
+The downside of using the MTLS token binding is that correctly configuring the OpenId Connect provider, ensuring that browsers can request an X509 certiticate authentication when SPA redirects the user to authenticate to the OIDC provider is complex.
+
+If you are a Keycloak user, check the https://www.keycloak.org/docs/latest/server_admin/#con-advanced-settings_server_administration_guide[OAuth 2.0 Mutual TLS Certificate Bound Access Tokens Enabled] in the Advanced Configuration section of the https://www.keycloak.org/docs/latest/server_admin[Keycloak Server Administration documentation] and the https://tech.aufomm.com/how-to-use-certificate-bound-access-token-with-kong-and-keycloak/[How to Use Certificate-Bound Access Token with Kong and Keycloak] community blog post.
+
+As far as Quarkus is concerned, you only need to set a single OIDC configuration property, `quarkus.oidc.token.binding.certificate=true`, in addition to the Vert.x HTTP MTLS configuration, to enforce the MTLS token binding.
+
+See the https://quarkus.io/guides/security-oidc-bearer-token-authentication#mutual-tls-token-binding[Quarkus OIDC Mutual TLS Token Binding] documentation for more details.
+
+== Demonstrating Proof-of-Possession (DPoP)
+
+https://datatracker.ietf.org/doc/html/rfc9449[Demonstrating Proof-of-Possession (DPoP)] specification describes how access tokens can be cryptographically bound to special JWT tokens called DPoP proofs.
+
+image::oidc-dpop.png[OIDC DPoP,align="center"]
+
+The SPA client generates a private and public key pair, and creates a DPoP proof token to complete the access token acquisition from the OIDC provider. It then forwards this DPoP token to Quarkus with a new DPoP proof. The access token must be bound to the DPoP proof by containing a public JSON Web Key (JWK) key thumbprint which matches the thumbprint of the public JWK key contained in the DPoP proof.
+
+This binding can only be successful if the client uses the same public and private key pair for creating the DPoP proof to request the access token in the previous step and creating another DPoP proof for submitting it alongside the DPoP access token to Quarkus.
+
+Quarkus OIDC will also enforce https://datatracker.ietf.org/doc/html/rfc9449#name-checking-dpop-proofs[other DPoP proof check requirements]. Support for custom https://datatracker.ietf.org/doc/html/rfc9449#name-resource-server-provided-no[DPoP nonce providers] is also planned.
+
+Adoption of DPoP, compared to that of the MTLS token binding, is expected to progress faster, because DPoP is an `application-level` protocol, with no expectation that the transport-level MTLS authentication takes place. However, correctly creating DPoP proofs at the SPA level is not straightforward and requires care.
+
+If you are a Keycloak user, then enabling an experimental `dpop` feature is sufficient to get started. Also check the https://www.keycloak.org/docs/latest/server_admin/#con-advanced-settings_server_administration_guide[OAuth 2.0 Demonstrating Proof-of-Possession at the Application Layer (DPoP)] in the Advanced Configuration section of the https://www.keycloak.org/docs/latest/server_admin[Keycloak Server Administration documentation] and the https://tech.aufomm.com/how-to-use-demonstrating-proof-of-possession-dpop-token-with-kong-and-keycloak/[How to Use Demonstrating Proof-of-Possession (DPoP) Token with Kong and keycloak] community blog post.
+
+As far as Quarkus is concerned, you only need to set a single OIDC configuration property, `quarkus.oidc.token.authorization-scheme=dpop` to accept DPoP tokens and enforce their binding to the accompanying DPoP proofs. 
+
+See the https://quarkus.io/guides/security-oidc-bearer-token-authentication#demonstrating-proof-of-possession-dpop[Quarkus OIDC Demonstrating Proof of Possession (DPoP)] documentation for more details.
+
+== Financial-Grade API (FAPI)
+
+https://openid.net/wg/fapi/[Financial-Grade API (FAPI)] is a general high-security API profile built on top of OAuth2.
+
+Both https://datatracker.ietf.org/doc/html/rfc8705[RFC 8705: Mutual TLS Client Authentication and Certificate-Bound Access Tokens] and https://datatracker.ietf.org/doc/html/rfc9449[RFC 9449: OAuth 2.0 Demonstrating Proof-of-Possession (DPoP)] specifications are included in the Financial-Grade API 2.0 https://openid.net/specs/fapi-security-profile-2_0-final.html#name-general[General Security Profile].
+
+== Conclusion
+
+In this article, we have discussed two important OAuth2 specifications for sender-constraining access tokens, https://datatracker.ietf.org/doc/html/rfc8705[RFC 8705: Mutual TLS Client Authentication and Certificate-Bound Access Tokens] and https://datatracker.ietf.org/doc/html/rfc9449[RFC 9449: OAuth 2.0 Demonstrating Proof-of-Possession (DPoP)].
+
+Both of these token security elevation technologies can be easily supported in Quarkus OIDC, by using a single configuration property only, without having to write a lot of custom code and configuration.
+
+Please experiment with https://datatracker.ietf.org/doc/html/rfc8705[Mutual TLS Client Authentication and Certificate-Bound Access Tokens] and https://datatracker.ietf.org/doc/html/rfc9449[Demonstrating Proof-of-Possession (DPoP)] in Quarkus and let us know what you think.
