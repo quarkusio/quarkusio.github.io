@@ -1,0 +1,437 @@
+---
+layout: post
+title: 'Movie similarity search using vector databases'
+date: 2025-03-24
+tags: langchain4j, llm, ai
+synopsis: Shows how to create a movie similarity search system using a vector database and Quarkus LangChain4j
+author: iocanel
+---
+:imagesdir: /assets/images/posts/similarity-search-using-vector-dbs
+ifdef::env-github,env-browser,env-vscode[:imagesdir: ../assets/images/posts/similarity-search-using-vector-dbs]
+
+=== Introduction ===
+With LLMs becoming increasingly popular we often see them being used even for tasks that are not directly related to text generation. 
+Such case is using LLMs for recommendation systems. In this post we'll see how you can build such a system using https://docs.quarkiverse.io/quarkus-langchain4j/dev/index.html[Quarkus LangChain4j]
+but without using LLMs. More specifically we'll create a simple movie similarity search system using a vector database. The role
+of https://docs.quarkiverse.io/quarkus-langchain4j/dev/index.html[Quarkus LangChain4j] in this story is to abstract the underlying vector database through the `EmbeddingStore` interface.
+
+A relevant sample has been recently added to the https://github.com/quarkiverse/quarkus-langchain4j/tree/main/samples/[Quarkus LangChain4j samples].
+
+=== Embeddings ===
+An embedding is a way to represent unstructured data (text, images etc.) in a structured way. This is done by mapping the data into a vector.
+As we are able to perform mathematical operations on vectors, such as calculating the distance between them, we can use embeddings to calculate 
+how close (or similar) two pieces of data are. In our case, comparing the embeddings of the movie overview can give us a measure of how similar
+the two movies are. This is the premise of this post.
+
+
+==== How are embeddings created? ====
+There are multiple ways to create embeddings. https://docs.quarkiverse.io/quarkus-langchain4j/dev/index.html[Quarkus LangChain4j] provides the following:
+
+* https://docs.quarkiverse.io/quarkus-langchain4j/dev/in-process-embedding.html[In-process embedding]
+* https://docs.quarkiverse.io/quarkus-langchain4j/dev/llms.html[Model provider]
+
+In this post we'll use the former. Did I mention that we won't be using LLMs?
+Instead, we'll be using https://github.com/pgvector/pgvector[pgvector] which is a PostgreSQL extension that provides vector operations and indexing.
+
+Our project will need the following dependencies, for https://github.com/pgvector/pgvector[pgvector] and https://docs.quarkiverse.io/quarkus-langchain4j/dev/in-process-embedding.html[in-process embedding]:
+
+[source,xml]
+----
+    <dependency>
+        <groupId>dev.langchain4j</groupId>
+        <artifactId>langchain4j-embeddings-bge-small-en-q</artifactId>      
+    </dependency>
+    <dependency>
+        <groupId>io.quarkiverse.langchain4j</groupId>
+        <artifactId>quarkus-langchain4j-pgvector</artifactId>
+    </dependency>
+----
+
+To be able to use these dependencies without needing to specify versions, the BOM can be imported to the `dependencyManagement` of the project:
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-bom</artifactId>
+    <version>0.25.0</version>
+    <type>pom</type>
+    <scope>import</scope>
+</dependency>
+----
+
+To properly use the in-process embedding model we need to configure it in the `application.properties` file. 
+We also need to configure the pgvector dimension and ensure it's aligned with the dimension of the embedding model.
+In our case, it's 384 (the https://docs.quarkiverse.io/quarkus-langchain4j/dev/index.html[Quarkus LangChain4j] documentation provides the size used by each model).
+
+So, the `application.properties` file should look like this:
+[source,properties]
+----
+quarkus.langchain4j.pgvector.dimension=384
+quarkus.langchain4j.embedding-model.provider=dev.langchain4j.model.embedding.onnx.bgesmallenq.BgeSmallEnQuantizedEmbeddingModel
+----
+
+*Note*: We can use any other document store supported by https://docs.quarkiverse.io/quarkus-langchain4j/dev/index.html[Quarkus LangChain4j], in fact that's one of the key benefits of using it, the abstraction
+of embeddings stores.
+
+
+==== Storing the embedding ====
+To store the embedding we'll need an `EmbeddingStoreIngestor` The ingestor is created using the `EmbeddingModel` and the `EmbeddingStore`, both provided 
+as beans and can be easily injected. Alternatively, the user can specify a document splitter, for splitting large documents into smaller chunks, but we won't be needing that
+in this post, as the movie overview are relatively small.
+
+image::ingestion.png[scaledwidth=100%]
+
+
+Before passing the unstructured text to the ingestor we need to wrap it in a `Document` object. The `Document` also contains a `Metadata` object which holds key-value pairs.
+The `Metadata` is really handy as we can add there information needed for correlating the `Document` with other data. In our case we'll use the `Metadata` to store the id of the movie.
+That id will help us correlate the movie overview with the actual movie.
+
+The simplified code below shows, how the actual ingestor is created and how the embedding is stored.
+
+[source,java]
+----
+@Inject 
+EmbeddingModel embeddingModel;
+
+@Inject 
+EmbeddingStore embeddingStore;
+
+public EmbeddingStoreIngestor createIngestor()  {
+    return EmbeddingStoreIngestor.builder()
+    .embeddingModel(embeddingModel)
+    .embeddingStore(embeddingStore)
+    .build();
+}
+
+public void ingest(Long movieId, String overview) {
+      Metadata metadata = Metadata.from(Map.of("id", id));
+      Document document = Document.from(overview, metadata);
+      createIngestor().ingest(document);
+}
+----
+
+So, how exactly do we use the movie id ? This depends really on how we store the rest of the movie data. In our case, we'll store the movie data in a PostgreSQL database.
+This means that the movie id, corresponds to the id of the Movie in the database.
+
+
+==== Querying the embedding ====
+To query the embedding we'll use the `EmbeddingStore` and the `EmbeddingModel` in order to execute `EmbeddingSearchRequest`.  
+The code is pretty straight forward. We use the movie overview to create a search request. The `EmbeddingSearchRequest` builder
+also allows us to specify the maximum number of results and also the minimum similarity threshold. The later allows us to filter 
+out embeddings that are not similar enough to the query embedding. In other words, it tells the store that if there are not enough similar results
+to avoid adding irrelevant results to the response.
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import java.util.List;
+
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+
+@ApplicationScoped
+public class MovieRecommendationService {
+
+  @Inject
+  EmbeddingStore<TextSegment> embeddingStore;
+
+  @Inject 
+  EmbeddingModel embeddingModel;
+
+  @Transactional
+  public List<Movie> searchSimilarMovies(String overview) {
+    
+    Embedding embedding = embeddingModel.embed(overview).content();
+    EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+    .queryEmbedding(embedding)
+    .minScore(0.5)
+    .maxResults(10)
+    .build();
+
+    return embeddingStore.search(request).matches().stream().map(m -> {
+      Long id = m.embedded().metadata().getLong("id");
+      Movie movie = Movie.findById(id);
+      return movie;
+    }).toList();
+
+  }
+}
+----
+
+
+==== Loading the movies ====
+To populate the movies in the database, we'll use a CSV file containing the top 1000 movies from IMDB.
+The important columns for us are:
+
+* `title` the movie title
+* `overview` the movie overview
+* `link` the link to the image poster
+
+To easily map CSV entries to `Movie` objects we'll use `Jackson`. Specifically, we will use the `@JsonProperty` 
+annotation to map the CSV columns to the `Movie` fields. Also, we'll use `@JsonIgnoreProperties(ignoreUnknown = true)`
+to ignore unknown fields.
+
+So, a simplified version of our Movie entity object looks like: 
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+
+@Entity
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class Movie extends PanacheEntity {
+
+    @JsonProperty("Poster_Link")
+    public String link;
+    @JsonProperty("Series_Title")
+    public String title;
+    @JsonProperty("Overview")
+    @Column(length = 1000)
+    public String overview;
+
+    public static List<Movie> searchByTitleLike(String title) {
+      return find("title like ?1", "%" + title + "%").list();
+    }
+}
+----
+
+So, now we are ready to load our movies from the CSV to our relational and vector databases.
+
+Key points:
+
+* Observing the `StartupEvent` allows us to load the movies when the application starts
+* CSVMapper is used to map the CSV entries to `Movie` objects
+* We save each movie using a @Transaction method because we need that `id` that's often generated by the database
+* We ingest the documents in a batch. This can make a huge difference especially, if we move from in-process to remote embedding models.
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkus.logging.Log;
+import io.quarkus.runtime.StartupEvent;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
+import jakarta.transaction.Transactional;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+import com.fasterxml.jackson.databind.MappingIterator;
+import com.fasterxml.jackson.dataformat.csv.CsvMapper;
+import com.fasterxml.jackson.dataformat.csv.CsvSchema;
+
+import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.Metadata;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
+
+@ApplicationScoped
+public class MovieLoader {
+
+
+  public void load(@Observes StartupEvent event, @ConfigProperty(name = "movies.file") Path moviesFile,
+                   EmbeddingStore embeddingStore, EmbeddingModel embeddingModel) throws Exception {
+    if (!Files.exists(moviesFile)) {
+      throw new IllegalStateException("Missing movies file: " + moviesFile);
+    }
+
+    embeddingStore.removeAll();
+
+    EmbeddingStoreIngestor ingester = EmbeddingStoreIngestor.builder()
+    .embeddingModel(embeddingModel)
+    .embeddingStore(embeddingStore)
+    .build();
+
+    List<Document> docs = new ArrayList<>();
+    try (MappingIterator<Movie> it = new CsvMapper().readerFor(Movie.class).with(CsvSchema.emptySchema().withHeader()).readValues(moviesFile.toFile())) {
+      for (Movie movie : it.readAll()) {
+        Long id = save(movie).id;
+        Metadata metadata = Metadata.from(Map.of("id", id, "title", movie.title));
+      Document document = Document.from(movie.overview, metadata);
+      docs.add(document);
+
+      }
+    }
+
+    Log.info("Ingesting movies...");
+    ingester.ingest(docs);
+    Log.info("Application initalized!");
+  }
+
+  @Transactional
+  public Movie save(Movie m) {
+    m.persist();
+    return m;
+  }
+
+}
+----
+
+To use the CSV mapper, we'll need to Jackson's CSV dataformat dependency:
+
+[source,xml]
+----
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-csv</artifactId>
+        </dependency>
+----
+
+The path of the movies file is specified in the `application.properties` file.
+
+[source,properties]
+----
+movies.file=src/main/resources/movies.csv
+----
+
+
+==== Bringing it all together ====
+The only thing that's left is to create a REST endpoint that allows us to search for similar movies. We could also use a simple UI.
+Let's start with the REST endpoint. It's pretty straightforward. We need two methods, one for searching movies and one for searching similar movies.
+For the former we just use the `Movie` entity, for the latter we inject and use the `MovieRecommendationService` we created earlier.
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import java.util.List;
+
+@Path("/movies")
+public class MovieResource {
+
+    @Inject
+    MovieRecommendationService recommendationService;
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/by-title/{title}")
+    public List<Movie> searchByTitle(String title) {
+      return Movie.searchByTitleLike(title);
+    }
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/similar/{id}")
+    public List<Movie> searchSimilar(Long id) {
+      Movie m = Movie.findById(id);
+      return recommendationService.searchSimilarMovies(m.overview);
+    }
+}
+----
+
+For the UI, let's just use a simple HTML page that uses the REST endpoint to search for similar movies.
+
+The key elements of that page are:
+
+* movie-box: a text field for entering the movie title
+* search-results: an unordered list for displaying the search results
+* movie-overview: div for displaying the overview of the selected movie
+* movie-poster: an image for displaying the movie poster
+* similar-results: an additional unordered list for displaying the similar movies
+
+It's important to remember that the `Movie` entity is using Jackson to map the CSV columns to the entity fields.
+This means that when a `Movie` is serialized to JSON, it will use the CSV column names as the field names and not
+the entity field names. The HTML code below needs to take that into consideration.
+
+[source,html]
+----
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+    <title>{{_title_}}</title>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1"/>
+	</head>
+	<body>
+    <h2>Movie Similarity Search</h2> 
+    <input type="text" id="movie-box" placeholder="Enter a movie title">
+    <h3 hidden="true" id="movie-results-heading">Click on of the movies below</h3>
+    <ul id="search-results"></ul>
+    <img id="movie-poster"><img>
+    <div id="movie-overview"></div>
+    <h3 hidden="true" id="similar-heading">Similar movies</h3>
+    <ul id="similar-results"></ul>
+
+    <script>
+    document.getElementById("movie-box").addEventListener("input", async function() {
+        const query = this.value.trim();
+        if (query.length === 0) {
+          document.getElementById("search-results").innerHTML = "";
+          return;
+        }
+      const response = await fetch(`/movies/by-title/${encodeURIComponent(query)}`);
+        const movies = await response.json();
+
+        if (movies.length > 0) {
+          document.getElementById("movie-results-heading").hidden = false;
+        }
+        movies.forEach(movie => {
+          const li = document.createElement("li");
+          li.textContent = movie.Series_Title;
+          li.addEventListener("click", () => displayMovie(movie));
+          document.getElementById("search-results").appendChild(li);
+        });
+    });
+
+    async function displayMovie(movie) {
+      console.log('Displaying movie:', movie);
+      document.getElementById("search-results").innerHTML = "";
+      document.getElementById("movie-poster").src = movie.Poster_Link;
+      document.getElementById("movie-poster").style.display = "block";
+      document.getElementById("movie-overview").textContent = movie.Overview;
+      document.getElementById("similar-heading").hidden = false;
+      document.getElementById("movie-results-heading").hidden = true;
+      document.getElementById("similar-results").innerHTML = "";
+
+      const response = await fetch(`/movies/similar/${encodeURIComponent(movie.id)}`);
+      const similarMovies = await response.json();
+        similarMovies.forEach(similarMovie => {
+           const li = document.createElement("li");
+           li.textContent = similarMovie.Series_Title;
+           li.addEventListener("click", () => displayMovie(similarMovie));
+           document.getElementById("similar-results").appendChild(li);
+        });
+    }
+    </script>
+	</body>
+</html>
+----
+
+I won't go into much detail about the HTML code as it's outside the scope of this post. 
+The final results should look like this:
+
+image::movie-similarity-search-ui.png[scaledwidth=100%]
+
+
+==== Conclusion ====
+The quality of the recommendations depends on the accuracy of the movie overview and also on the quality of the embeddings.
+This means that better embedding models can lead to better recommendations. The vector database used could possibly also 
+affect the quality of the recommendations, but that's a topic for another post.
