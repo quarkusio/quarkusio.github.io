@@ -361,7 +361,7 @@ public class main implements Callable<Integer> {
 
             // Is it staled?
             // Months is an unsupported unit, so using days
-            if (update.updateAt().isBefore(Instant.now().minus(60, ChronoUnit.DAYS))) {
+            if (! isLTS()  && update.updateAt().isBefore(Instant.now().minus(60, ChronoUnit.DAYS))) {
                 return Status.STALED;
             }
 
@@ -394,6 +394,10 @@ public class main implements Callable<Integer> {
 
         public String getBadgeText() {
             return getStatus().name().toLowerCase().replace("_", " ");
+        }
+
+        public boolean isLTS() {
+            return title.trim().toLowerCase().endsWith("lts");
         }
 
     }
