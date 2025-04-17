@@ -1,0 +1,202 @@
+---
+layout: post
+title: 'Getting ready for secure MCP with Quarkus MCP Server'
+date: 2025-04-23
+tags: ai mcp security
+synopsis: 'Demonstrate secure Quarkus MCP SSE server access in the dev mode'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/secure_mcp_sse_server
+
+== Introduction
+
+https://modelcontextprotocol.io/specification/2025-03-26[The latest version of the Model Context Protocol (MCP) specification] introduces an https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization[authorization] flow for HTTP based MCP transports.
+
+MCP authorization will enable MCP SSE and Streamable HTTP clients to access MCP servers securely and is being very actively discussed and evaluated right now. This https://github.com/modelcontextprotocol/modelcontextprotocol/pull/284[MCP authorization PR] is one of the focal points for the MCP authorization discussions.
+
+While it will take a bit of time for the MCP authorization specificaion to finalize and be widely supported, one thing you can be certain about is that secure MCP servers that wish to interoperate with MCP authorization aware MCP clients will be required to accept and verify bearer access tokens sent by these clients on behalf of their users.
+
+The https://github.com/quarkiverse/quarkus-mcp-server[Quarkus MCP Server project] is ready for you to start experimenting with secure MCP SSE servers.
+
+In this post, we will show how Quarkus provides a complete Dev UI experience for you to login with an OpenId Connect or OAuth2 provider of your choice, and use an acquired access token to access MCP SSE server securely.
+
+== Create MCP SSE server
+
+First, let's create a secure Quarkus MCP SSE server.
+
+You can find the complete project source https://github.com/quarkiverse/quarkus-mcp-server/tree/main/samples/secure-mcp-sse-server[here].
+
+=== Maven dependencies
+
+Add the following dependencies:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.mcp</groupId>
+    <artifactId>quarkus-mcp-server-sse</artifactId> <1>
+    <version>1.1.1</version>
+</dependency>
+
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId> <2>
+</dependency>
+----
+<1> `quarkus-mcp-server-sse` is required to support the MCP SSE transport.
+<2> `quarkus-oidc` is required to secure access to the MCP SSE endpoints.
+
+[[tool]]
+=== Tool
+
+Let's create a tool that can be invoked only if the current MCP request is authenticated:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkiverse.mcp.server.TextContent;
+import io.quarkiverse.mcp.server.Tool;
+import io.quarkus.security.Authenticated;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.inject.Inject;
+
+public class ServerFeatures {
+
+    @Inject
+    SecurityIdentity identity;
+
+    @Tool(name = "user-name-provider", description = "Provides a name of the current user") <1>
+    @Authenticated <2>
+    TextContent provideUserName() {
+        return new TextContent(identity.getPrincipal().getName()); <3>
+    }
+}
+----
+<1> Provide a tool that can return a name of the current user. Note the `user-name-provider` tool name, you will use it later for a tool call.
+<2> Require authenticated tool access. See also how the main MCP SSE endpoint is secured in the <<configuration>> section below.
+<3> Use the injected `SecurityIdentity` to return a name.
+
+[[configuration]]
+=== Configuration
+
+Finally, let's configure our secure MCP server:
+
+[source,properties]
+----
+quarkus.http.auth.permission.authenticated.paths=/mcp/sse
+quarkus.http.auth.permission.authenticated.policy=authenticated
+----
+<1> Enforce an authenticated access to the main MCP SSE endpoint. See also how the tool is secured with an annotation in the <<tool>> section above, though you can also secure access to the tool by also listing an SSE tools endpoint in the configuration, for example: `quarkus.http.auth.permission.authenticated.paths=/mcp/sse,/mcp/messages/*`.
+
+What about the OIDC configuration ? It is provided for you in devmode by https://quarkus.io/guides/security-openid-connect-dev-services[Dev Services for Keycloak].  It creates a default realm, client and adds two users, `alice` and `bob`, for you to get started immediately. You can also register a custom Keycloak realm.
+
+We are ready to test our secure MCP server, both in DevUI and with `curl`.
+
+== Start MCP SSE server
+
+Start the server in the dev mode:
+
+[source,shell]
+----
+mvn quarkus:dev
+----
+
+[[mcp-server-devui]]
+=== Access MCP SSE server in DevUI
+
+Go to http://localhost:8080/q/dev[Dev UI], find both MCP Server and OpenId Connect cards:
+
+image::mcp_server_oidc_devui.png[MCP Server and OIDC in DevUI,align="center"]
+
+Select an OpenId Connect card and https://quarkus.io/guides/security-openid-connect-dev-services#develop-service-applications[login to Keycloak] using an `alice` name and an `alice` password.
+
+What about other providers such as `Auth0` or https://quarkus.io/guides/security-openid-connect-providers#github[GitHub] ?
+No problems, you can login to them from OIDC DevUI as well, for example, see how you can https://quarkus.io/guides/security-oidc-auth0-tutorial#looking-at-auth0-tokens-in-the-oidc-dev-ui[login to Auth0] - the only requirement is to update your provider application registration to allow callbacks to DevUI.
+
+Now, after logging in with `Keycloak`, copy the acquired access token using a provided copy button:
+
+image::login_and_copy_access_token.png[Login and copy access token,align="center"]
+
+Now go the MCP Server card, select the `Tools` option and choose the `user-name-provider` tool:
+
+image::mcp_server_choose_tool.png[Choose MCP Server tool,align="center"]
+
+Paste the copied access token into the Tool's `Bearer token` field:
+
+image::mcp_server_bearer_token.png[MCP Server Bearer token,align="center"]
+
+Make a tool call by selecting the `Call` action and get the response:
+
+image::mcp_server_tool_response.png[MCP Server tool response,align="center"]
+
+=== Access MCP SSE server with curl
+
+Let's try to use `curl` as well and also learn a little bit how MCP SSE transport works. 
+
+Access the main SSE endpoint with the access token without the access token first:
+
+[source,shell]
+----
+curl -v localhost:8080/mcp/sse
+----
+
+You will get HTTP 401 error.
+
+Now, get and copy the access token as explained in the <<mcp-server-devui>> section above.
+
+[source,shell]
+----
+curl -v -H "Authorization: Bearer ey..." localhost:8080/mcp/sse
+----
+
+and get an SSE response such as:
+
+[source,shell]
+----
+< content-type: text/event-stream
+< 
+event: endpoint
+data: /messages/ZTZjZDE5MzItZDE1ZC00NzBjLTk0ZmYtYThiYTgwNzI1MGJ
+----
+
+The current `curl` SSE session must stay open, for it to receive updates related to dynamically allocated `data` endpoint.
+
+Open another window and use the same access token to post the tool call request to the `data` endpoint:
+
+[source,shell]
+----
+url -v -H "Authorization: Bearer ey..." -H "Content-Type: application/json" --data @call.json http://localhost:8080/mcp/messages/ZTZjZDE5MzItZDE1ZC00NzBjLTk0ZmYtYThiYTgwNzI1MGJ
+----
+
+where a `call.json` looks like this:
+
+[source,json]
+----
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "user-name-provider",
+    "arguments": {
+    }
+  }
+}
+----
+
+Now look in the first curl window and observe a response such as:
+
+[source,shell]
+----
+event: message
+data: {"jsonrpc":"2.0","id":2,"result":{"isError":false,"content":[{"text":"alice","type":"text"}]}}
+----
+
+== Conclusion
+
+In the this blog post, we have explained how a secure Quarkus MCP SSE server can be created and tested in Quarkus Dev UI and with the `curl` tool.
+
+The Quarkus team is keeping an eye on the MCP Authorization specification evolution and is looking into supporting all possible MCP Authorization scenarios.
+
+Stay tuned for more updates !
