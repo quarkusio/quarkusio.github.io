@@ -5,8 +5,133 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Wed, 30 Apr 2025 03:20:15 +0000</lastBuildDate>
+        <lastBuildDate>Wed, 30 Apr 2025 09:43:47 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>The internals (and a few externals) of Quarkus test classloading have changed</title>
+            <link>
+                https://quarkus.io/blog/test-classloading-rewrite/
+            </link>
+            <description>
+                &lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;whats-changing&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-changing&quot;&gt;&lt;/a&gt;What&amp;#8217;s changing?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The internals of Quarkus test classloading have been rewritten in 3.22.
+It does not affect production and dev modes, or some Quarkus test modes, such &lt;code&gt;@QuarkusIntegrationTest`, &lt;/code&gt;@QuarkusComponentTest`.
+However, &lt;code&gt;`@QuarkusTest&lt;/code&gt; has changed.
+This change should make Quarkus testing work better, and it allowed us to fix a pile of longstanding bugs.
+It will also allow us to improve the integration with test frameworks such as Pact.
+However, it did introduce a few bugs we know about, and most likely also some bugs we don&amp;#8217;t yet know about.
+We&amp;#8217;re keen to get feedback from the community so that we can get fixing.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;why&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#why&quot;&gt;&lt;/a&gt;Why?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In previous versions, Quarkus tests were invoked using the default JUnit classloader, and then executed in a different, Quarkus-aware, classloader.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This mostly worked very well, and meant that &lt;code&gt;QuarkusTest&lt;/code&gt; tests mostly behaved as if they were part of the same application as the code under test.
+The Quarkus test framework could start and stop Quarkus instances at the right point in the test lifecycle, inject CDI dependencies, and do other useful Quarkus bytecode manipulation.
+However, some use cases didn&amp;#8217;t work. Tests using advanced JUnit 5 features like &lt;code&gt;@TestTemplate&lt;/code&gt; and &lt;code&gt;@ParameterizedTest&lt;/code&gt; sometimes found that the same test code might appear to run in several classloaders in a single test, or that injected dependencies weren&amp;#8217;t always available.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;While Quarkus extensions can do all sorts of marvellous bytecode manipulation to improve the developer experience, they cannot manipulate test classes with the same freedom that they do normal application classes.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Over time, test-related defects were building up that couldn&amp;#8217;t be changed without a fundamental rewrite of how Quarkus loads and executes tests.
+The Quarkus test code itself was also growing ever-more complex as it tried to work around various JUnit edge cases. Moving test instances from one classloader to another involved serializing and deserialization, which is harder to implement on newer JVM versions with tighter class security. For example, Quarkus used to use XStream as the serialization provider, but XStream no longer works with Java 17 and higher, because of reflection restrictions in the newer JVMs.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;What if, instead, Quarkus tests were simply run in the same classloader used to to load them?&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;what-you-need-to-do&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#what-you-need-to-do&quot;&gt;&lt;/a&gt;What you need to do&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;From Quarkus 3.22 onwards, this is exactly how &lt;code&gt;@QuarkusTest&lt;/code&gt; classloading works.
+What do your tests need to change in order to work with the new architecture?
+&lt;strong&gt;Nothing&lt;/strong&gt; (hopefully!).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;One of the goals of this change was that the rewrite didn&amp;#8217;t touch any tests in our test suite, to make sure they&amp;#8217;d all continue working without updates.
+In practice, there have been a few hiccups and we&amp;#8217;ve also discovered some edge cases in the broader ecosystem.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;known-regressions&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#known-regressions&quot;&gt;&lt;/a&gt;Known regressions&lt;/h3&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Dev services now start in the JUnit discovery phase&lt;/strong&gt;. &lt;a href=&quot;https://quarkus.io/guides/dev-services&quot;&gt;Quarkus Dev Services&lt;/a&gt; are currently started during &lt;a href=&quot;https://quarkus.io/guides/reaugmentation#what-is-augmentation&quot;&gt;the augmentation phase&lt;/a&gt;, along with bytecode manipulation and other application initialization steps. With the new testing design, all augmentation happens at the beginning of the test run, during the JUnit discovery phase. This means all Dev Services also start at the beginning of the test run. If several test classes with different Dev Service configuration are augmented before any tests are run, multiple differently-configured Dev Services may be running at the same time. This can cause port conflicts and cross-talk on configuration values. We&amp;#8217;re hoping to have a &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/45785&quot;&gt;fix&lt;/a&gt; for this in the next release. As a workaround, splitting conflicting tests into separate projects should fix symptoms.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Config access from JUnit conditions&lt;/strong&gt;. Using a &lt;code&gt;ConfigProvider&lt;/code&gt; from a custom JUnit condition will &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47081&quot;&gt;trigger a &lt;code&gt;ServiceConfigurationError&lt;/code&gt;&lt;/a&gt;. The workaround is to set the thread context classloader to &lt;code&gt;this.getClass().getClassLoader()&lt;/code&gt; before reading config, and then set it back afterwards.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Increased memory footprint running tests. For suites using multiple profiles and resources, more heap or metaspace may be needed.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;things-to-watch-out-for&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#things-to-watch-out-for&quot;&gt;&lt;/a&gt;Things to watch out for&lt;/h3&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Test order change&lt;/strong&gt;. As part of the rewrite, the execution order of some tests has swapped around. Of course, we all know tests should not depend on execution order if they don&amp;#8217;t set an order explicitly. However, it&amp;#8217;s easy to not notice that a test requires a certain order&amp;#8230;&amp;#8203; until the order changes. We discovered some tests in our own suite that were sensitive to the execution order, and other people may make similar discoveries.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Test timing change&lt;/strong&gt;. We also discovered that the rewrite exposed some timing issues in tests. Because classloading is frontloaded at the beginning of the test run, rather than between test executions, there&amp;#8217;s less time for asynchronous operations to finish between tests. For example, there may no longer be time for external state to &apos;reset&apos; before the next test starts. This might expose some heisenbugs in test suites.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;dropped-support&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#dropped-support&quot;&gt;&lt;/a&gt;Dropped support&lt;/h3&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;&lt;code&gt;@TestProfile&lt;/code&gt; on &lt;code&gt;@Nested&lt;/code&gt; tests.&lt;/strong&gt; Mixing different test profiles and test resources on &lt;code&gt;@Nested&lt;/code&gt; tests is no longer supported. By definition, every &lt;code&gt;@TestProfile&lt;/code&gt; must get its own Quarkus application and classloader. Having multiple classloaders execute one test isn&amp;#8217;t compatible with loading the test with the classloader used to run it.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Version 2.x of the Maven Surefire plugin&lt;/strong&gt;. Versions below 3.x of the Maven Surefire plugin will no longer work with &lt;code&gt;@QuarkusTest&lt;/code&gt;. Version 3 of the Surefire plugin was released in 2023, so version 2 is now rather old.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;next-steps&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#next-steps&quot;&gt;&lt;/a&gt;Next steps&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The main work of the test classloading rewrite has been delivered in 3.22, and has unlocked a bunch of possible improvements.
+Some test defects weren&amp;#8217;t directly fixed by the main change, but the architecture is now in place to enable a fix.
+More excitingly, test-related extensions, like the Pact extensions, can now add new features to reduce test boilerplate.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As always, if you spot issues or oddities, please let us know on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;zulip&lt;/a&gt; or &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;raise an issue&lt;/a&gt;.
+The &lt;a href=&quot;https://github.com/orgs/quarkusio/projects/30&quot;&gt;working group for test classloading&lt;/a&gt; is still underway, and welcomes contributions.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Wed, 30 Apr 2025 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/test-classloading-rewrite/
+            </guid>
+            
+            
+            
+            <author>Holly Cummins (https://twitter.com/holly_cummins)</author>
+            
+        </item>
         
         <item>
             <title>Getting ready for secure MCP with Quarkus MCP Server</title>
@@ -8557,209 +8682,6 @@ public interface SummarizerAiService {
             <pubDate>Fri, 29 Nov 2024 00:00:00 +0000</pubDate>
             <guid>
                 https://quarkus.io/blog/quarkus-3-17-2-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.17 - Observability improvements, programmatic permission checkers, MicroProfile REST Client 4.0</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-17-0-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus 3.17 is a smaller release than 3.16 but we polished and improved a lot of areas.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Notable changes are:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/41956&quot;&gt;#41956&lt;/a&gt; - Integrate OpenTelemetry to the WebSockets Next extension&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/43983&quot;&gt;#43983&lt;/a&gt; - OpenTelemetry - Add SimpleSpanProcessor support&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/43959&quot;&gt;#43959&lt;/a&gt; - Update MicroProfile REST Client to 4.0&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/43846&quot;&gt;#43846&lt;/a&gt; - Add annotation to allow using custom CDI bean methods as permission checkers&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/41929&quot;&gt;#41929&lt;/a&gt; - Use ArC features in datasource extensions for eager startup and active/inactive&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/43448&quot;&gt;#43448&lt;/a&gt; - Adapt locales support for GraalVM &amp;gt;= 24.2&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;There won&amp;#8217;t be any new minor releases in December but we will release new micros of 3.17.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Next minor 3.18 will be released at the end of January.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.17, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.17.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For more information about the adjustments you need to make to your applications, please refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.17&quot;&gt;Quarkus 3.17 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;whats-new&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-new&quot;&gt;&lt;/a&gt;What&amp;#8217;s new?&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;observability&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#observability&quot;&gt;&lt;/a&gt;Observability&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In relation to observability, we would like to highlight new features:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;Support for &lt;a href=&quot;https://opentelemetry.io&quot;&gt;OpenTelemetry&lt;/a&gt; in the &lt;a href=&quot;https://quarkus.io/guides/websockets-next-tutorial&quot;&gt;WebSockets Next&lt;/a&gt; extension.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;OpenTelemetry Simple Processors for traces and logs on Quarkus. This is important for lambda functions and other short-lived processes because it allows sending telemetry faster, not batching it, therefore minoring the risk of losing data.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;MicroProfile Telemetry 2.0 support by adding automatic JVM and HTTP request metrics to the OpenTelemetry extension.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;microprofile-rest-client-4-0&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#microprofile-rest-client-4-0&quot;&gt;&lt;/a&gt;MicroProfile REST Client 4.0&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The Quarkus REST Clients have been updated to MicroProfile REST Client 4.0.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;security&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#security&quot;&gt;&lt;/a&gt;Security&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We added more flexibility to how you define your permissions by allowing to point to CDI bean methods for permission checking.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This solution is the Quarkus equivalent to the Expression Language support you can find in some other frameworks.
-Expression Language expressions are brittle and hard to debug and robust permission checking is critical,
-thus why we prefer you write your permission checking in plain Java.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can find more detailed information about this new feature in the &lt;a href=&quot;https://quarkus.io/guides/security-authorize-web-endpoints-reference#permission-checker&quot;&gt;documentation&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;inactive-datasources&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#inactive-datasources&quot;&gt;&lt;/a&gt;Inactive datasources&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;A lot of work went into ArC, our CDI implementation, and our datasource support to make sure we would avoid a lot of corner cases when a datasource is inactive.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For instance:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;We make sure inactive datasources don&amp;#8217;t contribute to health checks.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;We fail fast if some code tries to inject an inactive datasource.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can find more information about this work in the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.17#datasources&quot;&gt;Quarkus 3.17 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;locale-support&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#locale-support&quot;&gt;&lt;/a&gt;Locale support&lt;/h3&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Our Mandrel team is working tirelessly to make sure Quarkus stays compatible with the future versions of GraalVM/Mandrel.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We adapted our locale support to be compatible with GraalVM &amp;gt;= 24.2 and you can find all the gory details in the corresponding &lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/43448&quot;&gt;pull request&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;platform-component-upgrades&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#platform-component-upgrades&quot;&gt;&lt;/a&gt;Platform component upgrades&lt;/h3&gt;
-&lt;div class=&quot;sect3&quot;&gt;
-&lt;h4 id=&quot;quarkus-cxf&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#quarkus-cxf&quot;&gt;&lt;/a&gt;Quarkus CXF&lt;/h4&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus CXF 3.17 was released and is now available in &lt;a href=&quot;https://code.quarkus.io/?extension-search=origin:platform%20quarkus-cxf&quot;&gt;Quarkus Platform 3.17&lt;/a&gt;.
-Check the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.17.0.html&quot;&gt;Quarkus CXF 3.17.0&lt;/a&gt; release notes for more information about what is new in this release.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.17.0.CR1&quot;&gt;3.17.0.CR1&lt;/a&gt; and &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.17.0&quot;&gt;3.17.0&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;contributors&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#contributors&quot;&gt;&lt;/a&gt;Contributors&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The Quarkus community is growing and has now &lt;a href=&quot;https://github.com/quarkusio/quarkus/graphs/contributors&quot;&gt;1035 contributors&lt;/a&gt;.
-Many many thanks to each and everyone of them.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In particular for the 3.17 release, thanks to Ales Justin, Alexei Bratuhin, Alexey Loubyansky, Amit Prasad, Andy Damevin, Antoine de Troostembergh, Benjamin Raimondi, Bruno Baptista, Bruno Marvin, chengehe, Christian Ivanov, Clement Escoffier, Cristian Burlacu, Daniel Bobbert, Daniel Cunha, Daniel Ezihe, Dannier Leonides Galicia Chinchilla, David M. Lloyd, Douglas Monteiro, Emmanuel Ferdman, Foivos Zakkak, Fouad Almalki, Francesco Nigro, Frantisek Havel, George Gastaldi, Georgios Andrianakis, Guillaume Smet, Gunnar Morling, Holly Cummins, Inaki Villar, Ioannis Canellos, Jakub Gardo, Jakub Jedlicka, Jan Martiska, jcarvaja, Jono, Jorge Solórzano, Jose, Julien Ponge, Jérémie Bresson, Katia Aresti, koplas, Ladislav Thon, Loïc Hermann, Loïc Mathieu, luneo7, Marco Belladelli, Marco Sappé Griot, Marek Skacelik, mariofusco, Martin Bartoš, Martin Kouba, Matej Novotny, Matheus Cruz, Max Rydahl Andersen, Melloware, Michael Edgar, Michal Karm Babacek, Michal Maléř, Michal Vavřík, Murray Hopkins, Ozan Gunalp, Peter Palaga, Phillip Krüger, Ralf Ueberfuhr, Raphael Tholl, rghara, Robert Stupp, Robert Toyonaga, Roberto Cortez, Robin De Mol, RobinDM, Rod Cheater, Rolfe Dlugy-Hegwer, Rostislav Svoboda, Ruwen Reddig, Sergey Beryozkin, sNiXx, Stef, Stéphane Épardaud, Thomas Canava, Trấn Nguyễn, Vincent Sourin, vsevel, and Yoann Rodière.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 27 Nov 2024 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-17-0-released/
             </guid>
             
             
