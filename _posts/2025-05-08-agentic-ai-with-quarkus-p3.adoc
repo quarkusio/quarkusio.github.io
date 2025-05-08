@@ -1,0 +1,117 @@
+---
+layout: post
+title: 'Agentic AI with Quarkus - part 3'
+date: 2025-05-08T00:00:00Z
+tags: ai llm agents
+synopsis: 'Agentic AI with Quarkus - part 3'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/agentic
+
+The https://quarkus.io/blog/agentic-ai-with-quarkus/[first part] of this blog post series briefly introduced agentic AI and discussed workflow patterns. Subsequently, the https://quarkus.io/blog/agentic-ai-with-quarkus-p2/[second installment] explored the proper agentic patterns, showing how to implement them using Quarkus and its LangChain4j extension.
+
+This third article aims to clarify the differences between these two approaches, discuss their pros and cons, and demonstrate with a practical example how to migrate an AI-infused service using a workflow pattern to a pure agentic implementation.
+
+In essence, the most relevant difference between the two is that workflow patterns are programmatically orchestrated through handcrafted code paths, while agents autonomously decide their own processes and tool usage, maintaining control over how they execute tasks. This makes them more flexible and adaptable to various scenarios, but it also makes them less predictable and, in some cases, more prone to hallucinations.
+
+[.text-center]
+.AI Workflow Vs. Pure Agentic AI
+image::wrokflowVsAgents.png[align="center", alt="AI Workflow Vs. Pure Agentic AI"]
+
+== From Workflow to Agents
+
+https://quarkus.io/blog/agentic-ai-with-quarkus/#routing[Routing] is one of the workflow patterns presented in the first article of this series. There, we used a first LLM service to categorize the user request and then used that category to programmatically reroute that request to one of three other LLMs acting as medical, legal, or technical experts.
+
+[.text-center]
+.Routing pattern
+image::routing-pattern.png[width=70%, align="center", alt="Routing pattern"]
+
+In that example, each expert was implemented as a separate and independent LLM service, and the routing to one of them was performed programmatically by the application code. Tracing the execution of a request like:
+
+[source, shell]
+----
+curl http://localhost:8080/expert/request/I%20broke%20my%20leg%20what%20should%20I%20do
+----
+
+The resulting traces show the sequence of steps performed to fulfill the user request: first, the relatively fast, less than 2 seconds, classification phase conducted by the Router Agent, then the more expensive invocation of the selected expert service, which took almost 25 seconds to generate its answer.
+
+[.text-center]
+.Tracing routing workflow pattern execution
+image::routing-workflow-trace.png[align=center, alt="Tracing routing workflow pattern execution"]
+In this example, we use the same model to classify and generate the response. However, it is possible to use specialized models for the classification and each experts.
+Now, let’s see how we can transform this workflow approach into a more agentic one.
+
+Quarkus integration makes it straightforward to turn these AI “expert” services into _tools_ that another AI service can invoke. You only need to annotate the AI service methods with `@Tool` and configure the caller AI service with `@Toolbox`. This approach preserves the possibility of also invoking the single expert directly as an independent LLM service, and also using specialized models for each expert. Note that this `@Tool` annotation is not related with the presence of any MCP server and has the purpose of exposing the AI service also as a tool for other AI services. It is planned to discuss MCP in the next blog post of this series.
+
+is used to specify the name of the tool, which will be used by the agent to invoke it. The name of the tool is not necessarily the same as the name of the class, but it is a good practice to keep them aligned.
+
+[source, java]
+----
+public interface MedicalExpert {
+
+    @UserMessage("""
+            You are a medical expert.
+            Analyze the following user request under a medical point of view and provide the best possible answer.
+            The user request is {request}.
+            """)
+    @Tool("A medical expert") // <-- Allows to use this LLM also as a tool for other LLMs
+    String medicalRequest(String request);
+}
+----
+
+This way, it is possible to provide a second alternative implementation of the same expert interrogation service, this time using a pure agentic approach. The Router Agent is replaced by a single LLM, having the three experts as _tools_, that can autonomously decide to which expert the question must be delegated.
+
+[source, java]
+----
+@RegisterAiService(modelName = "tool-use")
+@ApplicationScoped
+public interface ExpertsSelectorAgent {
+
+    @UserMessage("""
+            Analyze the following user request and categorize it as 'legal', 'medical' or 'technical',
+            then forward the request as it is to the corresponding expert provided as a tool.
+            Finally return the answer that you received from the expert without any modification.
+
+            The user request is: '{request}'.
+            """)
+    @ToolBox({MedicalExpert.class, LegalExpert.class, TechnicalExpert.class})
+    String askToExpert(String request);
+}
+----
+
+The `@ToolBox` annotation is used to specify the list of tools the agent can use, in this case, the three experts. Note that, similarly to what has been done for other agentic examples in the previous post of this series, this AI service has been configured to use a model capable of reasoning and requesting tool invocations. In our example, the model is configured in the `application.properties` file and is using  `qwen2.5` with 7 billion parameters. In addition, the `temperature` is set to 0 to make the classification more predictable and minimize the possibility of hallucinations.
+
+[source,properties]
+----
+quarkus.langchain4j.ollama.tool-use.chat-model.model-id=qwen2.5:7b
+quarkus.langchain4j.ollama.tool-use.chat-model.temperature=0
+quarkus.langchain4j.ollama.tool-use.timeout=180s
+----
+
+At this point, the agentic implementation of this expert interrogation service is also ready and can be exposed with a different REST endpoint, making it possible to use and compare these two alternative solutions.
+
+
+[source,java]
+----
+@GET
+@Produces(MediaType.TEXT_PLAIN)
+@Path("request-agentic/{request}")
+public String requestAgentic(String request) {
+    Log.infof("User request is: %s", request);
+    return expertsSelectorAgent.askToExpert(request);
+}
+----
+
+== Comparing the workflow and agentic approaches
+
+The two approaches are equivalent in terms of functionality, but they differ in how they are implemented and the levels of control and flexibility they offer. In particular, the pure agentic solution is much simpler and more elegant, as it does not require additional code to route the request to the right expert. The agent can do that by itself. It could also use more than one expert for a single query if needed, which would be impossible with the workflow approach, where the routing is hardcoded in the application code.
+
+On the other hand, the workflow approach is more predictable and easier to debug, as the routing logic is explicit and can be easily traced. It can also be tested and controlled separately. For instance, the behavior of the Router Agent alone could be controlled and corrected with an output guardrail. Moreover, it also allows for more complex workflows, where the routing decision can depend on multiple factors and not just the user’s request.
+
+Finally, as evidenced by tracing of the agentic execution, its current implementation has a significant drawback: the overall time to fulfill the user request is significantly increased.
+
+[.text-center]
+.Tracing agentic routing execution
+image::routing-agentic-trace.png[align=center, alt="Tracing agentic routing execution"]
+
+This depends on how the agent uses the LLM expert as a tool: even though it has been explicitly required to forward the expert’s response as it is and without any modification, it seems to ignore this instruction. It can't avoid wasting significant time reprocessing the expert's answer before returning it. In other words, this is a side-effect of the fact that the agent is in complete control of the execution, and there is no way to forward this control to a different LLM, as it would be convenient in this case. 
