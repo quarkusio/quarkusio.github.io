@@ -1,6 +1,6 @@
 ---
 layout: working-groups
 title: Working Groups
-subtitle: Organizing the community around a specific topics or goals.
+subtitle: Driving the future of Quarkus.
 permalink: /working-groups/
 ---

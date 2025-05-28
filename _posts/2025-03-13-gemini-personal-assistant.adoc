@@ -1,0 +1,490 @@
+---
+layout: post
+title: 'Secure Agentic AI with Quarkus and Google Gemini'
+date: 2025-03-13
+tags: gemini agentic ai oidc
+synopsis: 'Explain how Quarkus LangChain4j and OIDC can help to create secure agentic Google Gemini AI services'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/gemini-personal-assistant
+
+== Introduction
+
+https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] project provides top-class integration between Quarkus and https://github.com/langchain4j/langchain4j[LangChain4j], helping developers to create Generative and Agentic AI agents.
+
+Agentic AI in particular, which https://blogs.nvidia.com/blog/what-is-agentic-ai/[uses sophisticated reasoning and iterative planning to autonomously solve complex, multi-step problems], is getting a lot of the developer's attention today. You are encouraged to read https://quarkus.io/blog/agentic-ai-with-quarkus/[Agentic AI with Quarkus - part 1] and https://quarkus.io/blog/agentic-ai-with-quarkus-p2/[Agentic AI with Quarkus - part 2] blog posts and learn about techniques and patterns for creating Agentic AI agents with https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j].
+
+In this article, we introduce `Gemini Personal Assistant`, Secure Agentic AI agent which helps the currently logged-in user to analyze scheduled events, update and create new events, and keep an eye on event conflicts in the user's Google calendars.
+
+== Agentic AI and user identity
+
+Agentic AI does not work in isolation. To provide a personalized advice the AI service which works with multiple users must be able to access a user identity.
+
+The user identity acts as a glue between LLM and the user-specific, changing data.
+
+== Integrated AI security
+
+It is necessary to note that for an AI agent that can work with the users data to make it to production, it must be secured. 
+
+But what does creating a secure AI agent involve ?
+
+AI security is a complex topic, and it will be covered in depth in the https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] documentation. https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] already offers an important https://docs.quarkiverse.io/quarkus-langchain4j/dev/guardrails.html[Guardrails] AI security feature, supporting the data verification and prompt anonimization.
+
+For the purpose of this article, an important point is that AI security is an integral part of your application's security architecture.
+
+Only authenticated users can access the sensitive application data. It is the case with or without AI being involved.
+Agentic AI agents that are allowed to work with the user data can only be accessible by the authenticated users, for the AI be able to work with the user identity.
+
+Designing an integrated application and AI security architecture is essential for creating secure, capable, production-quality Agentic AI agents.
+
+== API keys versus access tokens
+
+Using API keys provides an easiest option for accessing LLM:
+
+image::use-api-keys-to-access-llm.png[Use API keys to access LLM,align="center"]
+
+When an AI service serves many users in the organization, the API key must be organization wide for everyone in the organization be able to have their data analyzed by LLM. API key is a long time token which must be kept secured.
+
+If your application works with users who log-in with an OpenId Connect provider such as Google, which also hosts LLM, managing API keys with a long lifespan safely is a security challenge that can be avoided given that the time-constrained access tokens acquired during the Google authentication are already available. Furthermore, the organization wide API keys can not be used to access Google services on behalf of the currently logged-in user.
+
+image::use-access-tokens-to-access-llm.png[Use access tokens to access LLM,align="center"]
+
+As you can see, using access tokens to access Gemini looks similar to using API keys. The difference is, the access token is scoped by the current user authentication, it is time constrained and it can be used to access any Google service that requires an access token.
+
+Using access tokens fits into the integrated security concept perfectly: users login to your application with Google using an OpenId Connect authorization code flow, the application propagates an access token acquired as part of this flow to Google services to access them on behalf of the authenticated user, with the Google Gemini service being only one of such services. The user logs out, the session and the corresponding ID and access tokens are deleted.
+
+And the security bonus point is that the current user will be asked by Google, after the authentication is complete, to authorize your application to use Generative API on the user's behalf.
+
+Therefore, we will work with the access tokens. 
+
+https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] supports two Gemini model providers, https://ai.google.dev/[AI Gemini] and https://cloud.google.com/vertex-ai[Vertex AI Gemini].
+https://ai.google.dev/[AI Gemini] can accept both API keys and access tokens while https://cloud.google.com/vertex-ai[Vertex AI Gemini] requires access tokens.
+
+For the moment, we will use https://cloud.google.com/vertex-ai[Vertex AI Gemini], however we plan to switch to https://ai.google.dev/[AI Gemini] due to its simpler configuration soon.
+
+== Gemini Personal Assistant
+
+Ok, let's create our secure Gemini Personal Assistant.
+
+=== Architecture
+
+Gemini Personal Assistant is a WebSockets chatbot which is only available to users authenticated with Google.
+
+image::chatbot-architecture.png[Gemini Personal Assistant,align="center"]
+
+Users who login to the application with Google can access the Personal Assistant bot and ask it to help to analyze and manage the schedule for the next few days or weeks. 
+
+The Personal Assistant is able to greet the logged-in user by name and access Google Calendar API on behalf of the user, inform about the schedule, add new events, modify events and warn about the conflicts.
+
+We are going to look at the key dependencies, configuration properties and code fragments. 
+
+You can find the complete project source https://github.com/sberyozkin/quarkus-langchain4j-gemini[here].
+
+=== Maven dependencies
+
+Add the following dependencies:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-websockets-next</artifactId> <1>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId> <2>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest-client-oidc-token-propagation</artifactId> <3>
+</dependency>
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-oidc-model-auth-provider</artifactId> <4>
+</dependency>
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-vertex-ai-gemini</artifactId> <5>
+</dependency>
+----
+<1> `quarkus-websockets-next` is required to support WebSockets for the chat bot.
+<2> `quarkus-oidc` is required to secure the Quarkus endpoint which uses AI service
+<3> `quarkus-rest-client-oidc-token-propagation` supports access token propagation to Google services such as Google Calendar
+<4> `quarkus-langchain4j-oidc-model-auth-provider` supports access token propagation to remote model providers such as Vertex AI Gemini
+<5> `quarkus-langchain4j-vertex-ai-gemini` brings Vertex AI Gemini model provider extension
+
+=== Configuration
+
+Next we create the configuration:
+
+[source,properties]
+----
+# Google OpenId Connect configuration:
+
+quarkus.oidc.provider=google <1>
+quarkus.oidc.client-id=${GOOGLE_CLIENT_ID} <2>
+quarkus.oidc.credentials.secret=${GOOGLE_CLIENT_SECRET} <2>
+quarkus.oidc.authentication.extra-params.scope=https://www.googleapis.com/auth/generative-language.retriever,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/calendar <3>
+
+# Gemini configuration
+
+quarkus.langchain4j.vertexai.gemini.chat-model.model-id=gemini-2.0-flash <4>
+quarkus.langchain4j.vertexai.gemini.location=europe-west1
+quarkus.langchain4j.vertexai.gemini.project-id=${GOOGLE_PROJECT_ID} <5>
+quarkus.langchain4j.vertexai.gemini.log-requests=true
+quarkus.langchain4j.vertexai.gemini.log-responses=true
+
+quarkus.rest-client.google-calendar-api.url=https://www.googleapis.com/calendar/v3 <6>
+----
+<1> Require Google authentication. 
+<2> Follow https://quarkus.io/guides/security-openid-connect-providers#google[steps described in the Quarkus OIDC documentation] to register a Quarkus application in Google Cloud and use the generated application client id and secret, and note the Google project id.
+<3> Request that an access token issued after the user authentication has permissions to access generative API provided by Gemini and Calendar API for the AI Service tools support. Users will be asked to authorize the registered application to access these APIs on the user's behalf.
+<4> Configure the Gemini model id. Note that no API key is configured: the `quarkus-langchain4j-oidc-model-auth-provider` dependency will make sure the current Google user access token is propagated to Google Gemini.
+<5> Specify the Google project id.
+<6> Configure Calendar API base URL for the Google Calendar tool to work.
+
+=== Implementation
+
+Now we create the AI service:
+
+[source,java]
+----
+package org.acme.gemini;
+
+import org.acme.gemini.PersonalAssistantResource.PersonalAssistantTools;
+
+import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.service.UserMessage;
+import io.quarkiverse.langchain4j.RegisterAiService;
+import jakarta.enterprise.context.SessionScoped;
+
+@RegisterAiService(tools = { PersonalAssistantTools.class, GoogleCalendarClient.class })
+@SessionScoped
+public interface PersonalAssistantService {
+    @SystemMessage("""  <1>
+            You are a personal assistant.
+            Your tasks are:
+             - Provide the currently logged-in user with an information about the scheduled events after the {{timeMin}} but before the {{timeMax}} date and time.
+             - Get the list of the available calendars and ask the user which calendar the user would like to check; remember the user's choice.
+             - Use the calendar id field as a calendarId value in all the tool operations with the chosen calendar but show only calendar summary to the user.
+             - Help the user to schedule other events during this period, advise about any event conflicts.
+             - Let the user know which calendar contains a given event.
+             - Be polite but do not hesitate to be informal sometimes to make the user smile.
+
+             The event is represented as a JSON object and has the following fields:
+               summary is the event summary
+               description is the event description
+               location is the event location
+               start is the event start date and time JSON object
+               end is the event end date and time JSON object
+               id is the eventId that can be used for accessing, deleting or modifying this event.
+
+             Both start and end JSON objects have the following fields:
+             date date with the first 4 digits representing a year, next 2 ones - a month, and the last 2 ones - a day, for example, 2025-03-21.
+             dateTime RFC3339 date and time timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:00:00Z.
+             timeZone time zone.
+
+             The date and time is represented as a RFC3339 timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:30:30Z.
+             In the timestamp such as 2011-06-03T10:00:00Z, the year is 2011, the month - 06 (June), the day - 3rd day of the month, the hour is '10', the minutes - '30', and the seconds - '30'.
+             'Z' indicates a GMT time zone.
+
+             To calculate an event duration, deduct the event's start date and time from its end date and time.
+             Typically, calculating a difference in hours and minutes is enough for most events.
+             
+             The calendar is represented as a JSON object and has the following fields:
+               id is the calendarId
+               summary is the calendar summary
+               description is the calendar description
+               location is the calendar location
+               timeZone is the calendar time zone
+               primary is the calendar primary boolean status
+               """)
+    String assist(@UserMessage String question, String timeMin, String timeMax); <2>
+}
+----
+<1> The system prompt is the most important feature of this AI service. It requires a lot of tuning to get the best out
+of Gemini. For example, note the `logged-in user` text matches one of the tool descriptions below for Gemini to get the information related to the currently logged in user. Providing precise information about API that Gemini may need to work with is very important. Please try to tune it futher during your experiments with Gemini Personal Assistant.
+<2> Request Gemini to evaluate a question about the schedule within the provided time bounds.
+
+Gemini Personal Assistant depends on two tools to get the user-specific login information:
+
+[source,java]
+----
+package org.acme.gemini;
+
+import org.eclipse.microprofile.jwt.Claims;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import dev.langchain4j.agent.tool.Tool;
+import io.quarkus.oidc.IdToken;
+import io.quarkus.security.Authenticated;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+@Singleton
+@Authenticated <1>
+public class PersonalAssistantTools {
+
+    @Inject
+    @IdToken
+    JsonWebToken identity; <2> 
+
+    @Tool("Returns the first name and the family name of the logged-in user.")
+    public String getLoggedInUserName() { <3>
+        return identity.getName();
+    }
+
+    @Tool("Returns email address of the logged-in user.")
+    public String getEmailAddressOfLoggedInUser() { <4>
+       return identity.getClaim(Claims.email); 
+    }
+}
+----
+<1> Tools can only be accessed if the authenticated user initiated the Gemini query.
+<2> Use the ID token acquired during the Google authorization code flow authentication as a user identity representation.
+<3> Use the current user identity to get the user's full name for Gemini to greet the user.
+<4> Return an email address of the currently logged in user. For example, Gemini can use this tool to find a primary calendar whose description matches the user's email address.
+
+It also uses a Google Calendar REST client tool to deal with the user requests about the schedule:
+
+[source,java]
+----
+package org.acme.gemini;
+
+import java.time.ZonedDateTime;
+import java.util.List;
+
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import org.jboss.resteasy.reactive.RestQuery;
+
+import dev.langchain4j.agent.tool.Tool;
+import io.quarkus.oidc.token.propagation.AccessToken;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@RegisterRestClient(configKey = "google-calendar-api")
+@AccessToken <1>
+@Path("/")
+public interface GoogleCalendarClient {
+
+    @GET
+    @Path("/users/me/calendarList")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Tool("Get calendars list")
+    Calendars getCalendars(); <2>
+    
+    @GET
+    @Path("/calendars/{calendarId}/events")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Tool("Get events")
+    Events getEvents(@PathParam("calendarId") String calendarId, @RestQuery("timeMin") String timeMin, @RestQuery("timeMax") String timeMax); <3>
+
+    @PUT
+    @Path("/calendars/{calendarId}/events/{eventId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Tool("Update or move event")
+    Events updateEvent(@PathParam("calendarId") String calendarId, @PathParam("eventId") String eventId, Event event); <4>
+
+    // Other methods are omitted for brewity
+    
+    public static record Calendars(List<Calendar> items) { <5>
+    }
+
+    public static record Calendar(String id, String summary, String description, String location, String timeZone, boolean primary) {
+    }
+    
+    public static record Events(List<Event> items) { <5>
+    }
+
+    public static record Event(String summary, String description, String location, Start start, End end, String id) {
+    }
+
+    public static record Start(String date, ZonedDateTime dateTime, String timeZone) {
+    }
+
+    public static record End(String date, ZonedDateTime dateTime, String timeZone) {
+    }
+}
+----
+<1> Use the access token acquired during the Google authorization code flow authentication to access Calendar API on the user's behalf.
+The token propagation with a single annotation only is supported by `quarkus-rest-client-oidc-token-propagation`.
+<2> REST client method tool for getting a list of calendars
+<3> REST client method tool for getting a list of events
+<4> REST client method tool for updating events
+<5> Tool parameter types which are also described in the system prompt.
+
+Next task is to ensure that Gemini Personal Assistant is available to the authenticated users only:
+
+[source,java]
+----
+package org.acme.gemini;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+
+import org.eclipse.microprofile.jwt.Claims;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.jboss.logging.Logger;
+
+import dev.langchain4j.agent.tool.Tool;
+import io.quarkus.oidc.IdToken;
+import io.quarkus.security.Authenticated;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.websockets.next.OnOpen;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+@WebSocket(path = "/assistant")
+@Authenticated <1>
+public class PersonalAssistantResource {
+
+    private static final Logger log = Logger.getLogger(PersonalAssistantResource.class);
+    
+    PersonalAssistantService assistant;
+
+    public PersonalAssistantResource(PersonalAssistantService assistant) {
+        this.assistant = assistant;
+    }
+
+    @Inject
+    SecurityIdentity identity;
+    
+    @OnOpen <2>
+    public String onOpen() {
+        return "Hello, " + identity.getPrincipal().getName() + ", I'm your Personal Assistant, how can I help you?";
+    }
+
+    @OnTextMessage <3>
+    public String onMessage(String question) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
+
+        ZonedDateTime minDateTime = Instant.now().atZone(ZoneId.of("GMT"));
+        String timeMin = minDateTime.format(formatter);
+
+        ZonedDateTime maxDateTime = minDateTime.plusDays(30);
+        String timeMax = maxDateTime.format(formatter);
+
+        return assistant.assist(question, timeMin, timeMax);
+    }
+}
+----
+<1> Require that WebSockets Upgrade can succeed only if the user is authenticated and that the security identiy is bound to the connection.
+<2> Greet the user; Gemini Personal Assistant is not busy yet at this point. 
+<3> Ask Gemini Personal Assistant to work with the user query about the schedule within the provided time bounds.
+
+=== Google Login, logout and user interaction support
+
+Please check the complete https://github.com/sberyozkin/quarkus-langchain4j-gemini[Gemini Personal Assistant] project source to see how Google login, logout and other user interactions are managed. We do not cover it here since the way it is done is not directly related to the work of Gemini Personal Assistant.
+
+=== Trying it out
+
+Now it is time to see what Gemini Personal Assistant can really do.
+
+Start the application in the dev mode:
+
+[source,shell]
+----
+mvn quarkus:dev
+----
+
+and go to `http://localhost:8080`:
+
+image::entry-demo-screen.png[Main demo screen,align="center"]
+
+After you login with Google, you will be greeted and offered an option to work with Gemini Personal Assistant:
+
+image::welcome-demo-screen.png[Welcome demo screen,align="center"]
+
+After selecting the Personal Assistant icon, you will be greated by Personal Assistant. Let's ask it something about the schedule:
+
+image::check-schedule-question.png[Check schedule question,align="center"]
+
+Personal Assistant has managed to get a user name and a list of user calendars with the help of tools.
+
+Let's ask it to check the primary calendar:
+
+image::check-schedule-primary-calendar.png[Check schedule primary calendar,align="center"]
+
+I asked it to use the one with my email address and the assitant was able to find it with the help from one of the tools which provides my email address. Sometimes, Personal Assistant can figure out which calendar is a primary one from the system prompt alone, which informs it that a calendar whose `primary` field is set to `true` is a primary calendar. But sometimes it needs hints.
+
+Now it gives the schedule update:
+
+image::check-schedule-answer.png[Check schedule answer,align="center"]
+
+Actually, as it happens, my friend just called and asked to delay our scheduled lunch by 1 hour, let's ask Gemini Personal Assistant to do it:
+
+image::event-update-request.png[Event update request,align="center"]
+
+And I can confirm my primary calendar was updated successfully, with the event rescheduled for 1 hour later. We'll touch on how to manage tools with side-effects later in this post.
+
+Let's ask the question about the events from another calendar:
+
+image::arsenal-tickets-question.png[Arsenal tickets question,align="center"]
+
+Personal Assistant is learning so it may need a bit of help to find the right calendar:
+
+image::arsenal-calendar-confirmation.png[Arsenal calendar confirmation,align="center"]
+
+and now it is happy to give an update:
+
+image::arsenal-tickets-answer.png[Arsenal tickets answer,align="center"]
+
+It also offers its help to add it to (another) calendar. Let's say yes, but I'm not sure it does not conflict with other events in my primary calendar:
+
+image::event-conflict-concern.png[Event conflict concern,align="center"]
+
+Gemini Personal Assistant assures me that no, there is no conflict:
+
+image::no-conflicts-confirmation.png[No conflicts confirmation,align="center"]
+
+And we can continue the conversation with a friendly Gemini Personal Assistant. 
+
+== How Agentic Gemini Personal Assistant is ?
+
+So, Gemini Personal Assistant helped us with queries about the schedule, event modifications and conflict checks.
+
+You may be asking, is it really Agentic AI which is expected to https://blogs.nvidia.com/blog/what-is-agentic-ai/[use sophisticated reasoning and iterative planning to autonomously solve complex, multi-step problems] ?
+
+Speaking about the calendars alone, if you have a busy schedule with events coming from multiple calendars, having an AI agent which can help you manage the schedule is Agentic AI.
+
+In this demo we have only asked questions and got answers.
+
+But it is not dificult to imagine an application running a background (autonomous) calendar check and broadcasting a message to the logged in user when a new event got added to one of the calendar. The agent can check user-specific data in the local database or other Google services such as GMail, inform the user accordingly, help the user to react to the data coming out of multiple sources at the same time.
+
+The foundation block which makes Gemini Personal Assistant ready to help to as many users in the organization as necessary is in place: it can access the user identity. Sky is the limit to what it can do with the user-specific data.
+
+== Security Considerations
+
+We have dealt with several important security considerations.
+
+The obvious consideration is that you do not want to allow unauthenticated access to LLM which works with the sensitve data. It is common sense and not specific to the AI security domain.
+
+The tricker issue is how to prevent LLM making mistakes when calling tools with side-effects. For example, if you look at the Google Calendar REST API client tool which allows to modify the event, you will note the `calendarId` parameter - the agent finds the id of a specific calendar from the list of calendars. How can the user be protected from the event beng moved to the wrong calendar ?
+
+The https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] team is looking at various options such as guardrails and hallucination strategies for tools.
+
+You can also have your tool do the checks before making an actual call. For example, instead of having a declarative REST client tool that can update calendars, have a Tool bean which injects Google Calendar REST client and enforces that a calendar update event call is allowed only if it is `PersonalAssistant` calendar which is about to be updated.
+
+As far as the actual chat-bot implementation is concerned, ensuring a secure WebSockets HTTP upgrade is critical but it is complicated by the fact that JavaScript WebSockets API does not enforce the same origin requirement. Nonetheless, using a technique such as a custom ticketing system, combined with using a secure `wss:` scheme can help to minimize risks. Look at the https://github.com/quarkiverse/quarkus-langchain4j/tree/main/samples/secure-sql-chatbot[secure-sql-chatbot] demo in the https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] repository for more details.
+
+Please note that using WebSockets is not a pre-requisite for implementing a Personal Assistant. You can use JAX-RS, Qute, SSE instead. 
+
+== Conclusion
+
+In this post, we have introduced Secure Agentic Gemini Personal Assistant.
+
+Are you thinking about actually making AI work in production ? https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j] is here to help.
+
+Enjoy !
