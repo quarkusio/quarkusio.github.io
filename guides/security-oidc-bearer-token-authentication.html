@@ -700,7 +700,7 @@ public class IssuerValidator implements ContainerRequestFilter {
 </div>
 </div>
 <div class="sect2">
-<h3 id="jose4j-validator"><a class="anchor" href="#jose4j-validator"></a>Jose4j Validator</h3>
+<h3 id="jose4j-validator-bearer"><a class="anchor" href="#jose4j-validator-bearer"></a>Jose4j Validator</h3>
 <div class="paragraph">
 <p>You can register a custom <a href="https://www.javadoc.io/doc/org.bitbucket.b_c/jose4j/latest/org/jose4j/jwt/consumer/class-use/Validator.html">Jose4j Validator</a> to customize the JWT claim verification process, before <code>org.eclipse.microprofile.jwt.JsonWebToken</code> is initialized.
 For example:</p>
@@ -2233,6 +2233,148 @@ section of the OpenID Connect Multi-Tenancy guide.</p>
 </div>
 </div>
 <div class="sect1">
+<h2 id="step-up-authentication"><a class="anchor" href="#step-up-authentication"></a>Step Up Authentication</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The <code>io.quarkus.oidc.AuthenticationContext</code> annotation can be used to list one or more Authentication Context Class Reference (ACR) values to enforce a required authentication level for the Jakarta REST resource classes and methods.
+The <a href="https://datatracker.ietf.org/doc/rfc9470/">OAuth 2.0 Step Up Authentication Challenge Protocol</a> introduces a mechanism for resource servers to request stronger authentication methods when the token does not have expected Authentication Context Class Reference (ACR) values.
+Consider the following example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.oidc;
+
+import io.quarkus.oidc.AuthenticationContext;
+import io.quarkus.oidc.BearerTokenAuthentication;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@BearerTokenAuthentication
+@Path("/")
+public class GreetingsResource {
+
+    @Path("hello")
+    @AuthenticationContext("myACR") <i class="conum" data-value="1"></i><b>(1)</b>
+    @GET
+    public String hello() {
+        return "hello";
+    }
+
+    @Path("hi")
+    @AuthenticationContext(value = "myACR", maxAge = "PT120m") <i class="conum" data-value="2"></i><b>(2)</b>
+    @GET
+    public String hi() {
+        return "hi";
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Bearer access token must have an <code>acr</code> claim with the <code>myACR</code> ACR value.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Bearer access token must have an <code>acr</code> claim with the <code>myACR</code> ACR value and be in use for no longer than 120 minutes since the authentication time.</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.http.auth.proactive=false <i class="conum" data-value="1"></i><b>(1)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Disable proactive authentication so that the <code>@AuthenticationContext</code> annotation can be matched with the endpoint before Quarkus authenticates incoming requests.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>If the bearer access token claim <code>acr</code> does not contain <code>myACR</code>, Quarkus returns an authentication requirements challenge indicating required <code>acr_values</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer error="insufficient_user_authentication",
+ error_description="A different authentication level is required",
+ acr_values="myACR"</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When a client such as Single-page application (SPA) receives a challenge with the <code>insufficient_user_authentication</code> error code, it must parse <code>acr_values</code>, request a new user login which must meet the <code>acr_values</code> constraints, and use a new access token to access Quarkus.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The <code>io.quarkus.oidc.AuthenticationContext</code> annotation can also be used to enforce required authentication level for a WebSockets Next server endpoint.
+The annotation must be placed on the endpoint class, because the <code>SecurityIdentity</code> is created before the HTTP connection is upgraded to a WebSocket connection.
+For more information about the HTTP upgrade security, see the <a href="websockets-next-reference#secure-http-upgrade">Secure HTTP upgrade</a> section of the Quarkus "WebSockets Next reference" guide.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>It is also possible to enforce the required authentication level for an OIDC tenant:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.hr.token.required-claims.acr=myACR</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Or, if you need more flexibility, write a <a href="#jose4j-validator-bearer">Jose4j Validator</a>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.it.oidc;
+
+import java.util.Map;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.jose4j.jwt.MalformedClaimException;
+import org.jose4j.jwt.consumer.JwtContext;
+import org.jose4j.jwt.consumer.Validator;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.common.runtime.OidcConstants;
+import io.quarkus.security.AuthenticationFailedException;
+
+@Unremovable
+@ApplicationScoped
+@TenantFeature("hr")
+public class AcrValueValidator implements Validator {
+
+    @Override
+    public String validate(JwtContext jwtContext) throws MalformedClaimException {
+        var jwtClaims = jwtContext.getJwtClaims();
+        if (jwtClaims.hasClaim("acr")) {
+            var acrClaim = jwtClaims.getStringListClaimValue("acr");
+            if (acrClaim.contains("myACR") &amp;&amp; acrClaim.contains("yourACR")) {
+                return null;
+            }
+        }
+        String requiredAcrValues = "myACR,yourACR";
+        throw new AuthenticationFailedException(Map.of(OidcConstants.ACR_VALUES, requiredAcrValues));
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="references"><a class="anchor" href="#references"></a>References</h2>
 <div class="sectionbody">
 <div class="ulist">
@@ -2296,7 +2438,7 @@ section of the OpenID Connect Multi-Tenancy guide.</p>
 <li><a href="#bearer-token-token-verification-introspection">Token verification and introspection</a></li>
 <li><a href="#bearer-token-token-introspection-userinfo-cache">Token introspection and <code>UserInfo</code> cache</a></li>
 <li><a href="#bearer-token-jwt-claim-verification">JSON Web Token claim verification</a></li>
-<li><a href="#jose4j-validator">Jose4j Validator</a></li>
+<li><a href="#jose4j-validator-bearer">Jose4j Validator</a></li>
 <li><a href="#single-page-applications">Single-page applications</a></li>
 <li><a href="#cross-origin-resource-sharing">Cross-origin resource sharing</a></li>
 <li><a href="#provider-endpoint-configuration">Provider endpoint configuration</a></li>
@@ -2322,6 +2464,7 @@ section of the OpenID Connect Multi-Tenancy guide.</p>
 </ul>
 </li>
 <li><a href="#programmatic-oidc-start-up">Programmatic OIDC start-up</a></li>
+<li><a href="#step-up-authentication">Step Up Authentication</a></li>
 <li><a href="#references">References</a></li>
 </ul></div>
     </div>
