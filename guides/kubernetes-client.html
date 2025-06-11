@@ -845,6 +845,138 @@ public class OpenShiftClientTest {
 </div>
 </div>
 <div class="sect1">
+<h2 id="optimizing-native-image"><a class="anchor" href="#optimizing-native-image"></a>Optimizing the Native Image</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The Kubernetes and OpenShift client extensions aim to provide a great <strong>developer experience</strong> while enabling the client to work in <strong>native mode</strong>.
+When building a native image, the Kubernetes Client extension will register all the accessible Kubernetes model classes for reflection.
+Unfortunately, this can lead to large native image sizes and longer build times.</p>
+</div>
+<div class="paragraph">
+<p>Once you&#8217;ve completed your application implementation, if you want to distribute and deploy your application as a <strong>native image</strong>, you should consider reducing its size by following these guidelines.</p>
+</div>
+<div class="sect2">
+<h3 id="use-the-kubernetes-client-extension"><a class="anchor" href="#use-the-kubernetes-client-extension"></a>Use the Kubernetes Client extension</h3>
+<div class="paragraph">
+<p>The <a href="#openshift-client">OpenShift Client</a> provides domain-specific language (DSL) accessors to common OpenShift resources.
+In addition, the extension supplies the necessary project configuration to bring in the OpenShift model type modules.</p>
+</div>
+<div class="paragraph">
+<p>In JVM mode, this works great because, as a developer, you don&#8217;t need to worry about the configuration.
+However, in native mode, by depending on the OpenShift extension you&#8217;re bringing in many resources that your application might not need unnecessarily increasing its size.</p>
+</div>
+<div class="paragraph">
+<p>In this context, it&#8217;s better to depend only on what you need, by adding a dependency to the Kubernetes Client extension and only the minimum OpenShift model dependencies:</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-kubernetes-client&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;openshift-model&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-kubernetes-client")
+implementation("io.fabric8:openshift-model")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The OpenShift-specific DSL accessors won&#8217;t be available since you&#8217;ll now have a Bean of type <code>KubernetesClient</code> instead of <code>OpenShiftClient</code>.
+However, the Fabric8 Kubernetes Client provides generic entry-points to perform operations on any resource:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">// List OpenShift Routes in any namespace
+kubernetesClient
+    .resources(io.fabric8.openshift.api.model.Route.class)
+    .inAnyNamespace().list();
+// Delete an OpenShift Route
+kubernetesClient
+    .resources(io.fabric8.openshift.api.model.Route.class)
+    .inNamespace("default").withName("the-route").delete();
+// Create or replace a new OpenShift Route
+kubernetesClient
+    .resource(new RouteBuilder()/* ... */.build())
+    .inNamespace("default").createOr(NonDeletingOperation::update);</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="depend-only-on-the-modules-you-need"><a class="anchor" href="#depend-only-on-the-modules-you-need"></a>Depend only on the modules you need</h3>
+<div class="paragraph">
+<p>The Kubernetes Client extension has transitive dependencies to all of the vanilla Kubernetes API model types.
+This is very convenient in JVM mode, since you don&#8217;t need to worry about configuring the project.</p>
+</div>
+<div class="paragraph">
+<p>However, in native mode, this implies registering for reflection model types that you very likely won&#8217;t use in your application.
+You can mitigate this by providing a more granular project configuration and depending only on those models you are sure the application uses.</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-kubernetes-client&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;kubernetes-client-api&lt;/artifactId&gt;
+    &lt;!-- Exclude all transitive dependencies --&gt;
+    &lt;exclusions&gt;
+        &lt;exclusion&gt;
+            &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+            &lt;artifactId&gt;*&lt;/artifactId&gt;
+        &lt;/exclusion&gt;
+    &lt;/exclusions&gt;
+&lt;/dependency&gt;
+&lt;!-- Include only those that make sense for your application --&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;kubernetes-client&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;kubernetes-model-core&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;kubernetes-model-admissionregistration&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;dependency&gt;
+    &lt;groupId&gt;io.fabric8&lt;/groupId&gt;
+    &lt;artifactId&gt;kubernetes-model-apps&lt;/artifactId&gt;
+&lt;/dependency&gt;
+&lt;!-- ... --&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("quarkus-kubernetes-client")
+implementation("io.fabric8:kubernetes-client-api") {
+    // Exclude all transitive dependencies
+    exclude group: "io.fabric8"
+}
+// Include only those that make sense for your application
+implementation("io.fabric8:kubernetes-client")
+implementation("io.fabric8:kubernetes-model-core")
+implementation("io.fabric8:kubernetes-model-admissionregistration")
+implementation("io.fabric8:kubernetes-model-apps")
+// ...</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>Configuration Reference</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -1631,6 +1763,12 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#note-on-ec-keys">Note on using Elliptic Curve keys</a></li>
 <li><a href="#access-to-the-kubernetes-api">Access to the Kubernetes API</a></li>
 <li><a href="#openshift-client">OpenShift Client</a></li>
+<li><a href="#optimizing-native-image">Optimizing the Native Image</a>
+<ul class="sectlevel2">
+<li><a href="#use-the-kubernetes-client-extension">Use the Kubernetes Client extension</a></li>
+<li><a href="#depend-only-on-the-modules-you-need">Depend only on the modules you need</a></li>
+</ul>
+</li>
 <li><a href="#configuration-reference">Configuration Reference</a></li>
 </ul></div>
     </div>
