@@ -258,18 +258,6 @@ If you would like to surface metrics from a separate management port, see the <a
 </tr>
 </table>
 </div>
-<div class="admonitionblock note">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-note" title="Note"></i>
-</td>
-<td class="content">
-<code>quarkus-micrometer</code> now uses the Prometheus client v1.x. For help migrating from the old client, please check the <a href="https://github.com/micrometer-metrics/micrometer/wiki/1.13-Migration-Guide">Prometheus Java client 0.x to 1.x upgrade</a>  from Micrometer.
-</td>
-</tr>
-</table>
-</div>
 </div>
 </div>
 <div class="sect1">
@@ -289,7 +277,7 @@ Other Quarkus and Quarkiverse extensions use the Quarkus Micrometer extension to
 <p>micrometer</p>
 </li>
 <li>
-<p>micrometer-registry-prometheus (Prometheus client v1.x)</p>
+<p>micrometer-registry-prometheus</p>
 </li>
 </ul>
 </div>
@@ -525,7 +513,7 @@ Micrometer applies naming conventions to convert registered meter names to match
 <div class="ulist">
 <ul>
 <li>
-<p>Prometheus: <code>http_server_requests_seconds</code></p>
+<p>Prometheus: <code>http_server_requests_duration_seconds</code></p>
 </li>
 <li>
 <p>Atlas: <code>httpServerRequests</code></p>
@@ -1093,6 +1081,8 @@ See <a href="https://docs.micrometer.io/micrometer/reference/concepts/timers">Ti
 <div class="sect1">
 <h2 id="automatically-generated-metrics"><a class="anchor" href="#automatically-generated-metrics"></a>Automatically generated metrics</h2>
 <div class="sectionbody">
+<div class="sect2">
+<h3 id="http-server"><a class="anchor" href="#http-server"></a>HTTP server</h3>
 <div class="paragraph">
 <p>The Micrometer extension automatically times HTTP server requests. Following Prometheus naming conventions for
 timers, look for <code>http_server_requests_seconds_count</code>, <code>http_server_requests_seconds_sum</code>, and
@@ -1128,6 +1118,382 @@ For example, setting
 <div class="title">Exported metrics format</div>
 <p>By default, the  metrics are exported using the Prometheus format <code>application/openmetrics-text</code>,
 you can revert to the former format by specifying the <code>Accept</code> request header to <code>text/plain</code> (<code>curl -H "Accept: text/plain" localhost:8080/q/metrics/</code>).</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="netty-memory-management-metrics"><a class="anchor" href="#netty-memory-management-metrics"></a>Netty memory management metrics</h3>
+<div class="paragraph">
+<p><a href="https://netty.io/">Netty</a> memory management metrics are important because Quarkus is built on top of <a href="https://vertx.io/">Eclipse Vert.x</a>, which is a framework built on top of Netty to create reactive applications in Java. Even if you use imperative style programing in Quarkus, under the surface it is conveniently handled by Vert.x in a reactive way.</p>
+</div>
+<div class="paragraph">
+<p>In short, Netty provides an <em>efficient</em> memory management system for asynchronous applications.
+It offers different types of memory allocation strategies, including <strong>heap</strong> (stored in the JVM heap) and direct memory (allocated outside the JVM memory), along with a <strong>buffer pooling mechanism</strong> to optimize allocations and reduce garbage collection (GC) overhead.</p>
+</div>
+<div class="sect3">
+<h4 id="memory-categories-in-netty"><a class="anchor" href="#memory-categories-in-netty"></a>Memory Categories in Netty</h4>
+<div class="paragraph">
+<p>Netty uses two primary memory categories:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Heap Memory</strong></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Allocated from the JVM heap (<code>byte[]</code>).</p>
+</li>
+<li>
+<p>Managed by the garbage collector.</p>
+</li>
+<li>
+<p>Slower for I/O operations because it requires copying data to/from direct memory before sending over a socket.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><strong>Direct Memory</strong></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Allocated outside the JVM heap using <code>ByteBuffer.allocateDirect()</code>.</p>
+</li>
+<li>
+<p>Not managed by the garbage collector, reducing GC pressure.</p>
+</li>
+<li>
+<p>Faster for I/O operations as it avoids unnecessary copying.</p>
+</li>
+</ul>
+</div>
+</li>
+</ol>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Using a very high value for -XX:MaxRAMPercentage (allocating most of the available RAM to the Java heap) is not recommended for Quarkus applications, as it’s important to leave room for Netty&#8217;s native memory allocations.</p>
+</div>
+<div class="paragraph">
+<p>These Netty metrics help evaluate how much room is needed.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect3">
+<h4 id="pooling-mechanism"><a class="anchor" href="#pooling-mechanism"></a>Pooling Mechanism</h4>
+<div class="paragraph">
+<p>Netty uses <strong>PooledByteBufAllocator</strong> to reduce memory allocation overhead and fragmentation. It is based on a <strong>jemalloc-style arena system</strong> (see <a href="https://github.com/jemalloc/jemalloc">jemalloc/jemalloc</a>), which includes:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Arenas</strong>: Large memory blocks that manage allocations.</p>
+</li>
+<li>
+<p><strong>Chunks</strong>: Memory segments within arenas (typically 16MB in size).</p>
+</li>
+<li>
+<p><strong>Pages</strong>: Fixed-size portions of a chunk (usually 8KB).</p>
+</li>
+<li>
+<p><strong>Subpages</strong>: Smaller allocations within a page for tiny objects.</p>
+</li>
+<li>
+<p><strong>Thread-local Caches</strong>: Per-thread cache for frequently used small buffers, reducing contention.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect3">
+<h4 id="metrics-for-netty-memory-management"><a class="anchor" href="#metrics-for-netty-memory-management"></a>Metrics for Netty Memory Management</h4>
+<div class="paragraph">
+<p>The Micrometer metrics report key metrics from Netty&#8217;s allocator, helping monitor memory usage, pinned memory, pooling efficiency, and cache behavior.</p>
+</div>
+<div class="sect4">
+<h5 id="1-memory-usage-metrics-every-allocator"><a class="anchor" href="#1-memory-usage-metrics-every-allocator"></a><strong>1. Memory Usage Metrics (Every allocator)</strong></h5>
+<div class="paragraph">
+<p>These metrics track the current memory usage by Netty allocators (in bytes)</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.memory.used</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Amount of memory currently used by the allocator</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>memory_type=[heap, direct]</code>, <code>name=allocator-name</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="2-pooled-allocator-pinned-memory-metrics"><a class="anchor" href="#2-pooled-allocator-pinned-memory-metrics"></a><strong>2. Pooled  Allocator - Pinned Memory Metrics</strong></h5>
+<div class="paragraph">
+<p>Pinned memory refers to buffers that cannot be recycled due to active references, preventing reuse by the allocator. A <em>high</em> number may indicate some kind of leak (as reference are not released).</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.memory.pinned</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Amount of pinned memory that cannot be reused</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>memory_type=[heap, direct]</code>, <code>name=allocator-name</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="3-pooled-allocator-arena-metrics"><a class="anchor" href="#3-pooled-allocator-arena-metrics"></a><strong>3. Pooled Allocator - Arena Metrics</strong></h5>
+<div class="paragraph">
+<p>Arenas (large size of memory) manage memory allocations efficiently by grouping chunks of memory. So this metric is the number of arenas allocated for a given allocator.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.pooled.arenas</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of arenas handling memory allocation</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>memory_type=[heap, direct]</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="4-cache-size-metrics"><a class="anchor" href="#4-cache-size-metrics"></a><strong>4. Cache Size Metrics</strong></h5>
+<div class="paragraph">
+<p>Netty caches small buffers within a given thread to avoid frequent memory allocations and improve performance. If the same thread needs memory, it will first check in its own cache. This is particularly efficient due to the event loop threading model (low number of threads). Note that the tiny caches are now merged into the small ones.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.pooled.cache.size</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Size of the buffer cache</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>cache_type=[small, normal]</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="5-thread-local-cache-metrics"><a class="anchor" href="#5-thread-local-cache-metrics"></a><strong>5. Thread-Local Cache Metrics</strong></h5>
+<div class="paragraph">
+<p>These metrics indicate the number of active thread-local caches used for memory pooling. It complements the cache size metrics (cache being the size, and this being the number of cache)</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.pooled.threadlocal.caches</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of thread-local caches for buffers</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">None</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="6-chunk-size-metrics"><a class="anchor" href="#6-chunk-size-metrics"></a><strong>6. Chunk Size Metrics</strong></h5>
+<div class="paragraph">
+<p>Chunks are the primary unit of memory allocation in Netty&#8217;s arenas.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Metric Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>allocator.pooled.chunk.size</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Size of a memory chunk in pooled allocator</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">None</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="quarkus-extensions-using-micrometer"><a class="anchor" href="#quarkus-extensions-using-micrometer"></a>List of Quarkus core extensions automatically instrumented with Micrometer</h3>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-agroal"><code>quarkus-agroal</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/cache"><code>quarkus-cache</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-caffeine"><code>quarkus-caffeine</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/smallrye-fault-tolerance"><code>quarkus-smallrye-fault-tolerance</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/grpc-getting-started"><code>quarkus-grpc</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/hibernate-orm"><code>quarkus-hibernate-orm</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-jaxrs-client-reactive"><code>quarkus-jaxrs-client-reactive</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/deploying-to-kubernetes"><code>quarkus-kubernetes</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/logging"><code>jboss-logging</code></a> (logging API in Quarkus)</p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/mongodb"><code>quarkus-mongodb-client</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-netty"><code>quarkus-netty</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/redis"><code>quarkus-redis-client</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/rest"><code>quarkus-rest</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/resteasy"><code>quarkus-resteasy-jackson</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/resteasy-client"><code>quarkus-resteasy-client</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/scheduler"><code>quarkus-scheduler</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/smallrye-graphql"><code>quarkus-smallrye-graphql</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-messaging"><code>quarkus-messaging</code></a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>AMQP 1.0</p>
+</li>
+<li>
+<p>RabbitMQ</p>
+</li>
+<li>
+<p>Kafka</p>
+</li>
+<li>
+<p>Pulsar</p>
+</li>
+<li>
+<p>JMS</p>
+</li>
+<li>
+<p>MQTT</p>
+</li>
+<li>
+<p>Camel Messaging</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/stork-reference"><code>quarkus-smallrye-stork</code></a></p>
+</li>
+<li>
+<p><a href="https://quarkus.io/guides/vertx"><code>quarkus-vertx</code></a> (http requests)</p>
+</li>
+<li>
+<p><a href="websockets-next-reference"><code>websockets-next</code></a></p>
+</li>
+</ul>
+</div>
 </div>
 </div>
 </div>
@@ -1179,6 +1545,7 @@ public class CustomConfiguration {
                 if(id.getName().startsWith("myservice")) {
                     return DistributionStatisticConfig.builder()
                         .percentiles(0.5, 0.95)     // median and 95th percentile, not aggregable
+                        .percentilesHistogram(true) // histogram buckets (e.g. prometheus histogram_quantile)
                         .build()
                         .merge(config);
                 }
@@ -1415,103 +1782,6 @@ The Prometheus metrics will be available from <code><a href="http://0.0.0.0:9000
 </div>
 <div class="paragraph">
 <p>Refer to the <a href="./management-interface-reference">management interface reference</a> for more information.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="quarkus-extensions-using-micrometer"><a class="anchor" href="#quarkus-extensions-using-micrometer"></a>Quarkus core extensions instrumented with Micrometer</h2>
-<div class="sectionbody">
-<div class="ulist">
-<ul>
-<li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-agroal"><code>quarkus-agroal</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/cache"><code>quarkus-cache</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-caffeine"><code>quarkus-caffeine</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/smallrye-fault-tolerance"><code>quarkus-smallrye-fault-tolerance</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/grpc-getting-started"><code>quarkus-grpc</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/hibernate-orm"><code>quarkus-hibernate-orm</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-jaxrs-client-reactive"><code>quarkus-jaxrs-client-reactive</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/deploying-to-kubernetes"><code>quarkus-kubernetes</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/logging"><code>jboss-logging</code></a> (logging API in Quarkus)</p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/mongodb"><code>quarkus-mongodb-client</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-netty"><code>quarkus-netty</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/redis"><code>quarkus-redis-client</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/rest"><code>quarkus-rest</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/resteasy"><code>quarkus-resteasy-jackson</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/resteasy-client"><code>quarkus-resteasy-client</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/scheduler"><code>quarkus-scheduler</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/smallrye-graphql"><code>quarkus-smallrye-graphql</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/extensions/io.quarkus/quarkus-messaging"><code>quarkus-messaging</code></a></p>
-<div class="ulist">
-<ul>
-<li>
-<p>AMQP 1.0</p>
-</li>
-<li>
-<p>RabbitMQ</p>
-</li>
-<li>
-<p>Kafka</p>
-</li>
-<li>
-<p>Pulsar</p>
-</li>
-<li>
-<p>JMS</p>
-</li>
-<li>
-<p>MQTT</p>
-</li>
-<li>
-<p>Camel Messaging</p>
-</li>
-</ul>
-</div>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/stork-reference"><code>quarkus-smallrye-stork</code></a></p>
-</li>
-<li>
-<p><a href="https://quarkus.io/guides/vertx"><code>quarkus-vertx</code></a> (http requests)</p>
-</li>
-<li>
-<p><a href="websockets-next-reference"><code>websockets-next</code></a></p>
-</li>
-</ul>
 </div>
 </div>
 </div>
@@ -2466,7 +2736,13 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#summaries-and-timers">Summaries and Timers</a></li>
 </ul>
 </li>
-<li><a href="#automatically-generated-metrics">Automatically generated metrics</a></li>
+<li><a href="#automatically-generated-metrics">Automatically generated metrics</a>
+<ul class="sectlevel2">
+<li><a href="#http-server">HTTP server</a></li>
+<li><a href="#netty-memory-management-metrics">Netty memory management metrics</a></li>
+<li><a href="#quarkus-extensions-using-micrometer">List of Quarkus core extensions automatically instrumented with Micrometer</a></li>
+</ul>
+</li>
 <li><a href="#customizing-micrometer">Customizing Micrometer</a>
 <ul class="sectlevel2">
 <li><a href="#meter-filter">Use <code>MeterFilter</code> to customize emitted tags and metrics</a></li>
@@ -2478,7 +2754,6 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#annotations">Does Micrometer support annotations?</a></li>
 <li><a href="#support-for-the-microprofile-metrics-api">Support for the MicroProfile Metrics API</a></li>
 <li><a href="#management-interface">Management interface</a></li>
-<li><a href="#quarkus-extensions-using-micrometer">Quarkus core extensions instrumented with Micrometer</a></li>
 <li><a href="#configuration-reference">Configuration Reference</a></li>
 </ul></div>
     </div>
