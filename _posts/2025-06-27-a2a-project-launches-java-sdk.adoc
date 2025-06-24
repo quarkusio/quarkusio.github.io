@@ -1,0 +1,305 @@
+---
+layout: post
+title: 'Quarkus and WildFly teams from Red Hat collaborating with Google on launch of Agent2Agent Java SDK'
+date: 2025-06-27
+tags: release
+synopsis: 'We’re thrilled to announce the launch of the Agent2Agent (A2A) Java SDK, contributed by the WildFly and the Quarkus communities'
+author: maeste
+---
+:imagesdir: /assets/images/posts/a2a-announce
+
+The agent revolution just took a massive leap forward! Following the
+recent landmark https://developers.googleblog.com/en/google-cloud-donates-a2a-to-linux-foundation/[announcement] that Google has donated the Agent2Agent
+(A2A) protocol to the Linux Foundation, we’re thrilled to announce the
+launch of the https://github.com/a2aproject/a2a-java[A2A Java SDK], created by the WildFly and Quarkus teams in close collaboration, and now contributed to the official A2A project.
+
+
+== A New Era Under Linux Foundation Stewardship
+
+The https://a2aproject.github.io/A2A/latest/specification[A2A] protocol’s transition to the Linux Foundation represents more
+than just a change of governance: it’s a commitment to vendor-neutral,
+community-driven innovation. Similar how WildFly and Quarkus both recently joined the CommonHaus foundation. This ensures that A2A, as a critical interoperability
+standard, remains open and accessible to all. With more than 100
+companies now supporting the protocol, we’re witnessing the formation of
+what industry leaders are calling "`an open, interoperable Internet of
+Agents.`"
+With the A2A Java SDK now part of this movement, enterprise developers can participate in this open agent ecosystem from day one.
+
+== Why Java SDK Matters
+
+Here’s where things get exciting from a technical perspective: *true
+polyglot agent ecosystems*.
+
+The agent landscape has been fragmented, with Python dominating AI/ML
+workflows, JavaScript powering web-based agents, and Java serving as the
+backbone of enterprise backend systems. Siloed development across language ecosystems has held back the true potential of agentic applications.
+
+
+Our Java SDK shatters these barriers by implementing the A2A protocol
+specification natively in Java, enabling:
+
+* *Enterprise-grade agent integration* with existing Java
+infrastructure +
+* *Seamless interoperability* between Java agents and those written in
+Python, JavaScript, or any A2A-compatible language with
+well-tested enterprise capabilities (including observability, security...)
+
+And you know what? Writing agents in Java is now as easy as writing
+
+=== 1. A class that creates an A2A Agent Card
+
+[source,java]
+----
+import io.a2a.spec.AgentCapabilities;
+import io.a2a.spec.AgentCard;
+import io.a2a.spec.AgentSkill;
+import io.a2a.spec.PublicAgentCard;
+...
+
+@ApplicationScoped
+public class WeatherAgentCardProducer {
+    
+    @Produces
+    @PublicAgentCard
+    public AgentCard agentCard() {
+        return new AgentCard.Builder()
+                .name("Weather Agent")
+                .description("Helps with weather")
+                .url("http://localhost:10001")
+                .version("1.0.0")
+                .capabilities(new AgentCapabilities.Builder()
+                        .streaming(true)
+                        .pushNotifications(false)
+                        .stateTransitionHistory(false)
+                        .build())
+                .defaultInputModes(Collections.singletonList("text"))
+                .defaultOutputModes(Collections.singletonList("text"))
+                .skills(Collections.singletonList(new AgentSkill.Builder()
+                        .id("weather_search")
+                        .name("Search weather")
+                        .description("Helps with weather in city, or states")
+                        .tags(Collections.singletonList("weather"))
+                        .examples(List.of("weather in LA, CA"))
+                        .build()))
+                .build();
+    }
+}
+----
+
+=== 2. A class that creates an A2A Agent Executor
+
+[source,java]
+----
+import io.a2a.server.agentexecution.AgentExecutor;
+import io.a2a.server.agentexecution.RequestContext;
+import io.a2a.server.events.EventQueue;
+import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.spec.JSONRPCError;
+import io.a2a.spec.Message;
+import io.a2a.spec.Part;
+import io.a2a.spec.Task;
+import io.a2a.spec.TaskNotCancelableError;
+import io.a2a.spec.TaskState;
+import io.a2a.spec.TextPart;
+...
+
+@ApplicationScoped
+public class WeatherAgentExecutorProducer {
+
+    @Inject
+    WeatherAgent weatherAgent;
+
+    @Produces
+    public AgentExecutor agentExecutor() {
+        return new WeatherAgentExecutor(weatherAgent);
+    }
+
+    private static class WeatherAgentExecutor implements AgentExecutor {
+
+        private final WeatherAgent weatherAgent;
+
+        public WeatherAgentExecutor(WeatherAgent weatherAgent) {
+            this.weatherAgent = weatherAgent;
+        }
+
+        @Override
+        public void execute(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
+            TaskUpdater updater = new TaskUpdater(context, eventQueue);
+
+            // mark the task as submitted and start working on it
+            if (context.getTask() == null) {
+                updater.submit();
+            }
+            updater.startWork();
+
+            // extract the text from the message
+            String userMessage = extractTextFromMessage(context.getMessage());
+
+            // call the weather agent with the user's message
+            String response = weatherAgent.chat(userMessage);
+
+            // create the response part
+            TextPart responsePart = new TextPart(response, null);
+            List<Part<?>> parts = List.of(responsePart);
+
+            // add the response as an artifact and complete the task
+            updater.addArtifact(parts, null, null, null);
+            updater.complete();
+        }
+
+        @Override
+        public void cancel(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
+            Task task = context.getTask();
+
+            if (task.getStatus().state() == TaskState.CANCELED) {
+                // task already cancelled
+                throw new TaskNotCancelableError();
+            }
+
+            if (task.getStatus().state() == TaskState.COMPLETED) {
+                // task already completed
+                throw new TaskNotCancelableError();
+            }
+
+            // cancel the task
+            TaskUpdater updater = new TaskUpdater(context, eventQueue);
+            updater.cancel();
+        }
+
+        private String extractTextFromMessage(Message message) {
+            StringBuilder textBuilder = new StringBuilder();
+            if (message.getParts() != null) {
+                for (Part part : message.getParts()) {
+                    if (part instanceof TextPart textPart) {
+                        textBuilder.append(textPart.getText());
+                    }
+                }
+            }
+            return textBuilder.toString();
+        }
+    }
+}
+----
+
+Pretty straightforward, right? The SDK provides all the necessary
+components to create agent cards, handle agent execution, and manage
+communication between agents.
+
+Note: In future some of this boiler plate code we expect will be simplified by Quarkus and other frameworks using the A2A Java SDK.
+
+And when it comes to client-side development, it's even easier. The SDK
+includes a simple A2A client that allows you to interact with A2A agents
+using the A2A protocol. This client abstracts away the complexities of
+the protocol, making it easy to send messages, receive responses, and
+manage agent interactions. Creating an A2A client in Java is as simple as:
+
+=== 1. Create an A2A client
+
+[source,java]
+----
+// Create an A2AClient (the URL specified is the server agent's URL, be sure to replace it with the actual URL of the A2A server you want to connect to)
+A2AClient client = new A2AClient("http://localhost:1234");
+----
+
+=== 2. Send a message to the A2A server agent
+
+[source,java]
+----
+// Send a text message to the A2A server agent
+Message message = A2A.toUserMessage("tell me a joke"); // the message ID will be automatically generated for you
+MessageSendParams params = new MessageSendParams.Builder()
+        .message(message)
+        .build();
+SendMessageResponse response = client.sendMessage(params);        
+----
+
+Note that `+A2A#toUserMessage+` will automatically generate a message ID
+for you when creating the `+Message+` if you don’t specify it. You can
+also explicitly specify a message ID like this:
+
+[source,java]
+----
+Message message = A2A.toUserMessage("tell me a joke", "message-1234"); // messageId is message-1234
+----
+
+And the SDK also provides a convenient way to handle task management,
+allowing you to create, get the current state, and cancel tasks with ease. This is
+especially useful for managing long-running operations or coordinating
+complex workflows between multiple agents. You can find more details
+about task management and many other features in the *https://github.com/a2aproject/a2a-java[A2A Java SDK]* repository's.
+
+You just want more code? Are you interested to see interoperability in action? Explore our
+https://github.com/a2aproject/a2a-samples/tree/main/samples/multi_language/python_and_java_multiagent[multi-language
+sample implementation&#44;] which demonstrates how Python and Java
+agents collaborate seamlessly. See this picture for a bird-eye overview, 
+and checkout the code for more insights
+
+image::a2a-agentic.png[scaledwidth=100%]
+
+== Technical Excellence: The Mutiny-Zero Advantage
+
+And if you need your agent to be reactive, don't worry about the dependencies you are adding, because 
+the Java SDK leverages *mutiny-zero* as its reactive foundation, a
+decision that reflects our commitment to framework-agnostic excellence.
+https://smallrye.io/smallrye-mutiny-zero/latest/[Mutiny Zero] is a minimal API for creating reactive streams-compliant
+publishers that weighs less than 50K and have **zero** external dependencies
+beyond the Reactive Streams API. This architecture delivers several
+compelling advantages:
+
+* *No Vendor Lock-in*: No specific technology commitments for your
+agents. +
+* *Lightweight Performance*: Faster startups, reduced resource
+consumption. +
+* *Maximum Compatibility*: Seamless integration with existing Java
+reactive ecosystems. +
+* *Future-Proof Design*: Ready for Java’s modern Flow APIs, backward
+compatible.
+
+This reactive foundation ensures your Java agents can handle
+high-throughput, low-latency agent-to-agent communications while
+remaining lightweight and composable.
+
+== Community-Driven Innovation
+
+What started as an external contribution has now become an official part
+of the A2A project repository, showcasing how the ecosystem can rapidly
+evolve through diverse contributions. This is precisely the kind of
+collaborative development that will accelerate A2A adoption and
+innovation.
+
+Ready to dive in? Here’s your roadmap:
+
+[arabic]
+. *Explore the SDK*: Visit
+https://github.com/a2aproject/a2a-java[github.com/a2aproject/a2a-java]
+to examine the implementation +
+. *Study Real Examples*: Check out the
+https://github.com/a2aproject/a2a-samples/tree/main/samples/multi_language/python_and_java_multiagent[multi-language
+samples] to see interoperability in action +
+. *Join the Community*: Connect with fellow developers in the A2A
+ecosystem +
+. *Start Building*: Begin prototyping your first multi-language agent
+team
+
+== The Bigger Picture: Collaborative Intelligence
+
+The A2A protocol aims to break down the silos that currently limit the
+potential of AI infuse applications by providing a common language for
+AI agents to discover each other’s capabilities, securely exchange
+information, and coordinate complex tasks.
+
+With Java now joining Python and JavaScript in the A2A ecosystem, we’re
+building towards a future where intelligence is truly collaborative,
+where the most sophisticated AI systems are assembled from specialized
+agents, each optimized for specific tasks but unified through
+standardized communication protocols.
+
+This Java SDK launch is just the beginning. The A2A project under Linux
+Foundation stewardship is positioned for rapid expansion, with
+additional language implementations, enhanced security features, and
+enterprise-grade tooling on the horizon.
+
+*Your contributions matter*. Whether you’re fixing bugs, adding
+features, creating examples, or building integrations with other frameworks — every commithelps build this collaborative future.
+The agent revolution is here, and with the A2A Java SDK, the entire Java
+ecosystem can participate. Let’s build something amazing together! 🚀
