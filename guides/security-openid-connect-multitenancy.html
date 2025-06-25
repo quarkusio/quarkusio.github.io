@@ -356,7 +356,7 @@ cd security-openid-connect-multi-tenancy-quickstart</code></pre>
 <div class="title">Maven</div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.23.4:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.24.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-openid-connect-multi-tenancy-quickstart \
     -Dextensions='oidc,rest-jackson' \
@@ -1300,6 +1300,133 @@ You can populate it by using any settings supported by the <code>quarkus-oidc</c
 <div class="paragraph">
 <p>If the dynamic tenant resolver returns <code>null</code>, a <a href="#static-tenant-resolution">Static tenant configuration resolution</a> is attempted next.</p>
 </div>
+<div class="sect3">
+<h4 id="update-resolved-dynamic-tenant-configuration"><a class="anchor" href="#update-resolved-dynamic-tenant-configuration"></a>Update resolved dynamic tenant configuration</h4>
+<div class="paragraph">
+<p>It may be necessary to update the already resolved tenant configuration.
+For example, a client secret may have to be updated following a client secret update in the registered OIDC application.</p>
+</div>
+<div class="paragraph">
+<p>To update the configuration, use <code>OidcTenantConfigBuilder</code> to create a new instance of <code>OidcTenantConfig</code> and modify it as required before returning it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import io.quarkus.oidc.OidcRequestContext;
+import io.quarkus.oidc.OidcTenantConfig;
+import io.quarkus.oidc.TenantConfigResolver;
+import io.quarkus.oidc.runtime.TenantConfigBean;
+import io.smallrye.mutiny.Uni;
+import io.vertx.ext.web.RoutingContext;
+
+@ApplicationScoped
+public class CustomTenantConfigResolver implements TenantConfigResolver {
+
+    @Inject
+    TenantConfigBean tenantConfigBean;
+
+    @Override
+    public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+
+        // Check request path or request context `tenant-id` property to determine the tenant id.
+
+        var currentTenantConfig = tenantConfigBean.getDynamicTenant("some-dynamic-tenant-id").getOidcTenantConfig(); <i class="conum" data-value="1"></i><b>(1)</b>
+        if (currentTenantConfig != null
+            &amp;&amp; "name".equals(currentTenantConfig.token().principalClaim().get())) { <i class="conum" data-value="2"></i><b>(2)</b>
+            // This is an original configuration, update it now:
+            OidcTenantConfig updatedConfig = OidcTenantConfig.builder(currentTenantConfig) <i class="conum" data-value="3"></i><b>(3)</b>
+                                .token().principalClaim("email").end()
+                                .build();
+
+            return Uni.createFrom().item(updatedConfig);
+        }
+        // create an initial configuration for the tenant
+        OidcTenantConfig config = OidcTenantConfig.builder() <i class="conum" data-value="4"></i><b>(4)</b>
+                                .token().principalClaim("name").end()
+                                // set other properties
+                                .build();
+        return Uni.createFrom().item(config);
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Use <code>io.quarkus.oidc.runtime.TenantConfigBean</code> to get the already resolved tenant configuration. Alternatively, you can use the tenant <code>OidcTenantConfig</code> cached in your resolver.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>You may want to check if this configuration has already been updated, to avoid multiple redundant updates, for example, due to multliple redirects.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Use the resolved configuration to create a builder and update it as required.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>Create an initial configuration if no configuration already exists.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>This is all you have to do update the already resolved dynamic tenantr configuration, without having to reconnect to the provider.</p>
+</div>
+<div class="paragraph">
+<p>If reconnecting is necessary, for example, the <code>UserInfo</code> endpoint address may have changed for the tenant to rediscover it,
+then simply set a <code>RoutingContext</code> <code>replace-tenant-configuration-context</code> property to <code>true</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Override
+public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+    OidcTenantConfig updatedConfig = OidcTenantConfig.builder(currentTenantConfig)
+                                    .token().principalClaim("email").end()
+                                    .build();
+    context.put("replace-tenant-configuration-context", "true"); <i class="conum" data-value="1"></i><b>(1)</b>
+
+    return Uni.createFrom().item(updatedConfig);
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Replace the resolved tenant configuration and re-connect to the provider</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Finally, if you decide to update the resoved configuration while the existing OIDC session is still active, you may to have the session cookie removed and the user re-authenticated to align with the latest tenant configuration requirements. Set a <code>RoutingContext</code> <code>remove-session-cookie</code> property to <code>true</code> if it is necessary:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Override
+public Uni&lt;OidcTenantConfig&gt; resolve(RoutingContext context, OidcRequestContext&lt;OidcTenantConfig&gt; requestContext) {
+    OidcTenantConfig updatedConfig = OidcTenantConfig.builder(currentTenantConfig)
+                                    .token().principalClaim("email").end()
+                                    .build();
+    context.put("remove-session-cookie", "true"); <i class="conum" data-value="1"></i><b>(1)</b>
+
+    return Uni.createFrom().item(updatedConfig);
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Update the tenant configuration, remove the session cookie and triger the user re-authentication. If possible, prefer to get the user log-out first, instead of triggering the re-authentication at the tenant resolution time.</td>
+</tr>
+</table>
+</div>
+</div>
 </div>
 <div class="sect2">
 <h3 id="static-tenant-resolution"><a class="anchor" href="#static-tenant-resolution"></a>Static tenant configuration resolution</h3>
@@ -1316,7 +1443,7 @@ To configure the resolution of the tenant identifier, use one of the following o
 <p><a href="#configure-tenant-paths">Configure tenant paths</a></p>
 </li>
 <li>
-<p><a href="#default-tenant-resolver">Use last request path segment as tenant id</a></p>
+<p><a href="#default-tenant-resolver">Use request path segments to find tenant id</a></p>
 </li>
 <li>
 <p><a href="#issuer-based-tenant-resolver">Resolve tenants with a token issuer claim</a></p>
@@ -1417,9 +1544,9 @@ Path-matching mechanism works exactly same as in the <a href="security-authorize
 </div>
 </div>
 <div class="sect3">
-<h4 id="default-tenant-resolver"><a class="anchor" href="#default-tenant-resolver"></a>Use last request path segment as tenant id</h4>
+<h4 id="default-tenant-resolver"><a class="anchor" href="#default-tenant-resolver"></a>Use request path segments to find tenant id</h4>
 <div class="paragraph">
-<p>The default resolution for a tenant identifier is convention based, whereby the authentication request must include the tenant identifier in the last segment of the request path.</p>
+<p>The default resolution for a tenant identifier is convention based, whereby the authentication request must include the tenant identifier in one of the path segments of the request path.</p>
 </div>
 <div class="paragraph">
 <p>The following <code>application.properties</code> example shows how you can configure two tenants named <code>google</code> and <code>github</code>:</p>
@@ -1453,8 +1580,10 @@ quarkus.http.auth.permission.login.policy=authenticated</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If the endpoint is running on <code><a href="http://localhost:8080" class="bare">http://localhost:8080</a></code>, you can also provide UI options for users to log in to either <code><a href="http://localhost:8080/google" class="bare">http://localhost:8080/google</a></code> or <code><a href="http://localhost:8080/github" class="bare">http://localhost:8080/github</a></code>, without having to add specific <code>/google</code> or <code>/github</code> JAX-RS resource paths.
-Tenant identifiers are also recorded in the session cookie names after the authentication is completed.
+<p>If the endpoint is running on <code><a href="http://localhost:8080" class="bare">http://localhost:8080</a></code>, you can also provide UI options for users to log in to either <code><a href="http://localhost:8080/google" class="bare">http://localhost:8080/google</a></code> or <code><a href="http://localhost:8080/github" class="bare">http://localhost:8080/github</a></code>, without having to add specific <code>/google</code> or <code>/github</code> JAX-RS resource paths.</p>
+</div>
+<div class="paragraph">
+<p>Tenant identifiers are also recorded in the session cookie names after the authentication is completed.
 Therefore, authenticated users can access the secured application area without requiring either the <code>google</code> or <code>github</code> path values to be included in the secured URL.</p>
 </div>
 <div class="paragraph">
