@@ -1834,6 +1834,124 @@ When you plan to use bearer access tokens during the opening WebSocket handshake
 </tr>
 </table>
 </div>
+<div class="paragraph">
+<p>Before the bearer access token sent on the initial HTTP request expires, you can send a new bearer access token as part of a message and update current <code>SecurityIdentity</code> attached to the WebSocket server connection:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package io.quarkus.websockets.next.test.security;
+
+import io.quarkus.security.Authenticated;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.websockets.next.OnTextMessage;
+import io.quarkus.websockets.next.WebSocket;
+import io.quarkus.websockets.next.WebSocketSecurity;
+import jakarta.inject.Inject;
+
+@Authenticated
+@WebSocket(path = "/end")
+public class Endpoint {
+
+    record Metadata(String token) {}
+    record RequestDto(Metadata metadata, String message) {}
+
+    @Inject
+    SecurityIdentity securityIdentity;
+
+    @Inject
+    WebSocketSecurity webSocketSecurity;
+
+    @OnTextMessage
+    String echo(RequestDto request) {
+        if (request.metadata != null &amp;&amp; request.metadata.token != null) {
+            webSocketSecurity.updateSecurityIdentity(request.metadata.token); <i class="conum" data-value="1"></i><b>(1)</b>
+        }
+        String principalName = securityIdentity.getPrincipal().getName(); <i class="conum" data-value="2"></i><b>(2)</b>
+        return request.message + " " + principalName;
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Asynchronously update the <code>SecurityIdentity</code> attached to the WebSocket server connection.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>The current <code>SecurityIdentity</code> instance is still available and can be used during the <code>SecurityIdentity</code> update.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <a href="security-oidc-bearer-token-authentication">OIDC Bearer token authentication</a> mechanism has builtin support for the <code>SecurityIdentity</code> update.
+If you use other authentication mechanisms, you must implement the <code>io.quarkus.security.identity.IdentityProvider</code> provider that supports the <code>io.quarkus.websockets.next.runtime.spi.security.WebSocketIdentityUpdateRequest</code> authentication request.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The new bearer access token must have the same <code>sub</code> claim value as the token used during the initial HTTP request.
+Please also make sure the <code>SecurityIdentity</code> is only updated when necessary and the WebSocket message with credentials do not appear in your application logs.
+Always use the <code>wss</code> protocol to enforce encrypted HTTP connection via TLS when sending credentials as part of the WebSocket message.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>WebSocket client application have to send a new access token before previous one expires:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-html hljs" data-lang="html">&lt;script type="module"&gt;
+    import Keycloak from 'https://cdn.jsdelivr.net/npm/keycloak-js@26.2.0/lib/keycloak.js'
+    const keycloak = new Keycloak({
+        url: 'http://localhost:39245',
+        realm: 'quarkus',
+        clientId: 'websockets-js-client'
+    });
+    function getToken() {
+        return keycloak.token
+    }
+
+    await keycloak
+        .init({onLoad: 'login-required'})
+        .then(() =&gt; console.log('User is now authenticated.'))
+        .catch(err =&gt; console.log('User is NOT authenticated.', err));
+
+    // open Web socket - reduced for brevity
+    let connectionOpened = true;
+    const subprotocols = [ "quarkus", encodeURI("quarkus-http-upgrade" + "#Authorization#Bearer " + getToken()) ]
+    const socket = new WebSocket("wss://" + location.host + "/chat/username", subprotocols);
+
+    setInterval(() =&gt; {
+        keycloak
+            .updateToken(15)
+            .then(result =&gt; {
+                if (result &amp;&amp; connectionOpened) {
+                    console.log('Token updated, sending new token to the server')
+                    socket.send(JSON.stringify({
+                        metadata: {
+                            token: `${getToken()}`
+                        }
+                    }));
+                }
+            })
+            .catch(err =&gt; console.error(err))
+    }, 10000);
+&lt;/script&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Complete example is located in the <code>security-openid-connect-websockets-next-quickstart</code> <a href="https://github.com/quarkusio/quarkus-quickstarts/tree/development/security-openid-connect-websockets-next-quickstart">directory</a>.</p>
+</div>
 </div>
 </div>
 <div class="sect2">
