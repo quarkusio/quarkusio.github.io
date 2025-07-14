@@ -1,0 +1,618 @@
+---
+layout: post
+title: 'Use Quarkus MCP client to access secure MCP HTTP server from command line'
+date: 2025-07-23
+tags: ai mcp security
+synopsis: 'Explain how Quarkus LangChain4j MCP client can access MCP HTTP servers with access tokens from CLI'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/secure_mcp_oidc_client
+
+== Introduction
+
+In the https://quarkus.io/blog/secure-mcp-client/[Use Quarkus MCP client to access secure MCP HTTP servers] blog post, we explained how a user can login to Quarkus LangChain4j AI server application with GitHub OAuth2 and have Google AI Gemini use https://docs.quarkiverse.io/quarkus-langchain4j/dev/mcp.html[Quarkus MCP Client] to access a secure https://github.com/quarkiverse/quarkus-mcp-server[Quarkus MCP Server] user name provider tool with a GitHub access token.
+
+However, not every AI service application is going to be designed to require a user login: for example, it may run as a command line application or cron scheduler. But also, not every AI service application that requires a user login will be able to use a user login token to access a secure MCP server because such a server may only support tokens of different type.
+
+In this blog post, we will explain how https://docs.quarkiverse.io/quarkus-langchain4j/dev/mcp.html[Quarkus MCP Client] that runs in a command line Quarkus LangChain4j AI application can itself acquire an access token using an OAuth2 `client_credentials` grant and use it to access a secure https://github.com/quarkiverse/quarkus-mcp-server[Quarkus MCP Server] service account name provider tool.
+
+We will work with https://www.keycloak.org/[Keycloak] and rely on it to demonstrate how to approach securing complex, distributed AI applications that may span multiple security boundaries, by requiring that access tokens are restricted to specific audiences, and exchanging them to acquire new, correct audiences.
+
+[[demo-architecture]]
+== Demo architecture
+
+image::demo-architecture.png[Command Line Poem Service Architecture,align="center"]
+
+As you can see in the diagram above, a command line agent uses a `Poem Service` AI service to create a poem. The `Poem Service` uses `AI Gemini` and requests `MCP Client` to complete a tool call to help `AI Gemini` to find out the service account name.
+
+The MCP client must use an access token. It uses an OAuth2 `client_credential` grant to acquire a service account token and propagate it to the secure MCP server. This service account token's audience restricts it to accessing the MCP server only.
+
+The MCP server tool implementation must access a REST server to complete the tool action. However, it can not use the current access token that is restricted to accessing this MCP server because the REST server accepts tokens that are meant to access this REST server only.
+
+Therefore, the MCP server exchanges the current token to set the REST server audience before propagating it, with the REST server successfully completing the secure tool call, with the response returned to the MCP Client. 
+
+We are now ready to start working on the demo.
+
+You can find the complete project source in the https://github.com/quarkiverse/quarkus-langchain4j/tree/main/samples/secure-mcp-cmd-client-server[Quarkus LangChain4j Command Line Secure MCP Client Server sample].
+
+[[create-mcp-server]]
+== Step 1 - Create and start MCP server
+
+First, let's create a secure Quarkus MCP SSE server that can enforce an authenticated access to its tool, verify that the access token has a correct audience, and complete a tool action by exchanging the current access token for a new access token with the REST server audience and propagating this token to the REST server to get the required service account name.
+
+[[mcp-server-dependencies]]
+=== MCP server maven dependencies
+
+Add the following dependencies:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.mcp</groupId>
+    <artifactId>quarkus-mcp-server-sse</artifactId> <1>
+    <version>1.4.0</version>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId> <2>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest</artifactId> <3>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest-client-oidc-token-propagation</artifactId> <4>
+</dependency>
+----
+<1> `quarkus-mcp-server-sse` is required to support MCP Streamable HTTP and SSE transports.
+<2> `quarkus-oidc` is required to secure access to MCP SSE endpoints. Its version is defined in the Quarkus BOM.
+<3> `quarkus-rest` is required to support REST server that the MCP tool has to call. Its version is defined in the Quarkus BOM.
+<4> `quarkus-rest-client-oidc-token-propagation` also brings `quarkus-rest-client` and is required to support a REST client call to REST server with the token exchange and propagation. Its version is defined in the Quarkus BOM.
+
+[[mcp-server-tool]]
+=== MCP Service Account Name Tool
+
+Let's create a tool that can return a name of the current service account. 
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import org.eclipse.microprofile.rest.client.inject.RestClient;
+import io.quarkiverse.mcp.server.TextContent;
+import io.quarkiverse.mcp.server.Tool;
+import jakarta.inject.Inject;
+
+public class ServiceAccountNameProvider { // <1>
+
+    @RestClient
+    @Inject
+    ServiceAccountNameRestClient serviceAccountNameRestClient; // <2>
+
+    @Tool(name = "sevice-account-name-provider", description = "Provides a name of the current service account") // <1>
+    TextContent provideServiceAccountName() {
+        return new TextContent(serviceAccountNameRestClient.getServiceAccountName()); // <2>
+    }
+}
+----
+<1> Provide a tool that can return a name of the current service account.
+<2> Use an injected `ServiceAccountNameRestClient` to access the REST server to complete the service account name request. See the <<service-account-name-rest-client>> section below for more details.
+
+[NOTE]
+====
+The MCP server tool can be invoked only if the current MCP request is authenticated.
+
+In this blog post we do not enforce the secure tool access with annotations such as https://quarkus.io/blog/secure-mcp-client/#mcp-server-tool[@PermissionAllowed] or https://quarkus.io/blog/secure-mcp-sse-server/#tool[@Authenticated] but only use the HTTP security policy configuration instead.
+
+See how both main MCP SSE and tool endpoints are secured in the <<mcp-server-configuration>> section below.
+====
+
+[[service-account-name-rest-client]]
+=== Service Account Name REST client
+
+The <<mcp-server-tool>> uses the Service Account Name REST client to call the REST server to complete a service account name request.
+
+This REST client looks like this:
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+import io.quarkus.oidc.token.propagation.common.AccessToken;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Produces;
+
+@RegisterRestClient
+@AccessToken // <2>
+public interface ServiceAccountNameRestClient {
+
+    @GET
+    @Produces("text/plain")
+    String getServiceAccountName(); // <1>
+}
+----
+<1> Get a service account name from the REST server. See the <<service-account-name-rest-server>> section below for more details.
+<2> Use `@AccessToken` annotation to require the access token exchange and propagation. This single `@AccessToken` annotation, supported by an additional configuration in the <<mcp-server-configuration>> section below, is all that is required to support this complex access token flow.
+
+[[service-account-name-rest-server]]
+=== Service Account Name REST server
+
+The <<mcp-server-tool>> uses the <<service-account-name-rest-client>> to get a service account name from the Service Account Name REST server.
+
+This REST server looks like this:
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import io.quarkus.security.Authenticated;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+
+@Path("/service-account-name")
+public class ServiceAccountNameRestServer {
+
+    @Inject
+    SecurityIdentity securityIdentity;
+
+    @GET
+    @Produces("text/plain")
+    @Authenticated // <1>
+    public String getServiceAccountName() {
+        return securityIdentity.getPrincipal().getName(); // <2>
+    }
+}
+----
+<1> Provide a secure REST resource method that can return a service account name
+<2> Use an injected `SecurityIdentity` to complete the method's task, in this case - return a service account identity name.
+
+In this demo, the REST server is collocated with the MCP server to simplify the demo. Of course, in production, such REST servers will most likely be remote.
+
+Next, let's have a look, in the <<mcp-server-configuration>> section, how access to both the <<mcp-server-tool>> and this server is restricted to tokens with specific audiences only.
+
+[[mcp-server-configuration]]
+=== MCP Server Configuration
+
+Let's configure our secure MCP server:
+
+[source,properties]
+----
+# MCP server
+quarkus.mcp.server.server-info.name=Service Account Name Provider # <1>
+quarkus.mcp.server.traffic-logging.enabled=true
+quarkus.mcp.server.traffic-logging.text-limit=1000
+
+# Require an authenticated access to MCP server
+quarkus.http.auth.permission.authenticated.paths=/mcp/* # <2>
+quarkus.http.auth.permission.authenticated.policy=authenticated
+
+# Default Quarkus OIDC tenant that verifies access tokens which reach the MCP server.
+quarkus.oidc.client-id=quarkus-mcp-server # <3>
+quarkus.oidc.token.audience=quarkus-mcp-server # <4>
+
+# Request a token exchange before the token propagation
+quarkus.rest-client-oidc-token-propagation.exchange-token=true # <4>
+
+# OIDC client that performs the current token exchange
+quarkus.oidc-client.auth-server-url=${quarkus.oidc.auth-server-url} # <5>
+quarkus.oidc-client.client-id=${quarkus.oidc.client-id}
+quarkus.oidc-client.credentials.secret=${quarkus.oidc.credentials.secret}
+quarkus.oidc-client.scopes=quarkus-mcp-service-scope
+quarkus.oidc-client.grant.type=exchange
+quarkus.oidc-client.grant-options.exchange.subject_token_type=urn:ietf:params:oauth:token-type:access_token # <6>
+
+# REST client which accesses a protected REST server, by propagating the exchanged token 
+io.quarkiverse.langchain4j.sample.ServiceAccountNameRestClient/mp-rest/url=http://localhost:8080/service-account-name  # <7>
+
+# OIDC `service-account-name-rest-server` tenant that secures a protected REST server.
+quarkus.oidc.service-account-name-rest-server.auth-server-url=${quarkus.oidc.auth-server-url} # <8>
+quarkus.oidc.service-account-name-rest-server.token.audience=quarkus-mcp-service # <9>
+quarkus.oidc.service-account-name-rest-server.tenant-paths=/service-account-name
+
+# Keycloak devservice that enables a default OIDC tenant that secures MCP server.
+quarkus.keycloak.devservices.image-name=quay.io/keycloak/keycloak:26.3.1 # <10>
+quarkus.keycloak.devservices.port=8081
+# Keycloak may require more memory on some systems
+quarkus.keycloak.devservices.container-memory-limit=1250M
+
+----
+<1> Declare MCP server and enable traffic logging.
+<2> Enforce an authenticated access to the main MCP SSE and tool endpoints. The configured pattern covers both the initial '/mcp/sse' handshake and '/mcp/messages/' requests.
+<3> Default OIDC tenant that secures the MCP SSE endpoint and tool. It is supported by Keycloak Dev Service in dev mode. In simple cases you do not even have to configure the default OIDC tenant. But in this demo, the default OIDC tenant is required to enforce that the tokens which reach the MCP server contain a `quarkus-mcp-server` audience.
+<4> Request an access token exchange before the <<service-account-name-rest-client>> propagates it.
+<5> Configure OIDC client to perform the token exchange
+<6> Set the https://datatracker.ietf.org/doc/html/rfc8693#name-token-type-identifiers[type] of a new token that the current token will be exchanged for to `access_token`. Starting from Quarkus 3.25, an expected new  token type will be set to `access_token` by default, and users will not have to configure this property when the access token type is required when exchanging tokens.
+<7> Configure the <<service-account-name-rest-client>> with the REST server address. The REST server is collocated with the MCP server only to simplify the demo.
+<8> The OIDC tenant that protects the REST server only.
+<9> The OIDC tenant that protects the REST server requires that the tokens that are used to access it contain a REST server `quarkus-mcp-service` audience.
+<10> Configure Keycloak dev service to use one of the latest released Keycloak images, and make it run on a fixed `8081` port to simplify the <<poem-service-configuration>> where an access to Keycloak is also required.
+
+[[start-mcp-server]]
+=== Start the MCP server in dev mode
+
+Now let's start the MCP server in dev mode:
+
+[source,shell]
+----
+mvn quarkus:dev
+----
+
+and go to the <<keycloak-setup>> in the next section to complete the Keycloak configuration that is required to support the secure MCP server token audience and exchange requirements.
+
+[[keycloak-setup]]
+== Step 2 - Keycloak setup
+
+When we <<start-mcp-server,started the MCP server in dev mode>>, Keycloak Dev Service launched a Keycloak container, made it available on port `8081`, created a `quarkus` realm with the `quarkus-mcp-server` client - this client name was configured with the `quarkus.oidc.client-id=quarkus-mcp-server` property in the <<mcp-server-configuration>> section.
+
+The `quarkus-mcp-server` client represents a confidential OIDC client that protects the MCP server.
+
+But MCP server and REST server have additional token audience and exchange requirements and we must complete the Keycloak setup to support those requirements. Let's do it.
+
+Go to `http://localhost:8081` and login as a Keycloak admin, with the `admin` name and `admin` password credentials.
+
+Select the `quarkus` realm:
+
+image::quarkus-realm.png[Quarkus Realm,align="center"]
+
+First, create a `quarkus-mcp-client` OIDC client that the Quarkus MCP client will use to acquire OAuth2 `client_credentials` tokens for accessing the MCP server.
+
+Start with the `General Settings`:
+
+image::quarkus-mcp-client.png[Quarkus MCP Client,align="center"]
+
+and enable `Client authentication` and `Service accounts roles` capabilities:
+
+image::quarkus-mcp-client-service-account.png[Quarkus MCP Client Service Account,align="center"]
+
+Save the `quarkus-mcp-client` OIDC client. Click on its `Credentials` tab and copy the generated secret to export it later as the <<oidc-client-secret>> in order to run the command line AI `Poem Service` application.
+
+For the Quarkus MCP client to be able to access MCP server with access tokens that the `quarkus-mcp-client` OIDC client will acquire, these tokens must contain an audience (`aud`) claim with a `quarkus-mcp-server` audience. The MCP server is configured in the <<mcp-server-configuration>> section to require this audience.
+
+Keycloak supports several options for adding an audience (`aud`) claim to issued tokens. We will use an option that involves creating a custom `Client scope` with an `Audience` mapping.
+
+Go to the `Client scopes` and create an `Optional` `quarkus-mcp-server-scope`:
+
+image::quarkus-mcp-server-scope.png[Quarkus MCP Server Scope,align="center"]
+
+Once the `quarkus-mcp-server-scope` scope is created, go to its `Mappings` tab, and choose `Configure a new mapper` option and select `Audience`:
+
+image::quarkus-mcp-server-scope-aud.png[Quarkus MCP Server Scope Audience,align="center"]
+
+Name this mapper as `quarkus-mcp-server-as-audience` and choose `quarkus-mcp-server` as an `Included Client Audience`:
+
+image::quarkus-mcp-server-scope-aud-details.png[Quarkus MCP Server Scope Audience Details,align="center"]
+
+Once the `quarkus-mcp-server-scope` is created, add it as an `Optional` scope to the `quarkus-mcp-client`:
+
+image::add-quarkus-mcp-server-scope-to-quarkus-mcp-client.png[Add Scope to Client,align="center"]
+
+Now, when Quarkus MCP client will use the `quarkus-mcp-client` OIDC client to acquire tokens, it will request a `quarkus-mcp-server-scope` token scope, resulting in Keycloak issuing tokens with an audience that contains the `quarkus-mcp-server` - exactly what the Quarkus MCP server requires.
+
+Next, we need to support Quarkus MCP server exchanging the incoming access token with the `quarkus-mcp-server` audience for a new token that will contain a REST server audience instead.
+
+Create a `quarkus-mcp-service` OIDC client that represents the REST server, similarly to how you created the `quarkus-mcp-client` OIDC client. Next, create a `quarkus-mcp-service-scope` client scope, similarly to how you created the `quarkus-mcp-server-scope` client scope, choosing the `quarkus-mcp-service` as an `Included Client Audience` when creating an audience mapping for this scope.
+
+Once the `quarkus-mcp-service-scope` is created, add it as an `Optional`  client scope to the `quarkus-mcp-server` MCP Server OIDC client, similarly to how you added the `quarkus-mcp-server-scope` to the `quarkus-mcp-client` above.
+
+Finally, update the `quarkus-mcp-server` capability to support a `Standard Token Exchange`, see the https://www.keycloak.org/securing-apps/token-exchange#_standard-token-exchange-enable[How to enable token exchange] example in the Keycloak documentation.
+
+Now, the `quarkus-mcp-server` OIDC client that secures the MCP server can also exchange the incoming token and request a new `quarkus-mcp-service` audience by adding the `quarkus-mcp-service-scope` scope to the token exchange grant request, exactly what the REST server requires.
+
+[NOTE]
+====
+If you actively work with another OAuth2 provider that can produce tokens with required audiences and exchange them using a standard token exchange grant, then you can also try to adapt this demo to work with that provider instead.
+====
+
+[[create-poem-service]]
+== Step 3 - Create and run Poem Service from command line
+
+The MCP server is now <<start-mcp-server,running>> and ready to accept tool calls. Let's create a command line AI `Poem Service` that will work with AI Gemini and use Quarkus MCP client to complete tool calls.
+
+[[poem-service-maven-dependencies]]
+=== Poem Service Maven dependencies
+
+Add the following dependencies:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-ai-gemini</artifactId> # <1>
+</dependency>
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-mcp</artifactId> # <2>
+</dependency>
+<dependency>
+    <groupId>io.quarkiverse.langchain4j</groupId>
+    <artifactId>quarkus-langchain4j-oidc-client-mcp-auth-provider</artifactId> # <3>
+</dependency>
+<dependency>
+   <groupId>io.quarkus</groupId>
+   <artifactId>quarkus-picocli</artifactId> # <4>
+</dependency>
+----
+<1> `quarkus-langchain4j-ai-gemini` brings support for AI Gemini.
+<2> `quarkus-langchain4j-mcp` provides core MCP Client support.
+<3> `quarkus-langchain4j-oidc-cient-mcp-auth-provider` provides an implementation of https://docs.quarkiverse.io/quarkus-langchain4j/dev/mcp.html#_authorization[McpClientAuthProvider] that can supply access tokens that it itself acquires with an OAuth2 `client_credentials` grant (or any other supported grant that does not require a user input). Note, this dependency is different from the `quarkus-langchain4j-oidc-mcp-auth-provider` one that supplies tokens already available after an authorization code flow completes, it was demoed in the https://quarkus.io/blog/secure-mcp-client/#poem-service-maven-dependencies[Use Quarkus MCP client to access secure MCP HTTP servers] blog post to propagate GitHub login access tokens. 
+<4> `quarkus-picocli` supports building command-line Quarkus applications. Its version is defined in the Quarkus BOM.
+
+[[ai-gemini-key]]
+=== AI Gemini API key
+
+`Poem Service` relies on AI Gemini to create a poem.
+
+Get https://aistudio.google.com/app/apikey[AI Gemini API key] and export it as an `AI_GEMINI_API_KEY` environment property.
+
+[[oidc-client-secret]]
+=== OIDC client secret
+
+Quarkus MCP client will use an implementation of https://docs.quarkiverse.io/quarkus-langchain4j/dev/mcp.html#_authorization[McpClientAuthProvider] provided by the `quarkus-langchain4j-oidc-cient-mcp-auth-provider` dependency.
+
+This `McpClientAuthProvider` uses the <<poem-service-configuration,configured OIDC client>> to acquire access tokens using an OAuth2 `client_credentials` grant, where an OIDC client secret must be provided.
+
+Export the OIDC `quarkus-mcp-client` client secret that you copied when working through the <<keycloak-setup>> section as an `OIDC_CLIENT_SECRET` environment property.
+
+[[poem-service]]
+=== Poem Service
+
+`Poem Service` is a simple Quarkus LangChain4j AI service:
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import dev.langchain4j.service.UserMessage;
+import io.quarkiverse.langchain4j.RegisterAiService;
+import io.quarkiverse.langchain4j.mcp.runtime.McpToolBox;
+
+@RegisterAiService
+public interface PoemService {
+    @UserMessage("""
+            Write a short 1 paragraph poem in {language} about a Java programming language.
+            Provide a translation to English if the original poem language is not English.
+            Dedicate the poem to the service account, refer to this account by its name.""") // <1>
+    @McpToolBox("service-account-name") // <2>
+    String writePoem(String language); // <1>
+}
+----
+<1> Request to write a poem about Java.
+<2> Use Quarkus MCP `service-account-name` client configured in the <<poem-service-configuration>> section to call a tool that can provide a service account name.
+
+This service is called from the `PoemCommand`:
+
+[source,java]
+----
+package io.quarkiverse.langchain4j.sample;
+
+import java.util.concurrent.Callable;
+import jakarta.enterprise.context.control.ActivateRequestContext;
+import jakarta.inject.Inject;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
+
+@Command(name = "poem", mixinStandardHelpOptions = true, description = "Create a poem", version = "v1.0")
+@ActivateRequestContext
+public class PoemCommand implements Callable<Integer> {
+
+    @Option(names = { "-l", "--language" }, description = "Poem language", defaultValue = "English")
+    String poemLanguage;
+
+    @Inject
+    PoemService poemService;
+
+    @Override
+    public Integer call() {
+        System.out.println(poemService.writePoem(poemLanguage)); // <1>
+        return 0;
+    }
+}
+----
+<1> Call `PoemService`.
+
+[[poem-service-configuration]]
+=== Poem Service Configuration
+
+Let's see how the command line `Poem Service` configuration looks like:
+
+[source,properties]
+----
+quarkus.langchain4j.mcp.service-account-name.transport-type=http <1>
+quarkus.langchain4j.mcp.service-account-name.url=http://localhost:8081/mcp/sse/ <2>
+
+quarkus.oidc-client.auth-server-url=http://localhost:8081/realms/quarkus <3>
+quarkus.oidc-client.client-id=quarkus-mcp-client <4>
+quarkus.oidc-client.credentials.secret=${oidc_client_secret} <5>
+quarkus.oidc-client.scopes=quarkus-mcp-server-scope <6>
+
+quarkus.langchain4j.ai.gemini.api-key=${ai_gemini_api_key} <7>
+quarkus.langchain4j.ai.gemini.log-requests=true <8>
+quarkus.langchain4j.ai.gemini.log-responses=true
+----
+<1> Enable MCP client HTTP transport. In this demo we use SSE, but `Streamable HTTP` is also supported.
+<2> Point to the Quarkus MCP server endpoint that you started in the <<start-mcp-server>> step.
+<3> Configure https://quarkus.io/guides/security-openid-connect-client-reference[OIDC client] to acquire access tokens using OAuth2 `client_credentials` grant, a default grant type supported by the OIDC client. OIDC client points to a Keycloak `quarkus` realm, note the fixed `8081` port that you requested Keycloak Dev Service to use for Keycloak in the <<keycloak-setup>> section. 
+<4> OIDC client id, you created the OIDC `quarkus-mcp-client` client in the <<keycloak-setup>> section.
+<5> OIDC `quarkus-mcp-client` client secret that you exported during the <<oidc-client-secret>> step.
+<6> Request that the tokens issued to `quarkus-mcp-client` must contain a `quarkus-mcp-server` MCP server audience. You created a client `quarkus-mcp-server-scope` scope with a `quarkus-mcp-server` client audience mapping in the <<keycloak-setup>> section.
+<7> AI Gemini key that you acquired and exported during the <<ai-gemini-key>> step.
+<8> Enable AI Gemini request and response logging
+
+[NOTE]
+====
+Please pay attention to the fact that the MCP client configuration has a `service-account-name` name. You referred to this configuration with the `@McpToolBox("service-account-name")` annotation in the <<poem-service>> section.
+====
+
+[[package-poem-service]]
+=== Package Poem Service
+
+Package the command line `Poem Service`:
+
+[source,shell]
+----
+mvn clean package
+----
+
+[[run-poem-service]]
+=== Run Poem Service
+
+Run the command line `Poem Service` that you packaged in the <<package-poem-service>> section:
+
+[source,shell]
+----
+java -jar target/quarkus-app/quarkus-run.jar
+----
+
+You should get a response such as:
+
+[source,shell]
+----
+For service-account-quarkus-mcp-client, this Java ode I write,
+A language strong, with classes bright, and objects shining light.
+From simple apps to systems grand, its power knows no end,
+With threads and streams, a helping hand,  a journey without bend.
+Its virtual machine, a sturdy friend,  on which great feats depend.
+----
+
+How about trying another language ?
+
+[source,shell]
+----
+java -jar target/quarkus-app/quarkus-run.jar --language Greek
+----
+
+You should get a response such as:
+
+[source,shell]
+----
+Here's a short poem in Greek about Java, dedicated to the service account "service-account-quarkus-mcp-client":
+
+**Greek:**
+
+Ω, Java, γλώσσα ισχυρή και γρήγορη,
+για προγραμματισμό, εργαλείο ακριβές.
+Στον service-account-quarkus-mcp-client αφιερωμένη,
+η δύναμή σου, πάντα  αξιοθαύμαστη.
+
+**English Translation:**
+
+O Java, language strong and fast,
+For programming, a precise tool.
+Dedicated to service-account-quarkus-mcp-client,
+Your power, always admirable.
+----
+
+== Have token audiences made any difference ?
+
+For the command line `Poem Service` to <<run-poem-service, run successfully>>, Quarkus MCP client had to acquire a token with a `quarkus-mcp-server` audience to access the MCP server. 
+
+Here is how a token that Keycloak issues to the MCP client looks like:
+
+image::token-with-quarkus-mcp-server-aud.png[Token with quarkus-mcp-server audience,align="center"]
+
+The token `aud` claim contains two audience values, one of them is a required `quarkus-mcp-server` audience.
+
+For the MCP `quarkus-mcp-server` server to complete the Quarkus MCP client request, it had to verify that the token had a correct `quarkus-mcp-server` audience, and exchange it for a new token with a `quarkus-mcp-service` audience to access the REST server. 
+
+Here is how an exchanged token that a Keycloak issues to the MCP server looks like:
+
+image::token-with-quarkus-mcp-service-aud.png[Token with quarkus-mcp-service audience,align="center"]
+
+The token `aud` claim contains a required `quarkus-mcp-service` audience.
+
+Note this token still retains a record of the original `quarkus-mcp-client` client that acquired the previous token, but also lists `quarkus-mcp-server` as the authorizing party (`azp`).
+
+Let's try to access both MCP server and REST server without an audience claim.
+
+Ensure the MCP server is <<start-mcp-server,running>> and <<keycloak-setup,Keycloak is configured>>.
+
+In the demo, the OIDC `quarkus-mcp-client` client acquires tokens that are used to access the MCP server.
+
+Use the following curl command to acquire a `client_credentials` token for the `quarkus-mcp-client` client, omitting a `quarkus-mcp-server-scope` grant property:
+
+[source,shell]
+----
+curl -X POST -H "Content-Type: application/x-www-form-urlencoded" -d "grant_type=client_credentials&client_id=quarkus-mcp-client&client_secret=keycloak_quarkus_mcp_client_secret" http://localhost:8081/realms/quarkus/protocol/openid-connect/token
+----
+
+and confirm at https://jwt.io/[jwt.io] that the returned JWT token has no audience claim.
+
+Try to access the MCP server with this token:
+
+[source,shell]
+----
+curl -H "Authorization: Bearer <token>" http://localhost:8080/mcp/sse
+----
+
+and you will get HTTP 401.
+
+What about the REST server ? In the demo, the OIDC `quarkus-mcp-server` client acquires tokens that are used to access the REST server.
+
+Use the following curl command to acquire a `client_credentials` token  for the `quarkus-mcp-server` client, omitting a `quarkus-mcp-service-scope` grant property:
+
+[source,shell]
+----
+curl -X POST -H "Content-Type: application/x-www-form-urlencoded" -d "grant_type=client_credentials&client_id=quarkus-mcp-server&client_secret=secret" http://localhost:8081/realms/quarkus/protocol/openid-connect/token
+----
+
+and confirm at https://jwt.io/[jwt.io] that the returned JWT token has no audience claim.
+
+Try to access the REST server with this token:
+
+[source,shell]
+----
+curl -H "Authorization: Bearer <token>" http://localhost:8080/service-account-name
+----
+
+and you will get HTTP 401.
+
+You can also enforce a stricter verification by requiring that tokens received by both MCP and REST servers were issued to the `quarkus-mcp-client` and `quarkus-mcp-server` respectively by adding the following configuration fragment to the <<mcp-server-configuration>>:
+
+[source,properties]
+----
+# Tokens that are accepted by MCP server must have been requested by `quarkus-mcp-client`
+
+quarkus.oidc.token.required-claims.azp=quarkus-mcp-client
+
+# Tokens that are accepted by REST server must have been requested by `quarkus-mcp-server`
+
+quarkus.oidc.service-account-name-rest-server.token.required-claims.azp=quarkus-mcp-server
+----
+
+[[resource-indicator]]
+== Note about Resource Indicators
+
+The https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[latest 2025-06-18 MCP authorization specification] https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#token-audience-binding-and-validation[requires] the use of https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicators].
+
+OAuth2 Resource Indicator allows for a fine grained token audience restriction, in the presence of multiple, diverse resource servers that must be accessed with tokens.
+
+For a simple demo that we created in this blog post, having a token to contain an audience only is sufficient.
+
+If your provider already supports https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicators] and you need to have a token to also include a resource indicator, configure OIDC client to request it.
+
+For example, you can add `quarkus.oidc-client.grant.client.extra-params.resource=http://localhost:8080/mcp` to the <<poem-service-configuration>>.
+
+In this case, to have the MCP server verify that an access token contains a correct resource indicator, add `quarkus.oidc.token.required-claims.resource=http://localhost:8080/mcp` to the <<mcp-server-configuration>>.
+
+== Security Considerations
+
+Ensuring that each participant in your distributed AI system is properly secured and accepts tokens thar are meant to access this participant only is crucial.
+
+Token audience restriction is one of the key OAuth2 mechanisms that supports this goal, with <<resource-indicator,resource indicators>> allowing to achieve a finer-grained audience restriction. 
+
+https://datatracker.ietf.org/doc/html/rfc8693[Token exchange] can help to correctly switch the OAuth2 security context when the tokens are flowing in a multi-hop distributed AI application.
+
+Read more about the https://modelcontextprotocol.io/specification/draft/basic/authorization#access-token-privilege-restriction[Access Token Privilege Restriction] in the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[latest 2025-06-18 MCP authorization specification].
+
+== Conclusion
+
+In this blog post, we demonstrated how https://docs.quarkiverse.io/quarkus-langchain4j/dev/mcp.html[Quarkus MCP Client] can access secure MCP servers by acquiring access tokens using an OAuth2 `client_credentials` grant and propagating them to the secure Quarkus MCP server.
+
+We also looked into restricting tokens to specific audiences and started learning about an important OAuth2 https://datatracker.ietf.org/doc/html/rfc8693[token exchange] grant.
+
+We have more content dedicated to AI and MCP security lined up for you, stay tuned !
