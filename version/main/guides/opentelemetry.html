@@ -688,15 +688,18 @@ public class CustomConfiguration {
 <h2 id="exporters"><a class="anchor" href="#exporters"></a>Exporters</h2>
 <div class="sectionbody">
 <div class="sect2">
-<h3 id="default-2"><a class="anchor" href="#default-2"></a>Default</h3>
+<h3 id="the-default"><a class="anchor" href="#the-default"></a>The Default</h3>
 <div class="paragraph">
-<p>The Quarkus OpenTelemetry extension uses its own signal exporters built on top of Vert.x for optimal performance and maintainability.</p>
+<p>The Quarkus OpenTelemetry extension uses its own signal exporters built on top of Vert.x for optimal performance and maintainability. All <strong>Quarkus built in exporters use the OTLP protocol</strong> through a couple of data senders, using <code>grpc</code> (the default) and <code>http/protobuf</code>.</p>
 </div>
 <div class="paragraph">
-<p>The exporter is automatically wired with CDI, that&#8217;s why the <code>quarkus.otel.traces.exporter</code> and <code>quarkus.otel.metrics.exporter</code> properties default to <code>cdi</code>.</p>
+<p>The active exporter is automatically wired by CDI, that&#8217;s why the <code>quarkus.otel.traces.exporter</code>, <code>quarkus.otel.metrics.exporter</code> and <code>quarkus.otel.logs.exporter</code> properties default value is <code>cdi</code>. This is not because of the protocol being used in the data transfer but because of how the exporters are wired.</p>
 </div>
 <div class="paragraph">
-<p>The <code>quarkus.otel.exporter.otlp.protocol</code> defaults to <code>grpc</code> but <code>http/protobuf</code> can also be used.</p>
+<p>CDI (Context Dependency Injection) will manage the exporters to use, according to the selected protocol or when applications implement their own CDI exporter, like in tests.</p>
+</div>
+<div class="paragraph">
+<p>The <code>quarkus.otel.exporter.otlp.protocol</code> property instructs Quarkus to switch the senders and defaults to <code>grpc</code> but <code>http/protobuf</code> can also be used.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -709,6 +712,95 @@ If you change the protocol, you also need to change the port in the endpoint. Th
 </td>
 </tr>
 </table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="using-cdi-to-produce-a-test-exporter"><a class="anchor" href="#using-cdi-to-produce-a-test-exporter"></a>Using CDI to produce a test exporter</h3>
+<div class="paragraph">
+<p>Leaving the default as CDI is particularly useful for tests. In the following example a Span exporter class is wired with CDI and then the telemetry can be used in test code.</p>
+</div>
+<div class="paragraph">
+<p>Creating a custom <code>SpanExporter</code> bean:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @ApplicationScoped
+    static class InMemorySpanExporterProducer {
+        @Produces
+        @Singleton
+        InMemorySpanExporter inMemorySpanExporter() {
+            return InMemorySpanExporter.create();
+        }
+    }</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Where <code>InMemorySpanExporter</code> is a class from the OpenTelemetry test utilities dependency:</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">    &lt;dependency&gt;
+        &lt;groupId&gt;io.opentelemetry&lt;/groupId&gt;
+        &lt;artifactId&gt;opentelemetry-sdk-testing&lt;/artifactId&gt;
+        &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.opentelemetry:opentelemetry-sdk-testing")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The bean of that class can be injected to access the telemetry data. This is an example to obtain the spans:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @Inject
+    InMemorySpanExporter inMemorySpanExporter;
+
+    //...
+
+    List&lt;SpanData&gt; finishedSpanItems = inMemorySpanExporter.getFinishedSpanItems();</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If this is used in an integration test, you should access the class from inside the running process and not from the test class.
+A viable option could be to expose that data through a REST endpoint method:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @GET
+    @Path("/export")
+    public List&lt;SpanData&gt; exportTraces() {
+        return inMemorySpanExporter.getFinishedSpanItems()
+                .stream()
+                .filter(sd -&gt; !sd.getName().contains("export")) <i class="conum" data-value="1"></i><b>(1)</b>
+                .collect(Collectors.toList());
+    }</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>This excludes calls to the export endpoint itself.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>For more details please take a look at the <a href="https://github.com/quarkusio/quarkus/blob/main/integration-tests/opentelemetry/src/main/java/io/quarkus/it/opentelemetry/ExporterResource.java">ExporterResource</a> in the Quarkus integration tests.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="the-opentelemetry-otlp-exporter"><a class="anchor" href="#the-opentelemetry-otlp-exporter"></a>The OpenTelemetry OTLP exporter</h3>
+<div class="paragraph">
+<p>This is currently not supported in Quarkus. Configuration example for traces: <code>quarkus.otel.tracing.exporter=otlp</code>.</p>
+</div>
+<div class="paragraph">
+<p>However, it&#8217;s also not needed because Quarkus own default exporters will send data using the OTLP protocol.</p>
 </div>
 </div>
 <div class="sect2">
@@ -3509,7 +3601,9 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 </li>
 <li><a href="#exporters">Exporters</a>
 <ul class="sectlevel2">
-<li><a href="#default-2">Default</a></li>
+<li><a href="#the-default">The Default</a></li>
+<li><a href="#using-cdi-to-produce-a-test-exporter">Using CDI to produce a test exporter</a></li>
+<li><a href="#the-opentelemetry-otlp-exporter">The OpenTelemetry OTLP exporter</a></li>
 <li><a href="#on-quarkiverse">On Quarkiverse</a></li>
 <li><a href="#logging-exporter-for-debugging">Logging exporter (for debugging)</a></li>
 </ul>
