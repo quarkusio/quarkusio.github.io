@@ -1,6 +1,6 @@
 ---
 layout: spring
-title: Leverage your Spring expertise in Quarkus
+title: Leverage your Spring expertise on Quarkus
 permalink: /spring/
 subtitle: Cloud-Native, Streamlined, & Productive
 
