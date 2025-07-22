@@ -1,5 +1,4 @@
 //usr/bin/env jbang "$0" "$@" ; exit $?
-//JAVA 21
 //JAVAC_OPTIONS -parameters
 //DEPS io.quarkus.platform:quarkus-bom:3.12.1@pom
 //DEPS io.quarkus:quarkus-picocli
