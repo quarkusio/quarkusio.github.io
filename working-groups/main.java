@@ -189,7 +189,7 @@ public class main implements Callable<Integer> {
             List<Update> statusUpdates) {
 
         public enum Status {
-            INACTIVE,
+            PAUSED,
             ON_TRACK,
             AT_RISK,
             OFF_TRACK,
@@ -343,7 +343,7 @@ public class main implements Callable<Integer> {
 
         public Status getStatus() {
             if (statusUpdates.isEmpty()) {
-                return Status.INACTIVE;
+                return Status.PAUSED;
             }
 
             statusUpdates.sort(Comparator.comparing(Update::updateAt).reversed());
@@ -356,7 +356,7 @@ public class main implements Callable<Integer> {
 
             // Is it inactive?
             if (update.status().equals("INACTIVE")) {
-                return Status.INACTIVE;
+                return Status.PAUSED;
             }
 
             // Is it staled?
@@ -377,14 +377,15 @@ public class main implements Callable<Integer> {
                 return Status.OFF_TRACK;
             }
 
+
             Log.warn("Unable to determine status of working group " + url + ", using INACTIVE as default");
-            return Status.INACTIVE;
+            return Status.OFF_TRACK;
 
         }
 
         public String getBadgeClass() {
             return switch (getStatus()) {
-                case INACTIVE -> "text-bg-secondary";
+                case PAUSED -> "text-bg-secondary";
                 case ON_TRACK -> "text-bg-success";
                 case AT_RISK, STALED -> "text-bg-warning";
                 case OFF_TRACK -> "text-bg-danger";
