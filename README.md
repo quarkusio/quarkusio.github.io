@@ -6,9 +6,9 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 ### Installation
 
-#### Using Docker
+#### Using Docker or Podman
 
-1. Install [Docker Desktop](https://docs.docker.com/install/).
+1. Install [Docker Desktop](https://docs.docker.com/install/) or [Podman Desktop](https://podman-desktop.io/)
 2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork:
 
         git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
@@ -17,11 +17,17 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
         cd quarkusio.github.io
 
-4. Run Docker Compose:
+4. Run Docker Compose or Podman Compose:
 
         docker compose up
 
-    > **Note:** The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
+or 
+
+        podman compose up
+
+By default, this does not include guides. To include guides, use `podman compose --file docker-compose_with_guides.yml up`, but be aware that serving guides via container is not currently working. 
+
+> **Note:** The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
 
     ```
     jekyll-1  |   Server address: http://0.0.0.0:4000/
