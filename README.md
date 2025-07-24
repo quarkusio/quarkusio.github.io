@@ -25,7 +25,7 @@ or
 
         podman compose up
 
-By default, this does not include guides. To include guides, use `podman compose --file docker-compose_with_guides.yml up`, but be aware that serving guides via container is not currently working. 
+By default, this does not include guides. To include guides, use `podman compose --file docker-compose_with_guides.yml up`. If the guides build terminates abruptly before completion, make sure your [container engine has enough memory allocated](https://podman-desktop.io/docs/podman/creating-a-podman-machine#procedure) (it will need at least 5GB).  
 
 > **Note:** The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
 
