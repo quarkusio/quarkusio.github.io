@@ -520,9 +520,17 @@ Just do not implement the <code>io.quarkus.vertx.http.runtime.security.HttpSecur
 The context can be activated by users, for example with the <code>@ActivateRequestContext</code>, however authorization happens before Quarkus prepares some <code>@RequestScoped</code> beans.
 We recommend to let Quarkus activate and prepare CDI request context for you.
 For example, consider a situation where you want to inject a bean from the Jakarta REST context, such as the <code>jakarta.ws.rs.core.UriInfo</code> bean.
-In this case, you must apply the <code>HttpSecurityPolicy</code> to Jakarta REST endpoints. This can be achieved in one of the following ways:
-* Use the <code>@AuthorizationPolicy</code> security annotation.
-* Set the <code>quarkus.http.auth.permission.custom1.applies-to=jaxrs</code> configuration property.</p>
+In this case, you must apply the <code>HttpSecurityPolicy</code> to Jakarta REST endpoints. This can be achieved in one of the following ways:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Use the <code>@AuthorizationPolicy</code> security annotation.</p>
+</li>
+<li>
+<p>Set the <code>quarkus.http.auth.permission.custom1.applies-to=jaxrs</code> configuration property.</p>
+</li>
+</ul>
 </div>
 </div>
 <div class="sect2">
@@ -912,6 +920,24 @@ quarkus.http.auth.permission.roles1.policy=admin-policy1</code></pre>
 </tr>
 </table>
 </div>
+<div class="paragraph">
+<p>If you prefer a programmatic configuration, the same mapping can be added with the <code>io.quarkus.vertx.http.security.HttpSecurity</code> CDI event:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.http.security;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+import jakarta.enterprise.event.Observes;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity) {
+        httpSecurity.rolesMapping("admin", "Admin1");
+    }
+}</code></pre>
+</div>
+</div>
 </div>
 <div class="sect2">
 <h3 id="shared-permission-checks"><a class="anchor" href="#shared-permission-checks"></a>Shared permission checks</h3>
@@ -986,6 +1012,128 @@ quarkus.http.auth.permission.roles3.policy=role-policy3</code></pre>
 <td>Shared permissions are always applied before unshared ones, therefore a <code>SecurityIdentity</code> with the <code>root</code> role will have the <code>user</code> role as well.</td>
 </tr>
 </table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="path-specific-authz-programmatic-set-up"><a class="anchor" href="#path-specific-authz-programmatic-set-up"></a>Set up path-specific authorization programmatically</h3>
+<div class="paragraph">
+<p>You can also configure the authorization policies presented by this guide so far programmatically.
+Consider the example mentioned earlier:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.http.auth.permission.permit1.paths=/public/*
+quarkus.http.auth.permission.permit1.policy=permit
+quarkus.http.auth.permission.permit1.methods=GET
+
+quarkus.http.auth.permission.deny1.paths=/forbidden
+quarkus.http.auth.permission.deny1.policy=deny
+
+quarkus.http.auth.permission.roles1.paths=/roles-secured/*,/other/*,/api/*
+quarkus.http.auth.permission.roles1.policy=role-policy1
+quarkus.http.auth.policy.role-policy1.roles-allowed=user,admin</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The same authorization policies can be configured programmatically:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.http.security;
+
+import jakarta.enterprise.event.Observes;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity) {
+        httpSecurity
+                .get("/public/*").permit()
+                .path("/roles-secured/*", "/other/*", "/api/*").roles("admin", "user")
+                .path("/forbidden").authorization().deny();
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Additionally, the <code>io.quarkus.vertx.http.security.HttpSecurity</code> CDI event can be used to configure specific authentication mechanisms and policies:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.http.security;
+
+import io.quarkus.vertx.http.security.HttpSecurity;
+import jakarta.enterprise.event.Observes;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+public class HttpSecurityConfiguration {
+
+    void configure(@Observes HttpSecurity httpSecurity, CustomHttpSecurityPolicy customHttpSecurityPolicy,
+                        @ConfigProperty(name = "secured-path") String securedPath) {
+
+        httpSecurity.path("/other/*").basic().policy(customHttpSecurityPolicy); <i class="conum" data-value="1"></i><b>(1)</b>
+
+        httpSecurity.path("/roles-secured/*").bearer().authorization()
+                .policy(identity -&gt; identity.hasRole("user") || "root".equals(identity.getPrincipal().getName()));  <i class="conum" data-value="2"></i><b>(2)</b>
+
+        httpSecurity.path("/other/administration").authorizationCodeFlow()
+                .authorization().policy((identity, routingContext) -&gt; {
+                    if (!identity.isAnonymous()) {
+                        String customAuthorization = routingContext.request().getHeader("Custom Authorization");
+                        return yourCustomAuthorizationCheck(customAuthorization);
+                    }
+                    return false;
+                });     <i class="conum" data-value="3"></i><b>(3)</b>
+
+        httpSecurity.path(securedPath).form();  <i class="conum" data-value="4"></i><b>(4)</b>
+
+        httpSecurity.path("/user-info").bearer().authorization().permissions("openid", "email", "profile"); <i class="conum" data-value="5"></i><b>(5)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Use the Basic authentication and authorize the requests with a custom <code>io.quarkus.vertx.http.runtime.security.HttpSecurityPolicy</code>.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Use the Bearer token authentication and authorize the <code>SecurityIdentity</code> with your own policy.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Use Authorization Code Flow mechanism and write your own policy based on incoming request headers.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>When Quarkus fires the <code>HttpSecurity</code> CDI event, the runtime configuration is ready.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>Require that all the requests to the <code>/user-info</code> path have string permissions <code>openid</code>, <code>email</code> and <code>profile</code>.
+The same authorization can be required with the <code>@PermissionsAllowed(value = { "openid", "email", "profile" }, inclusive = true)</code> annotation instance placed on an endpoint.</td>
+</tr>
+</table>
+</div>
+<div class="sect3">
+<h4 id="programmatic-set-up-references"><a class="anchor" href="#programmatic-set-up-references"></a>Programmatic set up references</h4>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="security-basic-authentication#basic-auth-programmatic-set-up">Set up Basic authentication programmatically</a></p>
+</li>
+<li>
+<p><a href="security-openid-connect-multitenancy#programmatic-startup">Programmatic OIDC start-up for multitenant application</a></p>
+</li>
+<li>
+<p><a href="security-authentication-mechanisms#form-based-auth-programmatic-set-up">Set up Form-based authentication programmatically</a></p>
+</li>
+</ul>
+</div>
 </div>
 </div>
 </div>
@@ -2186,6 +2334,7 @@ Ability to reference <code>@BeanParam</code> fields with the <code>@PermissionsA
 <li><a href="#permission-paths-and-http-root-path">Permission paths and HTTP root path</a></li>
 <li><a href="#map-security-identity-roles">Map <code>SecurityIdentity</code> roles</a></li>
 <li><a href="#shared-permission-checks">Shared permission checks</a></li>
+<li><a href="#path-specific-authz-programmatic-set-up">Set up path-specific authorization programmatically</a></li>
 </ul>
 </li>
 <li><a href="#standard-security-annotations">Authorization using annotations</a>
@@ -2294,6 +2443,9 @@ Ability to reference <code>@BeanParam</code> fields with the <code>@PermissionsA
         <li class="concepts"><a href="/guides/security-identity-providers">Identity providers</a></li>
       
         
+        <li class="tutorial"><a href="/guides/security-vertx-oidc-to-quarkus-oidc-migration">Migrate from Vert.x OIDC to Quarkus OIDC</a></li>
+      
+        
         <li class="guide"><a href="/guides/rest-migration">Migrating to Quarkus REST (formerly RESTEasy Reactive)</a></li>
       
         
@@ -2301,9 +2453,6 @@ Ability to reference <code>@BeanParam</code> fields with the <code>@PermissionsA
       
         
         <li class="reference"><a href="/guides/security-openid-connect-client-registration">OpenID Connect (OIDC) and OAuth2 dynamic client registration</a></li>
-      
-        
-        <li class="concepts"><a href="/guides/security-oidc-bearer-token-authentication">OpenID Connect (OIDC) Bearer token authentication</a></li>
       </ul>
     </div>
     </div>
