@@ -1,0 +1,405 @@
+---
+layout: post
+title: 'Use MCP OAuth2 Flow to access Quarkus MCP Server'
+date: 2025-09-22
+tags: ai mcp security
+synopsis: 'Explain how MCP OAuth2 Flow can be used to access Quarkus MCP Server'
+author: sberyozkin
+---
+:imagesdir: /assets/images/posts/secure_mcp_server_oauth2
+
+== Introduction
+
+Back in April 2025, in the https://quarkus.io/blog/secure-mcp-sse-server/[Getting ready for secure MCP with Quarkus MCP Server] blog post, we explained how to enforce MCP client authentication with the https://github.com/quarkiverse/quarkus-mcp-server[Quarkus MCP Server] by configuring it to verify bearer access tokens.
+
+At the time, we worked against the https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization[old 2025-03-26 version of the MCP Authorization specification] that expected compliant MCP servers to manage OAuth2 flows themselves either directly or via the delegation, with that idea being disputed due to its complexity, and with no MCP clients providing the OAuth2 authorization code flow support being available. Therefore, in the https://quarkus.io/blog/secure-mcp-sse-server/[Getting ready for secure MCP with Quarkus MCP Server] blog post, the access tokens were acquired out of band: we used https://quarkus.io/guides/security-openid-connect-dev-services[Keycloak DevUI] to get an access token and copy it to https://quarkus.io/blog/secure-mcp-sse-server/#mcp-server-devui[MCP Server DevUI] to test it in devmode, and did a GitHub login to the Quarkus REST endpoint in order to copy and test a GitHub access token with both https://github.com/modelcontextprotocol/inspector[MCP Inspector] and `curl` in prod mode.
+
+The https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[latest 2025-03-26 version of the MCP Authorization specification] offers a simpler, better version of how OAuth2 must be supported in MCP. The focus has shifted to MCP clients that are now expected to drive the OAuth2 flows, while MCP servers are only required to support automating such flows by providing https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata], as well as correctly verifying the actual access tokens.
+
+In this blog post, we will explain how MCP clients compliant with the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[latest 2025-03-26 version of the MCP Authorization specification] can login users using an OAuth2 authorization code flow, acquire access tokens and use them to access secure Quarkus MCP _Streamable HTTP_ servers on behalf of the logged-in users.
+
+Currently, https://github.com/modelcontextprotocol/inspector[MCP Inspector] offers the most advanced, adaptable, and accessible MCP OAuth2 authorization code flow support, even if somewhat unstable between its different versions, and therefore we will work with it in this post. You are welcome to experiment with other MCP client implementations.
+
+We will demonstrate a great https://docs.quarkiverse.io/quarkus-mcp-server/dev/index.html#_multiple_server_configurations[Quarkus MCP Server capability to support multiple MCP HTTP configurations], each one with their own unique OAuth2 or OpenId Connect security constraints, effectively allowing for a multi-tenant security control of tools, prompts and resources.
+
+https://www.keycloak.org/[Keycloak] will be used to support two distint security realms, with the security of each of the MCP HTTP configurations controlled by its own Keycloak realm. You are welcome to try to secure Quarkus MCP Server with other preferred OAuth2 or OpenID Connect providers by replacing the Keycloak specific configurations.
+
+[[demo-flow-diagram]]
+== Demo MCP OAuth2 Flow Diagram
+
+You can read all about the MCP OAuth2 Authorization Flow in the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#authorization-flow[Authorization Flow section of the latest specification].
+
+In this section, we are going to have a look at a simplified diagram showing how https://github.com/modelcontextprotocol/inspector[MCP Inspector] can use OAuth 2.0 Flow to login a user to Keycloak, get an access token and use it to access a secure Quarkus MCP Server endpoint.
+
+image::demo_flow_diagram.png[Demo Flow Diagram,align="center"]
+
+MCP Client such as https://github.com/modelcontextprotocol/inspector[MCP Inspector] requires configuring an MCP _Streamable HTTP_ endpoint URL, OAuth2 Client ID, and optional scopes to access the MCP server securely. And as you can see, a lot happens from the moment you press `Connect` until a valid access token is sent to the MCP server.
+
+MCP Client starts by accessing the MCP server without a token and gets back HTTP 401 with a `WWW-Authenticate` `resource_metadata` parameter that links to the MCP server's https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route. The client now fetches a base URL of the Keycloak realm that secures the MCP server as well as the MCP server's resource identifier.
+
+Next, MCP Client uses the Keycloak realm's URL to discover this realm's authorization and token endpoint URLs, supported https://www.rfc-editor.org/rfc/rfc7636[Proof Key for Code Exchange] (PKCE) methods, and other metadata properties.
+
+The user is now redirected to Keycloak to login into the required realm. The Keycloak redirect URL includes the configured OAuth2 client id, scopes, callback URI which points to the `http://localhost:6274/oauth/callback` endpoint managed by the MCP client, as well as the earlier discovered MCP Server's resource identifier as an https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator]. Generated PKCE code challenge and state parameters are also included in the redirect.
+
+The user logs in, is redirected back to the `http://localhost:6274/oauth/callback` endpoint, MCP client exchanges the returned `code` to get ID and access tokens, and uses the access token to access the MCP server, allowing the user to select and run the tool.
+
+[NOTE]
+====
+https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization Specification] also recommends that MCP clients support https://datatracker.ietf.org/doc/html/rfc7591[OAuth2 Dynamic Client Registration] and https://github.com/modelcontextprotocol/inspector[MCP Inspector] does support it. 
+
+In this post, we are only going to look at a case where OAuth2 Client ID is already known in advance, which is likely to be a typical case in production where OIDC client applications are created in advance.
+
+We will also look at how https://github.com/modelcontextprotocol/inspector[MCP Inspector] does https://datatracker.ietf.org/doc/html/rfc7591[OAuth2 Dynamic Client Registration] in the next post in this MCP Security series.
+====
+
+https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#authorization-flow[MCP Authorization Flow] is rather neatly defined, requiring the use of such OAuth2 specifications as https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata], https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator], and also recommending the use of https://datatracker.ietf.org/doc/html/rfc7591[OAuth2 Dynamic Client Registration]. 
+
+Please note though that the actual flow is not that unique to the MCP Authorization. It is a typical Single-page application (SPA) OAuth2 authorization code flow in action:
+
+image::typical_spa_oauth2_flow.png[Typical SPA OAuth2 Flow,align="center"]
+
+SPA uses a provider such as Keycloak to login users and use acquired access tokens to access Quarkus Service on their behalf - typical OAuth2 done at the SPA level. In this diagram, you can replace `SPA` with `MCP Client`, `Quarkus Service` with `MCP Server` and you'll get a close enough match with the demo flow diagram in the previous image.
+
+The comparison between the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization] and SPA OAuth2 flows implies that the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization specification] targets generic SPA AI and MCP client applications such as https://github.com/modelcontextprotocol/inspector[MCP Inspector], Claude AI, Cursor, and others that can plugin MCP servers. It does not currently apply to Quarkus MCP Client which typically runs in scope of the higher-level Quarkus LangChain4j server application with its own authentication requirements, you can read more about it in the https://quarkus.io/blog/secure-mcp-client/#demo-architecture[Use Quarkus MCP client to access secure MCP HTTP servers] blog post.
+
+We are now ready to have a look at how it works in the demo.
+
+You can find the complete project source in the https://github.com/quarkiverse/quarkus-mcp-server/tree/main/samples/multiple-secure-mcp-http-servers[Multiple Secure Quarkus MCP HTTP Servers sample].
+
+[[create-mcp-server]]
+== Step 1 - Create and start MCP server with two secure Streamable HTTP endpoints
+
+First, let's create a secure Quarkus MCP server and configure two _Streamable HTTP_ endpoints with their own unique security authentication controls.
+
+[[mcp-server-dependencies]]
+=== MCP server maven dependencies
+
+Add the following dependencies:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.mcp</groupId>
+    <artifactId>quarkus-mcp-server-sse</artifactId> <1>
+    <version>1.5.3</version>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId> <2>
+</dependency>
+----
+<1> `quarkus-mcp-server-sse` is required to support both MCP Streamable HTTP and SSE transports.
+<2> `quarkus-oidc` is required to secure access to MCP Server endpoints. Its version is defined in the Quarkus BOM.
+
+[[mcp-server-configuration]]
+=== MCP Server Configuration
+
+Let's configure the MCP server:
+
+[source,properties]
+----
+# First and default MCP server endpoint that we refer to as `alpha`
+# Alternatively, we can have a named `alpha` endpoint, similarly to the second `bravo` endpoint
+
+quarkus.mcp.server.sse.root-path=/mcp # <1>
+
+# Second MCP server endpoint that is explicitly named as `bravo`
+
+quarkus.mcp.server.bravo.sse.root-path=/bravo/mcp # <2>
+
+# Require an authenticated access to both Streamable HTTP endpoints
+
+quarkus.http.auth.permission.authenticated.paths=/mcp/*,/bravo/mcp/* # <3>
+quarkus.http.auth.permission.authenticated.policy=authenticated
+
+# Default OIDC tenant that secures the default `alpha` Streamable HTTP endpoint
+# Its required `quarkus.oidc.auth-server-url` property is set by Keycloak Dev Service
+# and points to the Keycloak `alpha` realm endpoint
+
+quarkus.oidc.tenant-paths=/mcp/* # <4>
+quarkus.oidc.token.audience=quarkus-mcp-alpha # <5>
+quarkus.oidc.resource-metadata.enabled=true # <6>
+quarkus.oidc.resource-metadata.force-https-scheme=false 
+
+# `Bravo` OIDC tenant that secures the `bravo` Streamable HTTP endpoint
+
+quarkus.oidc.bravo.auth-server-url=${keycloak.url}/realms/bravo # <7>
+quarkus.oidc.bravo.tenant-paths=/bravo/mcp/* # <7>
+quarkus.oidc.bravo.token.audience=quarkus-mcp-bravo # <8>
+quarkus.oidc.bravo.resource-metadata.enabled=true # <9>
+quarkus.oidc.bravo.resource-metadata.resource=bravo/mcp # <10>
+quarkus.oidc.bravo.resource-metadata.force-https-scheme=false
+
+# Keycloak devservice that supports both the default and `bravo` OIDC tenants.
+
+quarkus.keycloak.devservices.realm-path=alpha-realm.json,bravo-realm.json # <11>
+quarkus.keycloak.devservices.realm-name=alpha # <12>
+quarkus.keycloak.devservices.create-client=false # <13>
+
+# CORS configuration to allow MCP Inspector's SPA script calls
+
+quarkus.http.cors.enabled=true
+quarkus.http.cors.origins=http://localhost:6274 # <14>
+----
+<1> Root path for the default `alpha` MCP server endpoint, with both _Streamable HTTP_ and SSE endpoints available under this path.
+<2> Root path for the `bravo` MCP server endpoint, with both _Streamable HTTP_ and SSE endpoints available under this path.
+<3> Require authentication for all requests to the `alpha` and `bravo` MCP server endpoints. This authentication policy is enforced by the matching OIDC tenant configurations.
+<4> Default OIDC tenant secures the default MCP server `alpha` endpoint, Keycloak DevService inserts a missing `quarkus.oidc.auth-server-url` property that links to the Keycloak `alpha` realm endpoint.
+<5> Require that tokens that are allowed to access the default MCP server `alpha` endpoint must have an audience (`aud`) claim that contains a `quarkus-mcp-alpha` value.
+<6> Enable the https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route for the default OIDC tenant. It will help https://github.com/modelcontextprotocol/inspector[MCP Inspector] to find out about the authorization server that secures the default MCP server `alpha` endpoint.
+<7> OIDC `bravo` tenant secures the MCP server `bravo` endpoint. Its `quarkus.oidc.bravo.auth-server-url` property links to the Keycloak `bravo` realm endpoint.
+<8> Require that tokens that are allowed to access the MCP server `bravo` endpoint must have an audience (`aud`) claim that contains a `quarkus-mcp-bravo` value.
+<9> Enable the https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route for the OIDC `bravo` tenant. It will help https://github.com/modelcontextprotocol/inspector[MCP Inspector] to find out about the the authorization server that secures the MCP server `bravo` endpoint.
+<10> Customize the relative path for https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route for the OIDC `bravo` tenant. By default, it is `http://localhost:8080/bravo`, however, https://github.com/modelcontextprotocol/inspector[MCP Inspector] can not find this route and expects `http://localhost:8080/bravo/mcp`, so we just tune it a bit to make https://github.com/modelcontextprotocol/inspector[MCP Inspector] happy.
+<11> Ask Keycloak DevService to upload two realms to the Keycloak container, `alpha-realm.json` and `bravo-realm.json`.
+<12> Keycloak DevService must set the default OIDC tenant properies, we point to `alpha-realm.json` for Keycloak DevService to use it to set properties such as `quarkus.oidc.auth-server-url`.
+<13> Ask Keycloak not to add `quarkus.oidc.client-id`. Using the realm verification keys, the configured audience, expiry checks is sufficient to verify Keycloak JWT access tokens; we also plan to deal with dynamically registered OIDC clients in the next blog post.
+
+You can read about how https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] is supported in Quarkus OIDC in the https://quarkus.io/guides/security-oidc-expanded-configuration#resource-metadata-properties[Expanded OpenId Connect Configuration guide].
+
+The Keycloak `alpha` and `bravo` realms represent unique, non-intersecting security configurations backed up by Keycloak. Both of these realms are represented by default and `bravo` OIDC tenants respectively. Quarkus OIDC uses its https://quarkus.io/guides/security-openid-connect-multitenancy#configure-tenant-paths[path-based tenant resolver] to decide which OIDC tenant should handle the current MCP Server request.
+ 
+You are welcome to update the default and `bravo` OIDC tenant configurations to point to your preferred providers instead of Keycloak, for example, to multiple Entra ID or Auth0 tenants, etc.
+
+Please also check the <<keycloak-vs-github>> section about the reasons behind preferring to use Keycloak in this demo, instead of GitHub that was used in the earlier https://quarkus.io/blog/secure-mcp-sse-server/[Getting ready for secure MCP with Quarkus MCP Server] blog post.
+
+[NOTE]
+====
+https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization specification] https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#token-audience-binding-and-validation[requires] that the token audience is validated. The specification prefers https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicators] to control the token audience.
+
+For example, by default, the resource identifier of the default MCP server `alpha` endpoint is calculated as `http://localhost:8080` and MCP Inspector includes it as a https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] `resource` parameter in the Keycloak redirect URL. The providers that already support the https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] specification can add the `http://localhost:8080` resource indicator to the access token's audience (`aud`) claim.
+
+Keycloak does not support the https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] specification yet therefore we configure Keycloak to use predefined audience values specific to MCP server `alpha` and `bravo` endpoints. For our demo, the use of the custom audience values is non-ambiguous and sufficient.
+
+When your OAuth2 provider start supporting the https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] specification, all you need to do to align with the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization[MCP Authorization specification]'s requirement to use resource indicators is to update the OIDC tenant token audience configuration to contain an audience such as `http://localhost:8080`.
+
+You can also harden it by requiring a token to have both a custom audience value such as `quarkus-mcp-alpha` and a resource value such as `http://localhost:8080`.
+====
+
+[[mcp-server-tools]]
+=== MCP User Name Provider tools
+
+MCP Server has two _Streamable HTTP_ endpoints. The MCP and security configuration for each of these endpoints allows to group tools, resources and prompts according to specific deployment requirements.
+
+Let's create two tools that can return a name of the current MCP Client user, one per each endpoint:
+
+[source,java]
+----
+package org.acme;
+
+import io.quarkiverse.mcp.server.TextContent;
+import io.quarkiverse.mcp.server.Tool;
+import io.quarkus.oidc.UserInfo;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.inject.Inject;
+import io.quarkiverse.mcp.server.McpServer;
+
+public class ServerFeatures {
+
+    @Inject
+    SecurityIdentity identity; // <1>
+    
+    @Tool(name = "alpha-user-name-provider", description = "Provides a name of the current user in the Alpha realm") // <2>
+    TextContent provideUserName() {
+        return new TextContent(identity.getPrincipal().getName());
+    }
+    
+    @Tool(name = "bravo-user-name-provider", description = "Provides a name of the current user in the Bravo realm") // <3>
+    @McpServer("bravo")
+    TextContent provideUserName2() {
+        return new TextContent(identity.getPrincipal().getName());
+    }
+}
+
+----
+<1> Capture a security identity represented by the verified access token
+<2> The `alpha-user-name-provider` tool is accessible via the default _Streamable HTTP_ `alpha` endpoint.
+<2> The `bravo-user-name-provider` tool is accessible via the `bravo` _Streamable HTTP_ endpoint.
+
+[NOTE]
+====
+Both the `alpha-user-name-provider` and `bravo-user-name-provider` tools are very simple tools designed to show that the identities of MCP client users on whose behalf these tools are called by MCP clients is available to tools to perform a user identity specific action, an important element for a secure agentic AI system. Of course, the real world tool implementations will be more interesting.
+====
+
+[[keycloak-configuration]]
+=== Keycloak Configuration
+
+The Keycloak configuration has already been prepared in the `alpha-realm.json` and `bravo-realm.json` realm files that Keycloak DevService uploads to Keycloak at the start-up time.
+
+Let's have a closer look. Please go to `http://localhost:8080/q/dev-ui` and select an `OpenId Connect` card:
+
+image::keycloak_admin.png[Keycloak Admin,align="center"]
+
+Click on `Keycloak Admin`, login as `admin:admin` and check the `alpha` and `bravo` realm configurations.
+
+The `alpha-realm.json` has a single `alpha-client` client and a single user, `alice` with a password `alice`.
+
+The `alpha-client` is a public client because its `Client authentication` option is disabled:
+
+image::keycloak_public_client_capability.png[Public Keycloak Client,align="center"]
+
+Typically, public SPA applications work with the public clients, to avoid having to deal with managing the confidential client's secret.
+
+The `alpha-client` is configured to support a callback URL provided by https://github.com/modelcontextprotocol/inspector[MCP Inspector]:
+
+image::keycloak_alpha_client_general_settings.png[Keycloak Alpha Client settings,align="center"]
+
+The `alpha-realm.json` also has a custom `quarkus-mcp-alpha` client scope with an audience mapping, and it is assigned to the `alfa-client` client. It was done similarly to how it was done in the https://quarkus.io/blog/secure-mcp-oidc-client/#keycloak-setup[Use Quarkus MCP client to access secure MCP HTTP server from command line] blog post. We start with creating a `quarkus-mcp-server` client scope:
+
+image::keycloak_quarkus_mcp_alpha_scope.png[Keycloak Client quarkus-mcp-alpha scope,align="center"]
+
+Next, we create an audience mapping for this scope:
+
+image::keycloak_quarkus_mcp_alpha_scope_mapping.png[Keycloak Client quarkus-mcp-alpha scope mapping,align="center"]
+
+Finally, we assign this client scope as an optional scope to the `alpha-client` client:
+
+image::keycloak_alpha_client_scope.png[Keycloak alpha-client scope assignment,align="center"]
+
+Similarly, the `bravo-realm.json` has a public `bravo-client` client, and a single user, `jdoe` with a password `jdoe`. It also has a custom `quarkus-mcp-bravo` client scope with an audience mapping.
+
+Both realms have the client scopes with the audience mappings to let users request the correct token audience by configuring a custom scope in the https://github.com/modelcontextprotocol/inspector[MCP Inspector]'s OAuth2 Flow configuration. As implied in the <<mcp-server-configuration>>, it will be no longer necessary once the https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] specification is supported by Keycloak and other providers.
+
+[[keycloak-vs-github]]
+==== Why was Keycloak preferred to GitHub in the demo ?
+
+You may be wondering, why did we choose `Keycloak` for this demo, instead of `GitHub` that we used in the earlier https://quarkus.io/blog/secure-mcp-sse-server/[Getting ready for secure MCP with Quarkus MCP Server] blog post ?
+
+The main reason behind this is that the access tokens that are targeting MCP servers are expected to be designed to target MCP servers only. It is a good OAuth2 security recommendation. GitHub access tokens are meant to be used to access GitHub API, on behalf of the logged-in user, at the point where the login has happened, not via an MCP server indirection. For example, Claude AI offers a direct GitHub MCP integration.
+
+This consideration applies to other social providers such as Google.
+
+It is formally expressed in the https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction[MCP Authorization Access Token Privilege Restriction section]: `MCP servers MUST only accept tokens specifically intended for themselves...`.
+
+We also discussed it in the https://quarkus.io/blog/secure-mcp-client/#access-token-delegation-considerations[Access Token Delegation Considerations] section of the https://quarkus.io/blog/secure-mcp-client[Use Quarkus MCP client to access secure MCP HTTP servers] blog post.
+
+If your MCP server really needs to accept a token that it will not use itself, for example, in order to forward it further downstream, then consider an option of exchanging tokens for the audiences to be correct through the whole distributed token call chain. Please check the https://quarkus.io/blog/secure-mcp-oidc-client/[Use Quarkus MCP client to access secure MCP HTTP server from command line] blog post where we use the standard https://datatracker.ietf.org/doc/html/rfc8693[OAuth2 Token Exchange].
+
+[[start-mcp-server]]
+=== Start the MCP server in dev mode
+
+Now let's start the MCP server in dev mode:
+
+[source,shell]
+----
+mvn quarkus:dev
+----
+
+image::quarkus_mcp_server_dev_mode.png[MCP server dev mode,align="center"]
+
+You can see that default _Streamable HTTP_ and SSE endpoints are available at `http://localhost:8080/mcp` and `http://localhost:8080/mcp/sse` respectively, while the `bravo` _Streamable HTTP_ and SSE endpoints are available at `http://localhost:8080/bravo/mcp` and `http://localhost:8080/bravo/mcp/sse` respectively.
+
+[[start-mcp-inspector]]
+== Step 2: Use MCP Inspector to access two secure MCP server endpoints
+
+=== Start the MCP Inspector
+
+[source,shell]
+----
+npx @modelcontextprotocol/inspector@0.16.7
+----
+
+[NOTE]
+====
+While https://github.com/modelcontextprotocol/inspector[MCP Inspector] provides a very good OAuth2 Flow support, it is still a very active project and at the moment, you may observe https://github.com/modelcontextprotocol/inspector[MCP Inspector] failing to connect to the OAuth2 provider in some versions.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] v0.16.7 has been proven to connect to Keycloak successfully and therefore we recommend you to use this version when working with this blog post.
+====
+
+We are now going to connect to two individual MCP _Streamable HTTP_ endpoints in turn. 
+
+See the <<demo-flow-diagram>> section for an overview of how https://github.com/modelcontextprotocol/inspector[MCP Inspector] performs a `Connect` request. 
+
+Please keep your browser's `Developer Tools`'s `Network` tab open if you would like to observe how MCP Inspector probes various MCP server and Keycloak endpoints and eventually succeeds in getting a user logged in and acquiring the access token.
+
+[[mcp-inspector-connect-to-alpha]]
+==== Connect to the default MCP Server `alpha` endpoint
+
+image::mcp_inspector_alpha_connect.png[MCP Inspector Alpha Connect,align="center"]
+
+[NOTE]
+====
+If your browser does not show an `OAuth 2.0 Flow` in the `Authentication` view in the loaded https://github.com/modelcontextprotocol/inspector[MCP Inspector] v0.16.7, try latest Firefox.
+====
+
+Set `Transport Type` to `Streamable HTTP`, `URL` to the `http://localhost:8080/mcp` address of the default MCP server `alpha` endpoint.
+
+In the `OAuth 2.0 Flow` authentication section, set the `Client ID` to `alpha-client`, and `Scope` to `openid quarkus-mcp-alpha`.
+
+Requesting an `openid` scope is not strictly necessary in this demo, but OpenId Connect providers will not issue an ID token without it, only the access token, and you'll likely need an SPA MCP Client to have access to the ID token in prod.
+
+Requesting a `quarkus-mcp-alpha` scope is necessary for Keycloak to add a `quarkus-mcp-alpha` audience to the access token, please see how the `quarkus-mcp-alpha` client scope was created in the <<keycloak-configuration>> section.
+
+The `Redirect URI` is preconfigured by https://github.com/modelcontextprotocol/inspector[MCP Inspector] and points to the https://github.com/modelcontextprotocol/inspector[MCP Inspector]-managed `http://localhost:6274/oauth` callback endpoint where Keycloak will redirect the user to after the user login is complete.
+
+Now press `Connect`.
+
+As explained in the the <<demo-flow-diagram>> section, https://github.com/modelcontextprotocol/inspector[MCP Inspector] starts by trying to access the default MCP Server _Streamable HTTP_ `alpha` endpoint without a valid token and gets a `401 WWW-Authenticate` challenge, with the `resource_metadata` parameter pointing to the `alpha` endpoint's https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] fetches the `alpha` endpoint's protected resource metadata and finds out that it is secured by the Keycloak's `alpha` realm.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] now discovers the Keycloak `alpha` realm's metadata, and redirects you to Keycloak `alpha` realm's authorization endpoint where you will see a Keycloak `Alpha` realm login challenge:
+
+image::alpha_realm_login.png[Alpha Realm Login,align="center"]
+
+Login as `alice:alice`. Keycloak redirects you back to the https://github.com/modelcontextprotocol/inspector[MCP Inspector]'s `http://localhost:6274/oauth` endpoint. https://github.com/modelcontextprotocol/inspector[MCP Inspector] exchanges the returned `code` for tokens and completes the authorization code flow.
+
+The access token with a `quarkus-mcp-alpha` audience is now available, you can capture it using your browser's `Web Developer Tools` and decode in JWT.io:
+
+image::alpha_client_jwt.png[Alpha Client JWT,align="center"]
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] uses this token to let you select and run the `alpha-user-name-provider` tool:
+
+image::alpha_tool_run.png[Alpha Tool Run,align="center"]
+
+The way https://github.com/modelcontextprotocol/inspector[MCP Inspector] was able to acquire the access token, knowing only the OAuth2 Client ID and the MCP server's endpoint address was interesting. See the <<demo-flow-diagram>> section for the overview of how the whole OAuth2 flow works.
+
+Now disconnect MCP Inspector from the MCP Server `alpha` endpoint by pressing a `Disconnect` button.
+
+==== Connect to the MCP Server `bravo` endpoint
+
+Connecting to the MCP Server `bravo` endpoint works exactly the same as with the default `alpha` endpoint, as explained in the <<mcp-inspector-connect-to-alpha>> section, we only need to use the MCP Server `bravo` endpoint related properties.
+
+Set `Transport Type` to `Streamable HTTP`, `URL` to the `http://localhost:8080/bravo/mcp` address of the MCP server `bravo` endpoint.
+
+In the `OAuth 2.0 Flow` authentication section, set the `Client ID` to `bravo-client`, and `Scope` to `openid quarkus-mcp-bravo`.
+
+Keep `Redirect URI` set to `http://localhost:6274/oauth`.
+
+Now press `Connect`.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] starts by trying to access the MCP Server `bravo` endpoint without a valid token and gets a `401 WWW-Authenticate` challenge, with the `resource_metadata` parameter pointing to the `bravo`'s  https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector] fetches the `bravo` endpoint's protected resource metadata and finds out that it is secured by the Keycloak's `bravo` realm.
+
+https://github.com/modelcontextprotocol/inspector[MCP Inspector]  now discovers the Keycloak `bravo` realm's metadata, and redirects you to Keycloak `bravo` realm's authorization endpoint where you will see a Keycloak `Bravo` realm login challenge:
+
+image::bravo_realm_login.png[Bravo Realm Login,align="center"]
+
+Login as `jdoe:jdoe`. Keycloak redirects you back to the https://github.com/modelcontextprotocol/inspector[MCP Inspector]'s `http://localhost:6274/oauth` endpoint. https://github.com/modelcontextprotocol/inspector[MCP Inspector] exchanges the returned `code` for tokens and completes the authorization code flow.
+
+The access token with a `quarkus-mcp-bravo` audience is now available. https://github.com/modelcontextprotocol/inspector[MCP Inspector] uses this token to let you select and run the `bravo-user-name-provider` tool:
+
+image::bravo_tool_run.png[Bravo Tool Run,align="center"]
+
+See the <<mcp-inspector-connect-to-alpha>> section for more explanations of how https://github.com/modelcontextprotocol/inspector[MCP Inspector] manages to connect to the MCP Server endpoint knowing only its URL and the OAuth2 Client ID.
+
+== Security Considerations
+
+The main security consideration for secure Quarkus MCP server deployments is to ensure that access tokens have a correct audience, for the MCP Server to assert that the current token is meant to access this MCP server only. MCP Servers that propagate tokens further should consider exchanging such tokens, for a new token to target the downstream service correctly. 
+
+A token audience claim can have several values, and it must contain an https://www.rfc-editor.org/rfc/rfc8707.html[OAuth2 Resource Indicator] that points to a specific HTTP resource location or a custom audience value or both the resource indicator and the custom audience values.  
+
+One should also consider carefully if an MCP server should enable its https://datatracker.ietf.org/doc/html/rfc9728[OAuth2 Protected Resource Metadata] route which allows a public access to the information about the authorization server that secures this MCP Server.
+
+Please keep in mind that it might be considered sensitive information, especially when no SPA MCP Client applications are used, when the provider login themes can be customized to make it less obvious to users what is the actual provider that is used to log them in.
+
+== Conclusion
+
+In this blog, we used https://github.com/modelcontextprotocol/inspector[MCP Inspector] version 0.16.7 to demonstrate how MCP Client can use OAuth2 Flow to login users and access secure Quarkus MCP _Streamable HTTP_ servers, when only an MCP Server address and OAuth2 Client ID can provide enough context for the flow to succeed.
+
+We also demonstrated how Quarkus MCP Server can https://docs.quarkiverse.io/quarkus-mcp-server/dev/index.html#_multiple_server_configurations[support multiple MCP HTTP configurations] with their own unique security constraints supported with the https://quarkus.io/guides/security-openid-connect-multitenancy#configure-tenant-paths[Quarkus OIDC multi-tenancy resolver].
+
+In the next blog post in this series, we will look at how https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction[MCP Authorization] OAuth2 Flow can use OAuth Dynamic Client Registration and how https://github.com/quarkiverse/quarkus-oidc-proxy[Quarkus OIDC Proxy] can play its part in securing Quarkus MCP Servers.
+
+Enjoy, and stay tuned !
