@@ -273,70 +273,88 @@ CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Your application may have additional requirements.
-For example, if you have an application that requires <code>libfreetype.so</code>, you need to copy the native libraries to the container.
-In this case, you need to use a multi-stage <code>dockerfile</code> to copy the required libraries:</p>
+For example, if you have an application that manipulates graphics, images, or PDFs, you likely have Quarkus AWT extension included in the project and your native executable will require some additional libraries to run.
+In this case, you need to use a multi-stage <code>dockerfile</code> to copy the required libraries.</p>
 </div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile"># First stage - install the dependencies in an intermediate container
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6 as BUILD
-RUN microdnf install freetype -y
-
-# Second stage - copy the dependencies
-FROM quay.io/quarkus/ubi9-quarkus-micro-image:2.0
-COPY --from=BUILD \
-   /lib64/libfreetype.so.6 \
-   /lib64/libbz2.so.1 \
-   /lib64/libpng16.so.16 \
-   /lib64/
-
-WORKDIR /work/
-COPY --chmod=0755 target/*-runner /work/application
-EXPOSE 8080
-CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
-</div>
-</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
 <div class="paragraph">
-<p>If you need to have access to the full AWT support, you need more than just <code>libfreetype.so</code>, but also the font and font configurations:</p>
+<p>Copying handpicked libraries makes up for a small container image, yet it is somewhat britte, differs for different base image versions, and it is a subject to change as transitive dependencies of these libraries might change.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Headless graphics, PDF documents, QR code images etc. manipulation is natively supported on amd64/aarch64 Linux only. Neither Windows nor MacOS are supported and require running the application in a Linux container.</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile"># First stage - install the dependencies in an intermediate container
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6 as BUILD
-RUN microdnf install freetype fontconfig -y
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6 as nativelibs
+RUN microdnf install -y freetype fontconfig expat
 
 # Second stage - copy the dependencies
 FROM quay.io/quarkus/ubi9-quarkus-micro-image:2.0
-COPY --from=BUILD \
+WORKDIR /work/
+COPY --from=nativelibs \
+   /lib64/libz.so.1 \
+   /lib64/libstdc++.so.6 \
    /lib64/libfreetype.so.6 \
    /lib64/libgcc_s.so.1 \
    /lib64/libbz2.so.1 \
    /lib64/libpng16.so.16 \
    /lib64/libm.so.6 \
-   /lib64/libbz2.so.1 \
+   /lib64/libexpat.so.1 \
    /lib64/libuuid.so.1 \
+   /lib64/libxml2.so.2 \
+   /lib64/libharfbuzz.so.0 \
+   /lib64/libbrotlidec.so.1 \
+   /lib64/libbrotlicommon.so.1 \
+   /lib64/liblzma.so.5 \
+   /lib64/libglib-2.0.so.0 \
+   /lib64/libgraphite2.so.3 \
+   /lib64/libpcre.so.1 \
    /lib64/
-
-COPY --from=BUILD \
+COPY --from=nativelibs \
    /usr/lib64/libfontconfig.so.1 \
    /usr/lib64/
-
-COPY --from=BUILD \
+COPY --from=nativelibs \
     /usr/share/fonts /usr/share/fonts
-
-COPY --from=BUILD \
+COPY --from=nativelibs \
     /usr/share/fontconfig /usr/share/fontconfig
-
-COPY --from=BUILD \
+COPY --from=nativelibs \
     /usr/lib/fontconfig /usr/lib/fontconfig
-
-COPY --from=BUILD \
+COPY --from=nativelibs \
      /etc/fonts /etc/fonts
 
-WORKDIR /work/
-COPY --chmod=0755 target/*-runner /work/application
+RUN chown 1001 /work \
+    &amp;&amp; chmod "g+rwX" /work \
+    &amp;&amp; chown 1001:root /work
+# Shared objects to be dynamically loaded at runtime as needed,
+COPY target/*.so /work/
+COPY --chown=1001:root --chmod=0755 target/*-runner /work/application
+
 EXPOSE 8080
-CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
+USER 1001
+
+ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
 </div>
 </div>
 </div>
@@ -365,6 +383,29 @@ EXPOSE 8080
 USER 1001
 
 CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>To make documents processing, graphics, PDFs, etc. available for the application, you can install the required libraries using <code>microdnf</code> without manually copying anything:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6
+RUN microdnf install -y freetype fontconfig \
+    &amp;&amp; microdnf clean all
+
+WORKDIR /work/
+RUN chown 1001 /work \
+    &amp;&amp; chmod "g+rwX" /work \
+    &amp;&amp; chown 1001:root /work
+# Shared objects to be dynamically loaded at runtime as needed
+COPY --chown=1001:root target/*.so /work/
+COPY --chown=1001:root --chmod=0755 target/*-runner /work/application
+
+EXPOSE 8080
+USER 1001
+
+ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]</code></pre>
 </div>
 </div>
 </div>
