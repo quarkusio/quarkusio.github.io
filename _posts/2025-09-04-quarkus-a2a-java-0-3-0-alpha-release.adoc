@@ -1,0 +1,242 @@
+---
+layout: post
+title: 'Getting Started with Quarkus and A2A Java SDK 0.3.0'
+date: 2025-09-04
+tags: ai a2a
+synopsis: 'Today, we released A2A Java SDK 0.3.0.Alpha1. This makes it possible to quickly get started with Quarkus and A2A using the latest, more stable version of the A2A protocol.'
+author: fjuma
+---
+
+Today, we have released A2A Java SDK 0.3.0.Alpha1, which aligns with the v0.3.0 version of the https://github.com/a2aproject/A2A/tree/v0.3.0[A2A specification]. This https://cloud.google.com/blog/products/ai-machine-learning/agent2agent-protocol-is-getting-an-upgrade[latest version] of the A2A protocol is more stable and introduces new features like support for the gRPC transport.
+
+We've made significant changes to the A2A Java SDK to support the new protocol version and improved the user experience for both the client side and server side. In this post, we'll cover what's changed since our last release.
+
+== Recap: What's A2A?
+
+Before we dive into the details, let's quickly recap what https://a2a-protocol.org/latest/specification/[A2A] is. The Agent2Agent (A2A) Protocol is an open standard initially developed by Google and is now part of the Linux Foundation. It enables AI agents to communicate and collaborate with one another, regardless of each agent's underlying framework, language, or vendor. This is very important, as it's paving the way for polyglot multi-agent systems. The A2A protocol has been gaining a lot of traction since being announced just a few months ago.
+
+
+== What's new in the A2A Java SDK?
+
+Let's take a look at what's new for both A2A server agents and A2A clients.
+
+=== A2A Server Agent Updates
+
+==== Supported Transports
+
+The A2A Java SDK now supports the gRPC transport protocol in addition to JSON-RPC.
+
+To turn your Quarkus application into an A2A server agent, you simply need to add one or more dependencies on our A2A Java SDK Server Reference implementations, depending on the transport(s) you'd like your agent to support.
+
+The A2A Java SDK Server Reference implementations are based on Quarkus. If you're not using Quarkus,
+check out the https://github.com/wildfly-extras/a2a-java-sdk-server-jakarta[A2A Java SDK for Jakarta Servers].
+
+[NOTE]
+====
+The `io.github.a2asdk` `groupId` is temporary and will likely change for future releases. Keep an eye on the `a2a-java` https://github.com/a2aproject/a2a-java/blob/main/README.md[README] for up-to-date documentation.
+====
+
+===== JSON-RPC 2.0 Transport
+
+To allow your A2A server agent to support communication using JSON-RPC, add the following dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.github.a2asdk</groupId>
+    <artifactId>a2a-java-sdk-reference-jsonrpc</artifactId> <1>
+</dependency>
+----
+
+<1> `a2a-java-sdk-reference-jsonrpc` provides access to the core classes that make up the A2A specification and provides the HTTP endpoint that implements the A2A protocol using the JSON-RPC transport. If you're not using Quarkus, the `org.wildfly.a2a:a2a-java-sdk-jakarta-jsonrpc` dependency from the https://github.com/wildfly-extras/a2a-java-sdk-server-jakarta[A2A Java SDK for Jakarta Servers] project can be used instead.
+
+[NOTE]
+====
+Once you've added a CDI producer that creates an `AgentCard`, the A2A Java SDK will automatically expose your agent card at the server agent's `.well-known/agent-card.json` URI.
+====
+
+===== gRPC Transport
+
+To allow your A2A server agent to support communication using gRPC, add the following dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.github.a2asdk</groupId>
+    <artifactId>a2a-java-sdk-reference-grpc</artifactId> <1>
+</dependency>
+----
+
+<1> `a2a-java-sdk-reference-grpc` provides access to the core classes that make up the A2A specification and provides the gRPC service that implements the A2A protocol using the gRPC transport. If you're not using Quarkus, the `org.wildfly.a2a:a2a-java-sdk-jakarta-grpc` dependency from the https://github.com/wildfly-extras/a2a-java-sdk-server-jakarta[A2A Java SDK for Jakarta Servers] project can be used instead.
+
+===== Multiple Transports
+
+You can add dependencies on both `a2a-java-sdk-reference-jsonrpc` and `a2a-java-sdk-reference-grpc` if you'd like your A2A server agent to be able to communicate with clients using either transport.
+
+Support for the HTTP+JSON/REST transport will also be added to the A2A Java SDK very soon, keep an eye out for that!
+
+==== Declaring Supported Transports in the `AgentCard`
+
+The `AgentCard` is a class that describes the capabilities of an A2A server agent. Other agents or clients will use this to understand what our agent can do. Once you've added one or more dependencies on the A2A Java SDK Server Reference implementations, the next step is to add a class that creates an `AgentCard`.
+
+When creating your `AgentCard`, you must specify the primary endpoint for your A2A server agent and if your server agent supports multiple transports, these need to be specified as additional interfaces in your `AgentCard` as shown in the example below:
+
+[source,java]
+----
+import io.a2a.server.PublicAgentCard;
+import io.a2a.spec.AgentCapabilities;
+import io.a2a.spec.AgentCard;
+import io.a2a.spec.AgentSkill;
+...
+
+@ApplicationScoped
+public class WeatherAgentCardProducer {
+
+    @Produces
+    @PublicAgentCard
+    public AgentCard agentCard() {
+        return new AgentCard.Builder()
+                .name("Weather Agent")
+                .description("Helps with weather")
+                .url(YOUR_JSONRPC_URL) <1>
+                .preferredTransport(TransportProtocol.JSONRPC.asString()) <2>
+                .additionalInterfaces(List.of( <3>
+                        new AgentInterface(TransportProtocol.JSONRPC.asString(), YOUR_JSONRPC_URL), <4>
+                        new AgentInterface(TransportProtocol.GRPC.asString(), YOUR_GRPC_URL) <5>
+                ))
+                .version("1.0.0")
+                .capabilities(new AgentCapabilities.Builder()
+                        .streaming(true)
+                        .pushNotifications(false)
+                        .stateTransitionHistory(false)
+                        .build())
+                .defaultInputModes(Collections.singletonList("text"))
+                .defaultOutputModes(Collections.singletonList("text"))
+                .skills(Collections.singletonList(new AgentSkill.Builder()
+                        .id("weather_search")
+                        .name("Search weather")
+                        .description("Helps with weather in city, or states")
+                        .tags(Collections.singletonList("weather"))
+                        .examples(List.of("weather in LA, CA"))
+                        .build()))
+                .protocolVersion("0.3.0")
+                .build();
+    }
+}
+----
+<1> The primary endpoint URL for our A2A server agent. `YOUR_JSONRPC_URL` should be the URL, as a `String`, that is used to access your server agent using JSON-RPC as the transport (e.g., `"http://localhost:8080"`).
+<2> The preferred transport for our A2A server agent, `JSON-RPC` in this example. This is the transport protocol available at the primary endpoint URL.
+<3> The optional additional interfaces supported by our A2A server agent. This should include all supported transports.
+<4> The primary endpoint URL should also be specified here for completeness.
+<5> The gRPC transport URL. `YOUR_GRPC_URL` should be the URL, as a `String`, that is used to access your server agent using gRPC as the transport (e.g., `"localhost:8080"`)
+
+=== A2A Client Updates
+
+To make use of an A2A client using the A2A Java SDK, add the following dependency to your project:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.github.a2asdk</groupId>
+    <artifactId>a2a-java-sdk-client</artifactId> <1>
+</dependency>
+----
+<1> The `a2a-java-sdk-client` dependency provides access to a `ClientBuilder` that you can use to create your A2A `Client`.
+
+==== Supported Transports
+
+The A2A Java SDK client implementation now supports the gRPC transport protocol in addition to JSON-RPC.
+
+As mentioned previously, support for the HTTP+JSON/REST transport will be coming soon!
+
+===== JSON-RPC 2.0 Transport
+
+To allow your client to support the JSON-RPC transport for communication, just `a2a-java-sdk-client` is needed. No additional dependencies need to be manually added to your project.
+
+===== gRPC Transport
+
+To allow your client to support the gRPC transport for communication, simply add the following dependency to your project:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.github.a2asdk</groupId>
+    <artifactId>a2a-java-sdk-client-transport-grpc</artifactId>
+</dependency>
+----
+
+==== Creating a `Client`
+
+An A2A `Client` can now be created using a `ClientBuilder`. The `ClientBuilder` will select the appropriate transport protocol to use based on information obtained from the `AgentCard` for the A2A server agent that this client will be communicating with, also taking into account client-specified transport configuration. The `ClientBuilder` will then create a `Client` that will use the selected transport to communicate with the A2A server and the `Client` will also make use of any other client-specified configuration like whether to use streaming (`true` by default), accepted output modes, history length for messages, and so on.
+
+We want to give a shoutout to David Brassely, one of our community contributors, for working with us on improving the `Client` creation experience!
+
+Let's take a look at an example to see how a `Client` can now be created using the `ClientBuilder`:
+
+[source,java]
+----
+// First, get the agent card for the A2A server agent you want to connect to
+AgentCard agentCard = new A2ACardResolver("http://localhost:1234").getAgentCard();
+
+// Specify general client configuration and preferences for the ClientBuilder
+ClientConfig clientConfig = new ClientConfig.Builder()
+        .setAcceptedOutputModes(List.of("text"))
+        ...
+        .build();
+
+// Create event consumers to handle responses that will be received from the A2A server
+// (these consumers will be used for both streaming and non-streaming responses)
+List<BiConsumer<ClientEvent, AgentCard>> consumers = List.of(
+    (event, card) -> {
+        if (event instanceof MessageEvent messageEvent) {
+            // handle the messageEvent.getMessage()
+            ...
+        } else if (event instanceof TaskEvent taskEvent) {
+            // handle the taskEvent.getTask()
+            ...
+        } else if (event instanceof TaskUpdateEvent updateEvent) {
+            // handle the updateEvent.getTask()
+            ...
+        }
+    }
+);
+
+// Create a handler that will be used for any errors that occur during streaming
+Consumer<Throwable> errorHandler = error -> {
+    // handle the error.getMessage()
+    ...
+};
+
+// Optional: Create a channel factory function that takes the agent URL and returns a Channel for gRPC
+Function<String, Channel> channelFactory = agentUrl -> {
+    return ManagedChannelBuilder.forTarget(agentUrl)
+            ...
+            .build();
+};
+
+// Create the client using the builder
+Client client = Client
+        .builder(agentCard)
+        .clientConfig(clientConfig)
+        .withTransport(JSONRPCTransport.class, new JSONRPCTransportConfig()) <1>
+        .withTransport(GrpcTransport.class, new GrpcTransportConfig(channelFactory)) <2>
+        .addConsumers(consumers)
+        .streamingErrorHandler(errorHandler)
+        .build();
+----
+<1> This specifies that our client can support the `JSON-RPC` transport. At least one transport must be configured using the `withTransport` method.
+<2> This specifies that our client can support the `gRPC` transport.
+
+Once created, the `Client` can be used to send messages, get the current state of a task, cancel an ongoing task, get, set, and delete push notification configuration, and resubscribe to a task.
+
+== Conclusion
+
+We've taken a look at the key updates in A2A Java SDK 0.3.0, including the new gRPC transport and changes to how you configure both A2A server agents and A2A clients. To quickly get started creating your own A2A agents with Quarkus, check out the resources below.
+
+=== Further Reading
+
+* https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents[A2A Java SDK Samples]
+* https://github.com/a2aproject/a2a-java/blob/main/README.md[A2A Java SDK Documentation]
+* https://a2a-protocol.org/latest/specification/[A2A Specification]
+
+
