@@ -1,0 +1,136 @@
+name: Update Insights Sessions archive/upcoming
+
+on:
+  schedule:
+    - cron: '0 * * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    if: github.repository == 'quarkusio/quarkusio.github.io'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Archive current session
+        id: archive_session
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.INSIGHTS_YOUTUBE_API_KEY }}
+          YOUTUBE_CHANNEL_ID: ${{ secrets.INSIGHTS_YOUTUBE_CHANNEL_ID }}
+        run: |
+          today=$(date +"%B %d, %Y")
+          
+          nextsessiondate=$(yq -r '.nextsessiondate' _data/insights-videos.yaml)
+          nextsessiondate_formatted=$(date --date=$nextsessiondate +"%B %d, %Y")
+          
+          if [ "$today" != "$nextsessiondate_formatted" ]; then
+            echo "Next session date ($nextsessiondate_formatted) does not match today's date ($today). Skipping workflow run."
+            exit 0
+          fi
+          
+          current_episode=$(yq -r '.nextsessiontitle | sub(".* #([0-9]+):.*"; "${1}")' _data/insights-videos.yaml)
+          echo $current_episode
+          
+          youtube_response=$(curl -s --fail \
+              -H "X-goog-api-key: ${YOUTUBE_API_KEY}" \
+              "https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${YOUTUBE_CHANNEL_ID}&q=%23${current_episode}&type=video")
+          
+          video_id=$(echo $youtube_response | jq -r '.items[0].id.videoId')
+          video_status=$(echo $youtube_response | jq -r '.items[0].snippet.liveBroadcastContent')
+          video_title=$(echo $youtube_response | jq -r '.items[0].snippet.title')
+          
+          # Check if a video ID was found
+          if [ -z "$video_id" ] || [ "$video_id" == "null" ]; then
+            echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
+            exit 0
+          fi
+          
+          if [[ "$video_title" == *"#$current_episode"* ]]; then
+            echo "The video title contains the required episode number: '#$current_episode'"
+          else
+            echo "The video title does NOT contain the required episode number: '#$current_episode'. Exiting..."
+            exit 1
+          fi
+          
+          if [ "$video_status" != "none" ]; then
+            echo "Expecting the video status to be 'none' but instead it is: $video_status. Exiting..."
+            exit 0
+          fi
+          
+          video_link="https://www.youtube.com/watch?v=${video_id}"
+          nextsessiontitle="$(yq '.nextsessiontitle' _data/insights-videos.yaml)"
+          nextsessionguest="$(yq '.nextsessionguest' _data/insights-videos.yaml)"
+          
+          yq -i '
+            .pastvideos = [
+            {
+              "title": "'"$nextsessiontitle"'",
+              "date": "'"$nextsessiondate_formatted"'",
+              "authors": "'"$nextsessionguest"'",
+              "link": "'"$video_link"'"
+            }
+          ] + .pastvideos
+          ' _data/insights-videos.yaml
+          
+          echo "title=$(yq '.nextsessiontitle' _data/insights-videos.yaml)" >> "$GITHUB_OUTPUT"
+      - name: Set next session information
+        if: steps.archive_session.outputs.title != ''
+        run: |
+          yq -i 'del(.futurevideos[0])' _data/insights-videos.yaml
+  
+          title=$(yq '.futurevideos[0].title' _data/insights-videos.yaml)
+          guests=$(yq '.futurevideos[0].authors' _data/insights-videos.yaml)
+          
+          date_raw=$(yq '.futurevideos[0].date' _data/insights-videos.yaml)
+          date_iso=$(date --date="$date_raw" +"%Y-%m-%d")
+          date=${date_iso}T13:00Z
+          
+          yq -i '.nextsessiontitle = "'"$title"'"' _data/insights-videos.yaml
+          yq -i '.nextsessionguest = "'"$guests"'"' _data/insights-videos.yaml
+          yq -i '.nextsessiondate = "'"$date"'"' _data/insights-videos.yaml
+
+      - name: Commit and Create Pull Request
+        if: steps.archive_session.outputs.title != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # first see if the PR is already there, but just not merged yet:
+          
+          pr_number=$(gh pr list \
+            --repo "github.com/quarkusio/quarkusio.github.io" \
+            --state open \
+            --search "${{ steps.archive_session.outputs.title }}" \
+            --json number \
+            --jq '.[0].number' 2>/dev/null \
+            -L 1)
+          
+          if [[ -n "$pr_number" ]]; then
+            echo "Found existing PR: #$pr_number (Title: '${{ steps.archive_session.outputs.title }}')"
+            exit 0
+          fi
+          
+          # PR is not there yet so let's create one:
+          
+          git config --local user.name "Action user"
+          git config --global user.email "actionuser@foo"
+          
+          branch_name="feat/update-sessions-$(date +'%Y%m%d%H%M')"
+          git checkout -b "$branch_name"
+          
+          git add _data/insights-videos.yaml
+          git commit -m "[Insights sessions] move '${{ steps.archive_session.outputs.title }}' to archive"
+          
+          # Push the new branch
+          git push -u origin "$branch_name"
+          
+          # Create a pull request using the GitHub CLI
+          gh pr create --title "[Insights sessions] move '${{ steps.archive_session.outputs.title }}' to archive" \
+            --body "Automated Quarkus Insights session update." \
+            --base main \
+            --head "$branch_name" \
+            --repo "github.com/quarkusio/quarkusio.github.io"
