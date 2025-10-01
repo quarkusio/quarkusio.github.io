@@ -5,8 +5,728 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Wed, 01 Oct 2025 03:23:49 +0000</lastBuildDate>
+        <lastBuildDate>Wed, 01 Oct 2025 12:39:35 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>Use Quarkus OIDC Proxy to encrypt Quarkus MCP Server tokens</title>
+            <link>
+                https://quarkus.io/blog/secure-mcp-oidc-proxy/
+            </link>
+            <description>
+                &lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;introduction&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#introduction&quot;&gt;&lt;/a&gt;Introduction&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-server-oauth2/&quot;&gt;Use MCP OAuth2 Flow to access Quarkus MCP Server&lt;/a&gt; blog post, we explained how an MCP Client such as &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; could use the OAuth2 Flow with a pre-registered OAuth2 Client application to discover the MCP server&amp;#8217;s &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt;, the metadata of the authorization server, login a user and acquire an access token that it could use to access MCP Server provided tools.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this blog post, we will look at how &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; can register OAuth2 Client applications dynamically, instead of using a pre-registered OAuth2 Client, but also, use &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; to delegate to &lt;a href=&quot;https://www.keycloak.org/&quot;&gt;Keycloak&lt;/a&gt; during the MCP OAuth2 flow, &lt;a href=&quot;#point-of-using-oidc-proxy&quot;&gt;analyze why it can be useful&lt;/a&gt; and show how it can &lt;a href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;encrypt access and refresh tokens and exclude ID tokens&lt;/a&gt;, before they are made available to &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;demo-flow-diagram&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#demo-flow-diagram&quot;&gt;&lt;/a&gt;Demo MCP OAuth2 Flow Diagram&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-server-oauth2/&quot;&gt;Use MCP OAuth2 Flow to access Quarkus MCP Server&lt;/a&gt; blog post, we looked at how &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; could use OAuth 2.0 Flow with a &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-server-oauth2/#demo-flow-diagram&quot;&gt;pre-registered OAuth2 client&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The demo flow diagram in this section is very similar to the one from the &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-server-oauth2/#demo-flow-diagram&quot;&gt;Use MCP OAuth2 Flow to access Quarkus MCP Server&lt;/a&gt; blog post. It shows how &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; can use &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc7591&quot;&gt;OAuth2 Dynamic Client Registration&lt;/a&gt; instead of requiring that an OAuth2 Client is pre-registered, and with the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; interposing between MCP Client and Keycloak.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/demo_flow_diagram.png&quot; alt=&quot;Demo Flow Diagram&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc7591&quot;&gt;OAuth2 Dynamic Client Registration&lt;/a&gt; is used, MCP Client such as &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; requires configuring an MCP &lt;em&gt;Streamable HTTP&lt;/em&gt; endpoint URL only.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;MCP Client starts by accessing the MCP server without a token and gets back HTTP 401 with a &lt;code&gt;WWW-Authenticate&lt;/code&gt; &lt;code&gt;resource_metadata&lt;/code&gt; parameter that links to the MCP server&amp;#8217;s &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt; route. The client now fetches a URL of the authorization server that secures the MCP server as well as the MCP server&amp;#8217;s resource identifier.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Since &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; is used, MCP Client does not see a Keycloak URL as the authorization server URL but &lt;code&gt;&lt;a href=&quot;http://localhost:8080/q/oidc&quot; class=&quot;bare&quot;&gt;http://localhost:8080/q/oidc&lt;/a&gt;&lt;/code&gt; URL pointing to a default &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt;&apos;s base URL.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Next, MCP Client uses the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt;&apos;s URL to discover its authorization, token, client registration and other endpoint URLs. &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; provides its metadata by discovering Keycloak&amp;#8217;s metadata and replacing Keycloak-specific URLs with its own proxy-managed URLs, but does not transform other Keycloak metadata such as supported &lt;a href=&quot;https://www.rfc-editor.org/rfc/rfc7636&quot;&gt;Proof Key for Code Exchange&lt;/a&gt; (PKCE) methods.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The user is now redirected to &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; which in turn redirects the user to Keycloak to login.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once the user logs in and authorizes MCP Inspector to access Quarkus MCP server, the user is redirected back to the &lt;code&gt;&lt;a href=&quot;http://localhost:6274/oauth/callback&quot; class=&quot;bare&quot;&gt;http://localhost:6274/oauth/callback&lt;/a&gt;&lt;/code&gt; endpoint, MCP client exchanges the returned &lt;code&gt;code&lt;/code&gt; to get ID, access and refresh tokens, and uses the access token to access the MCP server, allowing the user to select and run the tool.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We are now ready to have a deeper look at how it works in the demo.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You can find the complete project source in the &lt;a href=&quot;https://github.com/sberyozkin/quarkus-mcp-server-oidc-proxy/tree/main/secure-mcp-http-server-with-oidc-proxy&quot;&gt;Secure Quarkus MCP HTTP Server with OIDC Proxy sample&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;create-mcp-server&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#create-mcp-server&quot;&gt;&lt;/a&gt;Step 1 - Create and start MCP server&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First, let&amp;#8217;s create a secure Quarkus MCP server.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;mcp-server-dependencies&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#mcp-server-dependencies&quot;&gt;&lt;/a&gt;MCP server maven dependencies&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Add the following dependencies:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;&amp;lt;dependency&amp;gt;
+    &amp;lt;groupId&amp;gt;io.quarkiverse.mcp&amp;lt;/groupId&amp;gt;
+    &amp;lt;artifactId&amp;gt;quarkus-mcp-server-sse&amp;lt;/artifactId&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    &amp;lt;version&amp;gt;1.6.0&amp;lt;/version&amp;gt;
+&amp;lt;/dependency&amp;gt;
+&amp;lt;dependency&amp;gt;
+    &amp;lt;groupId&amp;gt;io.quarkus&amp;lt;/groupId&amp;gt;
+    &amp;lt;artifactId&amp;gt;quarkus-oidc&amp;lt;/artifactId&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+&amp;lt;/dependency&amp;gt;
+&amp;lt;dependency&amp;gt;
+    &amp;lt;groupId&amp;gt;io.quarkiverse.oidc-proxy&amp;lt;/groupId&amp;gt;
+    &amp;lt;artifactId&amp;gt;quarkus-oidc-proxy&amp;lt;/artifactId&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+&amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;quarkus-mcp-server-sse&lt;/code&gt; is required to support both MCP Streamable HTTP and SSE transports.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;quarkus-oidc&lt;/code&gt; is required to secure access to Quarkus MCP Server. Its version is defined in the Quarkus BOM.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;quarkus-oidc-proxy&lt;/code&gt; is required to support OIDC proxy between MCP Client and Keycloak&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;mcp-server-configuration&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#mcp-server-configuration&quot;&gt;&lt;/a&gt;MCP Server Configuration&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s configure the MCP server:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Require an authenticated access to the MCP server
+
+quarkus.http.auth.permission.authenticated.paths=/mcp/* &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+quarkus.http.auth.permission.authenticated.policy=authenticated
+
+# Default OIDC tenant that secures the MCP server &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+# Its required `quarkus.oidc.auth-server-url` property is set by Keycloak Dev Service
+# and points to the Keycloak `quarkus-mcp-realm` realm endpoint
+
+quarkus.oidc.token.audience=quarkus-mcp-server &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+quarkus.oidc.resource-metadata.enabled=true &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+quarkus.oidc.resource-metadata.authorization-server=http://localhost:8080/q/oidc &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+quarkus.oidc.resource-metadata.force-https-scheme=false
+
+# Keycloak devservice that supports the default OIDC tenant.
+
+quarkus.keycloak.devservices.realm-path=quarkus-mcp-realm.json &lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;(6)&lt;/b&gt;
+quarkus.keycloak.devservices.create-client=false &lt;i class=&quot;conum&quot; data-value=&quot;7&quot;&gt;&lt;/i&gt;&lt;b&gt;(7)&lt;/b&gt;
+
+# CORS configuration to allow MCP Inspector&apos;s SPA script calls
+
+quarkus.http.cors.enabled=true
+quarkus.http.cors.origins=http://localhost:6274 &lt;i class=&quot;conum&quot; data-value=&quot;8&quot;&gt;&lt;/i&gt;&lt;b&gt;(8)&lt;/b&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Require authentication for all requests to the MCP server. This authentication policy is enforced by the default OIDC tenant configuration.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Default OIDC tenant secures the MCP server, Keycloak DevService inserts a missing &lt;code&gt;quarkus.oidc.auth-server-url&lt;/code&gt; property that links to the Keycloak &lt;code&gt;quarkus-mcp-realm&lt;/code&gt; realm endpoint.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Require that tokens that are allowed to access the MCP server must have an audience (&lt;code&gt;aud&lt;/code&gt;) claim that contains a &lt;code&gt;quarkus-mcp-server&lt;/code&gt; value.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Enable the &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt; route for the default OIDC tenant. It will help &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; to find out about the authorization server that secures the MCP server.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;5&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Quarkus &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt; handler is not aware that &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; is meant to intercept OAuth2 Flow requests between &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; and Keycloak, so we help it to return a correct URL by setting an absolute URL that points to the base &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; URL.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;6&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Ask Keycloak DevService to upload the &lt;code&gt;quarkus-mcp-realm.json&lt;/code&gt; realm file. This realm does not have pre-registered clients.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;7&quot;&gt;&lt;/i&gt;&lt;b&gt;7&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Ask Keycloak not to add &lt;code&gt;quarkus.oidc.client-id&lt;/code&gt; since &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; will register OAuth2 clients dynamically.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;8&quot;&gt;&lt;/i&gt;&lt;b&gt;8&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;CORS policy to allow &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; script requests.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You can read about how &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt; is supported in Quarkus OIDC in the &lt;a href=&quot;https://quarkus.io/guides/security-oidc-expanded-configuration#resource-metadata-properties&quot;&gt;Expanded OpenId Connect Configuration guide&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;mcp-server-tools&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#mcp-server-tools&quot;&gt;&lt;/a&gt;MCP User Name Provider tool&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s create a single tool that can return a name of the current MCP Client user:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;package org.acme;
+
+import io.quarkiverse.mcp.server.TextContent;
+import io.quarkiverse.mcp.server.Tool;
+import io.quarkus.oidc.UserInfo;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.inject.Inject;
+
+public class ServerFeatures {
+
+    @Inject
+    SecurityIdentity identity; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+    @Tool(name = &quot;user-name-provider&quot;, description = &quot;Provides a name of the current user&quot;) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    TextContent provideUserName() {
+        return new TextContent(identity.getPrincipal().getName());
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Capture a security identity represented by the verified access token&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;user-name-provider&lt;/code&gt; tool returns a name of the current MCP Client user.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;user-name-provider&lt;/code&gt; tool is a very simple tool designed to show that an identity of the MCP client user on whose behalf this tool is called by the MCP client is available for the tool to perform a user identity specific action, an important element for a secure agentic AI system.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;keycloak-configuration&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#keycloak-configuration&quot;&gt;&lt;/a&gt;Keycloak Configuration&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The Keycloak configuration has already been prepared in the &lt;code&gt;quarkus-mcp-realm.json&lt;/code&gt; that Keycloak DevService uploads to Keycloak at the start-up time.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s have a closer look. Please go to &lt;code&gt;&lt;a href=&quot;http://localhost:8080/q/dev-ui&quot; class=&quot;bare&quot;&gt;http://localhost:8080/q/dev-ui&lt;/a&gt;&lt;/code&gt; and select an &lt;code&gt;OpenId Connect&lt;/code&gt; card:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/devui_oidc_card.png&quot; alt=&quot;Keycloak Admin&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Click on &lt;code&gt;Keycloak Admin&lt;/code&gt;, login as &lt;code&gt;admin:admin&lt;/code&gt; and check the &lt;code&gt;quarkus-mcp-realm&lt;/code&gt; realm configuration.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;quarkus-mcp-realm&lt;/code&gt; has only Keycloak specific clients registered that are required to support various Keycloak realm operations, it has no custom clients registered.
+This realm has a single user, &lt;code&gt;alice&lt;/code&gt; with a password &lt;code&gt;alice&lt;/code&gt;.
+It also has a custom &lt;code&gt;quarkus-mcp-server&lt;/code&gt; client scope with an audience mapping:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/quarkus_mcp_server_client_scope.png&quot; alt=&quot;Keycloak quarkus-mcp-server client scope&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;quarkus-mcp-server&lt;/code&gt; scope has an audience mapping:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/quarkus_mcp_server_audience.png&quot; alt=&quot;Keycloak quarkus-mcp-server audience mapping&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;quarkus-mcp-realm&lt;/code&gt; realm have the &lt;code&gt;quarkus-mcp-server&lt;/code&gt; client scope with the &lt;code&gt;quarkus-mcp-server&lt;/code&gt; audience mapping to let users specify the &lt;code&gt;quarkus-mcp-server&lt;/code&gt; scope in order to request the correct token audience when &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; initiates OAuth2 Flow.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;a href=&quot;https://www.rfc-editor.org/rfc/rfc8707.html&quot;&gt;OAuth2 Resource Indicator&lt;/a&gt; specification provides an alternative option, where MCP Client can pass an MCP Server&amp;#8217;s &lt;code&gt;resource&lt;/code&gt; indicator to the OAuth2 provider and the provider can add it to the token audience. You can choose to avoid creating custom Keycloak client scopes with an audience mapping once Keycloak starts supporting the &lt;a href=&quot;https://www.rfc-editor.org/rfc/rfc8707.html&quot;&gt;OAuth2 Resource Indicator&lt;/a&gt; specification.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;start-mcp-server&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#start-mcp-server&quot;&gt;&lt;/a&gt;Start the MCP server in dev mode&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now let&amp;#8217;s start the MCP server in dev mode:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;mvn quarkus:dev&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/quarkus_mcp_server_dev_mode.png&quot; alt=&quot;MCP server dev mode&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You can see that default &lt;em&gt;Streamable HTTP&lt;/em&gt; and SSE endpoints are available at &lt;code&gt;&lt;a href=&quot;http://localhost:8080/mcp&quot; class=&quot;bare&quot;&gt;http://localhost:8080/mcp&lt;/a&gt;&lt;/code&gt; and &lt;code&gt;&lt;a href=&quot;http://localhost:8080/mcp/sse&quot; class=&quot;bare&quot;&gt;http://localhost:8080/mcp/sse&lt;/a&gt;&lt;/code&gt; respectively.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;start-mcp-inspector&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#start-mcp-inspector&quot;&gt;&lt;/a&gt;Step 2: Start the MCP Inspector&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;npx @modelcontextprotocol/inspector@0.16.7&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;While &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; provides a very good OAuth2 Flow support, it is still a very active project and at the moment, you may observe &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; failing to connect to the OAuth2 provider in some versions. &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; v0.16.7 is currently recommended.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/mcp_inspector_connect_view.png&quot; alt=&quot;MCP Inspector Connect&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As you can see, no pre-configured OAuth2 Client ID is set.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now, do not press &lt;code&gt;Connect&lt;/code&gt; immediately. We are going to follow the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s &lt;code&gt;Guided OAuth Flow&lt;/code&gt; to &lt;a href=&quot;#use-mcp-inspector-to-access-mcp-server&quot;&gt;register an OAuth2 Client, login a user and acquire an access token&lt;/a&gt; instead, and request a &lt;code&gt;Connect&lt;/code&gt; once the &lt;code&gt;Guided OAuth Flow&lt;/code&gt; is complete.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We will then have a look at how to &lt;a href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;Encrypt access and refresh tokens and drop ID token&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;See the &lt;a href=&quot;#demo-flow-diagram&quot;&gt;Demo MCP OAuth2 Flow Diagram&lt;/a&gt; section for an overview of how &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; performs a &lt;code&gt;Connect&lt;/code&gt; request.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Please keep your browser&amp;#8217;s &lt;code&gt;Developer Tools&amp;#8217;s `Network&lt;/code&gt; tab open if you would like to observe how MCP Inspector probes various MCP server and &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; endpoints and eventually succeeds in getting a user logged in and acquiring the access token.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;use-mcp-inspector-to-access-mcp-server&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#use-mcp-inspector-to-access-mcp-server&quot;&gt;&lt;/a&gt;Step 3: Use MCP Inspector to register OAuth2 Client and access MCP Server&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We are now going to use the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s &lt;code&gt;Guided OAuth Flow&lt;/code&gt; to register an OAuth2 Client, login a user and acquire tokens.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/mcp_inspector_oauth2_settings.png&quot; alt=&quot;MCP Inspector OAuth2 Settings&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Click on &lt;code&gt;Open Auth Settings&lt;/code&gt; which you can find opposite the Connection settings that you saw in the &lt;a href=&quot;#start-mcp-inspector&quot;&gt;Step 2: Start the MCP Inspector&lt;/a&gt; section, and click on the &lt;code&gt;Guided OAuth2 Flow&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/mcp_inspector_oauth2_flow_progress.png&quot; alt=&quot;MCP Inspector OAuth2 Settings Progress&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;Guided OAuth2 Flow&lt;/code&gt; may not be highlighted after you select it but &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; will run it once you press &lt;code&gt;Continue&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Press &lt;code&gt;Continue&lt;/code&gt; to do the &lt;code&gt;Metadata Discovery&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_metadata_discovered.png&quot; alt=&quot;OAuth2 Metadata Discovered&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As you can see, &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; discovers the MCP Server&amp;#8217;s &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc9728&quot;&gt;OAuth2 Protected Resource Metadata&lt;/a&gt; first, finds out the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt;&apos;s URL, and uses it to fetch the the OIDC Proxy&amp;#8217;s metadata. As mentioned in the &lt;a href=&quot;#demo-flow-diagram&quot;&gt;Demo MCP OAuth2 Flow Diagram&lt;/a&gt; section, &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt; provides its metadata by discovering Keycloak&amp;#8217;s metadata and replacing Keycloak-specific URLs with its own proxy-managed URLs, but does not transform other Keycloak metadata.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The next step is the &lt;code&gt;Client Registration&lt;/code&gt;, press &lt;code&gt;Continue&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; posts a client registration request that you can see in the browser&amp;#8217;s developer tools:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_client_registration_request.png&quot; alt=&quot;OAuth2 Client Registration Request&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Note that the &lt;code&gt;token_endpoint_auth_method&lt;/code&gt; property is set to &lt;code&gt;none&lt;/code&gt; - this is how a &lt;code&gt;public&lt;/code&gt; OAuth2 Client is registered, since managing confidential OAuth2 Clients that have secrets is harder for Single-page application (SPA) such as &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;Client Registration&lt;/code&gt; succeeds:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_reg_client_response.png&quot; alt=&quot;OAuth2 Client Registration Response&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;client_id&lt;/code&gt; is a dynamically generated value. You will see a different &lt;code&gt;client_id&lt;/code&gt; when you work with this blog post.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;At this point, we have to pause the &lt;code&gt;Guided OAuth2 Flow&lt;/code&gt; sequence, go to Keycloak and assign the &lt;code&gt;quarkus-mcp-server&lt;/code&gt; and &lt;code&gt;profile&lt;/code&gt; scopes to the registered client.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The whole point of registering OAuth2 Clients dynamically is to avoid having to deal with manually configuring them.
+However, as you could see in the Client Registration Request image above, &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; currently does not allow
+to pass OAuth2 scopes during the OAuth2 Client Registration - irrespectively of whether you configure &lt;code&gt;Scope&lt;/code&gt; in its &lt;a href=&quot;#start-mcp-inspector&quot;&gt;Connection settings&lt;/a&gt; or not.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The scopes impact what an issued access token can do, what kind of information it can include. The current OAuth2 Client application that logins the current user can request some scopes, for the user to authorize the client to use the access token according to permissions enabled by these scopes. Without requesting scopes during the OAuth2 Client Registration, Keycloak can only issue access tokens with a very limited content, with no audience and the logged-in user information included.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Therefore, to support this post&amp;#8217;s demo flow, we need to manually assign the required scopes to the registered client directly in the Keycloak Admin Dashboard.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In general, the &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization&quot;&gt;MCP Authorization&lt;/a&gt;-compliant MCP Clients should be able to use custom OAuth2 scopes during the &lt;a href=&quot;https://datatracker.ietf.org/doc/html/rfc7591&quot;&gt;OAuth2 Dynamic Client Registration&lt;/a&gt; going forward.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;OK, let&amp;#8217;s update the registered client in Keycloak.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Login to Keycloak as described in the &lt;a href=&quot;#keycloak-configuration&quot;&gt;Keycloak Configuration&lt;/a&gt; section, select the &lt;code&gt;quarkus-mcp-realm&lt;/code&gt; in &lt;code&gt;Manage Realms&lt;/code&gt; and the registered client in this realm&amp;#8217;s &lt;code&gt;Clients&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/keycloak_reg_client_dashboard.png&quot; alt=&quot;Keycloak Registered Client&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Click on its &lt;code&gt;Client Scopes&lt;/code&gt; tab, and add &lt;code&gt;profile&lt;/code&gt; and &lt;code&gt;quarkus-mcp-server&lt;/code&gt; scopes as &lt;code&gt;Default&lt;/code&gt; scopes:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/add_scopes_to_registered_client.png&quot; alt=&quot;Add Scopes Registered Client&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Usually, these scopes should be optional for them to be requested at the authorization code flow login time, but in this case we set them as default scopes since the registered client is currently not aware of such scopes at the registration and login times due to the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s limitation described above in this section.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As far as these two scopes are concerned, the &lt;code&gt;quarkus-mcp-server&lt;/code&gt; scope was described in the &lt;a href=&quot;#keycloak-configuration&quot;&gt;Keycloak Configuration&lt;/a&gt; section and is used to ensure the access tokens that are issued to the registered client include the correct MCP server audience, while the &lt;code&gt;profile&lt;/code&gt; scope is only added for the access tokens to contain the logged-in user&amp;#8217;s name - adding this scope is not strictly necessary.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s go back to the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s &lt;code&gt;Guided OAuth Flow&lt;/code&gt; where we have already completed the &lt;code&gt;Metadata Discovery&lt;/code&gt; and &lt;code&gt;Client Registration&lt;/code&gt; steps.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Press &lt;code&gt;Continue&lt;/code&gt; to begin the &lt;code&gt;Preparing Authorization&lt;/code&gt; step and you will see an &lt;code&gt;Authorization URL&lt;/code&gt; displayed:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_prepare_authorization.png&quot; alt=&quot;OAuth2 Prepare Authorization&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Click on it using the provided button on the right, and you will be redirected to Keycloak, via &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt;, to login:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/keycloak_realm_login.png&quot; alt=&quot;Keycloak Realm Login&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Login as &lt;code&gt;alice:alice&lt;/code&gt;, and now Keycloak will request you to give your consent to the registered MCP Inspector Client to access Quarkus MCP Server:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/keycloak_consent_screen.png&quot; alt=&quot;Keycloak Consent Screen&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is what using scopes during the client registration, and &lt;code&gt;quarkus-mcp-server&lt;/code&gt; scope in particular, give you: a must have option to authorize the registered MCP client application to access the MCP Server on your behalf.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Press &lt;code&gt;Yes&lt;/code&gt;, Keycloak will redirect you back to the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s callback page in another tab that will display the authorization code:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/copy_authorization_code.png&quot; alt=&quot;Copy Authorization Code&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Copy and paste this code into the &lt;code&gt;Prepare Authorization&lt;/code&gt; field in the &lt;code&gt;Guided OAuth Flow&lt;/code&gt; view:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_request_authorization.png&quot; alt=&quot;OAuth2 Prepare Authorization&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Press &lt;code&gt;Continue&lt;/code&gt;. &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; now successfully acquires the tokens:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/token_request_response.png&quot; alt=&quot;OAuth2 Get Tokens&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As you can see, 3 tokens, the access and refresh tokens but also the ID token are returned. &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; does not really need the ID token, it only needs an access token in order to be able to access the MCP server, and optionally, the refresh token to get another access token when the current one expires. We&amp;#8217;ll have a look at how to drop the ID token in the &lt;a href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;Encrypt access and refresh tokens and drop ID token&lt;/a&gt; section.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Copy the access token from the provided JSON data and paste it into &lt;a href=&quot;https://www.jwt.io/&quot;&gt;jwt.io&lt;/a&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/access_token_claims.png&quot; alt=&quot;OAuth2 Access Token Claims&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;It contains a required &lt;code&gt;quarkus-mcp-server&lt;/code&gt; audience, exactly what the &lt;a href=&quot;#mcp-server-configuration&quot;&gt;MCP Server expects&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now you are ready to press &lt;code&gt;Connect&lt;/code&gt; in the Connection view that you saw in the &lt;a href=&quot;#start-mcp-inspector&quot;&gt;Step 2: Start the MCP Inspector&lt;/a&gt; section.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;At this point, the access token is already available, so &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; uses this token to let you select and run the &lt;code&gt;user-name-provider&lt;/code&gt; tool:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/username_provider_call.png&quot; alt=&quot;User Name Provider Call&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now press &lt;code&gt;Disconnect&lt;/code&gt; first, and then &lt;code&gt;Clear OAuth State&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/disconnect_clear_oauth2_state.png&quot; alt=&quot;Disconnect and clear OAuth2 state&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;But keep the &lt;a href=&quot;#start-mcp-server&quot;&gt;MCP server running&lt;/a&gt;, do not stop it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s see next how &lt;a href=&quot;#use-oidc-proxy&quot;&gt;OIDC Proxy can encrypt access and refresh tokens and drop ID token&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;use-oidc-proxy&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#use-oidc-proxy&quot;&gt;&lt;/a&gt;Step 4: Use OIDC Proxy to encrypt access and refresh tokens and drop ID token&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;point-of-using-oidc-proxy&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#point-of-using-oidc-proxy&quot;&gt;&lt;/a&gt;What is the point of using OIDC Proxy ?&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You may be wondering by now, what is the point of using &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; and &lt;a href=&quot;https://github.com/quarkiverse/quarkus-mcp-server&quot;&gt;Quarkus MCP Server&lt;/a&gt; together, with all the proxying going on between &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; and Keycloak ?&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And if you have been following the evolution of the MCP Authorization specification, from its older &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization&quot;&gt;2025-03-26 version&lt;/a&gt; to the &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization&quot;&gt;latest one&lt;/a&gt;, you may want to ask, does the idea of using &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; bring us back to the days where the MCP Server was expected to do OAuth2 itself in the &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization&quot;&gt;2025-03-26 version&lt;/a&gt; ?&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Not really, &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; was introduced in the &lt;a href=&quot;https://quarkus.io/blog/oidc-proxy/&quot;&gt;Use OIDC Proxy to integrate OIDC service endpoints with custom GPT&lt;/a&gt; blog post, more than half a year before the original MCP specification was published.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The main idea behind &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; is to let SPA applications write the same OAuth2 code no matter what the connection details and capabilities of the actual proxied OAuth2 provider are, with the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; mediating between the client that is trying to perform various OAuth2 actions and the actual provider.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For example, as it happens, Keycloak currently does not accept OAuth2 dynamic client registration requests that are sent directly from the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; SPA because its client registration endpoint does not support CORS. However, &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt;, by being co-located with the Quarkus MCP Server, does support CORS, and thus can approve and forward OAuth2 client registration requests from the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; SPA&amp;#8217;s host to Keycloak. &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; can also augment or transform some of the OAuth2 requests and responses.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Besides helping SPAs write an interoperable OAuth2 code, &lt;a href=&quot;https://quarkus.io/blog/oidc-proxy/#security-considerations&quot;&gt;it can help with restricting which authorization code flow tokens can be returned and support a locally managed redirect endpoint&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Recently, we have also enhanced &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; to support encrypting access and refresh tokens before returning them to SPA. We&amp;#8217;ll look at it in the next &lt;a href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;Encrypt access and refresh tokens and drop ID token&lt;/a&gt; section.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;use-oidc-proxy-to-encrypt-tokens&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;&lt;/a&gt;Encrypt access and refresh tokens and drop ID token&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When we were discussing the early &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization&quot;&gt;MCP Authorizaton version 2025-03-26&lt;/a&gt; options in the &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-sse-server/&quot;&gt;Getting ready for secure MCP with Quarkus MCP Server&lt;/a&gt; blog post, my colleague &lt;a href=&quot;https://github.com/BarDweller&quot;&gt;Ozzy Osborne&lt;/a&gt; thought about the security of access tokens that were made available to MCP Clients and prototyped a Quarkus MCP Server demo where the MCP Server was used to access GitHub but the Claude AI MCP Client only had access to the wrapped access tokens that can not be used directly against GitHub.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; builds on Ozzy&amp;#8217;s idea to wrap tokens and makes it possible to encrypt both access and refresh tokens that are returned to the MCP Client.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s see how it works.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Add the following configuration properties to the &lt;a href=&quot;#mcp-server-configuration&quot;&gt;MCP Server Configuration&lt;/a&gt;, without restarting the &lt;a href=&quot;#start-mcp-server&quot;&gt;MCP Server&lt;/a&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Public key in JWK format that OIDC Proxy must use to encrypt access and refresh tokens.
+# Keys in the PEM format are also supported.
+
+quarkus.oidc-proxy.token-encryption-key-location=publicKey.jwk &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+# Private key in JWK format that OIDC Proxy must use to decrypt refresh tokens and Quarkus OIDC - bearer access tokens.
+
+# The private and public keys were generated to support tests and demos.
+# &apos;quarkus.oidc.credentials.secret&apos; property can be used encrypt and decrypt tokens instead.
+
+quarkus.oidc.token.decryption-key-location=privateKey.jwk &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+
+# This is a hint to Quarkus OIDC that the incoming access tokens must be decrypted,
+# given that by default it expects only encrypted ID tokens when `quarkus.oidc.token.decryption-key-location` is set.
+
+quarkus.oidc.token.decrypt-access-token=true &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+
+quarkus.oidc-proxy.allow-id-token=false &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;a href=&quot;https://github.com/sberyozkin/quarkus-mcp-server-oidc-proxy/blob/main/secure-mcp-http-server-with-oidc-proxy/src/main/resources/publicKey.jwk&quot;&gt;Public RSA key&lt;/a&gt; that OIDC Proxy must use to encrypt access and refresh tokens, when intercepting the &lt;code&gt;authorization_code&lt;/code&gt; and &lt;code&gt;refresh_token&lt;/code&gt; grant responses. Note that Quarkus OIDC that protects the MCP Server does not control the communication between &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; and the token issuer, therefore it can not encrypt the tokens, only OIDC Proxy can.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;a href=&quot;https://github.com/sberyozkin/quarkus-mcp-server-oidc-proxy/blob/main/secure-mcp-http-server-with-oidc-proxy/src/main/resources/privateKey.jwk&quot;&gt;Private RSA key&lt;/a&gt; that OIDC Proxy must use to decrypt refresh tokens and Quarkus OIDC - bearer access tokens. Note that OIDC Proxy does not control access to the Quarkus service endpoint such as Quarkus MCP server but only intercepts requests/responses to/from the token issuer, therefore it can only decrypt refresh tokens when intercepting &lt;code&gt;refresh_token&lt;/code&gt; grant requests, while Quarkus OIDC must handle the decryption of the access tokens that were encrypted by OIDC Proxy and are used to access the MCP Server.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;This is a hint to Quarkus OIDC that when the &lt;code&gt;quarkus.oidc.token.decryption-key-location&lt;/code&gt; is set, that only an access token, either the bearer or authorization code flow one, that must be decrypted.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;As you could see at the end of the &lt;a href=&quot;#use-mcp-inspector-to-access-mcp-server&quot;&gt;Step 3: Use MCP Inspector to register OAuth2 Client and access MCP Server&lt;/a&gt; section, ID token was also returned to &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt; which does not need it. OIDC proxy also does not encrypt ID tokens the same way it can encrypt access and refresh tokens, because the whole point of an ID token when SPA applications login the user is for SPA be able to find some information about the user from the ID token, therefore encrypting it by the OIDC proxy would make it impossible. But an ID token can contain sensitive information so why return it to SPA which does not need it ? So we let &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt; remove it from the authorization code flow grant response.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Save the updated configuration, Quarkus MCP Server will notice them in dev mode.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now please go back to the &lt;a href=&quot;#use-mcp-inspector-to-access-mcp-server&quot;&gt;Step 3: Use MCP Inspector to register OAuth2 Client and access MCP Server&lt;/a&gt; section and repeat the same steps, including updating another registered client in Keycloak.
+Once you completed the &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s &lt;code&gt;Guided OAuth Flow&lt;/code&gt;, check the returned tokens:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/token_request_response_without_idtoken.png&quot; alt=&quot;Token response without the ID token&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As you can see an ID token is no longer returned.
+Now copy the access token value. &lt;a href=&quot;https://www.jwt.io/&quot;&gt;jwt.io&lt;/a&gt; no longer accepts encrypted JWT tokens, but you can find another JWT decoder online such as &lt;a href=&quot;https://fusionauth.io/dev-tools/jwt-decoder&quot;&gt;FusionAuth JWT Decoder&lt;/a&gt;.
+Paste the access token - the actual claims are encrypted but it can still show the JWT headers:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/secure_mcp_oidc_proxy/oauth2_encrypted_access_token.png&quot; alt=&quot;Encrypted access token&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;These are not signing but encryption algorithms. &lt;code&gt;RSA-OAEP&lt;/code&gt; encrypts the generated content encryption key while &lt;code&gt;A256GCM&lt;/code&gt; algorithm uses this key to encrypt claims.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this particular demo, the fact that the access and refresh tokens are encrypted primarily eliminates the information leak risk as Keycloak access and refresh tokens are usually in JWT format and can contain sensitive details. We also rely on the MCP Client to use &lt;a href=&quot;https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#authorization-code-protection&quot;&gt;Proof Key for Code Exchange&lt;/a&gt; to minimize a risk of the authorizaion code being leaked and the attacker acquiring the tokens, and we enforce the CORS policy in the &lt;a href=&quot;#mcp-server-configuration&quot;&gt;MCP Server Configuration&lt;/a&gt; section to allow requests to the MCP Server only from the known &lt;a href=&quot;https://github.com/modelcontextprotocol/inspector&quot;&gt;MCP Inspector&lt;/a&gt;&apos;s host and port.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Encrypting access tokens before returning them to the MCP Client is very useful when your MCP Server is implemented to propagate the incoming access tokens to other services, such as GitHub, or downstream microservices that may not enforce specific CORS policies, or token verification constraints such as a token audience check. In such cases, if the MCP Client leaks the access token, the attacker can bypass Quarkus MCP server and access those other services directly. This risk is avoided when the access token is encrypted by &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt; because those other services won&amp;#8217;t be able to decrypt it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Similarly, when the SPA tries to use a refresh token to refresh the expired access token and the attacker manages to get hold of the refresh token and is aware of the actual token issuer&amp;#8217;s refresh endpoint, then the refresh grant request can go directly to the provider. This risk is avoided when the refresh token is encrypted by &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt; because the token issuer won&amp;#8217;t be able to decrypt it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now that we discussed why it may be worth encrypting the access and refresh tokens, please go to the end of the &lt;a href=&quot;#use-mcp-inspector-to-access-mcp-server&quot;&gt;Step 3: Use MCP Inspector to register OAuth2 Client and access MCP Server&lt;/a&gt; section, &lt;code&gt;Connect&lt;/code&gt; to the MCP Server, and run the tool to confirm that the encrypted access token is correctly decrypted by the MCP Server.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;security-considerations&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#security-considerations&quot;&gt;&lt;/a&gt;Security Considerations&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The key security recommendation remains the same as the one in the &lt;a href=&quot;https://quarkus.io/blog/secure-mcp-server-oauth2/#security-considerations&quot;&gt;Use MCP OAuth2 Flow to access Quarkus MCP Server&lt;/a&gt; blog post: secure Quarkus MCP servers must enforce that access tokens have a correct audience, for the MCP Server to assert that the current token is meant to access this MCP server only. And indeed, MCP Servers that propagate tokens further should consider exchanging such tokens, for a new token to target the downstream service correctly - it also minimizes the risk discussed next.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When your MCP server forwards the tokens, please consider how to minimize a risk of the attacker stealing the tokens from the MCP Client and using them to access directly the same services that MCP Server forwards tokens to. &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; provides a way to &lt;a href=&quot;#use-oidc-proxy-to-encrypt-tokens&quot;&gt;encrypt access and refresh tokens&lt;/a&gt; that are returned to the MCP Client, making them acceptable only by either the MCP server or &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;OIDC Proxy&lt;/a&gt; itself.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When MCP Client registers OAuth2 Clients dynamically, please consider enforcing a user consent during the authentication with a standard OpenId Connect &lt;code&gt;prompt=consent&lt;/code&gt; parameter. &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; recognizes the &lt;code&gt;quarkus.oidc.authentication.extra-params.prompt=consent&lt;/code&gt; property that you can use if the MCP Client does not add it itself when initiating an authorization code flow for the dynamically registered client.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Please note that the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; extension currently has an &lt;code&gt;experimental&lt;/code&gt; status, therefore, while we do encourage you to experiment with it, we do not recommend to use it in production for the purpose of hardening the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-mcp-server&quot;&gt;Quarkus MCP Server&lt;/a&gt; token security yet.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Please never use a wildcard CORS policy in production, get the MCP server accept only known MCP Client SPA origins.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this blog post we looked at how &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; can help to harden the security of &lt;a href=&quot;https://github.com/quarkiverse/quarkus-mcp-server&quot;&gt;Quarkus MCP Server&lt;/a&gt; tokens, by encrypting access and refresh tokens, and removing a possibly sensitive ID token, before the tokens are returned to the MCP Client.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We also used &lt;a href=&quot;https://github.com/quarkiverse/quarkus-oidc-proxy&quot;&gt;Quarkus OIDC Proxy&lt;/a&gt; to get OAuth2 Dynamic Client Registration working by controlling the CORS policy at the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-mcp-server&quot;&gt;Quarkus MCP Server&lt;/a&gt; level and forwarding the client registration requests to Keycloak.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Please let us know what you think, enjoy !&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Wed, 01 Oct 2025 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/secure-mcp-oidc-proxy/
+            </guid>
+            
+            
+            
+            <author>Sergey Beryozkin (https://twitter.com/sberyozkin)</author>
+            
+        </item>
         
         <item>
             <title>Quarkus Newsletter #60 - September</title>
@@ -8913,146 +9633,6 @@ public String requestAgentic(String request) {
             
             
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>The internals (and a few externals) of Quarkus test classloading have changed</title>
-            <link>
-                https://quarkus.io/blog/test-classloading-rewrite/
-            </link>
-            <description>
-                &lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;whats-changing&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-changing&quot;&gt;&lt;/a&gt;What&amp;#8217;s changing?&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The internals of Quarkus test classloading have been rewritten in 3.22.
-It does not affect production and dev modes, or some Quarkus test modes, such as &lt;code&gt;@QuarkusIntegrationTest&lt;/code&gt;, &lt;code&gt;@QuarkusComponentTest&lt;/code&gt;.
-However, &lt;code&gt;@QuarkusTest&lt;/code&gt; has changed.
-This change should make Quarkus testing work better, and it allowed us to fix a pile of longstanding bugs.
-It will also allow us to improve the integration with test frameworks such as Pact.
-However, it did introduce a few bugs we know about, and most likely also some bugs we don&amp;#8217;t yet know about.
-We&amp;#8217;re keen to get feedback from the community so that we can get fixing.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;why&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#why&quot;&gt;&lt;/a&gt;Why?&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;In previous versions, Quarkus tests were invoked using the default JUnit classloader, and then executed in a different, Quarkus-aware, classloader.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;This mostly worked very well, and meant that &lt;code&gt;QuarkusTest&lt;/code&gt; tests mostly behaved as if they were part of the same application as the code under test.
-The Quarkus test framework could start and stop Quarkus instances at the right point in the test lifecycle, inject CDI dependencies, and do other useful Quarkus bytecode manipulation.
-However, some use cases didn&amp;#8217;t work. Tests using advanced JUnit 5 features like &lt;code&gt;@TestTemplate&lt;/code&gt; and &lt;code&gt;@ParameterizedTest&lt;/code&gt; sometimes found that the same test code might appear to run in several classloaders in a single test, or that injected dependencies weren&amp;#8217;t always available.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;While Quarkus extensions can do all sorts of marvellous bytecode manipulation to improve the developer experience, they cannot manipulate test classes with the same freedom that they do normal application classes.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Over time, test-related defects were building up that couldn&amp;#8217;t be changed without a fundamental rewrite of how Quarkus loads and executes tests.
-The Quarkus test code itself was also growing ever-more complex as it tried to work around various JUnit edge cases. Moving test instances from one classloader to another involved serializing and deserialization, which is harder to implement on newer JVM versions with tighter class security. For example, Quarkus used to use XStream as the serialization provider, but XStream no longer works with Java 17 and higher, because of reflection restrictions in the newer JVMs.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;What if, instead, Quarkus tests were simply run in the same classloader used to to load them?&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;what-you-need-to-do&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#what-you-need-to-do&quot;&gt;&lt;/a&gt;What you need to do&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;From Quarkus 3.22 onwards, this is exactly how &lt;code&gt;@QuarkusTest&lt;/code&gt; classloading works.
-What do your tests need to change in order to work with the new architecture?
-&lt;strong&gt;Nothing&lt;/strong&gt; (hopefully!).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;One of the goals of this change was that the rewrite didn&amp;#8217;t touch any tests in our test suite, to make sure they&amp;#8217;d all continue working without updates.
-In practice, there have been a few hiccups and we&amp;#8217;ve also discovered some edge cases in the broader ecosystem.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;known-regressions&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#known-regressions&quot;&gt;&lt;/a&gt;Known regressions&lt;/h3&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;All dev services now start in the JUnit discovery phase&lt;/strong&gt;. &lt;a href=&quot;https://quarkus.io/guides/dev-services&quot;&gt;Quarkus Dev Services&lt;/a&gt; are currently started during &lt;a href=&quot;https://quarkus.io/guides/reaugmentation#what-is-augmentation&quot;&gt;the augmentation phase&lt;/a&gt;, along with bytecode manipulation and other application initialization steps. With the new testing design, all augmentation happens at the beginning of the test run, during the JUnit discovery phase. This means all Dev Services also start at the beginning of the test run. If several test classes with different Dev Service configuration are augmented before any tests are run, multiple differently-configured Dev Services may be running at the same time. This can cause port conflicts and cross-talk on configuration values. We&amp;#8217;re hoping to have a &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/45785&quot;&gt;fix&lt;/a&gt; for this in the next release. As a workaround, splitting conflicting tests into separate projects should fix symptoms.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Config access from JUnit conditions&lt;/strong&gt;. Using a &lt;code&gt;ConfigProvider&lt;/code&gt; from a custom JUnit condition will &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47081&quot;&gt;trigger a &lt;code&gt;ServiceConfigurationError&lt;/code&gt;&lt;/a&gt;. The workaround is to set the thread context classloader to &lt;code&gt;this.getClass().getClassLoader()&lt;/code&gt; before reading config, and then set it back afterwards. This is fixed in 3.23.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Nested test issues&lt;/strong&gt;. If nested &lt;code&gt;@QuarkusTest&lt;/code&gt; tests are mixed in the same project with plain tests, the plain tests &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47657&quot;&gt;will not be able to access Quarkus config&lt;/a&gt;, because the thread context classloader does not get correctly reset. As a workaround, you can manually set the thread context classloader to the system classloader in the plain tests. The nested tests also &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47671&quot;&gt;have problems in dev mode&lt;/a&gt;. Most of these issues are fixed in 3.23, and the remaining cases are sorted out in 3.24.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;junit-platform.properties&lt;/strong&gt; Including a &lt;code&gt;junit-platform.properties&lt;/code&gt; in a project &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47646&quot;&gt;causes problems&lt;/a&gt; for tests using &lt;code&gt;@QuarkusTest&lt;/code&gt;. This is fixed in 3.24, but note that &lt;code&gt;junit-platform.properties&lt;/code&gt; files can also &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/48125&quot;&gt;interfere with multi-profile tests&lt;/a&gt;. To register a class orderer, it is best to &lt;a href=&quot;https://quarkus.io/guides/getting-started-testing#testing_different_profiles&quot;&gt;configure the orderer&lt;/a&gt; in the Quarkus application properties.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Gradle source sets&lt;/strong&gt;. In some cases classes in one gradle source set &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47760&quot;&gt;cannot access package-private fields and classes in a different source set&lt;/a&gt;. This causes an &lt;code&gt;IllegalAccessError&lt;/code&gt;. The workaround is to switch from package-private to public. This is fixed in 3.24.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;IDE support&lt;/strong&gt;. Running &lt;code&gt;QuarkusTest&lt;/code&gt; tests from the Eclipse IDE is &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/47656&quot;&gt;more challenging&lt;/a&gt;. Running a class as a JUnit test gives an error. To workaround, you can individual test methods, or run a whole package also works, or add &lt;code&gt;-uniqueId [engine:junit-jupiter]/[class:&amp;lt;your.class.name.here&amp;gt;]&lt;/code&gt; to the program arguments in the run configuration. This is fixed in Eclipse 4.37. Similar, in Visual Studio Code, running all tests in a class or package &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/48014&quot;&gt;will fail&lt;/a&gt;, but running individual test methods will work.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Increased memory footprint running tests.&lt;/strong&gt; For suites using multiple profiles and resources, more heap or metaspace may be needed.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;things-to-watch-out-for&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#things-to-watch-out-for&quot;&gt;&lt;/a&gt;Things to watch out for&lt;/h3&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Test order change&lt;/strong&gt;. As part of the rewrite, the execution order of some tests has swapped around. Of course, we all know tests should not depend on execution order if they don&amp;#8217;t set an order explicitly. However, it&amp;#8217;s easy to not notice that a test requires a certain order&amp;#8230;&amp;#8203; until the order changes. We discovered some tests in our own suite that were sensitive to the execution order, and other people may make similar discoveries.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Test timing change&lt;/strong&gt;. We also discovered that the rewrite exposed some timing issues in tests. Because classloading is frontloaded at the beginning of the test run, rather than between test executions, there&amp;#8217;s less time for asynchronous operations to finish between tests. For example, there may no longer be time for external state to &apos;reset&apos; before the next test starts. This might expose some heisenbugs in test suites.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect2&quot;&gt;
-&lt;h3 id=&quot;dropped-support&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#dropped-support&quot;&gt;&lt;/a&gt;Dropped support&lt;/h3&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;&lt;code&gt;@TestProfile&lt;/code&gt; on &lt;code&gt;@Nested&lt;/code&gt; tests.&lt;/strong&gt; Mixing different test profiles and test resources on &lt;code&gt;@Nested&lt;/code&gt; tests is no longer supported. By definition, every &lt;code&gt;@TestProfile&lt;/code&gt; must get its own Quarkus application and classloader. Having multiple classloaders execute one test isn&amp;#8217;t compatible with loading the test with the classloader used to run it.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Version 2.x of the Maven Surefire plugin&lt;/strong&gt;. Versions below 3.x of the Maven Surefire plugin will no longer work with &lt;code&gt;@QuarkusTest&lt;/code&gt;. Version 3 of the Surefire plugin was released in 2023, so version 2 is now rather old.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;strong&gt;Parallel test execution.&lt;/strong&gt; Running Quarkus tests in parallel has &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/42296&quot;&gt;never been supported&lt;/a&gt;, but it would work in some circumstances. It is now less likely to work.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;next-steps&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#next-steps&quot;&gt;&lt;/a&gt;Next steps&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;The main work of the test classloading rewrite has been delivered in 3.22, and has unlocked a bunch of possible improvements.
-Some test defects weren&amp;#8217;t directly fixed by the main change, but the architecture is now in place to enable a fix.
-More excitingly, test-related extensions, like the Pact extensions, can now add new features to reduce test boilerplate.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As always, if you spot issues or oddities, please let us know on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;zulip&lt;/a&gt; or &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;raise an issue&lt;/a&gt;.
-The &lt;a href=&quot;https://github.com/orgs/quarkusio/projects/30&quot;&gt;working group for test classloading&lt;/a&gt; is still underway, and welcomes contributions.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 30 Apr 2025 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/test-classloading-rewrite/
-            </guid>
-            
-            
-            
-            <author>Holly Cummins (https://twitter.com/holly_cummins)</author>
             
         </item>
         
