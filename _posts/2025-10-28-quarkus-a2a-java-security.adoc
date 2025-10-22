@@ -1,0 +1,276 @@
+---
+layout: post
+title: 'How to Secure Your A2A Server Agent with Keycloak OAuth2'
+date: 2025-10-28
+tags: ai a2a security keycloak oauth2
+synopsis: This blog post shows how to secure an A2A server agent using OAuth2 bearer tokens via Keycloak and shows how to enable an A2A client to automatically obtain and pass the required token in each request.
+author: fjuma
+---
+
+Today, we've released A2A Java SDK 0.3.0.Final which includes security and cloud related enhancements.
+In this post, we'll focus on A2A security. Stay tuned for a future post on cloud related enhancements!
+
+The A2A protocol delegates authentication to standard mechanisms like OAuth2 and OpenID Connect. An
+A2A server agent specifies its authentication requirements in its agent card so A2A clients know
+what type of credentials they need to obtain and then they can pass these credentials to
+the server agent when sending requests.
+
+We're going to walk through securing an A2A server agent with OAuth2 using Keycloak and we'll
+show how to configure an A2A client to handle token management. Our A2A server agent will be able
+to support all 3 transports (JSON‑RPC, HTTP+JSON/REST, and gRPC) so we can see that the authentication
+configuration is consistent across transport protocols.
+
+== Magic 8 Ball Sample
+
+To see security configuration in action, we'll use the https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents/magic_8_ball_security[Magic 8 Ball Security sample]
+from the https://github.com/a2aproject/a2a-samples[a2a-samples] repository. This sample is a simple https://github.com/a2aproject/a2a-samples/blob/main/samples/java/agents/magic_8_ball_security/server/src/main/java/com/samples/a2a/Magic8BallAgent.java[Quarkus LangChain4j AI service] that consults a virtual Magic 8 Ball to answer yes/no questions.
+
+=== A2A Server Agent
+
+We're going to focus specifically on the security configuration for our A2A server agent. For a detailed
+description on how to turn a Quarkus LangChain4j AI Service into an A2A server agent, check
+out this previous https://quarkus.io/blog/quarkus-a2a-java-grpc/[blog post].
+
+==== Security Configuration
+
+When using the A2A Java SDK reference implementations, the endpoints that need to be secured according to
+the A2A specification are already annotated with `@Authenticated` for you. That means that in order to secure
+your A2A server agent, you just need to specify the configuration for the specific authentication mechanism
+you'd like to use. To secure our A2A server agent with OAuth2, we simply need to add a dependency on the
+`quarkus-oidc` extension as shown below:
+
+[source,java]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId>
+</dependency>
+----
+
+> **NOTE**: In our sample, we're going to rely on Quarkus Dev Services to automatically create and configure
+a Keycloak instance that we'll use as our OAuth2 provider. Quarkus Dev Services relies on a container runtime
+like Docker or Podman to be installed and properly configured. For more details on using Podman with
+Quarkus, see this https://quarkus.io/guides/podman[guide].
+
+Now that our A2A server agent is being secured with OAuth2, we need to indicate this in our agent card
+as shown below.
+
+[source,java]
+----
+@Produces
+  @PublicAgentCard
+  public AgentCard agentCard() {
+    ClientCredentialsOAuthFlow clientCredentialsOAuthFlow = new ClientCredentialsOAuthFlow( <1>
+            null, <2>
+            Map.of("openid", "openid", "profile", "profile"), <3>
+            "http://localhost:" + keycloakPort + "/realms/quarkus/protocol/openid-connect/token"); <4>
+    OAuth2SecurityScheme securityScheme = new OAuth2SecurityScheme.Builder() <5>
+            .flows(new OAuthFlows.Builder().clientCredentials(clientCredentialsOAuthFlow).build())
+            .build();
+
+    return new AgentCard.Builder()
+        .name("Magic 8 Ball Agent")
+        .description(
+            "A mystical fortune-telling agent that answers your yes/no "
+                + "questions by asking the all-knowing Magic 8 Ball oracle.")
+        .preferredTransport(TransportProtocol.JSONRPC.asString())
+        .url("http://localhost:" + httpPort)
+        .version("1.0.0")
+        .documentationUrl("http://example.com/docs")
+        .capabilities(
+            new AgentCapabilities.Builder()
+                .streaming(true)
+                .pushNotifications(false)
+                .stateTransitionHistory(false)
+                .build())
+        .defaultInputModes(List.of("text"))
+        .defaultOutputModes(List.of("text"))
+        .security(List.of(Map.of(OAuth2SecurityScheme.OAUTH2, <6>
+                List.of("profile"))))
+        .securitySchemes(Map.of(OAuth2SecurityScheme.OAUTH2, securityScheme)) <7>
+        .skills(
+            List.of(
+                new AgentSkill.Builder()
+                    .id("magic_8_ball")
+                    .name("Magic 8 Ball Fortune Teller")
+                    .description("Uses a Magic 8 Ball to answer"
+                            + " yes/no questions")
+                    .tags(List.of("fortune", "magic-8-ball", "oracle"))
+                    .examples(
+                        List.of(
+                            "Should I deploy this code on Friday?",
+                            "Will my tests pass?",
+                            "Is this a good idea?"))
+                    .build()))
+        .protocolVersion("0.3.0")
+        .additionalInterfaces( <8>
+            List.of(
+                new AgentInterface(
+                    TransportProtocol.JSONRPC.asString(),
+                        "http://localhost:" + httpPort),
+                new AgentInterface(
+                    TransportProtocol.HTTP_JSON.asString(),
+                        "http://localhost:" + httpPort),
+                new AgentInterface(TransportProtocol.GRPC.asString(),
+                        "localhost:" + httpPort)))
+        .build();
+  }
+----
+<1> Details about the OAuth2 flow our A2A server agent supports.
+<2> We can optionally specify the URL to be used for obtaining a refresh token.
+<3> The available scopes for the OAuth2 client credentials flow. This is a map between the scope name and a description of the scope.
+<4> The token URL to be used for this flow.
+<5> Specifies an OAuth2 security scheme using the `ClientCredentialsOAuthFlow`. We'll refer to this from the
+agent card.
+<6> A list of security requirement objects that apply to all agent interactions. Each object lists
+security schemes that can be used. Follows the OpenAPI 3.0 Security Requirement Object.
+<7> A declaration of the security schemes that can be used.
+<8> Notice that our A2A server agent supports all 3 transports: JSON-RPC, HTTP+JSON/REST, and gRPC.
+
+==== Starting the A2A Server Agent
+
+Follow the https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents/magic_8_ball_security#running-the-a2a-server-agent[instructions] in the sample's README to start our A2A server agent.
+
+A2A clients can now send queries to our A2A server agent using any of the 3 configured transports.
+
+Now that our secured A2A server agent is up and running, let's take a look at how to create an A2A
+client that can communicate with it.
+
+=== A2A Client
+
+The `magic_8_ball_security` sample also includes a https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents/magic_8_ball_security/client/src/main/java/com/samples/a2a/client/TestClient.java[TestClient] that can be used to send messages to the `Magic8BallAgent`.
+
+For general information on how to configure A2A clients using the A2A Java SDK, check out this https://quarkus.io/blog/quarkus-a2a-java-0-3-0-alpha-release/[previous post].
+
+=== Security Configuration
+
+Because the A2A server agent our client will be communicating with is secured using OAuth2, our client
+needs to be able to obtain the required token and pass it to the A2A server agent with each request.
+
+The `a2a-java-sdk-client` dependency provided by the A2A Java SDK gives us access to a `Client.builder` that we'll use to create our A2A client and specify the necessary authentication configuration.
+
+The A2A Java SDK provides two main classes related to authentication:
+
+* `CredentialService`: An interface you can implement to define how to obtain a credential for a specific security scheme.
+
+* `AuthInterceptor`: A `ClientCallInterceptor` implementation that uses a `CredentialService` to automatically obtain and attach the required credential to client requests.
+
+Let's see how to configure an A2A client using these classes.
+
+[source,java]
+----
+// Create credential service for OAuth2 authentication
+CredentialService credentialService = new KeycloakOAuth2CredentialService(); <1>
+
+// Create an auth interceptor to be used for all transports
+AuthInterceptor authInterceptor = new AuthInterceptor(credentialService); <2>
+
+...
+
+var builder = Client.builder(agentCard)
+                  .addConsumers(consumers)
+                  .streamingErrorHandler(streamingErrorHandler);
+
+// Our client will optionally allow the user to specify which transport to use.
+// Here, we'll add configuration for the user-specified transport. The transport
+// will default to jsonrpc if not specified by the user.
+switch (transport.toLowerCase()) {
+  case "grpc":
+    builder.withTransport(
+        GrpcTransport.class,
+        new GrpcTransportConfigBuilder()
+            .channelFactory(channelFactory)
+            .addInterceptor(authInterceptor) <3>
+            .build());
+    break;
+  case "rest":
+    builder.withTransport(
+        RestTransport.class,
+        new RestTransportConfigBuilder()
+            .addInterceptor(authInterceptor) <4>
+            .build());
+    break;
+  case "jsonrpc":
+    builder.withTransport(
+        JSONRPCTransport.class,
+        new JSONRPCTransportConfigBuilder()
+            .addInterceptor(authInterceptor) <5>
+            .build());
+    break;
+  default:
+    throw new IllegalArgumentException("Unsupported transport type. Supported types are: grpc, rest, jsonrpc");
+}
+
+return builder.build();
+----
+<1> `CredentialService` is an interface provided by the A2A Java SDK. You can implement this interface to
+obtain credentials for a given security scheme. In our sample, since the A2A server agent is being secured
+with Keycloak, we have created a class called https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents/magic_8_ball_security/client/src/main/java/com/samples/a2a/client/KeycloakOAuth2CredentialService.java[KeycloakOAuth2CredentialService] that implements this
+interface and obtains credentials for the OAuth2 security scheme using the Keycloak `AuthzClient`.
+<2> `AuthInterceptor` is a class provided by the A2A Java SDK that can be used to automatically add credential
+details to a request based on the security schemes supported by the A2A server agent using a `CredentialService`.
+Notice that we are passing our `KeycloakOAuth2CredentialService` to the `AuthInterceptor`. We're going to use
+the same `AuthInterceptor` to specify the authentication configuration for all 3 transport protocols.
+<3> Interceptors can be configured for each transport. Here we are specifying that we want to use our `AuthInterceptor` for the gRPC transport.
+<4> This shows how to configure the `AuthInterceptor` for the HTTP+JSON/REST transport.
+<5> This shows how to configure the `AuthInterceptor` for the JSON-RPC transport.
+
+With this configuration, when our A2A client attempts to sends a request to the A2A server agent,
+the `AuthInterceptor` will use the A2A server's agent card to detect its supported security schemes
+and will automatically obtain the required credential for the OAuth2 security scheme using the `KeycloakOAuth2CredentialService`. The obtained token will then be included in the HTTP authorization
+header for the A2A server agent to validate.
+
+=== Using the A2A Client
+
+The sample application contains a `TestClientRunner` that can be run using JBang:
+
+[source,shell]
+----
+jbang TestClientRunner.java
+----
+
+You should see output similar to this:
+
+[source,shell]
+----
+Connecting to agent at: http://localhost:11000
+Using transport: jsonrpc
+...
+Sending message: Should I deploy this code on Friday?
+Using jsonrpc transport with OAuth2 Bearer token
+Message sent successfully. Waiting for response...
+Received status-update: submitted
+Received status-update: working
+Received artifact-update: The Magic 8 Ball says: "Outlook good." It seems like a Friday deployment might be a good idea! What are your thoughts on that?
+Received status-update: completed
+Final response: The Magic 8 Ball says: "Outlook good." It seems like a Friday deployment might be a good idea! What are your thoughts on that?
+----
+
+You can also experiment with sending different messages to the A2A server agent using the --message option as
+follows:
+
+[source,shell]
+----
+jbang TestClientRunner.java --message "Should I refactor this code?"
+----
+
+You can try using different transports (`jsonrpc`, `grpc`, or `rest`) with the --transport option:
+
+[source,shell]
+----
+jbang TestClientRunner.java --transport grpc
+----
+
+== Conclusion
+
+This post has shown how to configure security for both A2A server agents and A2A clients.
+
+=== Further Reading
+
+* https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents/magic_8_ball_security[Magic 8 Ball Security Sample]
+* https://quarkus.io/blog/quarkus-a2a-java-0-3-0-alpha-release/[Getting Started with Quarkus and A2A Java SDK 0.3.0]
+* https://quarkus.io/blog/quarkus-a2a-java-0-3-0-beta-release/[A2A Java SDK: Support for the REST Transport is Now Here]
+* https://quarkus.io/blog/quarkus-a2a-java-grpc/[Getting Started with A2A Java SDK and gRPC]
+* https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents[A2A Java SDK Samples]
+* https://github.com/a2aproject/a2a-java/blob/main/README.md[A2A Java SDK Documentation]
+* https://a2a-protocol.org/latest/specification/[A2A Specification]
