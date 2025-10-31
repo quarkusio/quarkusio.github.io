@@ -5,8 +5,772 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Fri, 31 Oct 2025 07:04:40 +0000</lastBuildDate>
+        <lastBuildDate>Fri, 31 Oct 2025 12:17:04 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>How to Use Your A2A Server Agent in a Distributed or Cloud Native Environment</title>
+            <link>
+                https://quarkus.io/blog/quarkus-a2a-cloud-enhancements/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The recent &lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.0.Final&quot;&gt;0.3.0.Final&lt;/a&gt; release of the A2A Java SDK, included a bunch of improvements.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Farah recently blogged about the &lt;a href=&quot;https://quarkus.io/blog/quarkus-a2a-java-security/&quot;&gt;new security features&lt;/a&gt; in the A2A Java SDK.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This post will focus on the significant cloud-related enhancements which also are part of this release. These provide the building blocks for running the SDK in a distributed, cloud-native environment. We will demonstrate this with a simple A2A Agent, which simply appending &lt;code&gt;Artifacts&lt;/code&gt; to a &lt;code&gt;Task&lt;/code&gt; that contain the name of the pod handling the incoming `Message`s.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Note that we have done a &lt;a href=&quot;https://github.com/wildfly-extras/a2a-java-sdk-server-jakarta&quot;&gt;0.3.1.Final&lt;/a&gt; release since. The links in the examples will use this very latest release.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We will cover the following topics:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Initially, we will look at the simple, in-memory components that form the core of the SDK&amp;#8217;s asynchronous model. These core classes were inspired by the Python version of the SDK, &lt;a href=&quot;https://github.com/a2aproject/a2a-python&quot;&gt;a2a-python&lt;/a&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Next, we&amp;#8217;ll introduce the new, persistent and replicated implementations designed for distributed environments.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Finally, we&amp;#8217;ll walk through an &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/README.md&quot;&gt;example&lt;/a&gt; that combines these components and deploys an application in a Kubernetes cluster, showing that the components enable us to work in a load-balanced environment.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;core-sdk-in-memory-components&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#core-sdk-in-memory-components&quot;&gt;&lt;/a&gt;Core SDK In-Memory Components&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The A2A Java SDK provides the tools to manage asynchronous, long-running processes, which we call Tasks. As described in the &lt;a href=&quot;https://a2a-protocol.org/latest/topics/key-concepts/&quot;&gt;Core Concepts&lt;/a&gt; section of the A2A protocol documentation (as well as the &lt;a href=&quot;https://a2a-protocol.org/latest/topics/life-of-a-task/&quot;&gt;Life of a Task&lt;/a&gt; and &lt;a href=&quot;https://a2a-protocol.org/latest/topics/streaming-and-async/&quot;&gt;Streaming and Asynchronous Operations for Long-Running Tasks&lt;/a&gt; sections), a Task can move through various states.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A key design principle is that as long as a Task is in a non-final state, it must be possible to send messages to do more work on it, or re-subscribe to its events.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To manage this, the SDK relies on a few core components, and provides simple, default implementations of those:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/tasks/TaskStore.java&quot;&gt;&lt;code&gt;TaskStore&lt;/code&gt;&lt;/a&gt;: Manages the lifecycle and persistence of &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/spec/src/main/java/io/a2a/spec/Task.java&quot;&gt;&lt;code&gt;Task&lt;/code&gt;&lt;/a&gt; objects. The default implementation is &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/tasks/InMemoryTaskStore.java&quot;&gt;&lt;code&gt;InMemoryTaskStore&lt;/code&gt;&lt;/a&gt;, which holds all &lt;code&gt;Task&lt;/code&gt; information in memory.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/tasks/PushNotificationConfigStore.java&quot;&gt;&lt;code&gt;PushNotificationConfigStore&lt;/code&gt;&lt;/a&gt;: Stores a client&amp;#8217;s push notification configurations (like webhook URLs). The default is the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/tasks/InMemoryPushNotificationConfigStore.java&quot;&gt;&lt;code&gt;InMemoryPushNotificationConfigStore&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/events/QueueManager.java&quot;&gt;&lt;code&gt;QueueManager&lt;/code&gt;&lt;/a&gt;: This is central to the asynchronous model. It creates and manages &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/server-common/src/main/java/io/a2a/server/events/EventQueue.java&quot;&gt;&lt;code&gt;EventQueue&lt;/code&gt;&lt;/a&gt;s for tasks. In your A2A applications, you will typically implement an &lt;code&gt;AgentExecutor&lt;/code&gt;, which takes an incoming message, and then puts events on the &lt;code&gt;EventQueue&lt;/code&gt; to update the &lt;code&gt;Task&lt;/code&gt; with the results of the processing. The SDK then listens on this &lt;code&gt;EventQueue&lt;/code&gt; to update the &lt;code&gt;Task&lt;/code&gt; in the &lt;code&gt;TaskStore&lt;/code&gt;, and notify any clients listening for updates. Clients listening for updates are ones that have asked to resubscribe, or ones having sent a message, and are waiting for results.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;These in-memory implementations are simple and fast, making them perfect for single-instance deployments, getting started, or testing. However, in a distributed or cloud environment where service instances can be created or destroyed, this in-memory state is lost, which breaks the guarantee for long-running tasks. Also, since all the state is kept in memory, there are overheads associated with this approach.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;distributed-and-cloud-ready-implementations&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#distributed-and-cloud-ready-implementations&quot;&gt;&lt;/a&gt;Distributed and Cloud Ready Implementations&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To run in a distributed environment, we needed to replace these in-memory components with implementations that could persist state and coordinate across multiple service instances. For this release, we introduced several new components, which you can find in the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.1.Final/extras&quot;&gt;&lt;code&gt;extras/&lt;/code&gt;&lt;/a&gt; directory of the &lt;code&gt;a2a-java&lt;/code&gt; repository.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Essentially, they are alternative implementations of the &lt;code&gt;TaskStore&lt;/code&gt;, &lt;code&gt;PushNotificationConfigStore&lt;/code&gt; and &lt;code&gt;QueueManager&lt;/code&gt; interfaces. They have been annotated with the &lt;code&gt;@Alternative&lt;/code&gt; and &lt;code&gt;@Priority&lt;/code&gt; CDI annotations, so that if their Maven modules is included in your build, these implementations will take precedence over the default, in-memory ones.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Each component has a README, and is fully tested with an integration test for additional information about how to set it up.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;While we are not aiming to provide support for every possible backend in this repository, we hope that the examples given show that it is relatively simple to provide other mechanisms to back the functionality.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;database-backed-taskstore-and-pushnotificationstore&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#database-backed-taskstore-and-pushnotificationstore&quot;&gt;&lt;/a&gt;Database-Backed TaskStore and PushNotificationStore&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The simplest problem to solve was persistence. We introduced:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.1.Final/extras/task-store-database-jpa/src/main/java/io/a2a/extras/taskstore/database/jpa/JpaDatabaseTaskStore.java&quot;&gt;&lt;code&gt;JpaDatabaseTaskStore&lt;/code&gt;&lt;/a&gt;: This persists &lt;code&gt;Task&lt;/code&gt; state to a relational database using Jakarta JPA. See the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.1.Final/extras/task-store-database-jpa/README.md&quot;&gt;README&lt;/a&gt; for more details. The module also contains tests for additional guidance for how to set it up.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/push-notification-config-store-database-jpa/src/main/java/io/a2a/extras/pushnotificationconfigstore/database/jpa/JpaDatabasePushNotificationConfigStore.java&quot;&gt;&lt;code&gt;JpaDatabasePushNotificationConfigStore&lt;/code&gt;&lt;/a&gt;: This persists &lt;code&gt;PushNotificationConfig&lt;/code&gt; instances to a relational database using Jakarta JPA. The &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/push-notification-config-store-database-jpa/README.md&quot;&gt;README&lt;/a&gt; and the module&amp;#8217;s tests contain more details.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;replicated-queuemanager&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#replicated-queuemanager&quot;&gt;&lt;/a&gt;Replicated QueueManager&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As for the &lt;code&gt;QueueManager&lt;/code&gt;, it doesn&amp;#8217;t just store state. It also manages active, in-memory message queues. If a client sends a message to a &lt;code&gt;Task&lt;/code&gt; via one A2A Agent instance, we need to make sure that subscribers to the &lt;code&gt;Task&lt;/code&gt; on other A2A Agent instances forming part of the cluster, also receive the resulting &lt;code&gt;EventQueue&lt;/code&gt; messages.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We introduced the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/queue-manager-replicated/core/src/main/java/io/a2a/extras/queuemanager/replicated/core/ReplicatedQueueManager.java&quot;&gt;ReplicatedQueueManager&lt;/a&gt; for this. The component is built with a pluggable &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/queue-manager-replicated/core/src/main/java/io/a2a/extras/queuemanager/replicated/core/ReplicationStrategy.java&quot;&gt;&lt;code&gt;ReplicationStrategy&lt;/code&gt;&lt;/a&gt; responsible for pushing the events to other nodes in the cluster. It also notifies the other nodes when an &lt;code&gt;EventQueue&lt;/code&gt; for a &lt;code&gt;Task&lt;/code&gt; is created, and when it is closed.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We provide one implementation of &lt;code&gt;ReplicationStrategy&lt;/code&gt;, &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/queue-manager-replicated/replication-mp-reactive/src/main/java/io/a2a/extras/queuemanager/replicated/mp_reactive/ReactiveMessagingReplicationStrategy.java&quot;&gt;&lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt;&lt;/a&gt;, which uses MicroProfile Reactive Messaging under the hood to send and receive the replicated &lt;code&gt;EventQueue&lt;/code&gt; events. The nice thing about MicroProfile Reactive Messaging, is that it is simple to configure alternative providers to do the actual messaging part by changing properties in your &lt;code&gt;application.properties&lt;/code&gt;. In our tests, and examples we chose Kafka as the provider.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;However, you are not stuck with Kafka or MicroProfile Reactive Messaging. It should be possible to plug in whichever mechanism you choose, as long as you provide your own implementation of &lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/extras/queue-manager-replicated/README.md&quot;&gt;README&lt;/a&gt;, and the tests in the module provide more information to help you, whether you want to learn more about how to configure the &lt;code&gt;ReplicatedQueueManager&lt;/code&gt;, or implement your own &lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;stabilising-the-server-side&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#stabilising-the-server-side&quot;&gt;&lt;/a&gt;Stabilising the Server-Side&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Getting the &lt;code&gt;ReplicatedQueueManager&lt;/code&gt; to work reliably required significant improvements to our server-side request handling. We did a lot of work to ensure that the event &lt;code&gt;EventQueue&lt;/code&gt; associated with a &lt;code&gt;Task&lt;/code&gt; is always available for non-final &lt;code&gt;Task&lt;/code&gt; s, and that they are reliably cleaned up when a &lt;code&gt;Task&lt;/code&gt; finishes, while ensuring that existing subscribers still get all the events before the &lt;code&gt;EventQueue&lt;/code&gt; is closed.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This was the final step needed to get a deployment working reliably on Kubernetes, which is the focus of the next section.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;example-running-on-kubernetes&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#example-running-on-kubernetes&quot;&gt;&lt;/a&gt;Example: Running on Kubernetes&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now let us see how to combine these new components in a real-world scenario. We have created a new Kubernetes example demonstrating how to run a stateful A2A Java application in a Kubernetes cluster. It focuses on the improved implementations of &lt;code&gt;TaskStore&lt;/code&gt; and &lt;code&gt;QueueManager&lt;/code&gt;, and can be found &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/README.md&quot;&gt;here&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We will summarise the most important parts here below. We will look at how to set everything up, and run the example, before showing the most important parts of how the A2A Agent server is configured.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;prerequisites&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#prerequisites&quot;&gt;&lt;/a&gt;Prerequisites&lt;/h4&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To run the example, you need to install the following:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Java&lt;/strong&gt;: Version 17 or higher&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Container runtime&lt;/strong&gt;: We have tested with Docker and Podman&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Maven&lt;/strong&gt;: 3.8.x or higher&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Kind&lt;/strong&gt;: For Kubernetes support. Note the example will only work with Kind. Other implementations, such as Minikube, need other tweaks than Kind.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;kubectl&lt;/strong&gt;: Kind does not automatically install a kubectl for you.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;deploying-and-running-the-example&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#deploying-and-running-the-example&quot;&gt;&lt;/a&gt;Deploying and running the example&lt;/h4&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;From the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.1.Final/examples/cloud-deployment/scripts&quot;&gt;&lt;code&gt;scripts\&lt;/code&gt;&lt;/a&gt; folder, run either:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;./deploy.sh&lt;/code&gt;: if you use Docker&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;./deploy.sh --container-tool podman&lt;/code&gt;: if you use Podman&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/scripts/deploy.sh&quot;&gt;&lt;code&gt;deploy.sh&lt;/code&gt;&lt;/a&gt; script will take care of everything for you, and deploy your application. This includes&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Creating the Kind cluster with fully configured local registry support&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Building the A2A Agent application image and pushing it to the registry&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Install the Strimzi operator from &lt;a href=&quot;https://strimzi.io/install/latest?namespace=kafka&quot; class=&quot;bare&quot;&gt;https://strimzi.io/install/latest?namespace=kafka&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Deploy the files in the &lt;a href=&quot;https://github.com/a2aproject/a2a-java/tree/v0.3.1.Final/examples/cloud-deployment/k8s&quot;&gt;k8s/&lt;/a&gt; directory ordered by their numerical prefix. These:&lt;/p&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Configure the &lt;code&gt;a2a-demo&lt;/code&gt; namespace for our application&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Installs PostgreSQL needed for our &lt;code&gt;JPADatabaseTaskStore&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Installs Kafka, using the Strimzi operator&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Creates the Kafka topic our A2A Agent applications will use to replicate &lt;code&gt;EventQueue&lt;/code&gt; events&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Creates a &lt;code&gt;ConfigMap&lt;/code&gt; containing database connection properties, kafka bootstrap servers and the URL of the Agent&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Deploys our A2A Agent application&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Some of these steps take several minutes, so you need to be patient!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once everything is up and running you will see a message like this:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;=========================================
+Deployment completed successfully!
+=========================================
+
+To verify the deployment, run:
+  ./verify.sh
+
+To access the agent (via NodePort):
+  curl http://localhost:8080/.well-known/agent-card.json
+
+To run the test client (demonstrating load balancing):
+  cd ../server
+  mvn test-compile exec:java -Dexec.classpathScope=test \
+    -Dexec.mainClass=&quot;io.a2a.examples.cloud.A2ACloudExampleClient&quot; \
+    -Dagent.url=&quot;http://localhost:8080&quot;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now that everything is deployed, simply copy the above command and run it:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;$ cd ../server
+$ mvn test-compile exec:java -Dexec.classpathScope=test \
+    -Dexec.mainClass=&quot;io.a2a.examples.cloud.A2ACloudExampleClient&quot; \
+    -Dagent.url=&quot;http://localhost:8080&quot;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You should now see output like the following&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;=============================================
+A2A Cloud Deployment Example Client
+=============================================
+
+Agent URL: http://localhost:8080
+Process messages: 8
+Message interval: 1500ms
+
+Fetching agent card...
+✓ Agent: Cloud Deployment Demo Agent
+✓ Description: Demonstrates A2A multi-pod deployment with Kafka event replication, PostgreSQL persistence, and round-robin load balancing across Kubernetes pods
+
+Client task ID: cloud-test-1761754920509
+
+Creating streaming client for subscription...
+Creating non-streaming client for sending messages...
+✓ Clients created
+
+Step 1: Sending &apos;start&apos; to create task...
+✓ Task created: 2b525ae8-0b2a-43c9-b2fa-007a8b618240
+  State: SUBMITTED
+
+Step 2: Subscribing to task for streaming updates...
+✓ Subscribed to task updates
+
+Step 3: Sending 8 &apos;process&apos; messages (interval: 1500ms)...
+--------------------------------------------
+  Artifact #1: Processed by a2a-agent-cb7fd769-5wr8g
+    → Pod: a2a-agent-cb7fd769-5wr8g (Total unique pods: 1)
+  Artifact #2: Processed by a2a-agent-cb7fd769-5wr8g
+    → Pod: a2a-agent-cb7fd769-5wr8g (Total unique pods: 1)
+✓ Process message 1 sent
+✓ Process message 2 sent
+  Artifact #3: Processed by a2a-agent-cb7fd769-x9tdm
+    → Pod: a2a-agent-cb7fd769-x9tdm (Total unique pods: 2)
+...
+✓ Process message 8 sent
+  Artifact #13: Processed by a2a-agent-cb7fd769-5wr8g
+    → Pod: a2a-agent-cb7fd769-5wr8g (Total unique pods: 2)
+
+Waiting for process artifacts to arrive...
+
+Step 4: Sending &apos;complete&apos; to finalize task...
+  Artifact #14: Completed by a2a-agent-cb7fd769-5wr8g
+    → Pod: a2a-agent-cb7fd769-5wr8g (Total unique pods: 2)
+ℹ Subscription stream closed (expected after task completion)
+✓ Complete message sent, task state: WORKING
+
+Waiting for task to complete...
+⚠ Timeout waiting for task completion
+
+=============================================
+Test Results
+=============================================
+Total artifacts received: 14
+Unique pods observed: 2
+Pod names and counts: {a2a-agent-cb7fd769-x9tdm=3, a2a-agent-cb7fd769-5wr8g=11}
+
+✓ TEST PASSED - Successfully demonstrated multi-pod processing!
+  Messages were handled by 2 different pods.
+  This proves that:
+    - Load balancing is working (round-robin across pods)
+    - Event replication is working (subscriber sees events from all pods)
+    - Database persistence is working (task state shared across pods)&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The source code for the client can be found in &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/server/src/test/java/io/a2a/examples/cloud/A2ACloudExampleClient.java&quot;&gt;&lt;code&gt;A2ACloudExampleClient&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We will not show the full source code here, but in a nutshell what the client does is:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Fetch the &lt;code&gt;AgentCard&lt;/code&gt; of our A2A Agent.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Send an initial &lt;code&gt;Message&lt;/code&gt; containing a &lt;code&gt;TextPart&lt;/code&gt; with the text &lt;code&gt;create&lt;/code&gt;. We will see in the next section how the server uses this to create a new &lt;code&gt;Task&lt;/code&gt;. This &lt;code&gt;Task&lt;/code&gt; is then returned to the client, and on the server side the A2A Java SDK will create an entry in the &lt;code&gt;JPADatabaseTaskStore&lt;/code&gt; for the &lt;code&gt;Task&lt;/code&gt;, and also &lt;code&gt;ReplicatedQueueManager&lt;/code&gt; makes sure that the &lt;code&gt;EventQueue&lt;/code&gt; for the &lt;code&gt;Task&lt;/code&gt; remains open since the &lt;code&gt;Task&lt;/code&gt; is in a non-final state.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Calls &lt;code&gt;resubscribe()&lt;/code&gt; for events to the &lt;code&gt;Task&lt;/code&gt; we just created. The resulting subscription is kept open until the end TODO step. It does not matter if this call is handled on the same, or a different, node as in the previous step since the &lt;code&gt;TaskStore&lt;/code&gt; is backed by a database, and &lt;code&gt;QueueManager&lt;/code&gt; is replicated.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The client then sends several &lt;code&gt;process&lt;/code&gt; &lt;code&gt;Message&lt;/code&gt; s to the server. It creates a new connection each time. Since there are two pods, it is not deterministic which pod will handle the request. During the course of the full run, both pods should get invoked. Again, updates to the &lt;code&gt;Task&lt;/code&gt; should be reflected in the database-backed &lt;code&gt;TaskStore&lt;/code&gt; and all &lt;code&gt;Events&lt;/code&gt; are replicated to all nodes.  On the server-side, an &lt;code&gt;Artifact&lt;/code&gt; is added to the &lt;code&gt;Task&lt;/code&gt; containing the name of the pod that processed the &lt;code&gt;Message&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The subscriber from 3. outputs the messages as they come in, and keeps track of which nodes have been involved in processing &lt;code&gt;Message&lt;/code&gt; s. The information about which node processed the message, is contained in the &lt;code&gt;Task&lt;/code&gt; artifacts, as mentioned in the last point.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Finally, we send a &lt;code&gt;complete&lt;/code&gt; &lt;code&gt;Message&lt;/code&gt; to the A2A Agent, which puts the &lt;code&gt;Task&lt;/code&gt; in a final state. This causes the &lt;code&gt;EventQueue&lt;/code&gt; to be closed, which in turn causes the closure of the stream the client subscriber is subscribed to. Note that we receive the &lt;code&gt;Task&lt;/code&gt; with this &lt;code&gt;completed&lt;/code&gt; artifact from the server before the stream and subscription end.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The important thing to note, is that it does not matter which node the client subscription happens on, nor which nodes the messages are sent on. Since the &lt;code&gt;TaskStore&lt;/code&gt; is persistent, and the &lt;code&gt;Event&lt;/code&gt; s replicated, everything is received by the client as if there was only one A2A Agent node involved.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;the-server-part-of-the-application&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-server-part-of-the-application&quot;&gt;&lt;/a&gt;The Server Part of the Application&lt;/h4&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First let us look briefly at how the application has been written. As usual in an A2A application, you provide implementations of &lt;code&gt;AgentCard&lt;/code&gt; and &lt;code&gt;AgentExecutor&lt;/code&gt; via CDI.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our &lt;code&gt;AgentCard&lt;/code&gt; is provided by &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/server/src/main/java/io/a2a/examples/cloud/CloudAgentCardProducer.java&quot;&gt;&lt;code&gt;CloudAgentCardProducer&lt;/code&gt;&lt;/a&gt;. The most important parts are highlighted:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class CloudAgentCardProducer {
+
+    @ConfigProperty(name = &quot;agent.url&quot;, defaultValue = &quot;http://localhost:8080&quot;) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    String agentUrl;
+
+    @Produces
+    @PublicAgentCard
+    public AgentCard agentCard() {
+        return new AgentCard.Builder()
+                .name(&quot;Cloud Deployment Demo Agent&quot;)
+                .description(&quot;Demonstrates A2A multi-pod deployment with Kafka event replication, &quot; +
+                        &quot;PostgreSQL persistence, and round-robin load balancing across Kubernetes pods&quot;)
+                .url(agentUrl) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+                .version(&quot;1.0.0&quot;)
+                .capabilities(new AgentCapabilities.Builder()
+                        .streaming(true) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+                        .pushNotifications(false)
+                        .stateTransitionHistory(false)
+                        .build())
+                .defaultInputModes(Collections.singletonList(&quot;text&quot;))
+                .defaultOutputModes(Collections.singletonList(&quot;text&quot;))
+                .skills(Collections.singletonList(
+                        new AgentSkill.Builder()
+                                .id(&quot;multi_pod_demo&quot;)
+                                .name(&quot;Multi-Pod Replication Demo&quot;)
+                                .description(&quot;Demonstrates cross-pod event replication. &quot; + &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+                                        &quot;Send &apos;start&apos; to initialize, &apos;process&apos; to add artifacts, &quot; +
+                                        &quot;&apos;complete&apos; to finalize. Each artifact shows which pod processed it.&quot;)
+                                .tags(List.of(&quot;demo&quot;, &quot;cloud&quot;, &quot;kubernetes&quot;, &quot;replication&quot;))
+                                .examples(List.of(
+                                        &quot;start&quot;,
+                                        &quot;process&quot;,
+                                        &quot;complete&quot;
+                                ))
+                                .build()
+                ))
+                .protocolVersion(&quot;0.3.0&quot;)
+                .build();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The agent url is configurable, and is set by &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/k8s/05-agent-deployment.yaml#L53&quot;&gt;&lt;code&gt;k8s/05-agent-deployment.yaml&lt;/code&gt;&lt;/a&gt; referencing a value from the ConfigMap configured in &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/k8s/04-agent-configmap.yaml#L11&quot;&gt;&lt;code&gt;k8s/04-agent-configmap.yaml&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;We have enabled streaming, since this is needed for the &lt;code&gt;resubscribe()&lt;/code&gt; call done by the client&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Then we have a brief description of the &lt;code&gt;start&lt;/code&gt;, &lt;code&gt;process&lt;/code&gt; and &lt;code&gt;complete&lt;/code&gt; &apos;commands&apos; we saw the client send&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;AgentExecutor&lt;/code&gt; is provided by &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/server/src/main/java/io/a2a/examples/cloud/CloudAgentExecutorProducer.java&quot;&gt;&lt;code&gt;CloudAgentExecutorProducer&lt;/code&gt;&lt;/a&gt; (some code has been removed to keep the example manageable):&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class CloudAgentExecutorProducer {
+   @Produces
+    public AgentExecutor agentExecutor() {
+        return new CloudAgentExecutor();
+    }
+
+    private static class CloudAgentExecutor implements AgentExecutor {
+
+        @Override
+        public void execute(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
+            TaskUpdater updater = new TaskUpdater(context, eventQueue); &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+            try {
+                // Extract user message and normalize
+                String messageText = extractTextFromMessage(context.getMessage()).trim().toLowerCase();
+                // Get pod name from environment (set by Kubernetes Downward API)
+                String podName = System.getenv(&quot;POD_NAME&quot;); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+
+                // Handle message based on command
+                if (context.getTask() == null) { &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+                    // Initial message - create task in SUBMITTED → WORKING state
+                    // This will have the `start` command
+                    updater.submit();
+                    updater.startWork();
+                    String artifactText = &quot;Started by &quot; + podName;
+                    List&amp;lt;Part&amp;lt;?&amp;gt;&amp;gt; parts = List.of(new TextPart(artifactText, null));
+                    updater.addArtifact(parts);
+                } else if (&quot;complete&quot;.equals(messageText)) { &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+                    // Completion trigger - add final artifact and complete
+                    String artifactText = &quot;Completed by &quot; + podName;
+                    List&amp;lt;Part&amp;lt;?&amp;gt;&amp;gt; parts = List.of(new TextPart(artifactText, null));
+                    updater.addArtifact(parts);
+                    updater.complete();
+                } else { &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+                    // Subsequent messages - add artifacts (fire-and-forget, stays in WORKING)
+                    // This is for the `process` commands
+                    String artifactText = &quot;Processed by &quot; + podName;
+                    List&amp;lt;Part&amp;lt;?&amp;gt;&amp;gt; parts = List.of(new TextPart(artifactText, null));
+                    updater.addArtifact(parts);
+                    // No state change - task remains in WORKING
+                    LOGGER.info(&quot;Artifact added on pod: {}&quot;, podName);
+                }
+
+            } catch (JSONRPCError e) {
+                LOGGER.error(&quot;JSONRPC error processing task&quot;, e);
+                throw e;
+            } catch (Exception e) {
+                LOGGER.error(&quot;Error processing task&quot;, e);
+                throw new InternalError(&quot;Processing failed: &quot; + e.getMessage());
+            }
+        }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;A TaskUpdater is created with the &lt;code&gt;RequestContext&lt;/code&gt; and the &lt;code&gt;EventQueue&lt;/code&gt;. Note that even for new &lt;code&gt;Task`s, the framework will have created the `EventQueue&lt;/code&gt; for us.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;We get the name of the pod, as configured in &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/k8s/05-agent-deployment.yaml#L29&quot;&gt;&lt;code&gt;k8s/05-agent-deployment.yaml&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;start&lt;/code&gt; command sent by the client ends up in this block. This makes a few calls to update the state of the &lt;code&gt;Task&lt;/code&gt; using the &lt;code&gt;TaskUpdater&lt;/code&gt;, and adds an &lt;code&gt;Artifact&lt;/code&gt; indicating which pod started the &lt;code&gt;Task&lt;/code&gt;. The &lt;code&gt;TaskUpdater&lt;/code&gt; internally puts &lt;code&gt;Events&lt;/code&gt; on the &lt;code&gt;EventQueue&lt;/code&gt; after each of the calls on it, and the A2A Java SDK framework &apos;listens&apos; to the queue, resulting in updates to the &lt;code&gt;Task&lt;/code&gt; in the &lt;code&gt;TaskStore&lt;/code&gt;, and sending results to any clients subscribed to the &lt;code&gt;Task&lt;/code&gt; (or involved in making triggering this request). Since the &lt;code&gt;EventQueue&lt;/code&gt; is replicated, the events are also pushed to other nodes in the cluster.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;process&lt;/code&gt; messages end up in this block, which again add an &lt;code&gt;Artifact&lt;/code&gt; to the &lt;code&gt;Task&lt;/code&gt; via the &lt;code&gt;TaskUpdater&lt;/code&gt;, which adds an &lt;code&gt;Event&lt;/code&gt; to the queue. The &lt;code&gt;Event&lt;/code&gt; is handled in the same way as in the above point.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;5&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;When a &lt;code&gt;complete&lt;/code&gt; message is received, we add an &lt;code&gt;Artifact&lt;/code&gt; to the &lt;code&gt;Task&lt;/code&gt; using the &lt;code&gt;TaskUpdater&lt;/code&gt;, indicating which pod is completing the &lt;code&gt;Task&lt;/code&gt;, and finally use the &lt;code&gt;TaskUpdater&lt;/code&gt; to set the &lt;code&gt;Task&lt;/code&gt; state to &lt;code&gt;completed&lt;/code&gt;. This again results in events on the &lt;code&gt;EventQueue&lt;/code&gt;, which are handled as before. However, the update to a final state causes the &lt;code&gt;EventQueue&lt;/code&gt; to be closed, which is also replicated to the other nodes.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;configuring-quarkus-for-a2a-with-replicatedqueuemanager-and-jpadatabasetaskstore&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#configuring-quarkus-for-a2a-with-replicatedqueuemanager-and-jpadatabasetaskstore&quot;&gt;&lt;/a&gt;Configuring Quarkus for A2A with &lt;code&gt;ReplicatedQueueManager&lt;/code&gt; and &lt;code&gt;JPADatabaseTaskStore&lt;/code&gt;&lt;/h4&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The two main parts involved in configuring our application, are adding dependencies to the POM, and adding configuration via &lt;code&gt;application.properties.&lt;/code&gt; We will look at the POM first, and then look at the configuration.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect4&quot;&gt;
+&lt;h5 id=&quot;pom-dependencies&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#pom-dependencies&quot;&gt;&lt;/a&gt;Pom Dependencies&lt;/h5&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The full POM for the example can be found &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/v0.3.1.Final/examples/cloud-deployment/server/pom.xml&quot;&gt;here&lt;/a&gt;. We will talk about the most important dependencies below, step-by-step.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Since we are building a Quarkus based server, and for this case we only want the JSONRPC transport, we can include the following dependency which transitively includes everything else we need for our base A2A Agent server:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!-- Core A2A SDK with JSON-RPC transport. This pulls in the rest of the needed a2a-java dependencies --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.github.a2asdk&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;a2a-java-sdk-reference-jsonrpc&amp;lt;/artifactId&amp;gt;
+            &amp;lt;version&amp;gt;${sdk.version}&amp;lt;/version&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Then to override the standard &lt;code&gt;InMemoryTaskStore&lt;/code&gt; with the &lt;code&gt;JpaDatabaseTaskStore&lt;/code&gt;, and &lt;code&gt;InMemoryQueueManager&lt;/code&gt; with &lt;code&gt;ReplicatedQueueManager&lt;/code&gt; we include their modules&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!-- Database-backed task store --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.github.a2asdk&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;a2a-java-extras-task-store-database-jpa&amp;lt;/artifactId&amp;gt;
+            &amp;lt;version&amp;gt;${sdk.version}&amp;lt;/version&amp;gt;
+        &amp;lt;/dependency&amp;gt;
+        &amp;lt;!-- Replicated queue manager core --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.github.a2asdk&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;a2a-java-queue-manager-replicated-core&amp;lt;/artifactId&amp;gt;
+            &amp;lt;version&amp;gt;${sdk.version}&amp;lt;/version&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;ReplicatedQueueManager&lt;/code&gt; needs a &lt;code&gt;ReplicationStrategy&lt;/code&gt;. Our &lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt; is implemented by this module:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!-- Provides the MicroProfile Reactive Messaging ReplicationStrategy for the replicated queue manager--&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.github.a2asdk&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;a2a-java-queue-manager-replication-mp-reactive&amp;lt;/artifactId&amp;gt;
+            &amp;lt;version&amp;gt;${sdk.version}&amp;lt;/version&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We will configure the &lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt; to use Kafka later, so we need the dependency to use Kafka with MicroProfile Reactive Messaging:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!--
+            MicroProfile Reactive Messaging support including the Kafka connector, used by the MP RM
+            ReplicationStrategy
+        --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.quarkus&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;quarkus-messaging-kafka&amp;lt;/artifactId&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For the &lt;code&gt;JpaDatabaseTaskStore&lt;/code&gt;, we need to add Hibernate, which provides the JPA functionality. Since our example uses PostgreSQL, we include its driver:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!-- Quarkus Hibernate ORM --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.quarkus&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;quarkus-hibernate-orm&amp;lt;/artifactId&amp;gt;
+        &amp;lt;/dependency&amp;gt;
+        &amp;lt;!-- PostgreSQL JDBC driver --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.quarkus&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;quarkus-jdbc-postgresql&amp;lt;/artifactId&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Finally, since we will be deploying our A2A agent in Kubernetes, which uses readiness and liveness probes, we add the following dependency:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;        &amp;lt;!-- Quarkus Health checks --&amp;gt;
+        &amp;lt;dependency&amp;gt;
+            &amp;lt;groupId&amp;gt;io.quarkus&amp;lt;/groupId&amp;gt;
+            &amp;lt;artifactId&amp;gt;quarkus-smallrye-health&amp;lt;/artifactId&amp;gt;
+        &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That&amp;#8217;s it for the POM dependencies!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Additionally, the POM contains the &lt;code&gt;quarkus-maven-plugin&lt;/code&gt;, used to build the Quarkus server. This has no special configuration, so see the POM for more details.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect4&quot;&gt;
+&lt;h5 id=&quot;configuration-in-application-properties&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#configuration-in-application-properties&quot;&gt;&lt;/a&gt;Configuration in application.properties&lt;/h5&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The final piece of the puzzle is configuring the A2A Agent Quarkus application in its &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/main/examples/cloud-deployment/server/src/main/resources/application.properties&quot;&gt;&lt;code&gt;application.properties&lt;/code&gt;&lt;/a&gt;. Again, let&amp;#8217;s discuss the contents in chunks.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First we have some simple properties, setting the &lt;code&gt;agent.url&lt;/code&gt; to use in the &lt;code&gt;CloudAgentCardProducer&lt;/code&gt;. We also define the location of the health endpoint.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Agent Configuration
+agent.url=${AGENT_URL:http://localhost:8080} &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+# Health checks
+quarkus.smallrye-health.root-path=/health &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;AGENT_URL&lt;/code&gt; comes from &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/main/examples/cloud-deployment/k8s/05-agent-deployment.yaml#L53&quot;&gt;&lt;code&gt;05-agent-deployment.yaml&lt;/code&gt;&lt;/a&gt;, which in turn references the value defined in &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/main/examples/cloud-deployment/k8s/04-agent-configmap.yaml#L11&quot;&gt;&lt;code&gt;04-agent-configmap.yaml&lt;/code&gt;&lt;/a&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The endpoint matches what is expected by the readiness and liveness probes in &lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/main/examples/cloud-deployment/k8s/05-agent-deployment.yaml#L65-L80&quot;&gt;&lt;code&gt;05-agent-deployment.yaml&lt;/code&gt;&lt;/a&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now we define the database used by our &lt;code&gt;JpaDatabaseTaskStore&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Database Configuration (PostgreSQL)
+quarkus.datasource.db-kind=postgresql
+quarkus.datasource.jdbc.url=${DATABASE_URL:jdbc:postgresql://localhost:5432/a2a} &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+quarkus.datasource.username=${DATABASE_USER:a2a}
+quarkus.datasource.password=${DATABASE_PASSWORD:a2a}
+quarkus.datasource.jdbc.max-size=16&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;DATABASE_URL&lt;/code&gt;, &lt;code&gt;DATABASE_USER&lt;/code&gt; and &lt;code&gt;DATABASE_PASSWORD&lt;/code&gt; environment variables used are defined in &lt;code&gt;04-agent-configmap.yaml&lt;/code&gt; and exposed to the application via &lt;code&gt;05-agent-deployment.yaml&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Next we have the configuration of the &lt;code&gt;a2a-java&lt;/code&gt; JPA persistence unit, which is used by &lt;code&gt;JpaDatabaseTaskStore&lt;/code&gt; and &lt;code&gt;JpaPushNotificationConfigStore&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Hibernate ORM - Configure persistence unit &quot;a2a-java&quot;
+quarkus.hibernate-orm.&quot;a2a-java&quot;.datasource=&amp;lt;default&amp;gt;
+quarkus.hibernate-orm.&quot;a2a-java&quot;.database.generation=update
+quarkus.hibernate-orm.&quot;a2a-java&quot;.log.sql=false
+quarkus.hibernate-orm.&quot;a2a-java&quot;.packages=io.a2a.extras.taskstore.database.jpa,io.a2a.extras.pushnotificationconfigstore.database.jpa&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Finally, we have the MicroProfile Reactive Messaging configuration, which maps our channels to Kafka. For more information about how MicroProfile Reactive Messaging works in Quarkus, see this &lt;a href=&quot;https://quarkus.io/guides/kafka-getting-started&quot;&gt;guide&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Under the hood, the &lt;code&gt;ReactiveMessagingReplicationStrategy&lt;/code&gt; uses MicroProfile Reactive Messaging. It uses an &lt;code&gt;Emitter&lt;/code&gt; writing to a channel called &lt;code&gt;replicated-events-out&lt;/code&gt;, and has an &lt;code&gt;@Incoming&lt;/code&gt; annotated method receiving events from a channel called &lt;code&gt;replicated-events-in&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Kafka Configuration for Event Replication
+kafka.bootstrap.servers=${KAFKA_BOOTSTRAP_SERVERS:localhost:9092} &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+# MicroProfile Reactive Messaging - Outgoing (Publish to Kafka)
+mp.messaging.outgoing.replicated-events-out.connector=smallrye-kafka &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+mp.messaging.outgoing.replicated-events-out.topic=a2a-replicated-events
+mp.messaging.outgoing.replicated-events-out.value.serializer=org.apache.kafka.common.serialization.StringSerializer
+
+# MicroProfile Reactive Messaging - Incoming (Subscribe from Kafka)
+mp.messaging.incoming.replicated-events-in.connector=smallrye-kafka &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+mp.messaging.incoming.replicated-events-in.topic=a2a-replicated-events
+# Each pod needs a unique consumer group to receive ALL events (broadcast behavior)
+# Using POD_NAME from Kubernetes Downward API ensures each instance gets its own group
+mp.messaging.incoming.replicated-events-in.group.id=a2a-cloud-${POD_NAME:local} &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+mp.messaging.incoming.replicated-events-in.value.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+mp.messaging.incoming.replicated-events-in.auto.offset.reset=earliest&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;KAFKA_BOOTSTRAP_SERVERS&lt;/code&gt; is defined in &lt;code&gt;04-agent-configmap.yaml&lt;/code&gt; and exposed to the application via &lt;code&gt;05-agent-deployment.yaml&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Both the &lt;code&gt;replicated-events-out&lt;/code&gt; and &lt;code&gt;replicated-events-in&lt;/code&gt; channels use the Kafka connector, send/receive on the same Kafka topic, and (de)serialize &lt;code&gt;String&lt;/code&gt;.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;POD_NAME&lt;/code&gt; is exposed to the application in &lt;code&gt;05-agent-deployment.yaml&lt;/code&gt;, which obtains it from the Kubernetes metadata. This has the effect of setting a unique groupId, so that all pods in the cluster receive the replicated events.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The simple in-memory of the components shown are great for getting up and running fast. However, to work in an enterprise, distributed, or cloud environment we need to replace these components to use shared state, in order to survive server reboots and have replication between A2A Agent instances.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;further-reading&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#further-reading&quot;&gt;&lt;/a&gt;Further Reading&lt;/h3&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://quarkus.io/blog/quarkus-a2a-java-0-3-0-alpha-release/&quot;&gt;Getting Started with Quarkus and A2A Java SDK 0.3.0&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://quarkus.io/blog/quarkus-a2a-java-0-3-0-beta-release/&quot;&gt;A2A Java SDK: Support for the REST Transport is Now Here&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://quarkus.io/blog/quarkus-a2a-java-grpc/&quot;&gt;Getting Started with A2A Java SDK and gRPC&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents&quot;&gt;A2A Java SDK Samples&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/a2aproject/a2a-java/blob/main/README.md&quot;&gt;A2A Java SDK Documentation&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://a2a-protocol.org/latest/specification/&quot;&gt;A2A Specification&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Fri, 31 Oct 2025 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/quarkus-a2a-cloud-enhancements/
+            </guid>
+            
+            
+            
+            <author>Kabir Khan (https://twitter.com/kabirkhan)</author>
+            
+        </item>
         
         <item>
             <title>Quarkus 3.29 - Multiple cache backends and Qute DAP debugger support</title>
@@ -9569,81 +10333,6 @@ And that&amp;#8217;s just &lt;em&gt;one&lt;/em&gt; improvement among many, and n
             
             
             <author>James Cobb (https://twitter.com/insectengine)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.23.3 - Maintenance release</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-23-3-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We released Quarkus 3.23.3, the second (we skipped 3.23.1) maintenance release for our 3.23 release train.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.23, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.23.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For more information about the adjustments you need to make to your applications, please refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.23&quot;&gt;Quarkus 3.23 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.23.3&quot;&gt;3.23.3&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 11 Jun 2025 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-23-3-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
             
         </item>
         
