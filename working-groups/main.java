@@ -143,8 +143,9 @@ public class main implements Callable<Integer> {
                    }
                 """, variables);
 
-        System.out.println("Response: " + response);
-        System.out.println("Errors: " + response.getErrors());
+        if (response.hasError()) {
+            System.out.println("Errors:\n" + response.getErrors());
+        }
         System.out.println("Data:\n" + response.getData());
         JsonArray array = response.getData().getJsonObject("organization").getJsonObject("projectsV2")
                 .getJsonArray("nodes");
@@ -260,17 +261,7 @@ public class main implements Callable<Integer> {
                     .findFirst()
                     .orElse(null);
 
-            if (line != null) {
-                var content = line.substring(line.indexOf(":") + 1).trim();
-                Parser parser = Parser.builder().build();
-                Node document = parser.parse(content);
-                HtmlRenderer renderer = HtmlRenderer.builder()
-                        .omitSingleParagraphP(true)
-                        .build();
-                return renderer.render(document);
-            }
-
-            return null;
+            return extractLinkFromLine(line);
         }
 
         public String getProposal() {
@@ -279,6 +270,19 @@ public class main implements Callable<Integer> {
                     .findFirst()
                     .orElse(null);
 
+            return extractLinkFromLine(line);
+        }
+
+        public String getBackportsGithubProject() {
+            String line = longDescription().lines()
+                    .filter(s -> isMetadata("Backports", s))
+                    .findFirst()
+                    .orElse(null);
+
+            return extractLinkFromLine(line);
+        }
+
+        private String extractLinkFromLine(String line) {
             if (line != null) {
                 var content = line.substring(line.indexOf(":") + 1).trim();
                 Parser parser = Parser.builder().build();
