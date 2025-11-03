@@ -1,0 +1,253 @@
+---
+layout: post
+title: 'ArC migrates to Gizmo 2'
+date: 2025-11-03
+tags: arc gizmo
+synopsis: 'ArC got rewritten from Gizmo 1 to Gizmo 2. What does that mean for you?'
+author: lthon
+---
+
+ArC is Quarkus's implementation of CDI Lite.
+Gizmo is a simplified bytecode generation library.
+What do they have in common?
+
+ArC has been using Gizmo 1 since approximately forever, but now that Gizmo 2 is shaping up, some Quarkus components have started migrating to it.
+I have started rewriting ArC to Gizmo 2 a few months ago, when we felt like Gizmo 2 starts looking reasonable and some real-world experience was needed.
+
+This rewrite took several months, mostly because Gizmo 2 is a complete rewrite and rearchitecture of Gizmo 1 and ArC is a heavy user, but also because during the ArC rewrite, I found some Gizmo 2 issues and there were several back and forths.
+
+To illustrate, I'll first go over the differences in Gizmo 1 and 2, and then detail how that affects ArC users.
+Spoiler alert: there's no change that would affect Quarkus applications.
+All changes are in the APIs that are only exposed to extensions (at build time).
+
+== Gizmo 1 vs Gizmo 2
+
+First off, Gizmo 1 is based on ASM and Gizmo 2 is based on the ClassFile API (not the one present in the JDK since link:https://openjdk.org/jeps/484[version 24], but the link:https://github.com/dmlloyd/jdk-classfile-backport[fork] maintained by David Lloyd, which supports Java 17).
+The ClassFile API itself is very different to ASM, and since the ClassFile API structure guided the Gizmo 2 API structure, that is also very different.
+
+To quickly compare, this is how you generate a "Hello, World!" program with Gizmo 1:
+
+[source,java]
+----
+ClassOutput output = ...;
+try (ClassCreator creator = ClassCreator.builder()
+        .classOutput(output)
+        .className("com.example.Hello")
+        .build()) {
+    MethodCreator method = creator.getMethodCreator("main", void.class, String[].class)
+            .setModifiers(Modifier.PUBLIC | Modifier.STATIC);
+    Gizmo.systemOutPrintln(method, method.load("Hello, World!"));
+    method.returnVoid();
+}
+----
+
+And this is how you generate the same program with Gizmo 2:
+
+[source,java]
+----
+Gizmo gizmo = Gizmo.create(ClassOutput.fileWriter(Path.of("target")));
+gizmo.class_("com.example.Hello", cc -> {
+    cc.defaultConstructor();
+
+    cc.staticMethod("main", mc -> {
+        ParamVar args = mc.parameter("args", String[].class);
+        mc.body(bc -> {
+            bc.printf("Hello, World!%n");
+            bc.return_();
+        });
+    });
+});
+----
+
+There are obvious surface-level differences in the API structure, but there are also deeper differences.
+I'll mention one here just as an example: the way Gizmo represents and maintains values has changed significantly.
+
+Gizmo 1 has the venerable `ResultHandle` class, which is almost always a local variable (even though the API doesn't let you assign to it; you have to use `AssignableResultHandle` for that).
+This means you don't really have to care about order in which you produce values or about using them multiple times -- everything just works.
+There's obvious overhead though: for each use of the value, it needs to be loaded from the variable to the stack.
+
+On the other hand, Gizmo 2 represents values as ``Expr``s, which are _not_ local variables:
+
+[source,java]
+----
+Expr hello = bc.invokeVirtual(
+        MethodDesc.of(String.class, "concat", String.class, String.class),
+        Const.of("Hello"), Const.of(" World"));
+----
+
+An `Expr` is a value that is, at the time of its creation, on top of the stack, nothing more.
+This means the order of producing values suddenly matters and they may not be reused!
+To create a local variable (`LocalVar`) out of an expression, you have to explicitly call a method:
+
+[source,java]
+----
+LocalVar hello = bc.localVar("hello", bc.invokeVirtual(
+        MethodDesc.of(String.class, "concat", String.class, String.class),
+        Const.of("Hello"), Const.of(" World")));
+----
+
+There are a lot more concepts not shown in these examples, which you can read about in the documentation.
+The Gizmo 1 documentation is available at https://github.com/quarkusio/gizmo/blob/1.x/USAGE.adoc, while the Gizmo 2 documentation (not yet complete) is available at https://github.com/quarkusio/gizmo/blob/main/MANUAL.adoc.
+
+== ArC
+
+Back to ArC.
+Today, all bytecode generation in ArC is based on Gizmo 2 (if you want the gory details, look at https://github.com/quarkusio/quarkus/pull/50708[this pull request]), and it's going to be released in Quarkus 3.30.
+
+ArC has several public APIs that expose Gizmo types.
+This means that the rewrite to Gizmo 2 includes breaking changes.
+These are unlikely to impact users -- in fact, the number of affected places in the Quarkus core repository is surprisingly small.
+However, in the interest of transparency, here's a full list of API breakages:
+
+1. `BeanConfiguratorBase`: methods
++
+[source,java]
+----
+THIS creator(Consumer<MethodCreator> methodCreatorConsumer)
+THIS destroyer(Consumer<MethodCreator> methodCreatorConsumer)
+THIS checkActive(Consumer<MethodCreator> methodCreatorConsumer)
+----
++
+were changed to
++
+[source,java]
+----
+THIS creator(Consumer<CreateGeneration> creatorConsumer)
+THIS destroyer(Consumer<DestroyGeneration> destroyerConsumer)
+THIS checkActive(Consumer<CheckActiveGeneration> checkActiveConsumer)
+----
+
+2. `ObserverConfigurator`: method
++
+[source,java]
+----
+ObserverConfigurator notify(Consumer<MethodCreator> notifyConsumer)
+----
++
+was changed to
++
+[source,java]
+----
+ObserverConfigurator notify(Consumer<NotifyGeneration> notifyConsumer)
+----
+
+3. `ContextConfigurator`: method
++
+[source,java]
+----
+ContextConfigurator creator(Function<MethodCreator, ResultHandle> creator)
+----
++
+was changed to
++
+[source,java]
+----
+ContextConfigurator creator(Function<CreateGeneration, Expr> creator)
+----
+
+4. `BeanProcessor.Builder`: method
++
+[source,java]
+----
+Builder addSuppressConditionGenerator(Function<BeanInfo, Consumer<BytecodeCreator>> generator)
+----
++
+was changed to
++
+[source,java]
+----
+Builder addSuppressConditionGenerator(Function<BeanInfo, Consumer<BlockCreator>> generator)
+----
+
+Noone is expected to be affected by the last change, because that is in the ArC integration API, which should only be used by the Quarkus ArC extension.
+The other changes are in APIs that could legitimately be used:
+
+- synthetic beans
+- synthetic observers
+- custom contexts
+
+As you see, all these changes are similar.
+The Gizmo 1 variant takes a `Consumer<MethodCreator>` (or, in one case, a `Function<MethodCreator, ResultHandle>`).
+The `MethodCreator` must be used to create the bytecode of the corresponding method:
+
+- `BeanConfiguratorBase.creator()`: create an instance of the synthetic bean
+- `BeanConfiguratorBase.destroyer()`: destroy an instance of the synthetic bean
+- `BeanConfiguratorBase.checkActive()`: check if the synthetic bean is currently active (niche use case, most likely unused outside of the core Quarkus repository)
+- `ObserverConfigurator.notify()`: notify the synthetic observer
+- `ContextConfigurator.creator()`: create a context object of the custom context
+
+The Gizmo 2 variants no longer take a Gizmo object.
+Instead, they take an ArC interface that provides access to all the necessary Gizmo objects -- because more than 1 is necessary.
+
+As mentioned above, most extensions should not be affected.
+This is because higher-level APIs exist that do not expose bytecode generation; either they use classes that implement interfaces, or they accept results of recorder methods.
+These higher-level APIs didn't change at all.
+However, using the lower-level APIs is still permitted, so let's take a look at how we'd migrate a simple synthetic bean creation function from Gizmo 1 to Gizmo 2.
+
+Here's a simple synthetic bean registered using `SyntheticBeanBuildItem`:
+
+[source,java]
+----
+SyntheticBeanBuildItem.configure(String.class)
+        .scope(Singleton.class)
+        .param("message", "Hello, World!")
+        .creator(mc -> {
+            ResultHandle params = mc.readInstanceField(
+                    FieldDescriptor.of(mc.getMethodDescriptor().getDeclaringClass(),
+                            "params", Map.class),
+                    mc.getThis());
+            ResultHandle message = Gizmo.mapOperations(mc).on(params).get(mc.load("message"));
+            ResultHandle instance = mc.invokeVirtualMethod(
+                    MethodDescriptor.ofMethod(String.class,
+                            "concat", String.class, String.class),
+                    mc.load("Message: "), message);
+            mc.returnValue(instance);
+        })
+        .done();
+----
+
+The `Consumer` here accepts a `MethodCreator` that provides direct access to its parameters as well as to the class, from which one can read the fields.
+
+After the rewrite to Gizmo 2, the code looks like:
+
+[source,java]
+----
+SyntheticBeanBuildItem.configure(String.class)
+        .scope(Singleton.class)
+        .param("message", "Hello, World!")
+        .creator(cg -> {
+            BlockCreator bc = cg.createMethod();
+
+            Var params = cg.paramsMap();
+            Expr message = bc.withMap(params).get(Const.of("message"));
+            Expr instance = bc.invokeVirtual(
+                    MethodDesc.of(String.class,
+                            "concat", String.class, String.class),
+                    Const.of("Message: "), message);
+            bc.return_(instance);
+        })
+        .done();
+----
+
+The `Consumer` accepts `CreateGeneration` that provides access to the `BlockCreator` to generate bytecode (`createMethod()`) and a number of necessary variables.
+In this example, we use the `paramsMap()` method to acccess the parameter map.
+
+The other APIs have changed in the same manner: instead of `MethodCreator`, the `Consumer` accepts `*Generation` which provides access to the `BlockCreator` and the necessary variables.
+
+One might ask: why does the new API provide access to a `BlockCreator` and not to a `MethodCreator`, which clearly still exists in Gizmo 2?
+And it would be a good question.
+The answer, as it turns out, is efficiency.
+The previous API that did provide access to a `MethodCreator` required generating a whole new method that would only host the user-generated code.
+The new API that _doesn't_ provide access to a `MethodCreator` allows embedding the user-generated code into a method that contains other, ArC-generated code.
+Thus, the number of methods in the generated classes is smaller and the generated code is more compact.
+
+== Conclusion
+
+Gizmo 2 is an evolution (some might say _revolution_) of Gizmo 1, the simplified bytecode generation library used by all of Quarkus.
+ArC is a heavy user of Gizmo and it just recently migrated to Gizmo 2.
+There are some breaking changes that might affect Quarkus extensions (not applications).
+
+In this post, we reviewed the API breakages and showed a simple migration scenario.
+Hopefully, your extensions are not affected, because they use the higher-level APIs, but if they are, you'll need to migrate as well.
+Then, your extension will only be compatible with Quarkus 3.30 and above; it will stop working with previous versions.
+Plan accordingly.
