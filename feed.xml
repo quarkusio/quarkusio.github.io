@@ -5,8 +5,340 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Mon, 03 Nov 2025 03:28:10 +0000</lastBuildDate>
+        <lastBuildDate>Mon, 03 Nov 2025 11:05:14 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>ArC migrates to Gizmo 2</title>
+            <link>
+                https://quarkus.io/blog/arc-migrates-to-gizmo2/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;ArC is Quarkus&amp;#8217;s implementation of CDI Lite.
+Gizmo is a simplified bytecode generation library.
+What do they have in common?&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;ArC has been using Gizmo 1 since approximately forever, but now that Gizmo 2 is shaping up, some Quarkus components have started migrating to it.
+I have started rewriting ArC to Gizmo 2 a few months ago, when we felt like Gizmo 2 starts looking reasonable and some real-world experience was needed.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This rewrite took several months, mostly because Gizmo 2 is a complete rewrite and rearchitecture of Gizmo 1 and ArC is a heavy user, but also because during the ArC rewrite, I found some Gizmo 2 issues and there were several back and forths.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To illustrate, I&amp;#8217;ll first go over the differences in Gizmo 1 and 2, and then detail how that affects ArC users.
+Spoiler alert: there&amp;#8217;s no change that would affect Quarkus applications.
+All changes are in the APIs that are only exposed to extensions (at build time).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;gizmo-1-vs-gizmo-2&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#gizmo-1-vs-gizmo-2&quot;&gt;&lt;/a&gt;Gizmo 1 vs Gizmo 2&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First off, Gizmo 1 is based on ASM and Gizmo 2 is based on the ClassFile API (not the one present in the JDK since &lt;a href=&quot;https://openjdk.org/jeps/484&quot;&gt;version 24&lt;/a&gt;, but the &lt;a href=&quot;https://github.com/dmlloyd/jdk-classfile-backport&quot;&gt;fork&lt;/a&gt; maintained by David Lloyd, which supports Java 17).
+The ClassFile API itself is very different to ASM, and since the ClassFile API structure guided the Gizmo 2 API structure, that is also very different.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To quickly compare, this is how you generate a &quot;Hello, World!&quot; program with Gizmo 1:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;ClassOutput output = ...;
+try (ClassCreator creator = ClassCreator.builder()
+        .classOutput(output)
+        .className(&quot;com.example.Hello&quot;)
+        .build()) {
+    MethodCreator method = creator.getMethodCreator(&quot;main&quot;, void.class, String[].class)
+            .setModifiers(Modifier.PUBLIC | Modifier.STATIC);
+    Gizmo.systemOutPrintln(method, method.load(&quot;Hello, World!&quot;));
+    method.returnVoid();
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And this is how you generate the same program with Gizmo 2:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;Gizmo gizmo = Gizmo.create(ClassOutput.fileWriter(Path.of(&quot;target&quot;)));
+gizmo.class_(&quot;com.example.Hello&quot;, cc -&amp;gt; {
+    cc.defaultConstructor();
+
+    cc.staticMethod(&quot;main&quot;, mc -&amp;gt; {
+        ParamVar args = mc.parameter(&quot;args&quot;, String[].class);
+        mc.body(bc -&amp;gt; {
+            bc.printf(&quot;Hello, World!%n&quot;);
+            bc.return_();
+        });
+    });
+});&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There are obvious surface-level differences in the API structure, but there are also deeper differences.
+I&amp;#8217;ll mention one here just as an example: the way Gizmo represents and maintains values has changed significantly.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Gizmo 1 has the venerable &lt;code&gt;ResultHandle&lt;/code&gt; class, which is almost always a local variable (even though the API doesn&amp;#8217;t let you assign to it; you have to use &lt;code&gt;AssignableResultHandle&lt;/code&gt; for that).
+This means you don&amp;#8217;t really have to care about order in which you produce values or about using them multiple times&amp;#8201;&amp;#8212;&amp;#8201;everything just works.
+There&amp;#8217;s obvious overhead though: for each use of the value, it needs to be loaded from the variable to the stack.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;On the other hand, Gizmo 2 represents values as &lt;code&gt;Expr&lt;/code&gt;s, which are &lt;em&gt;not&lt;/em&gt; local variables:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;Expr hello = bc.invokeVirtual(
+        MethodDesc.of(String.class, &quot;concat&quot;, String.class, String.class),
+        Const.of(&quot;Hello&quot;), Const.of(&quot; World&quot;));&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;An &lt;code&gt;Expr&lt;/code&gt; is a value that is, at the time of its creation, on top of the stack, nothing more.
+This means the order of producing values suddenly matters and they may not be reused!
+To create a local variable (&lt;code&gt;LocalVar&lt;/code&gt;) out of an expression, you have to explicitly call a method:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;LocalVar hello = bc.localVar(&quot;hello&quot;, bc.invokeVirtual(
+        MethodDesc.of(String.class, &quot;concat&quot;, String.class, String.class),
+        Const.of(&quot;Hello&quot;), Const.of(&quot; World&quot;)));&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There are a lot more concepts not shown in these examples, which you can read about in the documentation.
+The Gizmo 1 documentation is available at &lt;a href=&quot;https://github.com/quarkusio/gizmo/blob/1.x/USAGE.adoc&quot; class=&quot;bare&quot;&gt;https://github.com/quarkusio/gizmo/blob/1.x/USAGE.adoc&lt;/a&gt;, while the Gizmo 2 documentation (not yet complete) is available at &lt;a href=&quot;https://github.com/quarkusio/gizmo/blob/main/MANUAL.adoc&quot; class=&quot;bare&quot;&gt;https://github.com/quarkusio/gizmo/blob/main/MANUAL.adoc&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;arc&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#arc&quot;&gt;&lt;/a&gt;ArC&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Back to ArC.
+Today, all bytecode generation in ArC is based on Gizmo 2 (if you want the gory details, look at &lt;a href=&quot;https://github.com/quarkusio/quarkus/pull/50708&quot;&gt;this pull request&lt;/a&gt;), and it&amp;#8217;s going to be released in Quarkus 3.30.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;ArC has several public APIs that expose Gizmo types.
+This means that the rewrite to Gizmo 2 includes breaking changes.
+These are unlikely to impact users&amp;#8201;&amp;#8212;&amp;#8201;in fact, the number of affected places in the Quarkus core repository is surprisingly small.
+However, in the interest of transparency, here&amp;#8217;s a full list of API breakages:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;BeanConfiguratorBase&lt;/code&gt;: methods&lt;/p&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;THIS creator(Consumer&amp;lt;MethodCreator&amp;gt; methodCreatorConsumer)
+THIS destroyer(Consumer&amp;lt;MethodCreator&amp;gt; methodCreatorConsumer)
+THIS checkActive(Consumer&amp;lt;MethodCreator&amp;gt; methodCreatorConsumer)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;were changed to&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;THIS creator(Consumer&amp;lt;CreateGeneration&amp;gt; creatorConsumer)
+THIS destroyer(Consumer&amp;lt;DestroyGeneration&amp;gt; destroyerConsumer)
+THIS checkActive(Consumer&amp;lt;CheckActiveGeneration&amp;gt; checkActiveConsumer)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;ObserverConfigurator&lt;/code&gt;: method&lt;/p&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;ObserverConfigurator notify(Consumer&amp;lt;MethodCreator&amp;gt; notifyConsumer)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;was changed to&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;ObserverConfigurator notify(Consumer&amp;lt;NotifyGeneration&amp;gt; notifyConsumer)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;ContextConfigurator&lt;/code&gt;: method&lt;/p&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;ContextConfigurator creator(Function&amp;lt;MethodCreator, ResultHandle&amp;gt; creator)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;was changed to&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;ContextConfigurator creator(Function&amp;lt;CreateGeneration, Expr&amp;gt; creator)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;BeanProcessor.Builder&lt;/code&gt;: method&lt;/p&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;Builder addSuppressConditionGenerator(Function&amp;lt;BeanInfo, Consumer&amp;lt;BytecodeCreator&amp;gt;&amp;gt; generator)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;was changed to&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;Builder addSuppressConditionGenerator(Function&amp;lt;BeanInfo, Consumer&amp;lt;BlockCreator&amp;gt;&amp;gt; generator)&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Noone is expected to be affected by the last change, because that is in the ArC integration API, which should only be used by the Quarkus ArC extension.
+The other changes are in APIs that could legitimately be used:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;synthetic beans&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;synthetic observers&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;custom contexts&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As you see, all these changes are similar.
+The Gizmo 1 variant takes a &lt;code&gt;Consumer&amp;lt;MethodCreator&amp;gt;&lt;/code&gt; (or, in one case, a &lt;code&gt;Function&amp;lt;MethodCreator, ResultHandle&amp;gt;&lt;/code&gt;).
+The &lt;code&gt;MethodCreator&lt;/code&gt; must be used to create the bytecode of the corresponding method:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;BeanConfiguratorBase.creator()&lt;/code&gt;: create an instance of the synthetic bean&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;BeanConfiguratorBase.destroyer()&lt;/code&gt;: destroy an instance of the synthetic bean&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;BeanConfiguratorBase.checkActive()&lt;/code&gt;: check if the synthetic bean is currently active (niche use case, most likely unused outside of the core Quarkus repository)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;ObserverConfigurator.notify()&lt;/code&gt;: notify the synthetic observer&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;ContextConfigurator.creator()&lt;/code&gt;: create a context object of the custom context&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The Gizmo 2 variants no longer take a Gizmo object.
+Instead, they take an ArC interface that provides access to all the necessary Gizmo objects&amp;#8201;&amp;#8212;&amp;#8201;because more than 1 is necessary.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As mentioned above, most extensions should not be affected.
+This is because higher-level APIs exist that do not expose bytecode generation; either they use classes that implement interfaces, or they accept results of recorder methods.
+These higher-level APIs didn&amp;#8217;t change at all.
+However, using the lower-level APIs is still permitted, so let&amp;#8217;s take a look at how we&amp;#8217;d migrate a simple synthetic bean creation function from Gizmo 1 to Gizmo 2.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Here&amp;#8217;s a simple synthetic bean registered using &lt;code&gt;SyntheticBeanBuildItem&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;SyntheticBeanBuildItem.configure(String.class)
+        .scope(Singleton.class)
+        .param(&quot;message&quot;, &quot;Hello, World!&quot;)
+        .creator(mc -&amp;gt; {
+            ResultHandle params = mc.readInstanceField(
+                    FieldDescriptor.of(mc.getMethodDescriptor().getDeclaringClass(),
+                            &quot;params&quot;, Map.class),
+                    mc.getThis());
+            ResultHandle message = Gizmo.mapOperations(mc).on(params).get(mc.load(&quot;message&quot;));
+            ResultHandle instance = mc.invokeVirtualMethod(
+                    MethodDescriptor.ofMethod(String.class,
+                            &quot;concat&quot;, String.class, String.class),
+                    mc.load(&quot;Message: &quot;), message);
+            mc.returnValue(instance);
+        })
+        .done();&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;Consumer&lt;/code&gt; here accepts a &lt;code&gt;MethodCreator&lt;/code&gt; that provides direct access to its parameters as well as to the class, from which one can read the fields.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;After the rewrite to Gizmo 2, the code looks like:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;SyntheticBeanBuildItem.configure(String.class)
+        .scope(Singleton.class)
+        .param(&quot;message&quot;, &quot;Hello, World!&quot;)
+        .creator(cg -&amp;gt; {
+            BlockCreator bc = cg.createMethod();
+
+            Var params = cg.paramsMap();
+            Expr message = bc.withMap(params).get(Const.of(&quot;message&quot;));
+            Expr instance = bc.invokeVirtual(
+                    MethodDesc.of(String.class,
+                            &quot;concat&quot;, String.class, String.class),
+                    Const.of(&quot;Message: &quot;), message);
+            bc.return_(instance);
+        })
+        .done();&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;Consumer&lt;/code&gt; accepts &lt;code&gt;CreateGeneration&lt;/code&gt; that provides access to the &lt;code&gt;BlockCreator&lt;/code&gt; to generate bytecode (&lt;code&gt;createMethod()&lt;/code&gt;) and a number of necessary variables.
+In this example, we use the &lt;code&gt;paramsMap()&lt;/code&gt; method to acccess the parameter map.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The other APIs have changed in the same manner: instead of &lt;code&gt;MethodCreator&lt;/code&gt;, the &lt;code&gt;Consumer&lt;/code&gt; accepts &lt;code&gt;*Generation&lt;/code&gt; which provides access to the &lt;code&gt;BlockCreator&lt;/code&gt; and the necessary variables.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;One might ask: why does the new API provide access to a &lt;code&gt;BlockCreator&lt;/code&gt; and not to a &lt;code&gt;MethodCreator&lt;/code&gt;, which clearly still exists in Gizmo 2?
+And it would be a good question.
+The answer, as it turns out, is efficiency.
+The previous API that did provide access to a &lt;code&gt;MethodCreator&lt;/code&gt; required generating a whole new method that would only host the user-generated code.
+The new API that &lt;em&gt;doesn&amp;#8217;t&lt;/em&gt; provide access to a &lt;code&gt;MethodCreator&lt;/code&gt; allows embedding the user-generated code into a method that contains other, ArC-generated code.
+Thus, the number of methods in the generated classes is smaller and the generated code is more compact.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Gizmo 2 is an evolution (some might say &lt;em&gt;revolution&lt;/em&gt;) of Gizmo 1, the simplified bytecode generation library used by all of Quarkus.
+ArC is a heavy user of Gizmo and it just recently migrated to Gizmo 2.
+There are some breaking changes that might affect Quarkus extensions (not applications).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this post, we reviewed the API breakages and showed a simple migration scenario.
+Hopefully, your extensions are not affected, because they use the higher-level APIs, but if they are, you&amp;#8217;ll need to migrate as well.
+Then, your extension will only be compatible with Quarkus 3.30 and above; it will stop working with previous versions.
+Plan accordingly.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Mon, 03 Nov 2025 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/arc-migrates-to-gizmo2/
+            </guid>
+            
+            
+            
+            <author>Ladislav Thon (https://twitter.com/_Ladicek)</author>
+            
+        </item>
         
         <item>
             <title>How to Use Your A2A Server Agent in a Distributed or Cloud Native Environment</title>
@@ -10303,36 +10635,6 @@ And that&amp;#8217;s just &lt;em&gt;one&lt;/em&gt; improvement among many, and n
             
             
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus Newsletter #57 - June</title>
-            <link>
-                https://quarkus.io/blog/quarkus-newsletter-57/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Quarkus MCP Server is blazing a trail as the first Java MCP server with Streamable HTTP support—unlocking new possibilities for developers. Read more about in the blog post &quot;Quarkus MCP Server: The First Java Server SDK to Support Streamable HTTP!&quot; by Max Rydahl Andersen. Learn how Quarkus MCP Client can use access tokens to access secure MCP servers in Sergey Beryozkin&amp;#8217;s blog post &quot;Use Quarkus MCP client to access secure MCP HTTP servers&quot;. Leverage ChatGPT and existing Maven skills, to rapidly develop and deploy a new API with Quarkus. Ease the learning curve and achieving quick validation on Heroku. See how in &quot;How To Introduce a New API Quickly Using Quarkus and ChatGPT&quot; by John Vester. Explore LLM guardrails, why they matter, and how you can effectively implement them to ensure safe and trustworthy AI interactions in &quot;Ensuring Safe and Reliable AI Interactions with LLM Guardrails&quot; by Brian Vermeer. Learn about Prasbanth&amp;#8217;s first experience to see how the Java ecosystem is adapting to the world of cloud-native applications — and how that experience left him motivated to continue this journey in &quot;From Traditional Java to Cloud-Native with Quarkus: My First Boston Java Users Meetup Experience&quot;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You will also see the latest Quarkus Insights episodes, top tweets/discussions and upcoming Quarkus attended events.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Check out &lt;a href=&quot;https://quarkus.io/newsletter/57/&quot;&gt;Newsletter #57: June&lt;/a&gt;!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Want to get newsletters in your inbox? &lt;a href=&quot;https://quarkus.io/newsletter&quot;&gt;Sign up for the newsletter&lt;/a&gt; using the on page form.&lt;/p&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Thu, 12 Jun 2025 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-newsletter-57/
-            </guid>
-            
-            
-            
-            <author>James Cobb (https://twitter.com/insectengine)</author>
             
         </item>
         
