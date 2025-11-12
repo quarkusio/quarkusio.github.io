@@ -1,0 +1,188 @@
+---
+layout: post
+title: 'Agentic AI Patterns: one size does not fit all'
+date: 2025-11-12T00:00:00Z
+tags: ai llm agents
+synopsis: 'Agentic AI Patterns: one size does not fit all'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/agentic
+
+At the beginning of 2025, we began experimenting with agentic AI using Quarkus and its LangChain4j extension. These efforts led to the publication of a three-part blog post series on the topic: the first https://quarkus.io/blog/agentic-ai-with-quarkus/[introduced agentic AI and workflow patterns], the second https://quarkus.io/blog/agentic-ai-with-quarkus-p2/[explored purely AI-orchestrated agentic patterns], and the third https://quarkus.io/blog/agentic-ai-with-quarkus-p3/[examined the differences between these two approaches] through a practical example, highlighting their respective pros and cons.
+
+Only a few months have passed since those articles were published, yet the AI ecosystem and the possibilities it unlocks have evolved at an incredible pace. Keeping up with the constant stream of novelties and changes has become increasingly challenging. In fact, the initial experiments from that series now seem to belong to a different era, even though they laid the essential groundwork for exploring the agentic AI landscape.
+
+These experiments and explorations led to the implementation of a https://docs.langchain4j.dev/tutorials/agents/[new agentic module] in LangChain4j, designed to provide a comprehensive toolkit for building agentic AI systems. The module also includes a set of predefined agentic patterns that serve as building blocks for coordinating agents in different ways. However, as we continued experimenting and, more importantly, discussing our findings with the LangChain4j community, it became clear that believing this set of patterns could fully cover all possible use cases was somewhat naive. In reality, the landscape is far more complex and nuanced.
+
+== Agentic AI at Devoxx Belgium 2025
+
+Agentic AI was, by far, one of the most discussed topics at Devoxx Belgium 2025, and we had the opportunity to present the agentic AI patterns implemented in LangChain4j. In fact, we delivered both a https://www.youtube.com/watch?v=X9baI7RBhqk[talk] showcasing practical examples of how these patterns work and how to use them, and a https://www.youtube.com/watch?v=mtWHfYTLeKE[session] that delved deeper into the journey behind implementing the agentic framework, including the key decisions we made and the mistakes we learned from along the way.
+
+As always at Devoxx, what mattered even more than attending the countless talks on agentic AI was the opportunity to meet so many people working in this field, exchanging ideas, sharing experiences, and discussing challenges and solutions.
+
+We learned a great deal from these interactions and returned home with one clear realization: we will never find a definitive pattern for agent orchestration. Not only is this beyond our specific area of expertise, but more importantly, such a universal pattern simply doesn’t exist. The variety and complexity of tasks that an agentic system may need to handle mean that no single approach can work in every situation: there is no one-size-fits-all solution for agentic AI orchestration.
+
+In reality, there is a broad spectrum of agentic patterns, ranging from reliable and deterministic yet rigid workflows, where agents follow predefined code and flow paths, to flexible yet unpredictable pure agentic orchestrations, where LLMs autonomously determine the sequence of actions and maintain control over task execution. Between these two extremes lies what might be the most interesting space: one that balances reliability and flexibility. And since precisely defining that middle ground is challenging, why not give users the ability to shape it according to their specific needs?
+
+== A generic architecture for agentic AI patterns
+
+The natural outcome of these reflections was the decision to design a generic architecture for agentic AI patterns: one flexible enough to support a wide variety of use cases, while still allowing these patterns to function as modular building blocks that can be seamlessly combined and complement one another.
+
+To ensure maximum flexibility, we needed to identify the simplest and most minimal abstraction capable of doing the job. This led us to realize that an agentic pattern, at its core, is the specification of an execution plan for the subagents it coordinates. Such a plan can be defined by implementing the following `Planner` interface:
+
+[source,java]
+----
+public interface Planner {
+
+    default void init(InitPlanningContext initPlanningContext) { }
+
+    default Action firstAction(PlanningContext planningContext) {
+        return nextAction(planningContext);
+    }
+
+    Action nextAction(PlanningContext planningContext);
+}
+----
+
+This interface, that still has to be considered experimental and could be enriched or modified in other ways with subsequent revisions, defines a method for initializing the planner, along with two methods responsible for determining the first action to execute and all subsequent ones. The method that returns the first action is optional; by default, it simply delegates to the method that returns the next action, which is the only one that must be implemented. The `Action` class returned by these methods represents the next step to be taken by the agentic pattern. It can either specify one or more subagents to be invoked next or signal that the execution has completed.
+
+In essence, the architecture of the LangChain4j agentic framework can be seen as a two-layered system, where the planner layer is responsible for determining the sequence of agent invocations, while the execution layer handles the actual execution of these agents based on the planner's directives. Both layers are designed to be easily extensible, allowing users to implement custom planners and execution frameworks like Quarkus to adapt some runtime aspects, like the thread pool used to run the different agents, to its needs. The `AgenticScope` acts as the shared context between these two layers, maintaining the state of the entire agentic system throughout its execution.
+
+[.text-center]
+.The planner and execution layers of the LangChain4j agentic architecture
+image::planner.png[width=50%, align="center", alt="The planner and execution layers of the LangChain4j agentic architecture"]
+
+All the built-in agentic patterns provided out of the box by the `langchain4j-agentic` module have been rewritten using this new `Planner` abstraction. The pull requests implementing this architecture have already been merged, and this article won’t go into much detail about their internals here, as you can find a full explanation in https://github.com/langchain4j/langchain4j/pull/3929[its description].
+
+Another important aspect to consider is that this new architecture not only allows users to implement their own agentic patterns but also makes it easy to combine them with any other pattern, whether provided by LangChain4j or created by users themselves. Since all patterns are now defined in terms of a `Planner`, any pattern can serve as a subagent within another, opening the door to an almost infinite variety of combinations. The following example illustrates this concept in practice.
+
+== Mixing multiple agentic patterns
+
+One of the examples included in the pull request mentioned earlier illustrates this new architecture by showing how to create a custom agentic pattern based on a goal-oriented strategy. This approach determines the sequence of agents to be invoked to accomplish a specific complex task.
+
+To put this approach into practice, the entire agentic system must define a final goal, and each subagent must declare its own preconditions, the requirements needed to perform its task,  and postconditions, which describe the outcomes guaranteed once execution is complete. However, in agentic LangChain4j, all this information is already implicitly available: the preconditions and postconditions correspond to each agent’s required inputs and produced outputs, while the final goal represents the desired outputs of the entire agentic system.
+
+Following this idea, we can calculate a dependency graph of all the subagents participating in the agentic system. Based on that graph, it’s then possible to implement a `Planner` capable of analyzing the initial state of the `AgenticScope`, comparing it with the desired goal, and determining the sequence of agent invocations that can lead to achieving that goal.
+
+[source,java]
+----
+public class GoalOrientedPlanner implements Planner {
+
+    private String goal;
+
+    private GoalOrientedSearchGraph graph;
+    private List<AgentInstance> path;
+
+    private int agentCursor = 0;
+
+    @Override
+    public void init(InitPlanningContext initPlanningContext) {
+        this.goal = initPlanningContext.plannerAgent().outputKey();
+        this.graph = new GoalOrientedSearchGraph(initPlanningContext.subagents());
+    }
+
+    @Override
+    public Action firstAction(PlanningContext planningContext) {
+        path = graph.search(planningContext.agenticScope().state().keySet(), goal);
+        if (path.isEmpty()) {
+            throw new IllegalStateException("No path found for goal: " + goal);
+        }
+        return call(path.get(agentCursor++));
+    }
+
+    @Override
+    public Action nextAction(PlanningContext planningContext) {
+        return agentCursor >= path.size() ? done() : call(path.get(agentCursor++));
+    }
+}
+----
+
+As mentioned earlier, in this example, the goal corresponds to the final output of the planner-based agentic pattern itself. The path from the initial state to that goal is computed using a graph built by analyzing the input and output keys of all subagents. The sequence of agents to invoke is then determined as the shortest path on that graph, connecting the current state to the desired goal.
+
+The example discussed in the pull request to demonstrate this pattern in action is an agentic system that generates horoscope-based write-ups. The complete source code is available https://github.com/langchain4j/langchain4j/tree/main/langchain4j-agentic-patterns/src/test/java/dev/langchain4j/agentic/patterns/goap/horoscope[here]. This system is composed of several subagents, each responsible for a specific task, such as extracting user data from the prompt, fetching horoscope information from an external source, generating content based on that data, and formatting the final write-up. In this setup, the graph of agent dependencies, which also determines the sequence of their activations, is as follows:
+
+[.text-center]
+.The GOAP-determined sequence of agents invocation to generate an horoscope-based writeup
+image::goap.png[width=50%, align="center", alt="The GOAP-determined sequence of agents invocation to generate an horoscope-based writeup"]
+
+The primary advantage of this goal-oriented strategy is that it deterministically identifies the shortest sequence of steps necessary to transition from the initial state to the final goal. However, in some cases, a sequence of agent invocations calculated purely along the optimal path in the dependency graph can become a limitation. For instance, by definition, a shortest path contains no loops, yet in practice, a loop may be necessary to allow an agent to reflect on its own work and iteratively refine its output.
+
+As mentioned earlier, the LangChain4j agentic framework overcomes this limitation by allowing seamless integration of the goal-oriented system with any other agentic pattern, whether provided by the framework or custom-built. For example, the final agent responsible for generating the write-up could be complemented by a reflection loop, using another agent that evaluates and scores the generated content.
+
+[source,java]
+----
+public interface Writer {
+    @UserMessage("""
+            Create an amusing writeup for {{person}} based on the following:
+            - their horoscope: {{horoscope}}
+            - a current news story: {{story}}
+            """)
+    @Agent("""
+           Create an amusing writeup for the target person based
+           on their horoscope and current news stories
+           """)
+    String write(@V("person") Person person,
+                 @V("horoscope") String horoscope,
+                 @V("story") String story);
+}
+
+public interface WriteupScorer {
+
+    @UserMessage("""
+            You are a critical reviewer. Give a review score between 0.0 and 1.0
+            for the following writeup
+            based on how well it aligns with the spirit of the given zodiac sign.
+            Return only the score and nothing else.
+
+            The writeup is: "{{writeup}}"
+            The sign is: "{{sign}}"
+            """)
+    @Agent("Scores a story based on how well it aligns with a given style")
+    double scoreWriteup(@V("writeup") String writeup, @V("sign") Sign sign);
+}
+
+public interface WriteupAndReviewLoop {
+    @Agent
+    String write(@V("person") Person person,
+                 @V("horoscope") String horoscope,
+                 @V("story") String story);
+}
+----
+
+In this setup, the single `Writer` agent can be replaced by a reflection loop, allowing the final agentic system to overcome one of the typical limitations of the goal-oriented strategy. The resulting system can then be defined as follows:
+
+[source,java]
+----
+Writer writer = AgenticServices.agentBuilder(Writer.class)
+        .chatModel(baseModel())
+        .outputKey("writeup")
+        .build();
+
+WriteupScorer scorer = AgenticServices.agentBuilder(WriteupScorer.class)
+        .chatModel(baseModel())
+        .outputKey("score")
+        .build();
+
+WriteupAndReviewLoop writeAndReviewLoop = AgenticServices
+        .loopBuilder(WriteupAndReviewLoop.class)
+        .subAgents(writer, scorer)
+        .outputKey("writeup")
+        .exitCondition( agenticScope -> agenticScope.readState("score", 0.0) >= 0.8)
+        .maxIterations(5)
+        .build();
+
+UntypedAgent horoscopeAgent = AgenticServices.plannerBuilder()
+        .subAgents(horoscopeGenerator, personExtractor,
+                   signExtractor, writeAndReviewLoop, storyFinder)
+        .outputKey("writeup")
+        .planner(GoalOrientedPlanner::new)
+        .build();
+----
+
+== Conclusion
+
+An agentic system composed of multiple small, specialized agents can often outperform a single large language model–based AI service, and do so at a fraction of the cost. However, using many interoperating agents introduces the challenge of coordinating them effectively to accomplish complex tasks. Different agentic patterns present distinct trade-offs between reliability and flexibility, and no single approach is suitable for all scenarios. This is why a customizable architecture that enables users to define and combine diverse agentic patterns is essential for building truly adaptable AI systems.
+
+By introducing a generic `Planner` interface, LangChain4j empowers users to design their own agentic patterns and seamlessly integrate them with existing ones. This flexibility enables the creation of sophisticated, purpose-driven agentic systems that balance the strengths of different orchestration strategies to meet specific needs.
+
+This also opens the door for users to contribute to the LangChain4j agentic ecosystem by sharing their own `Planner` implementations. To support this, a https://github.com/langchain4j/langchain4j/tree/main/langchain4j-agentic-patterns[new dedicated module], named langchain4j-agentic-patterns, has been added to the LangChain4j project. Its goal is to collect and maintain a growing set of reusable agentic patterns that can serve as building blocks for creating complex, robust agentic systems.
