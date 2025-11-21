@@ -1,0 +1,209 @@
+---
+layout: post
+title: 'Polyglot AI Agents: WebAssembly Meets the JVM'
+date: 2025-11-25T00:00:00Z
+tags: ai llm agents wasm jvm
+synopsis: 'Showcase how to run multi-language WebAssembly AI agents in a self-contained, enterprise-ready way with Quarkus'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/agentic
+
+This post targets enterprise Quarkus applications that need polyglot flexibility with centralized observability, governance, and scaling. Our question is simple: can we take the lessons from browser experiments and ship AI agents that run on the JVM while still speaking Rust, Go, Python, and JavaScript? The https://github.com/roastedroot/wasm-java-agents-blueprint[WASM Java Agents blueprint] answers yes by packaging a WebAssembly runtime, LangChain4j, and a local TinyLlama model directly into a Quarkus app.
+
+Running AI agents entirely inside the browser keeps data on the edge while still benefitting from advanced language models. In https://blog.mozilla.ai/wasm-agents-ai-agents-running-in-your-browser/[his first post], Davide Eynard shows how to assemble a browser-native agentic framework using Python.
+In the follow-up, https://blog.mozilla.ai/3w-for-in-browser-ai-webllm-wasm-webworkers/[Baris Guler's "3W for in-browser AI"], Guler turns that prototype into a practical stack: WebLLM runs the models locally, WebAssembly bundles tools compiled from multiple languages, and WebWorkers keep each agent off the main thread.
+
+== Why the JVM for AI Agents?
+
+Enterprise applications need centralized management, resource optimization, security controls, and integration with existing infrastructure. The JVM's mature ecosystem and battle-tested tooling make it an ideal platform for deploying AI agents at scale. For this use case, it offers several key advantages:
+
+*Enterprise-Grade Infrastructure*: Built-in monitoring, profiling, debugging tools, and enterprise security features that are battle-tested in production environments.
+
+*Self-Contained Deployment*: Everything runs within JVM boundaries—no external dependencies, no complex toolchain management, just a single JAR file that contains all the AI capabilities.
+
+*Polyglot Capabilities*: WebAssembly on the JVM provides a unified execution model that supports multiple languages (Rust, Go, Python, JavaScript) with secure isolation. Diverse agents coexist within the same process without sharing memory, maintaining strong safety boundaries.
+
+== Architecture: The JVM as a Polyglot AI Runtime
+
+The JVM serves as a unified runtime for multi-language AI agents through four layers:
+
+The *REST API layer* handles HTTP requests with path-based routing (`/hello/{language}/{lang}/{name}`).
+
+The *service layer* provides a ChatService for LLM prompting and language-specific services for each agent type (Rust, Go, Python, JavaScript). Agents are parametric, accepting configuration via the REST API.
+
+The *WebAssembly runtime layer* integrates WASM modules from different languages using https://github.com/dylibso/chicory[Chicory] for Rust/Go and the https://extism.org/[Extism] https://github.com/extism/chicory-sdk[Chicory SDK] for Python.
+
+The *AI integration layer* connects the LLM using https://github.com/langchain4j/langchain4j[LangChain4j] for Java integration, https://github.com/jlama-ai/jlama[JLama] (Java LLaMA implementation) for model inference, and `TinyLlama-1.1B-Chat-v1.0` for local processing. LangChain4j supports both local and cloud models with a modular architecture. JLama and Chicory run entirely within the JVM, keeping everything self-contained. `TinyLlama-1.1B-Chat-v1.0` is compact enough to run efficiently on development machines, demonstrating that local inference doesn't require massive resources.
+
+[.text-center]
+.JVM as a Polyglot AI Agent Runtime
+image::wasm-agents.png[width=50%, align="center", alt="JVM as a Polyglot AI Agent Runtime"]
+
+== The Polyglot Advantage
+
+Each language, when compiled to WebAssembly, brings different strengths to AI agents:
+
+*Rust*: Compiles to compact, close-to-native performance WASM modules with predictable memory usage
+
+*Go*: TinyGo produces small WASM binaries with WASI support, ideal for lightweight agents
+
+*Python*: PyO3 compilation to WASM preserves Python's expressiveness while enabling sandboxed execution
+
+*JavaScript*: QuickJS integration allows dynamic scripting and runtime flexibility within the JVM
+
+All these languages run as isolated WASM modules within the same JVM process. This means you can build agents in the language that best fits each task, then deploy them together in a single application.
+
+== Performance and Resource Efficiency
+
+The JVM approach delivers several performance benefits:
+
+*Memory Efficiency*: The JVM's garbage collector manages memory uniformly across all WASM modules, eliminating the complexity of multi-runtime memory management.
+
+*Resource Sharing*: All agents run in the same JVM process, reducing memory overhead and improving resource utilization.
+
+*Enterprise Monitoring*: Built-in JVM monitoring tools provide visibility into agent performance, memory usage, and execution patterns.
+
+*Scalability*: The stateless design enables horizontal scaling across multiple JVM instances with load balancing and container orchestration.
+
+=== Try It Yourself
+
+Getting started is straightforward:
+
+[source,shell]
+----
+# Clone the repository
+git clone https://github.com/roastedroot/wasm-java-agents-blueprint.git
+cd wasm-java-agents-blueprint
+
+# Start the application
+./mvnw quarkus:dev
+
+# Test the polyglot agents
+curl -X PUT "http://localhost:8080/hello/rust/en/Alice" \
+     -H "Content-Type: text/plain" \
+     --data "Tell me about yourself"
+
+curl -X PUT "http://localhost:8080/hello/go/fr/Bob" \
+     -H "Content-Type: text/plain" \
+     --data "What can you do?"
+
+curl -X PUT "http://localhost:8080/hello/py/de/Charlie" \
+     -H "Content-Type: text/plain" \
+     --data "Explain your capabilities"
+
+curl -X PUT "http://localhost:8080/hello/js/es/Diana" \
+     -H "Content-Type: text/plain" \
+     --data "How do you work?"
+----
+
+Here's a Rust agent example that compiles to WASM:
+
+[source,rust]
+----
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+
+#[no_mangle]
+pub extern "C" fn greet(lang: *const c_char, name: *const c_char) -> *mut c_char {
+    let lang_str = unsafe { CStr::from_ptr(lang).to_string_lossy() };
+    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+
+    let result = match lang_str.as_ref() {
+        "fr" => format!("Bonjour, {}!", name_str),
+        "de" => format!("Hallo, {}!", name_str),
+        "en" => format!("Hello, {}!", name_str),
+        "es" => format!("¡Hola, {}!", name_str),
+        _ => format!("Hello, {}!", name_str),
+    };
+
+    match CString::new(result) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+----
+
+And here's how you call it from a Quarkus service:
+
+[source,java]
+----
+@ApplicationScoped
+public class RustGreetingService {
+
+    private static final WasmModule module =
+            Parser.parse(
+                    RustGreetingService.class.getResourceAsStream("/demos/rust/hello_agent.wasm"));
+
+    public String greeting(String name, String lang) {
+        Instance instance = Instance.builder(module).withStart(false).build();
+        var greetFn = instance.exports().function("greet");
+
+        var namePtr = writeCString(instance, name);
+        var langPtr = writeCString(instance, lang);
+        var resultPtr = (int) greetFn.apply(langPtr, namePtr)[0];
+
+        var result = instance.memory().readCString(resultPtr);
+        return result;
+    }
+}
+----
+
+== What This Enables
+
+The JVM approach supports several practical use cases:
+
+*Centralized AI Services*: Deploy AI agents as microservices using existing Java monitoring, security, and deployment tools.
+
+*Multi-Language AI Pipelines*: Build workflows using agents written in different languages within the same application.
+
+*Enterprise Integration*: Integrate with existing Java systems, databases, and middleware without additional infrastructure.
+
+*Resource Optimization*: Share JVM processes across agents, reducing memory overhead.
+
+*Security and Compliance*: Use JVM security features and access controls for sensitive AI workloads.
+
+== Future Enhancements
+
+Potential improvements to consider:
+
+*Agent Orchestration*: Coordinate agents across languages—Rust for performance-critical tasks, Python for data processing, JavaScript for dynamic behavior.
+
+*Performance Optimization*: Use GraalVM native compilation to reduce memory footprint and improve startup times. Tune garbage collection for WASM workloads.
+
+*Distributed Execution*: Extend to multiple JVM instances with shared state and message passing between agents.
+
+*Monitoring*: Integrate Micrometer, Prometheus, and distributed tracing for agent performance visibility.
+
+*Dynamic Loading*: Support hot-swapping agent implementations without restarts for A/B testing and gradual rollouts.
+
+*Middleware Integration*: Connect with message queues, event streams, and service buses for complex workflows.
+
+== Conclusion
+
+The JVM's polyglot capabilities, combined with WebAssembly and LangChain4j, provide a practical platform for deploying AI agents in enterprise environments. Chicory enables secure WebAssembly execution, while LangChain4j handles AI integration. The result is a self-contained system that integrates with existing Java infrastructure.
+
+The browser-based 3W approach and the JVM approach serve different needs. The browser prioritizes user control and privacy. The JVM emphasizes enterprise integration and resource efficiency.
+
+Choose the runtime based on your requirements. Use the browser for consumer applications and privacy-sensitive scenarios. Use the JVM for enterprise deployments and resource-intensive applications.
+
+== Links and Resources
+
+This blueprint is built on top of several excellent open-source projects. Here are the key technologies and resources:
+
+=== Technologies
+
+- https://quarkus.io/[Quarkus] - Cloud-native Java framework
+- https://github.com/langchain4j/langchain4j[LangChain4j] - Java AI framework for LLM integration
+- https://github.com/jlama-ai/jlama[JLama] - Java LLaMA implementation for local inference
+- https://github.com/dylibso/chicory[Chicory] - Pure Java WebAssembly runtime
+- https://github.com/extism/chicory-sdk[Extism Chicory SDK] - Extism SDK for Chicory
+- https://github.com/extism/python-pdk[Extism Python PDK] - Python Plugin Development Kit
+- https://github.com/roastedroot/quickjs4j[QuickJS4j] - JavaScript execution in the JVM
+- https://tinygo.org/[TinyGo] - Go compiler for WebAssembly
+- https://github.com/PyO3/pyo3[PyO3] - Rust bindings for Python
+
+=== Related Projects
+
+- https://github.com/mozilla-ai/wasm-agents-blueprint[wasm-agents-blueprint] - Browser-based WASM agents blueprint
+- https://github.com/hwclass/wasm-browser-agents-blueprint[wasm-browser-agents-blueprint] - Browser-native AI agents with WebLLM + WASM + WebWorkers
+- https://developer-hub.mozilla.ai/[Mozilla.ai Blueprints Hub] - AI agent blueprints and examples
