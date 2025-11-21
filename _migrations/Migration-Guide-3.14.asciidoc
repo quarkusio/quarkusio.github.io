@@ -1,0 +1,190 @@
+---
+date: 2024-08-24
+---
+:toc:
+
+[NOTE]
+====
+We highly recommend the use of https://quarkus.io/guides/update-quarkus[`quarkus update`] to update to a new version of Quarkus.
+
+Items marked below with :gear: :white_check_mark: are automatically handled by https://quarkus.io/guides/update-quarkus[`quarkus update`].
+====
+
+== JPA / Hibernate ORM
+
+=== Upgrade to Hibernate ORM 6.6
+
+The Quarkus extensions for Hibernate ORM was upgraded to Hibernate ORM 6.6.
+
+Hibernate ORM 6.6 is largely backwards-compatible with Hibernate ORM 6.5,
+but a few checks have been tightened, so applications with incorrect configuration, mapping, or queries
+may now throw exceptions where they used to experience only warnings and malfunctions. In particular:
+
+* https://docs.jboss.org/hibernate/orm/6.6/migration-guide/migration-guide.html#merge-versioned-entity-when-row-is-deleted[Merging detects invalid creation attempts]:
+passing to `merge` an entity with a `@GeneratedValue` identifier or a `@Version` property set to a non-null value
+will now fail, whereas it used to (incorrectly) create the entity in database.
+* https://docs.jboss.org/hibernate/orm/6.6/migration-guide/migration-guide.html#explicit-validation-of-annotated-class-types[Applying both `@MappedSuperclass` and `@Embeddable` on the same type is not longer allowed].
+
+Some features are also now enabled by default to avoid unexpected -- and arguably error-prone -- behavior:
+
+* https://docs.jboss.org/hibernate/orm/6.6/migration-guide/migration-guide.html#discriminator-based-embeddable-inheritance[Embeddables with `@Embeddable` annotated subtypes will now use discriminator-based inheritance by default].
+
+Finally, behavior was altered in some cases to comply with the JPA specification:
+
+* https://docs.jboss.org/hibernate/orm/6.6/migration-guide/migration-guide.html#criteria-jakartapersistencecriteriaexpressionasclass[`jakarta.persistence.criteria.Expression#as(Class)` is now an unchecked cast]: use `org.hibernate.query.criteria.JpaExpression#cast(Class)` to perform a checked cast.
+
+See the https://docs.jboss.org/hibernate/orm/6.6/migration-guide/migration-guide.html[Hibernate ORM 6.6 migration guide] for more details.
+
+== SmallRye Health
+
+Some configuration properties were incorrectly under the `quarkus.health` config root whereas they should have been under the `quarkus.smallrye-health` config root to be consistent.
+
+This includes:
+
+- `quarkus.health.extensions.enabled` -> `quarkus.smallrye-health.extensions.enabled`
+- `quarkus.health.openapi.included` -> `quarkus.smallrye-health.openapi.included`
+
+The old properties have been deprecated and will be removed at some point in the future.
+
+== MongoDB
+
+The MongoDB client has been upgraded from 4.11.1 to 5.1.3.
+
+== Dev Services
+
+Several Dev Services default images have been updated:
+
+- PostgreSQL from 14 to 16
+- MySQL from 8.0 to 8.4
+- MongoDB from 4.4 to 7.0
+- Elasticsearch from 8.13 to 8.15
+- OpenSearch from 2.13 to 2.16
+
+NOTE: You can configure Quarkus explicitly to use a specific image for each Dev Service, e.g. see https://quarkus.io/guides/elasticsearch-dev-services#configuring-the-image[here for Elasticsearch/OpenSearch].
+
+== For extension developers
+
+This paragraph only concerns people developing their own Quarkus extensions.
+
+=== Getting your application to compile
+
+The extension annotation processor that is used to generate some files required for the Quarkus runtime and the configuration documentation has been redeveloped from scratch.
+It is a lot more flexible but comes with some new constraints:
+
+- You cannot mix configuration using the legacy `@ConfigRoot` approach (i.e. without a corresponding `@ConfigMapping` annotation) and the new `@ConfigMapping` approach in the same module. This shouldn't be too much of a problem.
+- If you use the new `@ConfigMapping` approach, you don't need to configure anything. The change should be transparent for you.
+- If you use the legacy `@ConfigRoot` approach (i.e. without a corresponding `@ConfigMapping` annotation), you need to inform the annotation processor of it:
++
+[source,xml]
+----
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.quarkus</groupId>
+                            <artifactId>quarkus-extension-processor</artifactId>
+                            <version>${quarkus.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                    <compilerArgs>
+                        <arg>-AlegacyConfigRoot=true</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+----
++
+The important part is the added `compilerArgs` `-AlegacyConfigRoot=true`.
++
+Note that this will result in a warning when compiling the test classes (given you don't have config annotations in your test classes, the annotation processor will not be triggered and you will get a warning telling you the `legacyConfigRoot` parameter is unused).
+To alleviate this issue, it is recommended to only enable the annotation processor for the `default-compile` execution (which compiles the main classes):
++
+[source,xml]
+----
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <configuration>
+                            <annotationProcessorPaths>
+                                <path>
+                                    <groupId>io.quarkus</groupId>
+                                    <artifactId>quarkus-extension-processor</artifactId>
+                                    <version>${quarkus.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                            <compilerArgs>
+                                <arg>-AlegacyConfigRoot=true</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+----
+
+=== Publishing the config documentation
+
+The config documentation used to be generated in the root `target/generated/config` directory by the extension annotation processor itself.
+
+This is not the case anymore: the extension annotation processor builds a model that is in each module, and we have a Maven plugin that assembles the model and generate the Asciidoc output.
+
+In your typical Quarkiverse extension, you would have to apply the following changes:
+
+- Set the version of the `quarkus-config-doc-maven-plugin` in the root POM `<pluginManagement>` section
+- Drop the copy of the generated doc in `docs/pom.xml`
+- Set up the `quarkus-config-doc-maven-plugin` in `docs/pom.xml`
+
+A typical diff would look like the following:
+
+[source,diff]
+----
+diff --git a/docs/pom.xml b/docs/pom.xml
+index 71be73f..5022bf4 100644
+--- a/docs/pom.xml
++++ b/docs/pom.xml
+@@ -56,6 +56,14 @@
+                     </execution>
+                 </executions>
+             </plugin>
++            <plugin>
++                <groupId>io.quarkus</groupId>
++                <artifactId>quarkus-config-doc-maven-plugin</artifactId>
++                <extensions>true</extensions>
++                <configuration>
++                    <targetDirectory>${project.basedir}/modules/ROOT/pages/includes/</targetDirectory>
++                </configuration>
++            </plugin>
+             <plugin>
+                 <artifactId>maven-resources-plugin</artifactId>
+                 <executions>
+@@ -68,11 +76,6 @@
+                         <configuration>
+                             <outputDirectory>${project.basedir}/modules/ROOT/pages/includes/</outputDirectory>
+                             <resources>
+-                                <resource>
+-                                    <directory>${project.basedir}/../target/asciidoc/generated/config/</directory>
+-                                    <include>quarkus-github-app.adoc</include>
+-                                    <filtering>false</filtering>
+-                                </resource>
+                                 <resource>
+                                     <directory>${project.basedir}/templates/includes</directory>
+                                     <include>attributes.adoc</include>
+diff --git a/pom.xml b/pom.xml
+index c87d42b..10cbacd 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -98,6 +98,11 @@
+                     <artifactId>quarkus-maven-plugin</artifactId>
+                     <version>${quarkus.version}</version>
+                 </plugin>
++                <plugin>
++                    <groupId>io.quarkus</groupId>
++                    <artifactId>quarkus-config-doc-maven-plugin</artifactId>
++                    <version>${quarkus.version}</version>
++                </plugin>
+                 <plugin>
+                     <groupId>org.apache.maven.plugins</groupId>
+                     <artifactId>maven-compiler-plugin</artifactId>
+----
