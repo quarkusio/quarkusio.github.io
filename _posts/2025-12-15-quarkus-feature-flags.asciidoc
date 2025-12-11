@@ -1,0 +1,265 @@
+---
+layout: post
+title: 'Quarkus feature flags'
+date: 2025-12-15
+tags: extension
+synopsis: 'We introduce a new Quarkiverse project - a lightweight and extensible feature flags extension.'
+author: mkouba
+---
+
+Feature flags are a proven and popular technique.
+In essence, a feature flag makes it possible to turn on-off and/or configure a specific functionality in your application.
+It is also referred to as toggles or switches.
+There are many types of feature flags.
+You may have heard of a "killer switch" that simply disables a problematic feature instantly.
+Feature flags can be used to implement "gradual rollout" to deliver new features gradually to small groups of users (aka beta testers).
+Permission flags are used to control access for different users.
+And so on.
+However, that's not the subject of this blogpost.
+We would like to introduce https://github.com/quarkiverse/quarkus-flags/[Quarkus Feature Flags] - a Quarkiverse project that aims to provide a _lightweight_ and _extensible_ feature flags Quarkus extension.
+
+More specifically, it provides:
+
+- A blocking/non-blocking API to access feature flags.
+- A non-blocking SPI to provide flags and externalize the computation of a flag value.
+- Several built-in flag providers:
+   - Quarkus config can be used to define feature flags,
+   - An in-memory flag repository which is useful for testing and dynamic registration of flags.
+- *Hibernate ORM* module, where feature flags are mapped from an annotated entity and are automatically loaded from the database.
+- *Security* module, so that it's possible to evaluate flags based on the current `SecurityIdentity`.
+- *Qute* module, so that it's possible to use the flags directly in templates.
+- *CRON* module with a flag evaluator that matches a specific CRON expression.
+
+Note that the goal of this extension is not to replace robust solutions such as https://openfeature.dev/[OpenFeature] and https://www.getunleash.io/[Unleash].
+Instead, we would like to offer a flexible option that integrates well with other parts of the Quarkus ecosystem.
+
+== Flag
+
+In this extension, a feature flag is represented by the `io.quarkiverse.flags.Flag` interface.
+It refers to a specific feature with a string identifier and provides several convenient methods to compute the _current value_.
+The value of a feature flag can be represented as `boolean`, `string` or `integer`.
+There can be only one flag for a given feature at a given time.
+A flag can also expose metadata which that can be leveraged in the SPI.
+
+== Simple example
+
+Let's start simple.
+We will create a flag for a feature called `my-feature-alpha` in the `application.properties` file.
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".value=true <1>
+----
+<1> Define a _runtime_ flag for feature `my-feature-alpha` with initial value `true`.
+
+TIP: A `runtime` feature flag can be overriden at runtime, e.g. using a system property or an environment variable. You can also define a flag fixed at build time, i.e. `quarkus.flags.build."my-feature-alpha".value=true`. However, its values ​​cannot be modified at runtime.
+
+The `io.quarkiverse.flags.Flags` interface represents the central point to access feature flags.
+The container registers a CDI bean that implements `Flags` automatically.
+Therefore, we will simply inject `Flags` and use one of its convenient methods.
+
+[source,java]
+----
+package org.example;
+
+import io.quarkiverse.flags.Flags;
+import jakarta.inject.Inject;
+
+@ApplicanScoped
+public class MyService {
+
+    @Inject
+    Flags flags;
+
+    void call() {
+        if (flags.isEnabled("my-feature-alpha")) {
+            // This business logic is executed only if "my-feature-alpha" value evaluates to true
+        }
+    }
+}
+----
+
+You can also access the flag in your UI built with Qute:
+
+[source,html]
+----
+<!DOCTYPE html>
+<html>
+<head>
+   <title>Flags</title>
+</head>
+<body>
+   <h1>Hello - Quarkus Club 2025</h1>
+   {#if flag:enabled('my-feature-alpha')} <1>
+   <p>Feature alpha is enabled!
+   {/if}
+</body>
+</html>
+----
+<1> The `flag:` namespace provides other useful properties and methods.
+
+NOTE: If you want to use the Qute integration in your application then you'll need to add the `io.quarkiverse.flags:quarkus-flags-qute` extension to your build file first.
+
+== Flag providers
+
+So far we defined the flag in the Quarkus config.
+This is not very flexible.
+Let's try some other built-in flag providers.
+We can use the `io.quarkiverse.flags.InMemoryFlagProvider` - an in-memory repository that can be useful for testing and dynamic registration.
+
+[source,java]
+----
+import io.quarkiverse.flags.BooleanValue;
+import io.quarkiverse.flags.Flag;
+import io.quarkiverse.flags.InMemoryFlagProvider;
+import io.quarkus.runtime.Startup;
+import jakarta.inject.Inject;
+
+@ApplicationScoped
+public class MyInitService {
+
+   AtomicBoolean alpha = new AtomicBoolean();
+
+   @Inject
+   InMemoryFlagProvider provider; <1>
+
+   @Startup <2>
+   void addFlags() {
+      provider.addFlag(Flag.builder("my-feature-alpha") <3>
+            .setCompute(ctx -> BooleanValue.from(alpha.get())) <4>
+            .build()); 
+   }
+}
+---- 
+<1> Inject `InMemoryFlagProvider` to add/remove flags. 
+<2> This method is automatically executed at application startup.
+<3> The `InMemoryFlagProvider` has higher priority and overrides the flag provided in config.
+<4> The current value of `my-feature-alpha` is calculated from `MyInitService#alpha`.
+
+This way we can control the current value of `my-feature-alpha` easily.
+However, in real use cases we will probably need to persist the feature flags in an external system.
+
+The https://docs.quarkiverse.io/quarkus-flags/dev/hibernate-orm.html[`quarkus-flags-hibernate-orm` extension] provides integration with Hibernate ORM.
+It discovers all JPA entities annotated with `@io.quarkiverse.flags.hibernate.common.FlagDefinition` and generates a flag provider automatically.
+The generated provider simply loads all flags from the database.
+A mapping looks like:
+
+[source,java]
+----
+import jakarta.persistence.Entity;
+
+import io.quarkiverse.flags.hibernate.common.FlagDefinition;
+import io.quarkiverse.flags.hibernate.common.FlagFeature;
+import io.quarkiverse.flags.hibernate.common.FlagValue;
+import io.quarkus.hibernate.orm.panache.PanacheEntity;
+
+@FlagDefinition <1>
+@Entity
+public class MyFlag extends PanacheEntity {
+
+    @FlagFeature <2>
+    public String feature;
+
+    @FlagValue <3>
+    public String value;
+
+}
+----
+<1> Marks a flag definition entity.
+<2> Defines the feature name of a feature flag.
+<3> Defines the value of a feature flag.
+
+TIP: The feature flags are collected at runtime. More specifically, the extension injects all CDI beans that implement `io.quarkiverse.flags.spi.FlagProvider` and calls the `FlagProvider#getFlags()` method. You can easily implement your own provider.
+
+== Flag evaluators
+
+In real applications, you will very likely need some dynamic evaluation logic based on some application state, such as the current user or current time.
+There is the `io.quarkiverse.flags.spi.FlagEvaluator` SPI which makes it possible to externalize the computation of the current value of a feature flag.
+Flag evaluators must be CDI beans.
+By default, a flag can reference one `FlagEvaluator` in its _metadata_ with a key `evaluator`. This evaluator is automatically used to compute the current value for any flag produced by means of `Flag.Builder` (i.e. created by `Flag#builder(String)`).
+There are also several built-in evaluators available.
+
+=== Current time
+
+The `io.quarkiverse.flags.TimeSpanFlagEvaluator` evaluates a flag based on the current date-time obtained from the system clock in the default time-zone.
+The current time must be after the `start-time` (exclusive) and before the `end-time` (exclusive).
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".meta.evaluator=quarkus.time-span <1>
+quarkus.flags.runtime."my-feature-alpha".meta.start-time=2001-01-01T10:15:30+01:00[Europe/Prague] <2> <3>
+----
+<1> Assign the evaluator to the flag. Note that we do not specify the initial value for `my-feature-alpha` - it is `true` by default.
+<2> The current date-time must be *after* the specified `start-time`. The `java.time.format.DateTimeFormatter.ISO_ZONED_DATE_TIME` is used to parse the `start-time` value.
+<3> We do not specify the `end-time` metadata value, so there is no upper bound for the time inverval.
+
+=== Current user
+
+The `SecurityIdentityFlagEvaluator` from the https://docs.quarkiverse.io/quarkus-flags/dev/security.html[`quarkus-flags-security` extension] can be used to compute the current value of a feature flag based on the current `SecurityIdentity`.
+A typical feature flag configuration looks like:
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".meta.evaluator=quarkus.security.identity <1>
+quarkus.flags.runtime."my-feature-alpha".meta.authenticated=true <2>
+quarkus.flags.runtime."my-feature-alpha".meta.roles-allowed=foo,bar <3>
+----
+<1> Assign the evaluator to the flag. Note that we do not specify the initial value for `my-feature-alpha` - it is `true` by default.
+<2> The current user must be authenticated.
+<3> The current user must have one of the defined roles.
+
+The `UsernameRolloutFlagEvaluator`, on the other hand, is an evaluator using a simple percentage-based rollout strategy, based on a consistent numerical representation of the current user name.
+It can be used to implement gradual rollout.
+A typical feature flag configuration may look like:
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".meta.evaluator=quarkus.security.username-rollout <1>
+quarkus.flags.runtime."my-feature-alpha".meta.rollout-percentage=20 <2>
+----
+<1> Assign the evaluator to the flag. Note that we do not specify the initial value for `my-feature-alpha` - it is `true` by default.
+<2> Enable the flag for the given percentage of users.
+
+=== CRON 
+
+The https://docs.quarkiverse.io/quarkus-flags/dev/cron.html[quarkus-flags-cron] extension provides the `CronFlagEvaluator` that can be used to compute the current value of a feature flag based on the current date-time obtained from the system clock in the default time-zone and the configured CRON expression.
+A typical feature flag configuration may look like:
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".meta.evaluator=quarkus.cron <1>
+quarkus.flags.runtime."my-feature-alpha".meta.authenticated=* * * * mon <2>
+----
+<1> Assign the evaluator to the flag. Note that we do not specify the initial value for `my-feature-alpha` - it is `true` by default.
+<2> The current date-time must match the given CRON expression. In this particular case, the flag will be enabled *every Monday*.
+
+NOTE: By default, the Unix/crontab syntax is used. However, it is also possible to use the syntax from Cron4j, Quartz and Spring. For more information, see https://docs.quarkiverse.io/quarkus-flags/dev/cron.html[the documentation].
+
+=== The case for multiple evaluators
+
+Sometimes it might be useful to combine several evaluators to compute the value of a flag.
+The core extension provides `io.quarkiverse.flags.CompositeFlagEvaluator` that evaluates a flag with the specified sub-evaluators.
+
+[source,properties]
+----
+quarkus.flags.runtime."my-feature-alpha".meta.evaluator=quarkus.composite <1>
+quarkus.flags.runtime."my-feature-alpha".meta.sub-evaluators=quarkus.time-span, quarkus.security.identity <2>
+quarkus.flags.runtime."my-feature-alpha".meta.start-time=2026-01-01T12:00:00+01:00[Europe/Prague] <3>
+quarkus.flags.runtime."my-feature-alpha".meta.roles-allowed=admin <4>
+----
+<1> Assign the evaluator to the flag. Note that we do not specify the initial value for `my-feature-alpha` - it is `true` by default.
+<2> The value of `sub-evaluators` represents a comma-separated list of sub-evaluator identifiers. They are executed in the specified order. In this particular case, the `TimeSpanFlagEvaluator` is executed first and then the `SecurityIdentityFlagEvaluator`.
+<3> The current date-time must be after the specified start-time.
+<4> The current user must have the role `admin`.
+
+== Extensibility
+
+Flag providers and flag evaluators are CDI beans.
+So all you have to do is add a bean that implements `FlagProvider` or `FlagEvaluator` in your application.
+You can use CDI interceptors and even decorate these components.
+
+== Conclusion
+
+Quarkus Feature Flags is a lightweight and extensible extension that can help you build more flexible applications.
+Feedback, feature requests and contributions are welcome.
+Feel free to create questions and issues on GitHub repository: https://github.com/quarkiverse/quarkus-flags/issues.
