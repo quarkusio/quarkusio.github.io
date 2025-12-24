@@ -8,7 +8,7 @@
 
 
 <head>
-  <title>Using Java Flight Recorder - main - Quarkus</title>
+  <title>Using JDK Flight Recorder - main - Quarkus</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="
@@ -50,7 +50,7 @@
   <meta name="twitter:site" content="@QuarkusIO"> 
   <meta name="twitter:creator" content="@QuarkusIO">
   <meta property="og:url" content="https://quarkus.io/version/main/guides/jfr" />
-  <meta property="og:title" content="Using Java Flight Recorder - main" />
+  <meta property="og:title" content="Using JDK Flight Recorder - main" />
   <meta property="og:description" content="Quarkus: Supersonic Subatomic Java" />
   <meta property="og:image" content="https://quarkus.io/assets/images/quarkus_card.png" />
   
@@ -228,11 +228,11 @@
       
       <a class="editlink" href="https://github.com/quarkusio/quarkus/edit/main/docs/src/main/asciidoc/jfr.adoc">Edit this Page</a>
       
-      <h1 class="text-caps">Using Java Flight Recorder </h1>
+      <h1 class="text-caps">Using JDK Flight Recorder </h1>
       <div id="preamble">
 <div class="sectionbody">
 <div class="paragraph">
-<p>This guide explains how <a href="https://openjdk.org/jeps/328">Java Flight Recorder</a> (JFR) can be extended to provide additional insight into your Quarkus application.
+<p>This guide explains how <a href="https://openjdk.org/jeps/328">Flight Recorder</a> can be extended to provide additional insight into your Quarkus application.
 JFR records various information from the Java standard API and JVM as events.
 By adding the Quarkus JFR extension, you can add custom Quarkus events to JFR. This will help you solve potential problems in your application.</p>
 </div>
@@ -439,7 +439,7 @@ We can launch the application with JFR configured to be enabled from the startup
 </div>
 </div>
 <div class="paragraph">
-<p>With the Java Flight Recorder and the application running, we can make a request to the provided endpoint:</p>
+<p>With the JDK Flight Recorder and the application running, we can make a request to the provided endpoint:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -710,7 +710,7 @@ The following three JFR events are recorded in JFR chunks.</p>
 <div class="sect2">
 <h3 id="native-image"><a class="anchor" href="#native-image"></a>Native Image</h3>
 <div class="paragraph">
-<p>Native executables supports Java Flight Recorder.
+<p>Native executables supports JDK Flight Recorder.
 This extension also supports native executables.</p>
 </div>
 <div class="paragraph">
@@ -840,8 +840,45 @@ We launch the application with JFR configured so that it is enabled from the sta
 <h2 id="adding-new-events"><a class="anchor" href="#adding-new-events"></a>Adding new events</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>This section is for those who would like to add new events to this extension.</p>
+<p>This section is for extension authors who want to add new JFR events.</p>
 </div>
+<div class="sect2">
+<h3 id="depending-on-the-api-module"><a class="anchor" href="#depending-on-the-api-module"></a>Depending on the API module</h3>
+<div class="paragraph">
+<p>The Quarkus JFR extension separates the public API from the runtime implementation.
+As a result, other extensions can implement JFR-based instrumentation by depending only on the JFR API module, without adding a dependency on the Quarkus JFR extension implementation itself.</p>
+</div>
+<div class="paragraph">
+<p>At deployment time, an extension can detect whether the application has enabled the Quarkus JFR extension by using Quarkus capabilities:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.deployment.Capabilities;
+import io.quarkus.deployment.Capability;
+import io.quarkus.deployment.annotations.BuildStep;
+import io.quarkus.deployment.annotations.BuildSteps;
+
+@BuildSteps
+class MyProcessor {
+
+    @BuildStep
+    void step(Capabilities capabilities) {
+        if (capabilities.isPresent(Capability.JFR)) {
+            // The Quarkus JFR extension is enabled
+            // Register JFR-related build items, bytecode transformations, etc.
+        }
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This pattern allows your extension to:
+* compile against stable API types only, and
+* activate JFR instrumentation only when the Quarkus JFR extension is present in the application.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="associating-events-by-request"><a class="anchor" href="#associating-events-by-request"></a>Associating events by request</h3>
 <div class="paragraph">
 <p>We recommend that new events be associated with existing events.
 Associations are useful when looking at the details of a process that is taking a long time.
@@ -868,14 +905,18 @@ When the two events are associated, we know immediately which datastore event wa
 See <a href="#identifying-requests">Identifying Requests</a> for more information on Request IDs.</p>
 </div>
 <div class="paragraph">
-<p>In specific code, the following two steps are required.
-First, implement <code>traceId</code> and <code>spanId</code> on the new event as follows
-The <code>@TraceIdRelational</code> and <code>@SpanIdRelational</code> attached to these events will provide the association.</p>
+<p>In code, you typically need the following two steps.</p>
+</div>
+<div class="sect3">
+<h4 id="1-add-tracespan-identifiers-to-your-event"><a class="anchor" href="#1-add-tracespan-identifiers-to-your-event"></a>1) Add trace/span identifiers to your event</h4>
+<div class="paragraph">
+<p>Implement <code>traceId</code> and <code>spanId</code> on the new event as follows.
+The <code>@TraceIdRelational</code> and <code>@SpanIdRelational</code> annotations mark these fields as relational identifiers used for association.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.jfr.runtime.SpanIdRelational;
-import io.quarkus.jfr.runtime.TraceIdRelational;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.jfr.api.SpanIdRelational;
+import io.quarkus.jfr.api.TraceIdRelational;
 import jdk.jfr.Description;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
@@ -897,12 +938,15 @@ public class NewEvent extends Event {
 }</code></pre>
 </div>
 </div>
+</div>
+<div class="sect3">
+<h4 id="2-populate-the-identifiers-from-the-idproducer"><a class="anchor" href="#2-populate-the-identifiers-from-the-idproducer"></a>2) Populate the identifiers from the IdProducer</h4>
 <div class="paragraph">
-<p>Then you get the information to store in the event from the <code>IdProducer</code> object&#8217;s <code>getTraceId()</code> and <code>getSpanId()</code>.</p>
+<p>Obtain the values to store in the event from an <code>IdProducer</code> and set them just before committing the event.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.jfr.runtime.IdProducer;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.jfr.api.IdProducer;
 
 public class NewInterceptor {
 
@@ -916,14 +960,16 @@ public class NewInterceptor {
         // The process you want to measure
 
         event.end();
-        if (endEvent.shouldCommit()) {
+        if (event.shouldCommit()) {
             event.setTraceId(idProducer.getTraceId());
             event.setSpanId(idProducer.getSpanId());
             // call other setters which you want to add
-            endEvent.commit();
+            event.commit();
         }
     }
 }</code></pre>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -1041,7 +1087,12 @@ public class NewInterceptor {
 </ul>
 </li>
 <li><a href="#jfr-configuration">JFR configuration</a></li>
-<li><a href="#adding-new-events">Adding new events</a></li>
+<li><a href="#adding-new-events">Adding new events</a>
+<ul class="sectlevel2">
+<li><a href="#depending-on-the-api-module">Depending on the API module</a></li>
+<li><a href="#associating-events-by-request">Associating events by request</a></li>
+</ul>
+</li>
 <li><a href="#configuration-reference">Configuration Reference</a></li>
 </ul></div>
     </div>
