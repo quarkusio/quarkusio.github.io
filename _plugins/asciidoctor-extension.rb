@@ -158,3 +158,31 @@ Extensions.register do
     end
   end
 end
+
+Extensions.register do
+  tree_processor do
+    process do |doc|
+      status = doc.attr('extension-status')
+
+      if status && !status.empty?
+        tooltip = case status
+          when 'experimental'
+            'This extension requests early feedback to mature the idea'
+          when 'preview'
+            'This extension\'s backward compatibility and presence in the ecosystem is not guaranteed'
+          when 'stable'
+            'This extension\'s backward compatibility and presence in the ecosystem are taken very seriously'
+          when 'deprecated'
+            'This extension is likely to be replaced or removed in a future version'
+          else
+            ""
+          end
+        label_html = %(<a class="status-label status-#{status}" title="#{tooltip}" href="#extension-status-note">#{status}</a>)
+
+        label_block = create_pass_block doc, label_html, {}
+        doc.blocks.insert(0, label_block)
+      end
+      doc
+    end
+  end
+end
