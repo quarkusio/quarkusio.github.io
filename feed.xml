@@ -5,8 +5,304 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Mon, 12 Jan 2026 15:04:55 +0000</lastBuildDate>
+        <lastBuildDate>Tue, 13 Jan 2026 03:33:33 +0000</lastBuildDate>
         
+        
+        <item>
+            <title>Towards faster builds</title>
+            <link>
+                https://quarkus.io/blog/building-large-applications/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When we initially released Quarkus, the industry was very much focused on microservices, and that was our primary target.
+However, Quarkus is also perfectly suited for large monoliths, whether you are migrating existing applications to a more modern runtime or building new ones from scratch.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus has always been able to handle large applications, but we have recently made significant improvements in this area, particularly when it comes to build times.
+In this post, we will walk through some of these improvements.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;how-the-story-started&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#how-the-story-started&quot;&gt;&lt;/a&gt;How the story started&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once upon a time, I came across &lt;a href=&quot;https://zestedesavoir.com/billets/4876/quarkus-spring-boot-et-les-monolithes/&quot;&gt;an article comparing Spring Boot and Quarkus for building large monoliths&lt;/a&gt; (it&amp;#8217;s in French, apologies to non-French speakers, but the results are largely self-explanatory).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The article compared a Spring Boot application and a Quarkus application implementing the same functionality and even included a generator to create both applications. The generated applications are simple: a few entities, some REST services, and typical CRUD endpoints.
+What made it really interesting was that you could easily scale up the number of entities and services to see how both frameworks handled larger applications.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;I truly value this kind of feedback: it not only helps us identify areas for improvement, but also provides a reproducible way to explore them.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As expected, Quarkus excelled in memory consumption and startup time.
+But the build time was noticeably higher than Spring Boot&amp;#8217;s.
+Again, this wasn&amp;#8217;t a surprise.
+After all, Quarkus shifts more work to build time.
+But the difference was still significant enough to warrant a closer look.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Long story short: we investigated and we improved. A lot.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;thanks&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#thanks&quot;&gt;&lt;/a&gt;Thanks&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First, I would like to thank the author of the original article, SpaceFox, for writing it and for providing such a useful generator.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As is often the case in the Quarkus world, I was not alone on this journey.
+I would therefore like to thank everyone who contributed through code, discussions, reviews, insights, and feedback.
+In alphabetical order: Tamás Cservenák, Sanne Grinovero, Martin Kouba, David Lloyd, Alexey Loubyansky, Matej Novotny, Yoann Rodière, and Ladislav Thon (and if I missed anyone, please let me know!).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This covers the core Quarkus work, but, as discussed later, several improvements were also made to the &lt;a href=&quot;https://github.com/smallrye/smallrye-open-api&quot;&gt;SmallRye OpenAPI project&lt;/a&gt;.
+For those contributions, I would like to thank Mike Edgar and Martin Panzer.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;our-journey-to-faster-builds&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#our-journey-to-faster-builds&quot;&gt;&lt;/a&gt;Our journey to faster builds&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This kind of journey naturally comes with its fair share of profiling and staring at flame graphs.
+It&amp;#8217;s not just about spotting the hotspots, but also about evaluating whether your changes actually move the needle (in the right direction, hopefully!).
+In the Java world, we&amp;#8217;ve been lucky to have a tool as powerful as &lt;a href=&quot;https://github.com/async-profiler/async-profiler&quot;&gt;Async Profiler&lt;/a&gt; by our side.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As with any optimization effort, the key lies in choosing your battles wisely and carefully weighing the inevitable trade-offs.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;code-optimizations&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#code-optimizations&quot;&gt;&lt;/a&gt;Code optimizations&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A lot of effort was invested in optimizing various parts of the build process: reducing memory allocations and optimizing algorithms and data structures were a big part of it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This work resulted in numerous pull requests across Quarkus, Jandex, and even ByteBuddy.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;parallelization&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#parallelization&quot;&gt;&lt;/a&gt;Parallelization&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our build process is already massively parallelized, but we identified a few areas where this was not the case, for example, the generation of Hibernate ORM proxies. We fixed that.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Another area for improvement was the creation of large JAR archives, which is inherently slow because it involves reading and compressing a significant number of resources, making it both I/O- and CPU-intensive.
+Until now, we were building JARs using a ZipFileSystem, adding resources one by one in a single thread.
+We have since switched to using the parallel compression support provided by Commons Compress.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This change required some fairly extensive refactoring of the JAR assembly code, but it was definitely worth it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;doing-less&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#doing-less&quot;&gt;&lt;/a&gt;Doing less&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;With all these optimizations, the time spent in the various goals of the &lt;code&gt;quarkus-maven-plugin&lt;/code&gt; was cut in half compared to our reference version, 3.25.1.&lt;/strong&gt;
+That&amp;#8217;s great&amp;#8230;&amp;#8203; but building our sample application still took around two minutes, which is more than we would like.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;It&amp;#8217;s time to step back and look at the bigger picture.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For Quarkus applications, we build our own JARs for two main reasons:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;We need to include additional resources and metadata.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;We introduced custom JAR packagings designed to improve startup time.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is the process we optimized by leveraging the parallel compression support provided by Commons Compress.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;However, when using Maven, a Quarkus application is still a traditional &lt;code&gt;jar&lt;/code&gt; Maven project.
+It follows the standard lifecycle for the &lt;code&gt;jar&lt;/code&gt; packaging, which means Maven will also build a conventional JAR using the &lt;code&gt;maven-jar-plugin&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Taking a step back, we actually don&amp;#8217;t need this JAR in 99% of cases, so we should avoid building it (while still keeping the flexibility to do so when absolutely necessary).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In Quarkus 3.31, we introduced the &lt;code&gt;quarkus&lt;/code&gt; packaging, which comes with its own lifecycle.
+This packaging is intended to be used only for the Quarkus application module itself.
+It automatically binds the goals of the &lt;code&gt;quarkus-maven-plugin&lt;/code&gt;, resulting in less boilerplate in your &lt;code&gt;pom.xml&lt;/code&gt; (and no changes required when new goals are added).
+More importantly, it does not bind the &lt;code&gt;maven-jar-plugin&lt;/code&gt; execution, nor the &lt;code&gt;maven-install-plugin&lt;/code&gt;, which leads to significantly faster builds for large applications, and benefits all applications overall.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For newly generated applications, this new &lt;code&gt;quarkus&lt;/code&gt; packaging will be the default.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Once 3.31 is released, you will also be able to switch your existing applications to the new packaging by applying the following changes:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-diff hljs&quot; data-lang=&quot;diff&quot;&gt;diff --git a/pom.xml b/pom.xml
+index 98660b8..3c60220 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -5,6 +5,7 @@
+     &amp;lt;groupId&amp;gt;fr.spacefox.perftests.quarkus&amp;lt;/groupId&amp;gt;
+     &amp;lt;artifactId&amp;gt;perftests-quarkus&amp;lt;/artifactId&amp;gt;
+     &amp;lt;version&amp;gt;1.0.0-SNAPSHOT&amp;lt;/version&amp;gt;
++    &amp;lt;packaging&amp;gt;quarkus&amp;lt;/packaging&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+     &amp;lt;properties&amp;gt;
+         &amp;lt;compiler-plugin.version&amp;gt;3.14.0&amp;lt;/compiler-plugin.version&amp;gt;
+@@ -66,16 +67,6 @@
+                 &amp;lt;artifactId&amp;gt;quarkus-maven-plugin&amp;lt;/artifactId&amp;gt;
+                 &amp;lt;version&amp;gt;${quarkus.platform.version}&amp;lt;/version&amp;gt;
+                 &amp;lt;extensions&amp;gt;true&amp;lt;/extensions&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+-                &amp;lt;executions&amp;gt; &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+-                    &amp;lt;execution&amp;gt;
+-                        &amp;lt;goals&amp;gt;
+-                            &amp;lt;goal&amp;gt;build&amp;lt;/goal&amp;gt;
+-                            &amp;lt;goal&amp;gt;generate-code&amp;lt;/goal&amp;gt;
+-                            &amp;lt;goal&amp;gt;generate-code-tests&amp;lt;/goal&amp;gt;
+-                            &amp;lt;goal&amp;gt;native-image-agent&amp;lt;/goal&amp;gt;
+-                        &amp;lt;/goals&amp;gt;
+-                    &amp;lt;/execution&amp;gt;
+-                &amp;lt;/executions&amp;gt;
+             &amp;lt;/plugin&amp;gt;
+             &amp;lt;plugin&amp;gt;
+                 &amp;lt;artifactId&amp;gt;maven-compiler-plugin&amp;lt;/artifactId&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Use the &lt;code&gt;quarkus&lt;/code&gt; packaging instead of the default &lt;code&gt;jar&lt;/code&gt; packaging.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;This is important and has been present in the generated projects for quite some time. Add it if not already there.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Drop the goals, they will be handled automatically and we don&amp;#8217;t want to run them twice.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To give you an idea of the impact, in our sample large application, &lt;strong&gt;this change alone reduced the build time from two minutes down to 37 seconds&lt;/strong&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;follow-ups&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#follow-ups&quot;&gt;&lt;/a&gt;Follow-ups&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;smallrye-openapi&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#smallrye-openapi&quot;&gt;&lt;/a&gt;SmallRye OpenAPI&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In November 2025, I presented part of this work during the first Quarkus community call (see &lt;a href=&quot;https://github.com/quarkusio/quarkus/discussions/50682&quot;&gt;here&lt;/a&gt; for more information about our community calls).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Following this presentation, Martin Panzer, one of our regular community contributors, opened an &lt;a href=&quot;https://github.com/smallrye/smallrye-open-api/issues/2401&quot;&gt;issue in the SmallRye OpenAPI project&lt;/a&gt; highlighting how slow the build could be for large applications.
+He provided a solid reproducer, which enabled Mike Edgar to implement several improvements that significantly reduced the contribution of SmallRye OpenAPI to the overall build time.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;These changes will directly benefit Quarkus build times, but since SmallRye OpenAPI is also used by other runtimes, they will positively impact the broader Java ecosystem as well.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The takeaway is simple: when you notice something odd, report it, we might be able to improve it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;the-infamous-classtoolargeexception&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-infamous-classtoolargeexception&quot;&gt;&lt;/a&gt;The infamous ClassTooLargeException&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In Quarkus, we generate a significant amount of bytecode, and for large applications you need to be careful, as scale can cause our generated bytecode to hit certain limits (for example, method size or class size limits).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The original French article mentioned hitting such a limit at a particular scale.
+To be fair, that scale was already quite large, but it&amp;#8217;s still not ideal to run into an arbitrary limit just because one class happens to push you over the edge.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We recently alleviated this limitation, and Quarkus can now handle much larger applications.
+This improvement will also be available in Quarkus 3.31.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;java-25&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#java-25&quot;&gt;&lt;/a&gt;Java 25&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Recently, we have rewritten most of our bytecode generation to use Gizmo 2, which is built on top of the Class-File API.
+This work is still ongoing, but key components such as ArC, our CDI implementation, are already relying on it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To preserve compatibility with Java 17 and 21, we currently use a backport of the Class-File API,
+but the Class-File API is relying on some classes from the underlying JDK.
+Several of these classes have seen significant optimizations in Java 25, and as a result,
+our bytecode generation performance improves noticeably when running on Java 25.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As Quarkus 3.31 will provide full support for Java 25, we recommend using it to build your applications and take advantage of these performance improvements.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus has always pushed the boundaries of developer experience: we introduced Dev Mode, pioneered the concept of Dev Services, and much more.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;But sometimes, improving developer experience means going back to the basics: build times.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That&amp;#8217;s exactly what we focused on here, and we hope you&amp;#8217;ll enjoy building your Quarkus applications faster (and greener!).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And if you spot additional opportunities to improve our build process, don&amp;#8217;t hesitate to open an issue: we&amp;#8217;re always happy to hear new ideas.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Tue, 13 Jan 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/building-large-applications/
+            </guid>
+            
+            
+            
+            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
+            
+        </item>
         
         <item>
             <title>Quarkus 3.30.6 - Maintenance release</title>
@@ -9877,61 +10173,6 @@ Many many thanks to each and everyone of them.&lt;/p&gt;
             
             
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>CVE emergency fixes - August 2025</title>
-            <link>
-                https://quarkus.io/blog/cve-fixes-aug-2025/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Today, we released two emergency releases for LTS branches - Quarkus 3.15.6.1 and 3.20.2.1 to address
-&lt;a href=&quot;https://nvd.nist.gov/vuln/detail/CVE-2025-55163&quot;&gt;CVE-2025-55163&lt;/a&gt;.
-The fix mitigates a vulnerability affecting the Quarkus HTTP/2 transport.
-Furthermore, 3.20.2.1 fixes a recent &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues/49133&quot;&gt;regression in context propagation behavior&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are using these versions and the mentioned components, the update is recommended.
-The fix will be also included in the upcoming 3.26.0 and 3.25.4 releases.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Mon, 18 Aug 2025 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/cve-fixes-aug-2025/
-            </guid>
-            
-            
-            
-            <author>Jan Martiška (https://twitter.com/janmartiska)</author>
             
         </item>
         
