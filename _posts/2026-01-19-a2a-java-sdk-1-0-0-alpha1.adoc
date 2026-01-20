@@ -1,0 +1,276 @@
+---
+layout: post
+title: 'A2A Java SDK 1.0.0.Alpha1 - Embracing the 1.0 Specification'
+date: 2026-01-19
+tags: ai agents a2a
+synopsis: This blog post announces the 1.0.0.Alpha1 release and future plans.
+author: kkhan
+---
+
+= A2A Java SDK 1.0.0.Alpha1 - Embracing the 1.0 Specification
+
+I am pleased to announce the release of https://github.com/a2aproject/a2a-java/releases/tag/v1.0.0.Alpha1[A2A Java SDK 1.0.0.Alpha1]. This release represents a significant milestone as we align with the upcoming 1.0 version of the https://github.com/a2aproject/A2A[Agent2Agent (A2A) Protocol specification]. Note that the specification itself is still being finalised, so there might be some subtle changes until the final 1.0 version.
+
+The A2A Protocol enables standardized communication between AI agents, allowing them to discover capabilities, delegate tasks, and collaborate seamlessly. This SDK provides a robust Java implementation for building both agents and clients that participate in the A2A ecosystem.
+
+== Why 1.0 Matters
+
+The move to version 1.0 of the A2A specification marks its transition from experimental to production-ready. As the specification matures, we've taken the opportunity to clean up technical debt, modernize our implementation, and establish patterns that will serve us well into the future.
+
+*This release contains breaking changes.* We made the deliberate decision not to maintain backward compatibility with the 0.3.x series, as 1.0 represents the first "proper" release of the specification. This allows us to build on a solid foundation without carrying forward legacy patterns.
+
+== Major Changes
+
+=== 1. Specification Alignment
+
+The SDK now implements protocol version `1.0` and aligns with the latest https://github.com/a2aproject/A2A/blob/main/specification/grpc/a2a.proto[a2a.proto] definitions. Key specification changes include:
+
+* *AgentCard evolution*: The `AgentCard` now uses a `supportedInterfaces` list instead of separate `url`, `preferredTransport`, and `additionalInterfaces` fields. This provides a cleaner, more flexible way to advertise multiple protocol bindings.
+* *Removed kind discriminators*: The 1.0 specification eliminates the `kind` field as a type discriminator, simplifying the protocol.
+* *Refined error handling*: Error classes have been reworked to match the 1.0 specification's error model.
+
+=== 2. Modern Java: Standardized on Records
+
+The entire `spec` module has been modernized to use Java records consistently. Previously, we had a mix of traditional classes and records across our domain model. Now all domain classes leverage records for immutability and conciseness, and all getters follow the same naming pattern:
+
+[source,java]
+----
+// Before (0.3.x): Mix of classes and records with inconsistent patterns
+public class AgentCard {  // Some were classes
+    private final String name;
+    public String getName() { return name; }  // JavaBean-style getters
+}
+
+public record AgentSkill(String id, String name, ...) { }  // Some were already records
+// Accessor: skill.name() without 'get' prefix
+
+// After (1.0.x): Consistent records throughout
+public record AgentCard(
+    String name,
+    String description,
+    AgentProvider provider,
+    String version,
+    List<AgentInterface> supportedInterfaces,
+    String protocolVersion) {
+
+    public static final String CURRENT_PROTOCOL_VERSION = "1.0";
+}
+
+public record AgentSkill(String id, String name, String description, ...) { }
+
+// Uniform accessor pattern throughout: card.name(), skill.name()
+----
+
+This standardization eliminates confusion and reduces boilerplate while providing a cleaner, more maintainable API.
+
+ The A2A Java SDK has seen significant improvements in type safety and **null-safety** through progressive adoption of JSpecify annotations over the past few months. This effort demonstrates the project's commitment to code quality and preventing null pointer exceptions at compile time.
+
+==== Builder Pattern with Static Factory Methods
+
+All builders now use static factory methods instead of public constructors. This provides better encapsulation and follows modern Java best practices:
+
+[source,java]
+----
+// Before (0.3.x): Public builder constructor
+AgentCard card = new AgentCard.Builder()
+    .name("My Agent")
+    .description("Does things")
+    .build();
+
+// After (1.0.x): Static factory method
+AgentCard card = AgentCard.builder()  // (1)
+    .name("My Agent")
+    .description("Does things")
+    .version("1.0.0")
+    .capabilities(AgentCapabilities.builder()  // (2)
+        .streaming(true)
+        .pushNotifications(false)
+        .build())
+    .defaultInputModes(List.of("text"))
+    .defaultOutputModes(List.of("text"))
+    .skills(List.of(
+        AgentSkill.builder()  // (3)
+            .id("weather_query")
+            .name("Weather Queries")
+            .description("Get current weather")
+            .build()
+    ))
+    .supportedInterfaces(List.of(
+        new AgentInterface("JSONRPC", "http://localhost:9999")
+    ))
+    .protocolVersion(AgentCard.CURRENT_PROTOCOL_VERSION)
+    .build();
+----
+<1> `AgentCard.builder()` creates the builder - constructor is now private
+<2> Nested builders also use static factory methods
+<3> All spec classes follow this pattern consistently
+
+Builder constructors are now private in the declaring classes, enforcing the use of the static factory method pattern throughout the SDK.
+
+=== 3. Protocol Buffers as Source of Truth
+
+We've eliminated our dependency on Jackson and established protocol buffers (protobuf) as the authoritative source for our domain model. The architecture is straightforward:
+
+* *Protobuf definitions* in `a2a.proto` define the wire format
+* *Java records* in the `spec` module provide the SDK's API
+* *MapStruct mappers* handle conversions, giving compile errors if protobuf and spec classes go out of sync
+* *Gson* handles JSON serialization for JSON-RPC transport
+
+This provides type safety across all transports, a single source of truth for the protocol, and clean separation between wire format and API without cluttering domain classes with serialization annotations.
+
+=== 4. Bill of Materials (BOMs)
+
+We've introduced Maven BOMs to simplify dependency management:
+
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.a2asdk</groupId>
+            <artifactId>a2a-java-sdk-bom</artifactId>
+            <version>1.0.0.Alpha1</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+----
+
+Three BOMs are available:
+
+* `a2a-java-sdk-bom`: Core SDK and client libraries
+* `a2a-java-extras-bom`: Optional extensions (JpaDatabaseTaskStore and -PushNotificationStore, replicated QueueManager, Vert.X HTTP client)
+* `a2a-java-reference-bom`: Quarkus reference implementations
+
+This eliminates version management headaches when using multiple SDK modules, and their dependencies.
+
+=== 5. Enhanced API Documentation
+
+Every class in the `spec` module now has comprehensive Javadoc explaining its purpose, usage, and relationship to the A2A specification. We've also added detailed documentation for integration points in `server-common` and all client modules.
+
+=== 6. Additional Improvements
+
+* *Pagination support*: The `ListTasks` and push notification configuration endpoints now support pagination with proper `Result` wrappers
+* *Pluggable HTTP client*: A new `A2AHttpClient` interface allows custom HTTP implementations, with a Vert.x-based implementation provided
+* *Better validation*: Enhanced input validation across all transports
+* *TCK progress*: Continuous work towards full compliance with the 1.0 Test Compatibility Kit. The TCK is also work in progress, while the specification is being finalised.
+
+== Breaking Changes Summary
+
+If you're migrating from 0.3.x, here are the key breaking changes:
+
+1. *AgentCard structure*: Replace `url` + `preferredTransport` with `supportedInterfaces` list
+2. *Builder pattern*: Use `AgentCard.builder()` instead of `new AgentCard.Builder()` - applies to all spec classes
+3. *Protocol version*: Update to `AgentCard.CURRENT_PROTOCOL_VERSION` (now `"1.0"`)
+4. *Field renames*: `supportsAuthenticatedExtendedCard` → `supportsExtendedAgentCard`
+5. *Getter naming*: Records use `card.name()` instead of `card.getName()`
+6. *Package cleanup*: The `io.a2a.apec` package has been trimmed
+7. *Serialization*: If you relied on Jackson annotations, migrate to Gson patterns
+
+== Getting Started
+
+Using Maven, add the BOM and dependencies:
+
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.a2asdk</groupId>
+            <artifactId>a2a-java-sdk-bom</artifactId>
+            <version>1.0.0.Alpha1</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>io.github.a2asdk</groupId>
+        <artifactId>a2a-java-sdk-reference-jsonrpc</artifactId>
+    </dependency>
+</dependencies>
+----
+
+Creating an agent requires producing an `AgentCard` and an `AgentExecutor`. The `@PublicAgentCard` qualifier marks the public agent card that serves as the entry point for discovery - this is what clients retrieve when discovering your agent. You can also provide an extended agent card with additional authenticated information. Here's a minimal example:
+
+[source,java]
+----
+@ApplicationScoped
+public class MyAgentCardProducer {
+    @Produces @PublicAgentCard
+    public AgentCard agentCard() {
+        return AgentCard.builder()
+            .name("Weather Agent")
+            .description("Provides weather information")
+            .version("1.0.0")
+            .capabilities(AgentCapabilities.builder()
+                .streaming(true)
+                .pushNotifications(false)
+                .build())
+            .defaultInputModes(List.of("text"))
+            .defaultOutputModes(List.of("text"))
+            .skills(List.of(
+                AgentSkill.builder()
+                    .id("weather_query")
+                    .name("Weather Queries")
+                    .description("Get current weather for a location")
+                    .build()
+            ))
+            .protocolVersion(AgentCard.CURRENT_PROTOCOL_VERSION)
+            .supportedInterfaces(List.of(
+                new AgentInterface("JSONRPC", "http://localhost:9999")
+            ))
+            .build();
+    }
+}
+
+@ApplicationScoped
+public class MyAgentExecutorProducer {
+    @Produces
+    public AgentExecutor agentExecutor() {
+        return new MyAgentExecutor();
+    }
+
+    private static class MyAgentExecutor implements AgentExecutor {
+        @Override
+        public void execute(RequestContext context, EventQueue eventQueue) {
+            TaskUpdater updater = new TaskUpdater(context, eventQueue);
+            updater.submit();
+            updater.startWork();
+
+            // Your agent logic here
+            String response = "Current weather: Sunny, 72°F";
+
+            updater.addArtifact(List.of(new TextPart(response, null)));
+            updater.complete();
+        }
+    }
+}
+----
+
+For complete examples, see the https://github.com/a2aproject/a2a-java/tree/main/examples/helloworld[Hello World example] in the repository.
+
+== Looking Forward
+
+This alpha release brings us significantly closer to a stable 1.0 SDK. Our focus areas for upcoming releases include:
+
+* Full compliance with the 1.0 TCK test suite
+* Performance optimizations based on real-world usage
+* Additional examples and integration guides
+* WildFly Feature Pack for seamless Jakarta EE integration
+
+The A2A specification itself is still evolving toward its 1.0 release. We're actively participating in the specification process and will continue aligning the SDK as the spec finalizes.
+
+== Get Involved
+
+We welcome contributions, feedback, and real-world usage reports! If you're building AI agents or want to explore multi-agent architectures, the A2A Java SDK provides a solid foundation.
+
+* *Repository*: https://github.com/a2aproject/a2a-java
+* *Examples*: https://github.com/a2aproject/a2a-java/tree/main/examples
+* *Specification*: https://github.com/a2aproject/A2A
+* *Issues*: https://github.com/a2aproject/a2a-java/issues
+
+Try out 1.0.0.Alpha1 and let us know how it works for your agent use cases!
