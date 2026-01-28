@@ -1,0 +1,122 @@
+---
+date: 2023-07-25
+lts: true
+---
+:toc:
+
+== `@InjectMock`
+
+`io.quarkus.test.junit.mockito.InjectMock` has been deprecated in favor of `io.quarkus.test.InjectMock`.
+
+== Native Compilation - Native executables and .so files
+
+Due to changes made to GraalVM/Mandrel, if you are using an extension that is relying on `.so` files (such as the AWT extension), you need to add these `.so` files to the native container similarly to:
+
+[source,docker]
+----
+...
+# Copy of the .so files to the container
+COPY --chown=1001:root target/*.so /work/
+COPY --chown=1001:root target/*-runner /work/application
+...
+----
+
+== Native Compilation - Work around missing CPU features
+
+When building on recent machines and running your native executable on older machines, you may see the following failure when starting the application:
+
+[source]
+----
+The current machine does not support all of the following CPU features that are required by the image: [CX8, CMOV, FXSR, MMX, SSE, SSE2, SSE3, SSSE3, SSE4_1, SSE4_2, POPCNT, LZCNT, AVX, AVX2, BMI1, BMI2, FMA].
+Please rebuild the executable with an appropriate setting of the -march option.
+----
+
+This error message means that the native compilation used more advanced instruction sets not supported by the CPU running the application.
+To work around that issue, add the following line to the `application.properties`:
+
+[source, properties]
+----
+quarkus.native.additional-build-args=-march=compatibility
+----
+
+Then, rebuild your native executable.
+This setting forces the native compilation to use an older instruction set, increasing the chance of compatibility.
+
+To explicitly define the target architecture, run `native-image -march=list` to get the supported configurations and then set `-march` to one of them, e.g., `quarkus.native.additional-build-args=-march=x86-64-v4`.
+If you are targeting an AMD64 host, `-march=x86-64-v2` would work in most cases.
+
+NOTE: The `march` parameter is only available on GraalVM 23+.
+
+== Transaction manager (Narayana)
+
+The configuration property `quarkus.transaction-manager.object-store-directory` has been renamed to `quarkus.transaction-manager.object-store.directory`.
+
+== Kubernetes
+
+=== Improve the logic to generate TLS-based container ports
+
+At the moment, the Kubernetes extension is always adding a container port called `https` to the generated Deployment resources. This approach is problematic because the port won't work unless SSL is configured. 
+
+After 3.2, the container port `https` will not be added to the generated Deployment resources by default, unless:
+- Either users explicitly provide some of the `quarkus.http.ssl.*` properties at build time.
+- Or users add this property `quarkus.kubernetes.ports.https.tls=true` at build time.
+
+More information about these changes in https://github.com/quarkusio/quarkus/issues/33307[here].
+
+=== Management interface port is not bound as a Service any longer
+
+When the management port is enabled (see more information https://quarkus.io/guides/management-interface-reference[here]), the Kubernetes extension will not generate the Kubernetes Service that binds the management port by default for security reasons. 
+
+Still, if you want to expose it via Service and Ingress resources, you can add the following properties:
+
+```
+quarkus.kubernetes.ingress.expose=true
+quarkus.kubernetes.ingress.target-port=management
+```
+
+For OpenShift, you would need:
+
+```
+quarkus.openshift.route.expose=true
+quarkus.openshift.route.target-port=management
+```
+
+And now, a new Kubernetes Service will be generated to bind the Management interface port.
+
+== Hibernate Search
+
+=== Defaults for projectable/sortable on geo-point fields
+
+NOTE: The following applies to Quarkus 3.2.3+ only, as Quarkus 3.2.0, 3.2.1, 3.2.2 were still using Hibernate Search 6.1.
+
+Hibernate Search 6.2 changed how defaults are handled for geo-point fields.
+
+If your Hibernate Search mapping includes geo-point fields that are using the default value for the `projectable` option,
+and are using either the default value or `Sortable.NO` for the `sortable` option,
+Elasticsearch schema validation will fail on startup because of missing docvalues on those fields.
+
+To address that, either:
+
+* Revert to the previous defaults by adding `projectable = Projectable.NO` to the mapping annotation of relevant geo-point fields.
+* Or recreate your Elasticsearch indexes and reindex your database. The easiest way to do so is to use https://docs.jboss.org/hibernate/search/6.2/reference/en-US/html_single/#indexing-massindexer[the `MassIndexer`] with https://docs.jboss.org/hibernate/search/6.2/reference/en-US/html_single/#indexing-massindexer-parameters-drop-and-create-schema[`dropAndCreateSchemaOnStart(true)`].
+
+See also https://docs.jboss.org/hibernate/search/6.2/migration/html_single/#data-format
+
+=== Different DB schema for outbox-polling
+
+NOTE: The following applies to Quarkus 3.2.3+ only, as Quarkus 3.2.0, 3.2.1, 3.2.2 were still using Hibernate Search 6.1.
+
+If you use the `quarkus-hibernate-search-orm-outbox-polling` extension,
+be aware that the database schema for the tables used by that extension changed.
+
+See https://docs.jboss.org/hibernate/search/6.2/migration/html_single/#data-format
+for help on how to migrate to the new schema.
+
+=== Deprecated/renamed configuration properties
+
+NOTE: The following applies to Quarkus 3.2.3+ only, as Quarkus 3.2.0, 3.2.1, 3.2.2 were still using Hibernate Search 6.1.
+
+* `quarkus.hibernate-search-orm.automatic-indexing.synchronization.strategy` is now deprecated in favor of `quarkus.hibernate-search-orm.indexing.plan.synchronization.strategy`.
+* `quarkus.hibernate-search-orm.automatic-indexing.enable-dirty-check` is now deprecated with no alternative to replace it. After its removal in a future version, a dirty check will always be performed when considering whether to trigger reindexing.
+
+See also https://docs.jboss.org/hibernate/search/6.2/migration/html_single/#configuration
