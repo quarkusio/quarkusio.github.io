@@ -1,0 +1,191 @@
+---
+layout: post
+title: 'Closing the Gap: Test Coverage for Quarkus Extensions'
+date: 2026-02-10
+tags: extension testing
+synopsis: 'From now on, quarkus-jacoco can also be used to measure test coverage of Quarkus extensions.'
+author: mkouba
+---
+
+Test coverage is usually defined as a metric that measures the percentage of code executed by tests.
+Some developers doubt its usefulness but I agree with https://martinfowler.com/bliki/TestCoverage.html[Martin Fowler's] opinion that _"Test coverage is a useful tool for finding untested parts of a codebase"_.
+I don't think the resulting number itself is important.
+After all, writing a test for a generated getter makes no sense at all.
+However, if it's possible to identify poorly tested code in a hot path of your extension, then you can improve the test suite and spot bugs before the release, which always pays off.
+Just as importantly, you can increase the ability to catch regressions.
+
+For a long time, there has been the `io.quarkus:quarkus-jacoco` extension that integrates the https://www.jacoco.org/jacoco/index.html[JaCoCo code coverage library].
+Nevertheless, until recently, it was not possible to measure the coverage of runtime modules for an extension project.
+In other words, it was possible to measure the coverage in your `@QuarkusTest`s but not in `QuarkusUnitTest`s, which typically constitute the majority of tests in extensions.
+Without adequate coverage support, developers were flying blind, uncertain whether their bytecode enhancements and recording logic were being effectively tested.
+
+== Technical overview
+
+JaCoCo instruments classes to record execution coverage data.
+By default, the classes are instrumented on-the-fly by a Java agent.
+However, in Quarkus we use https://www.jacoco.org/jacoco/trunk/doc/offline.html[offline instrumentation] to modify the bytecode of classes _during build_.
+By default, all classes in all _application archives_ are instrumented.
+An _application archive_ is an archive that provides components to the application.
+It's indexed via Jandex, and extensions can analyze its content.
+For example, Quarkus is analyzing the application archives during CDI bean discovery.
+However, a runtime module of an extension is usually _not_ an application archive.
+Therefore, the extension classes were never instrumented.
+Until now.
+In Quarkus 3.31.2, we introduced new configuration properties that specify the artifacts to be instrumented: `quarkus.jacoco.instrument-artifacts."dependency-name".group-id` and `quarkus.jacoco.instrument-artifacts."dependency-name".artifact-id`.
+
+== Basic setup
+
+If you want to measure the test coverage of the runtime module of an extension, specific JaCoCo configuration is needed in the deployment module:
+
+[source,xml]
+----
+<profiles>
+    <profile>
+        <id>test-coverage</id>
+        <activation>
+            <property>
+                <name>jacoco</name> <1>
+            </property>
+        </activation>
+        <dependencies>
+            <dependency>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-jacoco-deployment</artifactId> <2>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+        <build>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <quarkus.jacoco.instrument-artifacts.runtime.group-id>io.quarkus</quarkus.jacoco.instrument-artifacts.runtime.group-id> 
+                            <quarkus.jacoco.instrument-artifacts.runtime.artifact-id>quarkus-runtime-module-name</quarkus.jacoco.instrument-artifacts.runtime.artifact-id> <3>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+</profiles>
+----
+<1> This profile is activated with the `jacoco` property.
+<2> Add the `quarkus-jacoco-deployment` dependency with the test scope.
+<3> Instruct the JaCoCo plugin to instrument the `io.quarkus:quarkus-runtime-module-name`` artifact.
+
+By default, the JaCoCo data will be saved in the `target/jacoco-quarkus.exec` file and a coverage report is generated automatically in the `target/jacoco-report` directory.
+
+== Multi-module setup
+
+For multi-module projects, more config properties might be needed.
+Typically, when an extension project contains multiple extensions that depend on each other, a more complex configuration is required.
+In the following project we have two extensions submodules: `foo` and `bar`.
+
+----
+/my-extension-project
+   ├── /foo
+   │  ├── runtime
+   │  ├── deployment
+   │  └── pom.xml
+   ├── /bar (depends on foo)
+   │  ├── runtime
+   │  ├── deployment
+   │  └── pom.xml
+   └── pom.xml
+----
+
+Submodule `bar` depends on `foo` and extends its functionality.
+The `foo/deployment` submodule contains `QuarkusUnitTest`s that test classes from `foo/runtime`.
+The `bar/deployment` submodule contains `QuarkusUnitTest`s that test classes from both `bar/runtime` and `foo/runtime`.
+
+Our goal is to measure the coverage for both `foo/runtime` and `bar/runtime`.
+How do we proceed?
+First, we need to apply some configuration to the parent project.
+
+.`my-extension-project/pom.xml`
+[source,xml]
+----
+<profiles>
+    <profile>
+        <id>test-coverage</id>
+        <activation>
+            <property>
+                <name>jacoco</name> <1>
+            </property>
+        </activation>
+        <build>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <systemPropertyVariables>
+                           <quarkus.jacoco.data-file>${maven.multiModuleProjectDirectory}/target/jacoco.exec</quarkus.jacoco.data-file> <2>
+                           <quarkus.jacoco.reuse-data-file>true</quarkus.jacoco.reuse-data-file> <3>
+                           <quarkus.jacoco.report-location>${maven.multiModuleProjectDirectory}/target/coverage</quarkus.jacoco.report-location> <4>
+                           <quarkus.jacoco.aggregate-report-data>true</quarkus.jacoco.aggregate-report-data> <5>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+</profiles>
+----
+<1> This profile is activated with the `jacoco` property.
+<2> The shared JaCoCo data file will be: `my-extension-project/target/jacoco.exec`.
+<3> The shared JaCoCo data will be reused for all tests.
+<4> The generated coverage report will be in the `my-extension-project/target/coverage` directory.
+<5> The report data (source directories and class files) are aggregated so that a single report can be generated.
+
+Afterwards, we will modify the deployment modules of `foo` and `bar`.
+
+.`my-extension-project/bar/pom.xml`
+[source,xml]
+----
+<profiles>
+   <profile>
+      <id>test-coverage</id>
+      <activation>
+         <property>
+            <name>jacoco</name> <1>
+         </property>
+      </activation>
+      <dependencies>
+         <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jacoco-deployment</artifactId>
+            <scope>test</scope>
+         </dependency>
+      </dependencies>
+      <build>
+         <plugins>
+            <plugin>
+               <artifactId>maven-surefire-plugin</artifactId>
+               <configuration>
+                  <systemPropertyVariables>
+                     <quarkus.jacoco.instrument-artifacts.foo.group-id>org.acme</quarkus.jacoco.instrument-artifacts.foo.group-id>
+                     <quarkus.jacoco.instrument-artifacts.foo.artifact-id>foo</quarkus.jacoco.instrument-artifacts.foo.artifact-id> <2>
+                     <quarkus.jacoco.instrument-artifacts.bar.group-id>org.acme</quarkus.jacoco.instrument-artifacts.bar.group-id>
+                     <quarkus.jacoco.instrument-artifacts.bar.artifact-id>bar</quarkus.jacoco.instrument-artifacts.bar.artifact-id> <3>
+                  </systemPropertyVariables>
+               </configuration>
+            </plugin>
+         </plugins>
+      </build>
+   </profile>
+</profiles>
+----
+<1> This profile is activated with the `jacoco` property.
+<2> Instrument `org.acme:foo` when running tests in `bar/deployment`.
+<3> Instrument `org.acme:bar` when running tests in `bar/deployment`.
+
+Similarly, we can modify the `my-extension-project/foo/pom.xml` and then simply run `mvn clean test -Djacoco`.
+When the build is finished, we can analyze the code coverage reports in the `my-extension-project/target/coverage` directory.
+
+NOTE: The Quarkus JaCoCo config only works for tests that are annotated with `@QuarkusTest` and `@QuarkusUnitTest`. If you want to check the coverage of other tests as well then you will need to fall back to the JaCoCo maven plugin, see https://quarkus.io/guides/tests-with-coverage#coverage-for-tests-not-using-quarkustest[the docs] for more information.
+
+== Conclusion
+
+Since Quarkus 3.31.2 you can measure and analyze the code coverage for the runtime modules of Quarkus extensions.
+Improve the test suite, spot more bugs before the release, catch more regressions!
