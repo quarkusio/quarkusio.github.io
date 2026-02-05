@@ -771,7 +771,7 @@ You can ignore the <code>docker-compose</code> instructions here, as well as the
       LOG_DIR: "/tmp/logs"
 
   schema-registry:
-    image: quay.io/apicurio/apicurio-registry-mem:2.6.13.Final
+    image: quay.io/apicurio/apicurio-registry:3.1.7
     ports:
       - 8081:8080
     depends_on:
@@ -827,7 +827,7 @@ the containers with <code>docker-compose rm</code>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">java -Dmp.messaging.connector.smallrye-kafka.apicurio.registry.url=http://localhost:8081/apis/registry/v2 -jar target/quarkus-app/quarkus-run.jar</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">java -Dmp.messaging.connector.smallrye-kafka.apicurio.registry.url=http://localhost:8081/apis/registry/v3 -jar target/quarkus-app/quarkus-run.jar</code></pre>
 </div>
 </div>
 <div class="admonitionblock note">
@@ -848,7 +848,7 @@ You can configure the bootstrap server using: <code>java -Dkafka.bootstrap.serve
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.mp.messaging.connector.smallrye-kafka.apicurio.registry.url=http://localhost:8081/apis/registry/v2</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">%prod.mp.messaging.connector.smallrye-kafka.apicurio.registry.url=http://localhost:8081/apis/registry/v3</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -1096,13 +1096,13 @@ public class KafkaAndSchemaRegistryTestResource implements QuarkusTestResourceLi
     @Override
     public Map&lt;String, String&gt; start() {
         kafka.start();
-        registry = new GenericContainer&lt;&gt;("apicurio/apicurio-registry-mem:2.4.2.Final")
+        registry = new GenericContainer&lt;&gt;("apicurio/apicurio-registry:3.0.7")
                 .withExposedPorts(8080)
                 .withEnv("QUARKUS_PROFILE", "prod");
         registry.start();
         Map&lt;String, String&gt; properties = new HashMap&lt;&gt;();
         properties.put("mp.messaging.connector.smallrye-kafka.apicurio.registry.url",
-                "http://" + registry.getHost() + ":" + registry.getMappedPort(8080) + "/apis/registry/v2");
+                "http://" + registry.getHost() + ":" + registry.getMappedPort(8080) + "/apis/registry/v3");
         properties.put("kafka.bootstrap.servers", kafka.getBootstrapServers());
         return properties;
     }
@@ -1128,125 +1128,205 @@ public class MovieResourceTest {
 </div>
 </div>
 <div class="sect1">
-<h2 id="apicurio-versions-compatibility"><a class="anchor" href="#apicurio-versions-compatibility"></a>Using compatible versions of the Apicurio Registry</h2>
+<h2 id="migrating-from-apicurio-registry-2-x-to-3-x"><a class="anchor" href="#migrating-from-apicurio-registry-2-x-to-3-x"></a>Migrating from Apicurio Registry 2.x to 3.x</h2>
 <div class="sectionbody">
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Apicurio Registry 3.x introduces a <strong>breaking change in schema ID format</strong> from 8-byte (long) to 4-byte (int) identifiers.
+This affects message compatibility between v2 and v3 producers/consumers.
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="schema-id-format-change"><a class="anchor" href="#schema-id-format-change"></a>Schema ID Format Change</h3>
 <div class="paragraph">
-<p>The <code>quarkus-apicurio-registry-json-schema</code> extension depends on recent versions of Apicurio Registry client,
-and most versions of Apicurio Registry server and client are backwards compatible.
-For some you need to make sure that the client used by Serdes is compatible with the server.</p>
+<p>Apicurio Registry 3.x changed the schema ID format from <strong>8-byte (long)</strong> to <strong>4-byte (int)</strong> identifiers.
+This means messages produced with v2 cannot be consumed by v3 applications (and vice versa) without explicit configuration.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="migration-scenarios"><a class="anchor" href="#migration-scenarios"></a>Migration Scenarios</h3>
+<div class="paragraph">
+<p><strong>New applications (no existing v2 messages):</strong> No configuration needed. The v3 defaults will be used automatically.</p>
 </div>
 <div class="paragraph">
-<p>For example, with Apicurio Dev Service if you set the image name to use version <code>2.1.5.Final</code>:</p>
+<p><strong>Consuming existing v2 messages:</strong> Configure the <code>Legacy8ByteIdHandler</code> for channels that need to read v2-produced messages:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.apicurio-registry.devservices.image-name=quay.io/apicurio/apicurio-registry-mem:2.1.5.Final</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Per-channel configuration for consuming v2 messages
+mp.messaging.incoming.my-channel.apicurio.registry.id-handler=io.apicurio.registry.serde.Legacy8ByteIdHandler
+
+# Or configure globally for all channels
+mp.messaging.connector.smallrye-kafka.apicurio.registry.id-handler=io.apicurio.registry.serde.Legacy8ByteIdHandler</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>You need to make sure that <code>apicurio-registry-serdes-json-schema-serde</code> dependency
-and the REST client <code>apicurio-common-rest-client-vertx</code> dependency are set to compatible versions:</p>
+<p><strong>Producing v2-compatible messages:</strong> If downstream consumers still use v2, configure the producer:</p>
 </div>
-<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
-<div class="title">pom.xml</div>
+<div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
-    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
-    &lt;artifactId&gt;quarkus-apicurio-registry-json-schema&lt;/artifactId&gt;
-    &lt;exclusions&gt;
-        &lt;exclusion&gt;
-            &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-            &lt;artifactId&gt;apicurio-common-rest-client-vertx&lt;/artifactId&gt;
-        &lt;/exclusion&gt;
-        &lt;exclusion&gt;
-            &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-            &lt;artifactId&gt;apicurio-registry-serdes-json-schema-serde&lt;/artifactId&gt;
-        &lt;/exclusion&gt;
-    &lt;/exclusions&gt;
-&lt;/dependency&gt;
-&lt;dependency&gt;
-    &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-    &lt;artifactId&gt;apicurio-registry-client&lt;/artifactId&gt;
-    &lt;version&gt;2.1.5.Final&lt;/version&gt;
-&lt;/dependency&gt;
-&lt;dependency&gt;
-    &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-    &lt;artifactId&gt;apicurio-registry-common&lt;/artifactId&gt;
-    &lt;version&gt;2.1.5.Final&lt;/version&gt;
-&lt;/dependency&gt;
-&lt;dependency&gt;
-    &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-    &lt;artifactId&gt;apicurio-registry-serdes-json-schema-serde&lt;/artifactId&gt;
-    &lt;version&gt;2.1.5.Final&lt;/version&gt;
-    &lt;exclusions&gt;
-        &lt;exclusion&gt;
-            &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-            &lt;artifactId&gt;apicurio-common-rest-client-jdk&lt;/artifactId&gt;
-        &lt;/exclusion&gt;
-        &lt;exclusion&gt;
-            &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-            &lt;artifactId&gt;apicurio-registry-client&lt;/artifactId&gt;
-        &lt;/exclusion&gt;
-        &lt;exclusion&gt;
-            &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-            &lt;artifactId&gt;apicurio-registry-common&lt;/artifactId&gt;
-        &lt;/exclusion&gt;
-    &lt;/exclusions&gt;
-&lt;/dependency&gt;
-&lt;dependency&gt;
-    &lt;groupId&gt;io.apicurio&lt;/groupId&gt;
-    &lt;artifactId&gt;apicurio-common-rest-client-vertx&lt;/artifactId&gt;
-    &lt;version&gt;0.1.5.Final&lt;/version&gt;
-&lt;/dependency&gt;</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.outgoing.my-channel.apicurio.registry.id-handler=io.apicurio.registry.serde.Legacy8ByteIdHandler</code></pre>
 </div>
 </div>
-<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
-<div class="title">build.gradle</div>
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">dependencies {
-    implementation(platform("io.quarkus:quarkus-bom:2.12.3.Final"))
-
-    ...
-
-    implementation("io.quarkus:quarkus-apicurio-registry-json-schema")
-    implementation("io.apicurio:apicurio-registry-serdes-json-schema-serde") {
-        exclude group: "io.apicurio", module: "apicurio-common-rest-client-jdk"
-        exclude group: "io.apicurio", module: "apicurio-registry-client"
-        exclude group: "io.apicurio", module: "apicurio-registry-common"
-        version {
-            strictly "2.1.5.Final"
-        }
-    }
-    implementation("io.apicurio:apicurio-registry-client") {
-        version {
-            strictly "2.1.5.Final"
-        }
-    }
-    implementation("io.apicurio:apicurio-registry-common") {
-        version {
-            strictly "2.1.5.Final"
-        }
-    }
-    implementation("io.apicurio:apicurio-common-rest-client-vertx") {
-        version {
-            strictly "0.1.5.Final"
-        }
-    }
-}</code></pre>
 </div>
+<div class="sect2">
+<h3 id="standard-id-handlers-fixed-format"><a class="anchor" href="#standard-id-handlers-fixed-format"></a>Standard ID Handlers: Fixed Format</h3>
+<div class="paragraph">
+<p>Both v2 (8-byte) and v3 (4-byte) formats use the same magic byte.
+The standard ID handlers (<code>Legacy8ByteIdHandler</code> and <code>Default4ByteIdHandler</code>) read a fixed number of bytes based on configuration—there is no per-message auto-detection.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+If a single topic contains mixed messages (some with 8-byte IDs, some with 4-byte IDs), consumers using standard ID handlers will fail.
+A consumer configured with <code>Legacy8ByteIdHandler</code> always reads 8 bytes; one with <code>Default4ByteIdHandler</code> always reads 4 bytes.
+Mismatches cause corruption or deserialization errors.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
-<p>Known previous compatible versions for <code>apicurio-registry-client</code> and <code>apicurio-common-rest-client-vertx</code> are the following</p>
+<p><strong>With standard ID handlers, gradual migration only works when:</strong></p>
 </div>
 <div class="ulist">
 <ul>
 <li>
-<p><code>apicurio-registry-client</code> 2.1.5.Final with <code>apicurio-common-rest-client-vertx</code> 0.1.5.Final</p>
+<p>Each topic has messages in ONE format (either v2 or v3, not both)</p>
 </li>
 <li>
-<p><code>apicurio-registry-client</code> 2.3.1.Final with <code>apicurio-common-rest-client-vertx</code> 0.1.13.Final</p>
+<p>Per-channel configuration routes each topic to the correct ID handler</p>
 </li>
 </ul>
+</div>
+<div class="paragraph">
+<p>You can have producers and consumers using both formats in the same Apicurio Registry instance, but not mixing them in the same topic.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+For topics with mixed v2/v3 messages, consider using the <code>OptimisticFallbackIdHandler</code> described in the <a href="#optimistic-fallback-id-handler">Optimistic Fallback ID Handler</a> section.
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="migration-paths-for-topics-with-existing-v2-messages"><a class="anchor" href="#migration-paths-for-topics-with-existing-v2-messages"></a>Migration Paths for Topics with Existing v2 Messages</h3>
+<div class="paragraph">
+<p>For topics that already contain v2 messages, valid migration approaches are:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Stop and drain:</strong> Stop producers → drain topic completely → upgrade all services → restart with v3 configuration</p>
+</li>
+<li>
+<p><strong>New topic migration:</strong> Create a new v3 topic and migrate traffic to it</p>
+</li>
+<li>
+<p><strong>Accept transient failures:</strong> Accept transient failures during the switchover period</p>
+</li>
+<li>
+<p><strong>Optimistic fallback handler:</strong> Use the <code>OptimisticFallbackIdHandler</code> for gradual migration (see below)</p>
+</li>
+</ol>
+</div>
+</div>
+<div class="sect2">
+<h3 id="optimistic-fallback-id-handler"><a class="anchor" href="#optimistic-fallback-id-handler"></a>Optimistic Fallback ID Handler</h3>
+<div class="paragraph">
+<p>Apicurio Registry provides an <code>OptimisticFallbackIdHandler</code> that can help with gradual migration from v2 to v3.
+This handler:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Writes</strong> new messages with 4-byte (v3) IDs</p>
+</li>
+<li>
+<p><strong>Reads</strong> both 4-byte (v3) and 8-byte (v2) IDs</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Configure the optimistic fallback handler for migration
+mp.messaging.connector.smallrye-kafka.apicurio.registry.id-handler=io.apicurio.registry.serde.OptimisticFallbackIdHandler
+
+# Or per-channel
+mp.messaging.incoming.my-channel.apicurio.registry.id-handler=io.apicurio.registry.serde.OptimisticFallbackIdHandler</code></pre>
+</div>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+The <code>OptimisticFallbackIdHandler</code> makes the following assumption to distinguish between 4-byte and 8-byte IDs: schema IDs are greater than 0 and smaller than the maximum integer value.
+This is typically true for most use cases, but you should verify your schema IDs meet this constraint before using this handler.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>This approach enables a gradual migration where:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Upgrade consumers first with <code>OptimisticFallbackIdHandler</code> (they can read both v2 and v3 messages)</p>
+</li>
+<li>
+<p>Then upgrade producers (they start writing v3 format)</p>
+</li>
+<li>
+<p>Once all v2 messages are consumed, optionally switch to <code>Default4ByteIdHandler</code></p>
+</li>
+</ol>
+</div>
+</div>
+<div class="sect2">
+<h3 id="compatibility-with-apicurio-registry-2-x-server"><a class="anchor" href="#compatibility-with-apicurio-registry-2-x-server"></a>Compatibility with Apicurio Registry 2.x Server</h3>
+<div class="paragraph">
+<p>The Apicurio Registry 3.x client libraries continue to work with Apicurio Registry 2.x servers.
+However, note that Apicurio Registry 2.x is no longer actively maintained.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="additional-resources"><a class="anchor" href="#additional-resources"></a>Additional Resources</h3>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://www.apicur.io/registry/docs/apicurio-registry/3.0.x/index.html">Apicurio Registry 3.x Documentation</a></p>
+</li>
+<li>
+<p><a href="https://www.apicur.io/registry/docs/apicurio-registry/3.1.x/getting-started/assembly-migrating-registry-v2-v3.html">Apicurio Registry Deployment Migration Guide</a></p>
+</li>
+<li>
+<p><a href="https://www.apicur.io/blog/2025/03/30/migrate-registry-2-to-3">Official Apicurio Migration Guide</a></p>
+</li>
+<li>
+<p><a href="https://www.apicur.io/blog/2025/04/03/evolving-serialization">Apicurio SerDes Evolution Blog Post</a></p>
+</li>
+</ul>
+</div>
 </div>
 </div>
 </div>
@@ -1380,7 +1460,17 @@ In native mode, Quarkus supports the following versions: <code>6.2.x</code>, <co
 <li><a href="#manual-setup">Manual setup</a></li>
 </ul>
 </li>
-<li><a href="#apicurio-versions-compatibility">Using compatible versions of the Apicurio Registry</a></li>
+<li><a href="#migrating-from-apicurio-registry-2-x-to-3-x">Migrating from Apicurio Registry 2.x to 3.x</a>
+<ul class="sectlevel2">
+<li><a href="#schema-id-format-change">Schema ID Format Change</a></li>
+<li><a href="#migration-scenarios">Migration Scenarios</a></li>
+<li><a href="#standard-id-handlers-fixed-format">Standard ID Handlers: Fixed Format</a></li>
+<li><a href="#migration-paths-for-topics-with-existing-v2-messages">Migration Paths for Topics with Existing v2 Messages</a></li>
+<li><a href="#optimistic-fallback-id-handler">Optimistic Fallback ID Handler</a></li>
+<li><a href="#compatibility-with-apicurio-registry-2-x-server">Compatibility with Apicurio Registry 2.x Server</a></li>
+<li><a href="#additional-resources">Additional Resources</a></li>
+</ul>
+</li>
 <li><a href="#confluent">Using the Confluent Schema Registry</a></li>
 <li><a href="#further-reading">Further reading</a></li>
 </ul></div>
