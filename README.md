@@ -10,33 +10,41 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 
 1. Install [Docker Desktop](https://docs.docker.com/install/) or [Podman Desktop](https://podman-desktop.io/)
 2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork:
-
-        git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
-
+    ```sh
+    git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
+    ```
 3. Change into the project directory:
-
-        cd quarkusio.github.io
-
+    ```sh
+    cd quarkusio.github.io
+    ```
 4. Run Docker Compose or Podman Compose:
-
-        docker compose up
-
-or 
-
-        podman compose up
-
-By default, this does not include guides. To include guides, use `podman compose --file docker-compose_with_guides.yml up`. If the guides build terminates abruptly before completion, make sure your [container engine has enough memory allocated](https://podman-desktop.io/docs/podman/creating-a-podman-machine#procedure) (it will need at least 5GB).  
-
-> **Note:** The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
-
+    ```sh
+    docker compose up
     ```
-    jekyll-1  |   Server address: http://0.0.0.0:4000/
-    jekyll-1  |   Server running... press ctrl-c to stop.
+    or
+
+    ```sh
+    podman compose up
     ```
 
-    If any error occurs mentioning a name conflict, try:
+By default, this does not include guides. To include guides, use: 
+```sh
+docker compose --file docker-compose_with_guides.yml up
+```
+If the guides build terminates abruptly before completion, make sure your [container engine has enough memory allocated](https://podman-desktop.io/docs/podman/creating-a-podman-machine#procedure) (it will need at least 5GB).  
 
-        docker compose up --force-recreate
+> [!NOTE]
+> The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
+>
+>    ```
+>    jekyll-1  |   Server address: http://0.0.0.0:4000/
+>    jekyll-1  |   Server running... press ctrl-c to stop.
+>    ```
+
+ If an error occurs mentioning a name conflict, try:
+```sh
+docker compose up --force-recreate
+```
 
 5. Now browse to [http://localhost:4000](http://localhost:4000).
 #### Using a local Ruby environment
@@ -44,33 +52,36 @@ By default, this does not include guides. To include guides, use `podman compose
 
 1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 3.2.3`.
 2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems)
-  
-        gem install bundler
-
+   ```sh
+   gem install bundler
+   ```
 3. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
-  
-        git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
-
+   ```sh
+   git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
+   ```
 4. Change into the project directory:
-  
-        cd quarkusio.github.io
-
+   ```sh
+   cd quarkusio.github.io
+   ```
 5. Use bundler to fetch all required gems in their respective versions
-
-        bundle install
-
+   ```sh
+   bundle install
+   ```
 6. Build the site and make it available on a local server
-  
-        ./serve.sh
-
+   ```sh
+   ./serve.sh
+   ```
    Or if you want it faster and okay to not have guides included use the following:
 
-        ./serve-noguides.sh
+   ```sh
+   ./serve-noguides.sh
+   ```
 
 
 7. Now browse to http://localhost:4000
 
-> If you encounter any unexpected errors during the above, please refer to the [troubleshooting](https://jekyllrb.com/docs/troubleshooting/#configuration-problems) page or the [requirements](https://jekyllrb.com/docs/installation/#requirements) page, as you might be missing development headers or other prerequisites.
+>[!NOTE]
+>If you encounter any unexpected errors during the above, please refer to the [troubleshooting](https://jekyllrb.com/docs/troubleshooting/#configuration-problems) page or the [requirements](https://jekyllrb.com/docs/installation/#requirements) page, as you might be missing development headers or other prerequisites.
 
 **For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
 
@@ -84,9 +95,9 @@ If for some reason you need to deploy from your local machine, follow these inst
 
 ## Writing a blog
 
-> **NOTE:** Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts. 
-> Used badly, generative AI has a tendency to use complex words and phrasing. This makes 
-the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content.
+> [!WARNING]
+> Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts. 
+> Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content.
 
 To write a blog:
 
@@ -141,8 +152,8 @@ See Step 5 on https://docs.github.com/en/github/working-with-github-pages/managi
 
 Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/tree/main/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
 
-**Important:** the guides are maintained in the main Quarkus repository and pull requests should be submitted there:
-https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc.
+> [!IMPORTANT]
+> The guides are maintained in the main Quarkus repository and pull requests should be submitted there: https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc.
 
 ## License
 
