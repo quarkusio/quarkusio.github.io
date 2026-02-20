@@ -84,6 +84,7 @@ Phase 1 implements both changes using pure Jekyll — no external service change
 │  Related: Use Panache · Configure Flyway migrations          │
 └──────────────────────────────────────────────────────────────┘
 ```
+![Guide page screenshot](prototype-guide-page-screenshot.png)
 
 **Landing page** (sidebar + domain-grouped list):
 
@@ -119,6 +120,8 @@ Phase 1 implements both changes using pure Jekyll — no external service change
 ```
 
 Key: `[T]` tutorial, `[H]` how-to, `[R]` reference, `[C]` concept. `★` = active page. `▸` = collapsed, `▾` = expanded.
+
+![Landing page screenshot](prototype-landing-page-screenshot.png)
 
 **Guide page wireframe — what's new vs. existing**: The version selector, "Edit" link, and "Related guides" section already exist in the current layout. New elements introduced by this plan: the left sidebar (2/12 column), prev/next navigation footer, and Diataxis type badges.
 
