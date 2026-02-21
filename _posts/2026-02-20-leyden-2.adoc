@@ -1,0 +1,415 @@
+---
+layout: post
+title: 'How we integrated Project Leyden into Quarkus'
+date: 2026-02-20
+tags: performance leyden
+synopsis: 'You might have read our first post about Project Leyden and the new perspective it brought, but how did we actually integrate it into Quarkus? In this post, we share our journey and the improvements we made along the way.'
+author: gsmet,geoand
+---
+:imagesdir: /assets/images/posts/leyden-2/
+
+In a previous TODO link [blog post], we shared our excitement about Project Leyden and how it gave us a new perspective on Java application startup performance.
+
+In this post, we want to share our journey integrating Project Leyden into Quarkus, and how we made this integration both efficient and easy to use for our users.
+
+== Acknowledgements
+
+First, we would like to thank the Leyden team at IBM for their work on Project Leyden and for the many discussions we had with them,
+which were instrumental in helping us understand Leyden and determine how best to integrate it into Quarkus,
+namely (in alphabetical order), Maria Arias de Reyna Dominguez, Andrew Dinn, and Ashutosh Mehra.
+
+More broadly, we would like to thank everyone contributing to Project Leyden.
+
+Project Leyden is still evolving, and we look forward to seeing what they are preparing for Java 27 and beyond.
+
+Finally, special thanks to Sanne Grinovero for introducing us to the Leyden team at just the right time, and for his insights and valuable feedback on our work.
+
+== What is Project Leyden?
+
+=== GraalVM and the arrival of AOT in Java
+
+The Java world first discovered Ahead-of-Time (AOT) compilation with the introduction of GraalVM native image,
+which compiles Java applications into native executables.
+
+It made a huge impact on the Java ecosystem and was a game changer for Java application startup performance:
+
+- Startup time and memory footprint are significantly reduced.
+- There is no warmup phase, as the code is already compiled to native code, performance is effectively at its peak from the start.
+- The resulting executable is small, leading to much smaller container images.
+
+But this comes at a significant cost:
+
+- It is not "pure" Java: not all Java features and libraries are supported out of the box.
+- It relies on a closed-world assumption and removes most runtime dynamism. This was not an issue for us, as Quarkus makes the same assumption.
+- It introduces specific constraints, the most common being the need to provide explicit reflection configuration. These requirements add effort during development and testing.
+- Compilation time is long, which impacts both the developer experience and CI resource usage.
+- Debugging native executables is hard. It has improved but it is still a lot harder than debugging in the JVM.
+- The Open Source version comes with performance limitations that affect throughput.
+- And since everything is AOT-compiled, there is no JIT compiler to optimize code at runtime, which can lead to suboptimal peak performance in some cases.
+
+All in all, it is an excellent option for certain use cases, but it is not a silver bullet for every Java application.
+
+=== Project Leyden's approach to AOT
+
+Project Leyden addresses the same fundamental problem as GraalVM native image, but takes a different approach:
+
+- It is still "true" Java, it is part of OpenJDK: your application runs on the JVM, with full access to Java features and libraries, without special configuration.
+- During a training phase, it records application behavior and gathers information such as loaded and linked classes, and method profiling data.
+- This information is stored in an AOT cache.
+- At startup, you provide this AOT cache to the JVM.
+- Because the application still runs on the JVM, you continue to benefit from the JIT compiler, your preferred garbage collector, and all other JVM optimizations, preserving the high throughput typically associated with the JVM.
+
+The AOT cache is exactly that: a cache. If a class is not present in the cache, it is loaded and linked as usual.
+
+Project Leyden reduces startup time by optimizing class loading and linking.
+It reduces warmup time by providing the JVM with profiling information, and will reduce it even further once compiled code itself is stored in the cache.
+
+.How Leyden works
+image::leyden.png[How Leyden works]
+
+Although reducing memory footprint is not one of Leyden's primary goals, it may occur as a side effect.
+For example, if JAR files no longer need to remain open for class loading, some memory may be saved.
+
+That said, Project Leyden is not magic either. In its current form:
+
+- Startup and warmup time improvements are significant, but not as dramatic as with GraalVM/Mandrel native image.
+- You must train your application and generate the AOT cache. In practice, this is not difficult, and in Quarkus, we have made it as seamless as possible.
+- You still need to ship a JVM with your application.
+- You also need to ship the AOT cache, which means container images will be significantly larger than with native executables.
+
+Our take is that Project Leyden offers an excellent balance between performance and compatibility, at a very reasonable cost,
+and could become part of the default deployment workflow for many Java applications.
+
+== Project Leyden in Quarkus
+
+Quarkus is a highly specialized framework, with extensive build-time processing and optimizations.
+Project Leyden is a specialized technology as well, with its own constraints and requirements.
+
+Our goal was to integrate Project Leyden into Quarkus in a way that preserves what Quarkus does best, while also maximizing the benefits of Leyden.
+
+Quarkus 3.32 includes the first version of our end-to-end Leyden integration. Let's take a closer look at how it works.
+
+=== AOT JAR packaging
+
+You may be used to seeing your Quarkus application packaged in a `target/quarkus-app/` directory, but that wasn't always the case.
+In the early days of Quarkus, we built a traditional runner JAR in `target/`, with dependencies placed in a `lib/` directory, much like most other Java frameworks.
+
+The current default packaging in Quarkus is called `fast-jar`.
+One of its primary goals is to optimize class loading.
+
+We achieved this by introducing our own class loader, which, for example, keeps a `package name` -> `jar file` mapping in memory.
+It also includes additional optimizations, such as maintaining a full directory index for specific locations like `META-INF/services`.
+These are just a few examples of what this packaging does, but they should give you some context.
+
+This packaging performs very well in the traditional JVM world, but it doesn't play nicely with Project Leyden.
+
+Project Leyden takes a conservative approach: it only caches classes loaded by the standard JDK class loaders.
+In other words, no custom class loaders are allowed if you want to fully benefit from AOT caching.
+
+[NOTE]
+====
+We hope that, at some point, this limitation will be lifted by the Leyden team.
+If that happens, we will return to the `fast-jar` packaging, or an evolution of it.
+====
+
+To be precise: you cannot use custom class loaders to load **classes** if you want to fully benefit from AOT caching.
+However, you can still use a custom class loader for loading **resources** only.
+
+This is why we developed a dedicated packaging for Project Leyden: `aot-jar`.
+It is automatically selected when AOT is enabled, making the transition completely transparent.
+It uses the same file layout as the `fast-jar` packaging.
+
+In addition to delegating all **class** loading to the JDK class loader, this packaging has a few specific characteristics:
+
+* It collects service descriptors from `META-INF/services`, aggregates them, and keeps them in memory.
+* It applies the same approach to Quarkus configuration files (e.g., `application.properties`).
+* It maintains a full index of specific directories (e.g., the root directory, `META-INF`, and `META-INF/services`).
+* It introduces a pre-initialization phase, during which selected elements are preloaded in parallel (e.g., the time zone database).
+
+We fully expect this packaging to evolve over time as we gather feedback from real-world usage.
+
+[NOTE]
+====
+Let's be clear: `aot-jar` performs worse than `fast-jar` when Project Leyden is not used.
+
+It does not include all the optimizations of `fast-jar` and is intended to be used only in conjunction with Project Leyden.
+So it should not be used outside of this specific use case.
+====
+
+=== Training and AOT cache generation
+
+TODO Georgios (I split the paragraphs but feel free to reorganize them as you see fit)
+
+=== Integration with the build system
+
+TODO Georgios (I split the paragraphs but feel free to reorganize them as you see fit)
+
+== Some numbers
+
+We've described the benefits of Project Leyden in theory, but how does it perform in practice?
+
+To find out, we collected some numbers for two different Quarkus applications:
+
+- A simple REST application, the one you get when you run `quarkus create app`
+- A very large REST CRUD application: 1,000 entities, 1,000 repositories, 1,000 services, 1,000 REST endpoints... `9,000` .java files in total. This is an extreme case, don't try this at home! :)
+
+The container image sizes were measured using our default images, which are based on Red Hat's UBI 9 Minimal.
+
+=== Raw numbers
+
+[NOTE]
+====
+These numbers were obtained with a full recording of all classes that are loaded at startup.
+
+Your results may vary for several reasons:
+
+- Not all classes required at startup were recorded.
+- Your application performs actual work during startup, Leyden only optimizes class loading, not application logic.
+
+In any case, if you see unexpected results, we're very interested in your feedback.
+Please reach out to us, and we'll guide you on how to gather useful profiling information.
+====
+
+==== Small REST application
+
+[cols="2,2,1,2,1", options="header"]
+|===
+|  | Startup time | Diff | Container image size | Diff
+
+| *Default fast-jar*
+>m| 370 ms
+>m| Reference
+>m| 456 MB
+>m| Reference
+
+| *Project Leyden and aot-jar*
+>m| 80 ms
+>m| -78%
+>m| 495 MB
+>m| +9%
+
+| *Mandrel native executable*
+>m| 17 ms
+>m| -95%
+>m| 155 MB
+>m| -66%
+|===
+
+The AOT cache file is `39 MB` in size,
+the minimum you can expect for a Quarkus REST application.
+
+==== Large REST CRUD application
+
+[cols="2,2,1,2,1", options="header"]
+|===
+|  | Startup time | Diff | Container image size | Diff
+
+| *Default fast-jar*
+>m| 3,189 ms
+>m| Reference
+>m| 517 MB
+>m| Reference
+
+| *Project Leyden and aot-jar*
+>m| 924 ms
+>m| -71%
+>m| 715 MB
+>m| +38%
+
+| *Mandrel native executable*
+>m| 242 ms
+>m| -92%
+>m| 244 MB
+>m| -53%
+|===
+
+The AOT cache file is `198 MB`, not surprising, given that the application contains 9,000 `.java` files.
+
+=== Startup time
+
+++++
+<script src="/assets/javascript/chart.min.js"></script>
+++++
+
+++++
+<div class="chart-container">
+  <canvas id="startup-time-graph"></canvas>
+</div>
+<script>
+const startupTime = document.getElementById('startup-time-graph');
+new Chart(startupTime, {
+     type: 'bar',
+     data: {
+     labels: ['Small REST app', 'Large REST CRUD app'],
+     datasets: [
+     {
+          label: 'Default',
+          data: [370, 3189],
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Project Leyden',
+          data: [80, 924],
+          backgroundColor: 'rgba(255, 206, 86, 0.7)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Native',
+          data: [17, 242],
+          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: 'Startup time comparison'
+     },
+     legend: {
+          position: 'top',
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: 'Startup time (ms)'
+          }
+     }
+     }
+     }
+});
+</script>
+++++
+
+Startup time is greatly improved by Leyden, both for small and very large applications.
+While it doesn't quite match the startup speed of a native executable, the results are still impressive.
+
+Let's pause for a moment:
+**we were able to start a Quarkus REST application in the JVM in just `80 ms`**.
+
+.Quarkus starting fast!
+image::quarkus-startup.png[Starting fast]
+
+Granted, it's a simple REST application with a single endpoint,
+but it still relies on a full-featured REST implementation.
+And it runs in the JVM.
+
+For very large applications, the results are just as impressive:
+**we were able to reduce startup time by `71%`**.
+
+=== Container image size
+
+++++
+<div class="chart-container">
+  <canvas id="container-image-size-graph"></canvas>
+</div>
+<script>
+const containerImageSize = document.getElementById('container-image-size-graph');
+new Chart(containerImageSize, {
+     type: 'bar',
+     data: {
+     labels: ['Small REST app', 'Large REST CRUD app'],
+     datasets: [
+     {
+          label: 'Default',
+          data: [456, 517],
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Project Leyden',
+          data: [495, 715],
+          backgroundColor: 'rgba(255, 206, 86, 0.7)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Native',
+          data: [155, 244],
+          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: 'Container image size comparison'
+     },
+     legend: {
+          position: 'top',
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: 'Container image size (MB)'
+          }
+     }
+     }
+     }
+});
+</script>
+++++
+
+It won't come as a surprise: you also need to include the AOT cache file in your container image, so Leyden increases the image size.
+
+For a Quarkus REST application, the minimum is around `40 MB`.
+The cache size grows as your application becomes larger.
+
+On the opposite, going native significantly reduces the container image size, since you no longer need to include the full JVM.
+
+=== Throughput
+
+At this point, you might be thinking: "Why not just go native for everything?"
+Actually, that would be a bad idea, for all the reasons we've outlined TODO link to GraalVM paragraph above, and also because throughput will suffer.
+
+We haven't collected throughput numbers ourselves, as we don't have the proper setup,
+but some of our colleagues are running tests in an isolated environment.
+One thing is clear: native executables result in lower throughput.
+
+This is where Project Leyden really shines: you get much faster startup times while retaining all the benefits of running on the JVM.
+That said, native executables may still be perfectly suitable for your use case, for example, in serverless scenarios.
+
+== TODO Georgios
+
+TODO Georgios Before the conclusion, I want to add a section that mentions that we are actively monitoring the developments of Leyden via the premain branch.
+
+== Conclusion
+
+After a month of experimenting and working on the integration of Project Leyden into Quarkus, we are very excited about the results and the potential of this technology.
+And we are very happy we were able to integrate it into Quarkus 3.32 so that you can play with it already.
+
+Project Leyden comes with some trade-offs, but it offers a great balance between performance and compatibility, for a very reasonable cost.
+And Project Leyden is still evolving and improving, so we are looking forward to seeing how it will evolve and what it will bring to Java 27 and beyond.
+
+It might not fit all use cases, GraalVM/Mandrel native image might be a better fit for some of your applications, but for many of them, Project Leyden is going to be a great option.
+Its ease of use and compatibility with the existing Java ecosystem will make it a no-brainer in a lot of cases.
+
+Go have a look at the TODO link documentation and try it out, we are looking forward to hearing your feedback.
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/quarkusio/quarkus/issues[GitHub];
+ * craft some code and https://github.com/quarkusio/quarkus/pulls[push a PR];
+ * discuss with us on https://quarkusio.zulipchat.com/[Zulip] and on the https://groups.google.com/d/forum/quarkus-dev[mailing list];
+ * ask your questions on https://stackoverflow.com/questions/tagged/quarkus[Stack Overflow].
