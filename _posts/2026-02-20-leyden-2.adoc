@@ -104,11 +104,222 @@ We've described the benefits of Project Leyden in theory, but how does it perfor
 
 To find out, we collected some numbers for three different Quarkus applications:
 
-- A simple REST application — the one you get when you run quarkus create app
-- A medium-sized REST CRUD application
-- A very large REST CRUD application
+- A simple REST application, the one you get when you run `quarkus create app`
+- A very large REST CRUD application: 1,000 entities, 1,000 repositories, 1,000 services, 1,000 REST endpoints... `9,000` .java files in total. This is an extreme case, don't try this at home! :)
 
-TODO Guillaume present numbers and graphs
+The container image sizes were measured using our default images, which are based on Red Hat's UBI 9 Minimal.
+
+=== Raw numbers
+
+[NOTE]
+====
+These numbers were obtained with a full recording of all classes that are loaded at startup.
+
+Your results may vary for several reasons:
+
+- Not all classes required at startup were recorded.
+- Your application performs actual work during startup, Leyden only optimizes class loading, not application logic.
+
+In any case, if you see unexpected results, we're very interested in your feedback.
+Please reach out to us, and we'll guide you on how to gather useful profiling information.
+====
+
+==== Small REST application
+
+[cols="2,2,1,2,1", options="header"]
+|===
+|  | Startup time | Diff | Container image size | Diff
+
+| *Default fast-jar*
+>m| 370 ms
+>m| Reference
+>m| 456 MB
+>m| Reference
+
+| *Project Leyden and aot-jar*
+>m| 80 ms
+>m| -78%
+>m| 495 MB
+>m| +9%
+
+| *Native executable with Mandrel*
+>m| 17 ms
+>m| -95%
+>m| 155 MB
+>m| -66%
+|===
+
+The AOT cache file is `39 MB` in size,
+the minimum you can expect for a Quarkus REST application.
+
+==== Large REST CRUD application
+
+[cols="2,2,1,2,1", options="header"]
+|===
+|  | Startup time | Diff | Container image size | Diff
+
+| *Default fast-jar*
+>m| 3,189 ms
+>m| Reference
+>m| 517 MB
+>m| Reference
+
+| *Project Leyden and aot-jar*
+>m| 924 ms
+>m| -71%
+>m| 715 MB
+>m| +38%
+
+| *Native executable with Mandrel*
+>m| 242 ms
+>m| -92%
+>m| 244 MB
+>m| -53%
+|===
+
+The AOT cache file is `198 MB`, not surprising, given that the application contains 9,000 `.java` files.
+
+=== Startup time
+
+++++
+<script src="/assets/javascript/chart.min.js"></script>
+++++
+
+++++
+<canvas id="startup-time-graph" style="max-width: 800px; margin: 0 auto;"></canvas>
+<script>
+const startupTime = document.getElementById('startup-time-graph');
+new Chart(startupTime, {
+     type: 'bar',
+     data: {
+     labels: ['Small REST app', 'Large REST CRUD app'],
+     datasets: [
+     {
+          label: 'Default',
+          data: [370, 3189],
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Project Leyden',
+          data: [80, 924],
+          backgroundColor: 'rgba(255, 206, 86, 0.7)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Native',
+          data: [17, 242],
+          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: 'Startup time comparison'
+     },
+     legend: {
+          position: 'top',
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: 'Startup time (ms)'
+          }
+     }
+     }
+     }
+});
+</script>
+++++
+
+Startup time is greatly improved by Leyden, both for small and very large applications.
+However, the results are still not comparable to those obtained with a native executable.
+
+=== Container image size
+
+++++
+<canvas id="container-image-size-graph" style="max-width: 800px; margin: 0 auto;"></canvas>
+<script>
+const containerImageSize = document.getElementById('container-image-size-graph');
+new Chart(containerImageSize, {
+     type: 'bar',
+     data: {
+     labels: ['Small REST app', 'Large REST CRUD app'],
+     datasets: [
+     {
+          label: 'Default',
+          data: [456, 517],
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Project Leyden',
+          data: [495, 715],
+          backgroundColor: 'rgba(255, 206, 86, 0.7)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1
+     },
+     {
+          label: 'Native',
+          data: [155, 244],
+          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: 'Container image size comparison'
+     },
+     legend: {
+          position: 'top',
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: 'Container image size (MB)'
+          }
+     }
+     }
+     }
+});
+</script>
+++++
+
+It won't come as a surprise: you also need to include the AOT cache file in your container image, so Leyden increases the image size.
+
+For a Quarkus REST application, the minimum is around `40 MB`.
+The cache size grows as your application becomes larger.
+
+=== Throughput
+
+At this point, you might be thinking: "Why not just go native for everything?"
+Actually, that would be a bad idea, for all the reasons we've outlined TODO link to GraalVM paragraph above, and also because throughput will suffer.
+
+We haven't collected throughput numbers ourselves, as we don't have the proper setup,
+but some of our colleagues are running tests in an isolated environment.
+One thing is clear: native executables result in lower throughput.
+
+This is where Project Leyden really shines: you get much faster startup times while retaining all the benefits of running on the JVM.
+That said, native executables may still be perfectly suitable for your use case, for example, in serverless scenarios.
 
 == Conclusion
 
