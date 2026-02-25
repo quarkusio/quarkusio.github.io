@@ -282,7 +282,8 @@ Both of them support TLS.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.grpc.server.use-separate-server=false # Use the Vert.x based server</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties"># Use the Vert.x based server
+quarkus.grpc.server.use-separate-server=false</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -303,6 +304,112 @@ You cannot use both servers at the same time.
 </div>
 </div>
 <div class="sect1">
+<h2 id="performance-tuning-for-large-messages"><a class="anchor" href="#performance-tuning-for-large-messages"></a>Performance tuning for large messages</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>When working with large gRPC messages, you may need to tune the HTTP/2 flow control window size to achieve optimal throughput.</p>
+</div>
+<div class="sect2">
+<h3 id="unified-server-mode-vert-x-based"><a class="anchor" href="#unified-server-mode-vert-x-based"></a>Unified server mode (Vert.x-based)</h3>
+<div class="paragraph">
+<p>When using the unified server mode (<code>quarkus.grpc.server.use-separate-server=false</code>), you can configure the HTTP/2 connection window size:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.grpc.server.use-separate-server=false
+quarkus.http.http2-connection-window-size=104857600 # 100MB</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>quarkus.http.http2-connection-window-size</code> property sets the HTTP/2 connection window size in bytes. The default value is <code>-1</code>, which reuses the initial window size setting (typically 64KB). For large messages, increasing this value can significantly improve throughput.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="separate-server-mode-grpc-javanetty-based"><a class="anchor" href="#separate-server-mode-grpc-javanetty-based"></a>Separate server mode (gRPC Java/Netty-based)</h3>
+<div class="paragraph">
+<p>When using the separate server mode (<code>quarkus.grpc.server.use-separate-server=true</code>), you can configure the flow control window using a <code>ServerBuilderCustomizer</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.grpc.netty.NettyServerBuilder;
+import io.quarkus.grpc.api.ServerBuilderCustomizer;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class GrpcServerCustomizer implements ServerBuilderCustomizer&lt;NettyServerBuilder&gt; {
+    @Override
+    public void customize(NettyServerBuilder builder) {
+        builder.initialFlowControlWindow(100 * 1024 * 1024); // 100MB
+    }
+}</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+The separate server mode provides more direct control over Netty-specific settings but requires a dedicated port for gRPC traffic.
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="listening-on-a-random-port"><a class="anchor" href="#listening-on-a-random-port"></a>Listening on a Random Port</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>If you don&#8217;t want to specify a port you can set <code>quarkus.http.port=0</code> and <code>quarkus.http.test-port=0</code> when using Vert.x
+(<code>quarkus.grpc.server.use-separate-server=false)</code> or <code>quarkus.grpc.server.port=0</code> and <code>quarkus.grpc.server.test-port=0</code>
+when using the gRPC server. A random open port will be picked by the OS, and a log message printed in the console.</p>
+</div>
+<div class="paragraph">
+<p>To retrieve the real port, use the <code>io.quarkus.grpc.runtime.GrpcServer</code> API, which can be injected into the application
+code as a CDI Bean:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Singleton;
+import io.quarkus.grpc.runtime.GrpcServer;
+
+@Singleton
+public class MyService  {
+    @Inject
+    GrpcServer grpcServer;
+
+    public void connectToServer() {
+        int port = grpcServer.getPort();
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Or into any kind of test, either as a field or test parameter:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import org.junit.jupiter.api.Test;
+import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.grpc.runtime.GrpcServer;
+
+@QuarkusTest
+class GrpcServerTest {
+    GrpcServer grpcServer;
+
+    @Test
+    void connectToServer(GrpcServer grpcServer) {
+        int port = grpcServer.getPort();
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="selecting-grpc-clients"><a class="anchor" href="#selecting-grpc-clients"></a>Selecting gRPC clients</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -318,6 +425,20 @@ Unlike for the server, you can select the transport for each client:</p>
 <p>While it&#8217;s not the default, we recommend using the Vert.x based client, as it is more flexible and better integrated in the Quarkus ecosystem.
 It does not change the stubs you can use, as they are generated by the gRPC framework.
 However, it changes the way the client communicates with the server.</p>
+</div>
+<div class="sect2">
+<h3 id="client-side-flow-control-window"><a class="anchor" href="#client-side-flow-control-window"></a>Client-side flow control window</h3>
+<div class="paragraph">
+<p>When working with large messages, you can configure the flow control window for gRPC clients:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.grpc.clients.hello.flow-control-window=104857600 # 100MB</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The default flow control window is 1MB. Increasing this value can improve throughput when receiving large messages from the server.</p>
+</div>
 </div>
 </div>
 </div>
@@ -587,7 +708,18 @@ quarkus.grpc.clients.hello.use-quarkus-grpc-client=true</code></pre>
 </ul>
 </li>
 <li><a href="#selecting-a-grpc-server">Selecting a gRPC server</a></li>
-<li><a href="#selecting-grpc-clients">Selecting gRPC clients</a></li>
+<li><a href="#performance-tuning-for-large-messages">Performance tuning for large messages</a>
+<ul class="sectlevel2">
+<li><a href="#unified-server-mode-vert-x-based">Unified server mode (Vert.x-based)</a></li>
+<li><a href="#separate-server-mode-grpc-javanetty-based">Separate server mode (gRPC Java/Netty-based)</a></li>
+</ul>
+</li>
+<li><a href="#listening-on-a-random-port">Listening on a Random Port</a></li>
+<li><a href="#selecting-grpc-clients">Selecting gRPC clients</a>
+<ul class="sectlevel2">
+<li><a href="#client-side-flow-control-window">Client-side flow control window</a></li>
+</ul>
+</li>
 <li><a href="#configuring-tls-for-grpc-services">Configuring TLS for gRPC services</a>
 <ul class="sectlevel2">
 <li><a href="#with-the-vert-x-based-server">With the Vert.x based server</a></li>
