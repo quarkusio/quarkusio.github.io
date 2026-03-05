@@ -5,7 +5,7 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Thu, 05 Mar 2026 08:35:50 +0000</lastBuildDate>
+        <lastBuildDate>Thu, 05 Mar 2026 15:04:18 +0000</lastBuildDate>
         
         
         <item>
@@ -83,6 +83,953 @@
             
             
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
+            
+        </item>
+        
+        <item>
+            <title>How we integrated Project Leyden into Quarkus</title>
+            <link>
+                https://quarkus.io/blog/leyden-2/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus has long supported both JVM and native image modes, each optimized for different trade-offs.
+Native image delivers unmatched startup and footprint.
+JVM mode offers peak throughput, dynamic capabilities, and a mature tooling ecosystem.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus continues to improve and work well with native-image,
+and lately Project Leyden enabled us to strengthen the JVM side of that equation.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We shared our excitement about Project Leyden and how it gave us a new perspective on Java application startup performance in a previous &lt;a href=&quot;https://quarkus.io/blog/leyden-1/&quot;&gt;blog post&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this post, we want to share our journey integrating Project Leyden into Quarkus, and how we made this integration both efficient and easy to use for our users.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;acknowledgements&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#acknowledgements&quot;&gt;&lt;/a&gt;Acknowledgements&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;First, we would like to thank the OpenJDK team at IBM for their work on Project Leyden and for the many discussions we had with them,
+which were instrumental in helping us understand Leyden and determine how best to integrate it into Quarkus,
+namely (in alphabetical order), Maria Arias de Reyna Dominguez, Andrew Dinn, and Ashutosh Mehra.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;More broadly, we would like to thank everyone contributing to Project Leyden.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden is still evolving, and we look forward to seeing what they are preparing for Java 27 and beyond.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Finally, special thanks to Sanne Grinovero for introducing us to the Leyden team at just the right time, and for his insights and valuable feedback on our work.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;what-is-project-leyden&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#what-is-project-leyden&quot;&gt;&lt;/a&gt;What is Project Leyden?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;graalvm&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#graalvm&quot;&gt;&lt;/a&gt;GraalVM and the popularization of AOT in Java&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the Java world, Ahead-of-Time (AOT) compilation rose to prominence with the introduction of GraalVM native image, which compiles Java applications into native executables.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;It made a huge impact on the Java ecosystem and was a game changer for Java application startup performance:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Startup time and memory footprint are significantly reduced.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;There is no warmup phase, as the code is already compiled to native code. Performance is effectively at its peak from the start.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The resulting executable is small, leading to much smaller container images.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The Resident Set Size (RSS) memory usage is much smaller compared to a regular JVM application.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;But this comes with some drawbacks:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Not all Java features and libraries are supported out of the box as they are on OpenJDK.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;It relies on a closed-world assumption and removes most runtime dynamism (at least in its current form - work on the GraalVM side could change this in the future). Note: This was not and is not an issue for Quarkus as it makes the same assumption; it can be problematic for third-party libraries.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;It introduces specific constraints, the most common being the need to provide explicit reflection configuration. These requirements add effort during development and testing, although they are minimized for Quarkus supported extensions.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Native image builds are significantly slower. This typically does not affect the inner development loop (except when debugging native-specific issues), but it can have a noticeable impact on CI resources.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Debugging native executables is hard. It has improved, but it is still a lot harder than debugging in the JVM as it requires the use of GDB and the presence of debug symbols in the build.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;And since everything is AOT-compiled, there is no JIT compiler to optimize code at runtime, which can lead to suboptimal peak performance in some cases.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;All in all, native image is an excellent option when startup time and footprint are the primary goals.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;However, not all applications optimize for those dimensions.
+Some prioritize peak throughput, development velocity, debuggability, and compatibility with existing tooling.
+This is where Leyden becomes interesting, aiming to improve startup and footprint while staying closer to the traditional JVM model.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;project-leydens-approach-to-aot&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#project-leydens-approach-to-aot&quot;&gt;&lt;/a&gt;Project Leyden&amp;#8217;s approach to AOT&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden addresses the same fundamental problem as GraalVM native image, but takes a different approach:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;It is still &quot;pure&quot; Java, it is part of OpenJDK: your application runs on the JVM, with full access to Java features and libraries, without special configuration.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;During a training phase, it records application behavior and gathers information such as loaded and linked classes, and in more recent versions also starts recording some JIT output - increasing scope and optimization potentials in each JVM version.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;This information is stored in an AOT cache file.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;At startup, you configure the JVM with this AOT cache file.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Because the application still runs on the JVM, you continue to benefit from the JIT compiler, your preferred garbage collector, and all other JVM optimizations, preserving the high throughput typically associated with the JVM.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The AOT cache is exactly that: a cache. If a class is not present in the cache, it is loaded and linked as usual.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden reduces startup time by optimizing class loading and linking.
+It reduces warmup time by providing the JVM with profiling information, and will reduce it even further once compiled code itself is stored in the cache.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/leyden-2/leyden.png&quot; alt=&quot;How Leyden works&quot;&gt;
+&lt;/div&gt;
+&lt;div class=&quot;title&quot;&gt;Figure 1. How Leyden works&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That said, Project Leyden is not magic either. In its current form:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Startup and warmup time improvements are significant, but not as substantial as with GraalVM/Mandrel native image.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;You must train your application and generate the AOT cache. In practice, this is not difficult, and in Quarkus, we have made it as seamless as possible.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;You still need to ship a JVM with your application.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;You also need to ship the AOT cache, which means container images will be significantly larger than with native executables.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;You don&amp;#8217;t get any memory footprint benefit yet: in most cases, it&amp;#8217;s comparable to a regular JVM.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our take is that Project Leyden offers a compelling balance between performance and compatibility, at a very reasonable cost,
+and could become part of the default deployment workflow for many Java applications running on the JVM.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;project-leyden-status&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#project-leyden-status&quot;&gt;&lt;/a&gt;Project Leyden status&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In OpenJDK 25, the following Project Leyden-related JEPs are available:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://openjdk.org/jeps/483&quot;&gt;JEP 483 - Ahead-of-Time Class Loading &amp;amp; Linking&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://openjdk.org/jeps/514&quot;&gt;JEP 514 - Ahead-of-Time Command-Line Ergonomics&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://openjdk.org/jeps/515&quot;&gt;JEP 515 - Ahead-of-Time Method Profiling&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Together, these JEPs make Project Leyden fully usable starting with OpenJDK 25.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Additional JEPs are planned for OpenJDK 26 and beyond.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;project-leyden-in-quarkus&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#project-leyden-in-quarkus&quot;&gt;&lt;/a&gt;Project Leyden in Quarkus&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus is a highly specialized framework, with extensive build-time processing and optimizations.
+Project Leyden is a specialized technology as well, with its own constraints and requirements.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our goal was to integrate Project Leyden into Quarkus in a way that preserves what Quarkus does best, while also maximizing the benefits of Leyden.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Quarkus 3.32 includes the first version of our end-to-end Leyden integration. Let&amp;#8217;s take a closer look at how it works.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;aot-jar-packaging&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#aot-jar-packaging&quot;&gt;&lt;/a&gt;AOT JAR packaging&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You may be used to seeing your Quarkus application packaged in a &lt;code&gt;target/quarkus-app/&lt;/code&gt; directory, but that wasn&amp;#8217;t always the case.
+In the early days of Quarkus, we built a traditional runner JAR in &lt;code&gt;target/&lt;/code&gt;, with dependencies placed in a &lt;code&gt;lib/&lt;/code&gt; directory, much like most other Java frameworks.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The current default packaging in Quarkus is called &lt;code&gt;fast-jar&lt;/code&gt;.
+One of its primary goals is to optimize class loading.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We achieved this by introducing our own class loader, which, for example, keeps a &lt;code&gt;package name&lt;/code&gt; &amp;#8594; &lt;code&gt;jar file&lt;/code&gt; mapping in memory.
+It also includes additional optimizations, such as maintaining a full directory index for specific locations like &lt;code&gt;META-INF/services&lt;/code&gt;.
+These are just a few examples of what this packaging does, but they should give you some context.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This packaging performs very well in the traditional JVM world, but it doesn&amp;#8217;t play nicely with Project Leyden.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden takes a conservative approach: it only caches classes loaded by the standard JDK class loaders.
+In other words, no custom class loaders are allowed if you want to fully benefit from AOT caching.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We hope that, at some point, this limitation will be lifted by the Leyden team.
+If that happens, we will return to the &lt;code&gt;fast-jar&lt;/code&gt; packaging, or an evolution of it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To be precise: you cannot use custom class loaders to load &lt;strong&gt;classes&lt;/strong&gt; if you want to fully benefit from AOT caching.
+However, you can still use a custom class loader for loading &lt;strong&gt;resources&lt;/strong&gt; only.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is why we developed a dedicated packaging for Project Leyden: &lt;code&gt;aot-jar&lt;/code&gt;.
+It is automatically selected when AOT is enabled, making the transition completely transparent.
+It uses the same file layout as the &lt;code&gt;fast-jar&lt;/code&gt; packaging.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In addition to delegating all &lt;strong&gt;class&lt;/strong&gt; loading to the JDK class loader, this packaging has a few specific characteristics:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;It collects service descriptors from &lt;code&gt;META-INF/services&lt;/code&gt;, aggregates them, and keeps them in memory.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;It applies the same approach to Quarkus configuration files (e.g., &lt;code&gt;application.properties&lt;/code&gt;).&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;It maintains a full index of specific directories (e.g., the root directory, &lt;code&gt;META-INF&lt;/code&gt;, and &lt;code&gt;META-INF/services&lt;/code&gt;).&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;It introduces a pre-initialization phase, during which selected elements are preloaded in parallel (e.g., the time zone database).&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As this packaging format is new, we hope to gather feedback from real-world usage.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s be clear: &lt;code&gt;aot-jar&lt;/code&gt; performs worse than &lt;code&gt;fast-jar&lt;/code&gt; when Project Leyden is not used.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;It does not include all the optimizations of &lt;code&gt;fast-jar&lt;/code&gt; and is intended to be used only in conjunction with Project Leyden.
+So it should not be used outside of this specific use case.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;training-and-aot-cache-generation&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#training-and-aot-cache-generation&quot;&gt;&lt;/a&gt;Training and AOT cache generation&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The AOT cache is only as good as the training data used to generate it.
+During the training phase, the JVM records which classes are loaded and linked, and collects method profiling data.
+The more representative the training workload, the more effective the resulting cache.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We wanted training to be as seamless as possible for Quarkus users.
+The natural fit was to leverage the existing integration test infrastructure:
+if you already have &lt;code&gt;@QuarkusIntegrationTest&lt;/code&gt; tests, they can serve as the training workload.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;When AOT training is enabled, the flow is as follows:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Quarkus builds the application with the &lt;code&gt;aot-jar&lt;/code&gt; packaging.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The application starts with AOT training enabled.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Integration tests run against the application, exercising its endpoints and features.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The JVM captures profiling data during the entire test execution.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;An optimized &lt;code&gt;app.aot&lt;/code&gt; cache file is generated from the recorded data.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is both practical and effective: you already write integration tests to validate your application,
+and they also happen to produce somewhat realistic training data for the AOT cache.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Integration tests that use &lt;code&gt;@QuarkusIntegrationTest&lt;/code&gt; make it very easy to run the target application as they use Dev Services.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;integration-with-the-build-system&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#integration-with-the-build-system&quot;&gt;&lt;/a&gt;Integration with the build system&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We wanted enabling Leyden in Quarkus to be a one-flag operation.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Setting &lt;code&gt;quarkus.package.jar.aot.enabled=true&lt;/code&gt; is all it takes.
+Quarkus automatically switches to the &lt;code&gt;aot-jar&lt;/code&gt; packaging and sets up the entire AOT pipeline.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With Maven, the full flow is a single command:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;./mvnw verify -Dquarkus.package.jar.aot.enabled=true -DskipITs=false&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This builds the application, runs integration tests with AOT training, and generates the &lt;code&gt;app.aot&lt;/code&gt; cache file in &lt;code&gt;target/quarkus-app/&lt;/code&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you are using a project generated by our tooling, integration tests are disabled by default.
+Adding &lt;code&gt;-DskipITs=false&lt;/code&gt; makes sure they will be run.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Running the application with the AOT cache is just as straightforward:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;cd target/quarkus-app
+java -XX:AOTCache=app.aot -jar quarkus-run.jar&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We also integrated AOT with the container image extensions (Jib, Docker, and Podman).
+When building a container image with AOT enabled, Quarkus:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;Builds the application with &lt;code&gt;aot-jar&lt;/code&gt; packaging.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Creates a base container image.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Runs integration tests against the container to train the AOT cache.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Produces a final container image (with an &lt;code&gt;-aot&lt;/code&gt; suffix in its version) that includes the AOT cache and is pre-configured to use it at startup.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This end-to-end integration means going from source code to an AOT-optimized container image in a single command.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;some-numbers&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#some-numbers&quot;&gt;&lt;/a&gt;Some numbers&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We&amp;#8217;ve described the benefits of Project Leyden in theory, but how does it perform in practice?&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To find out, we collected some numbers for two different Quarkus applications:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;A simple REST application, the one you get when you run &lt;code&gt;quarkus create app&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;A very large REST CRUD application: 1,000 entities, 1,000 repositories, 1,000 services, 1,000 REST endpoints&amp;#8230;&amp;#8203; &lt;code&gt;9,000&lt;/code&gt; .java files in total. This is an extreme case, don&amp;#8217;t try this at home!&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The container image sizes were measured using our default images, which are based on Red Hat&amp;#8217;s UBI 9 Minimal and use JDK 25.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;raw-numbers&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#raw-numbers&quot;&gt;&lt;/a&gt;Raw numbers&lt;/h3&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;These numbers were obtained using a full recording of all classes loaded during startup.
+They were measured on our laptops rather than in an isolated lab environment.
+We plan to run a more comprehensive set of benchmarks in our lab soon.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Your results may vary for several reasons:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Not all classes required at startup were recorded.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Your application performs actual work during startup, Leyden only optimizes class loading, not application logic.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In any case, if you see unexpected results, we&amp;#8217;re very interested in your feedback.
+Please reach out to us, and we&amp;#8217;ll guide you on how to gather useful profiling information.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock tip&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-tip&quot; title=&quot;Tip&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;RSS is for Resident Set Size memory usage.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;small-rest-application&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#small-rest-application&quot;&gt;&lt;/a&gt;Small REST application&lt;/h4&gt;
+&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
+&lt;colgroup&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.0909%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.0909%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.091%;&quot;&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Startup time&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Container image size&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;RSS&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Default fast-jar&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;370 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;456 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;122 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Project Leyden and aot-jar&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;80 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-78%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;495 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;+9%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;103 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-16%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Mandrel native executable&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;17 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-95%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;155 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-66%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;37 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-70%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The AOT cache file is &lt;code&gt;39 MB&lt;/code&gt; in size,
+the minimum you can expect for a Quarkus REST application.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect3&quot;&gt;
+&lt;h4 id=&quot;large-rest-crud-application&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#large-rest-crud-application&quot;&gt;&lt;/a&gt;Large REST CRUD application&lt;/h4&gt;
+&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
+&lt;colgroup&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.0909%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.0909%;&quot;&gt;
+&lt;col style=&quot;width: 18.1818%;&quot;&gt;
+&lt;col style=&quot;width: 9.091%;&quot;&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Startup time&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Container image size&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;RSS&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Diff&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Default fast-jar&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;3,189 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;517 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;580 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;Reference&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Project Leyden and aot-jar&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;924 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-71%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;715 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;+38%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;580 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;0%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;strong&gt;Mandrel native executable&lt;/strong&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;242 ms&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-92%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;244 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-53%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;210 MB&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-right valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;-64%&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The AOT cache file is &lt;code&gt;198 MB&lt;/code&gt;, not surprising, given that the application contains 9,000 &lt;code&gt;.java&lt;/code&gt; files.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;startup-time&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#startup-time&quot;&gt;&lt;/a&gt;Startup time&lt;/h3&gt;
+&lt;script src=&quot;/assets/javascript/chart.min.js&quot;&gt;&lt;/script&gt;
+&lt;div class=&quot;chart-container&quot;&gt;
+  &lt;canvas id=&quot;startup-time-graph&quot;&gt;&lt;/canvas&gt;
+&lt;/div&gt;
+&lt;script&gt;
+const startupTime = document.getElementById(&apos;startup-time-graph&apos;);
+new Chart(startupTime, {
+     type: &apos;bar&apos;,
+     data: {
+     labels: [&apos;Small REST app&apos;, &apos;Large REST CRUD app&apos;],
+     datasets: [
+     {
+          label: &apos;Default&apos;,
+          data: [370, 3189],
+          backgroundColor: &apos;rgba(54, 162, 235, 0.7)&apos;,
+          borderColor: &apos;rgba(54, 162, 235, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Project Leyden&apos;,
+          data: [80, 924],
+          backgroundColor: &apos;rgba(255, 206, 86, 0.7)&apos;,
+          borderColor: &apos;rgba(255, 206, 86, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Native&apos;,
+          data: [17, 242],
+          backgroundColor: &apos;rgba(75, 192, 192, 0.7)&apos;,
+          borderColor: &apos;rgba(75, 192, 192, 1)&apos;,
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: &apos;Startup time comparison&apos;
+     },
+     legend: {
+          position: &apos;top&apos;,
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: &apos;Startup time (ms)&apos;
+          }
+     }
+     }
+     }
+});
+&lt;/script&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Startup time is greatly improved by Leyden, both for small and very large applications.
+While it doesn&amp;#8217;t quite match the startup speed of a native executable, the results are still impressive.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Let&amp;#8217;s pause for a moment.
+&lt;strong&gt;We were able to start a Quarkus REST application in the JVM in just &lt;code&gt;80 ms&lt;/code&gt;&lt;/strong&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/leyden-2/quarkus-startup.png&quot; alt=&quot;Starting fast&quot;&gt;
+&lt;/div&gt;
+&lt;div class=&quot;title&quot;&gt;Figure 2. Quarkus starting fast!&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Granted, it&amp;#8217;s a simple REST application with a single endpoint,
+but it still relies on a full-featured REST implementation.
+And it runs in the JVM.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For very large applications, the results are just as impressive:
+&lt;strong&gt;we were able to reduce startup time by &lt;code&gt;71%&lt;/code&gt;&lt;/strong&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;container-image-size&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#container-image-size&quot;&gt;&lt;/a&gt;Container image size&lt;/h3&gt;
+&lt;div class=&quot;chart-container&quot;&gt;
+  &lt;canvas id=&quot;container-image-size-graph&quot;&gt;&lt;/canvas&gt;
+&lt;/div&gt;
+&lt;script&gt;
+const containerImageSize = document.getElementById(&apos;container-image-size-graph&apos;);
+new Chart(containerImageSize, {
+     type: &apos;bar&apos;,
+     data: {
+     labels: [&apos;Small REST app&apos;, &apos;Large REST CRUD app&apos;],
+     datasets: [
+     {
+          label: &apos;Default&apos;,
+          data: [456, 517],
+          backgroundColor: &apos;rgba(54, 162, 235, 0.7)&apos;,
+          borderColor: &apos;rgba(54, 162, 235, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Project Leyden&apos;,
+          data: [495, 715],
+          backgroundColor: &apos;rgba(255, 206, 86, 0.7)&apos;,
+          borderColor: &apos;rgba(255, 206, 86, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Native&apos;,
+          data: [155, 244],
+          backgroundColor: &apos;rgba(75, 192, 192, 0.7)&apos;,
+          borderColor: &apos;rgba(75, 192, 192, 1)&apos;,
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: &apos;Container image size comparison&apos;
+     },
+     legend: {
+          position: &apos;top&apos;,
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: &apos;Container image size (MB)&apos;
+          }
+     }
+     }
+     }
+});
+&lt;/script&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;It won&amp;#8217;t come as a surprise: you also need to include the AOT cache file in your container image, so Leyden increases the image size.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For a Quarkus REST application, the minimum is around &lt;code&gt;40 MB&lt;/code&gt;.
+The cache size grows as your application becomes larger.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;On the other hand, going native significantly reduces the container image size, since you no longer need to include the full JVM.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;memory-footprint&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#memory-footprint&quot;&gt;&lt;/a&gt;Memory footprint&lt;/h3&gt;
+&lt;div class=&quot;chart-container&quot;&gt;
+  &lt;canvas id=&quot;rss-graph&quot;&gt;&lt;/canvas&gt;
+&lt;/div&gt;
+&lt;script&gt;
+const rss = document.getElementById(&apos;rss-graph&apos;);
+new Chart(rss, {
+     type: &apos;bar&apos;,
+     data: {
+     labels: [&apos;Small REST app&apos;, &apos;Large REST CRUD app&apos;],
+     datasets: [
+     {
+          label: &apos;Default&apos;,
+          data: [122, 580],
+          backgroundColor: &apos;rgba(54, 162, 235, 0.7)&apos;,
+          borderColor: &apos;rgba(54, 162, 235, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Project Leyden&apos;,
+          data: [103, 580],
+          backgroundColor: &apos;rgba(255, 206, 86, 0.7)&apos;,
+          borderColor: &apos;rgba(255, 206, 86, 1)&apos;,
+          borderWidth: 1
+     },
+     {
+          label: &apos;Native&apos;,
+          data: [37, 210],
+          backgroundColor: &apos;rgba(75, 192, 192, 0.7)&apos;,
+          borderColor: &apos;rgba(75, 192, 192, 1)&apos;,
+          borderWidth: 1
+     }
+     ]
+     },
+     options: {
+     responsive: true,
+     plugins: {
+     title: {
+          display: true,
+          text: &apos;RSS comparison&apos;
+     },
+     legend: {
+          position: &apos;top&apos;,
+     }
+     },
+     scales: {
+     y: {
+          beginAtZero: true,
+          title: {
+          display: true,
+          text: &apos;RSS (MB)&apos;
+          }
+     }
+     }
+     }
+});
+&lt;/script&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In terms of RSS, Project Leyden does not significantly change the picture,
+while native executables offer a substantially lower memory footprint.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Reducing memory usage has not been a primary goal of Project Leyden so far,
+though this may evolve in the future.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;lets-take-a-step-back&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#lets-take-a-step-back&quot;&gt;&lt;/a&gt;Let&amp;#8217;s take a step back&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;At this point, you might be thinking: &quot;Why not just go native for everything?&quot;.
+For all the reasons &lt;a href=&quot;#graalvm&quot;&gt;we&amp;#8217;ve outlined&lt;/a&gt;, use native when it makes sense for you.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There&amp;#8217;s also the question of throughput.
+We haven&amp;#8217;t collected throughput numbers ourselves, as we didn&amp;#8217;t have the proper setup,
+but some of our colleagues are running tests in an isolated environment,
+and recently published &lt;a href=&quot;https://quarkus.io/blog/new-benchmarks/&quot;&gt;new benchmark results&lt;/a&gt;.
+Native executables usually result in lower throughput,
+at least with what is available as Open Source today in Mandrel and GraalVM CE.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This is where Project Leyden really shines: you get significantly faster startup times compared to a regular JVM,
+while still retaining all the benefits of running on the JVM.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;whats-next-for-leyden-in-quarkus&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#whats-next-for-leyden-in-quarkus&quot;&gt;&lt;/a&gt;What&amp;#8217;s next for Leyden in Quarkus?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden is actively evolving, and we are closely tracking its developments,
+in particular via the premain branch of the OpenJDK Leyden repository,
+where experimental features are developed before being integrated into mainline JDK releases.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There are several areas where we expect things to improve:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Storage of JIT-compiled code in the AOT cache, which would further reduce warmup time.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Potential support for custom class loaders, which would allow us to return to the more optimized &lt;code&gt;fast-jar&lt;/code&gt; packaging.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;On the Quarkus side, we are also working on:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;Testing and validating on additional platforms, including Windows.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As Project Leyden matures, we will continue to integrate new features into Quarkus.
+We are looking forward to what Java 27 and beyond will bring.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;conclusion&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#conclusion&quot;&gt;&lt;/a&gt;Conclusion&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;After a month of experimenting and working on the integration of Project Leyden into Quarkus, we are very excited about the results and the potential of this technology.
+And we are very happy we were able to integrate it into Quarkus 3.32 so that you can play with it already.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Project Leyden is being continuously improved and is likely to figure prominently in the future of the Java platform.
+As part of our quest in Quarkus to provide the best development platform, with the help of the OpenJDK team at IBM,
+we are actively monitoring the progress made upstream (in the &lt;code&gt;premain&lt;/code&gt; branch of &lt;a href=&quot;https://github.com/openjdk/leyden/tree/premain&quot;&gt;&lt;code&gt;git@github.com:openjdk/leyden.git&lt;/code&gt;&lt;/a&gt;)
+and plan to continue shaping the Quarkus + Leyden experience accordingly.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With AOT support, Quarkus expands its runtime flexibility: plain JVM, Leyden-optimized JVM, and native image.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Rather than replacing one another, these modes form a spectrum of trade-offs.
+Native image remains unmatched for startup and minimal footprint.
+Leyden strengthens the JVM startup story.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Which works best depends on your priorities, constraints, and application workload.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our commitment is unchanged: give developers the best option for their workload and keep improving each path.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Thu, 05 Mar 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/leyden-2/
+            </guid>
+            
+            
+            
+            <author></author>
             
         </item>
         
@@ -9670,82 +10617,6 @@ Try it, use it in your CI, and please report any feedback so we can make it prod
             
             
             <author>Andrea Peruffo (https://twitter.com/and_prf)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.28.3 - Maintenance release</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-28-3-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you thought that because a lot of us are at Devoxx Belgium this week, you wouldn&amp;#8217;t have a Quarkus release this week, you were wrong!
-We released Quarkus 3.28.3, a new maintenance release for our 3.28 stream.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.28, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.28.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For more information about the adjustments you need to make to your applications, please refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.28&quot;&gt;Quarkus 3.28 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.28.3&quot;&gt;3.28.3&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Thu, 09 Oct 2025 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-28-3-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
             
         </item>
         
