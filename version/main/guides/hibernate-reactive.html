@@ -540,6 +540,110 @@ Make sure to terminate each statement with a semicolon.</p>
 <p>This is useful to have a data set ready for your tests or demos.</p>
 </div>
 <div class="sect2">
+<h3 id="using-transactional-with-hibernate-reactive"><a class="anchor" href="#using-transactional-with-hibernate-reactive"></a>Using <code>@Transactional</code> with Hibernate Reactive</h3>
+<div class="paragraph">
+<p>You can use the standard <code>jakarta.transaction.Transactional</code> annotation with Hibernate Reactive.
+This provides a more familiar programming model for developers coming from Hibernate ORM.</p>
+</div>
+<div class="paragraph">
+<p>While defining transaction handling using the annotation, you should inject <code>Mutiny.Session</code> or <code>Mutiny.StatelessSession</code> using CDI and use them in methods annotated with <code>@Transactional</code>.</p>
+</div>
+<div class="paragraph">
+<p>Here&#8217;s an example showing how to use <code>@Transactional</code> in a REST resource:</p>
+</div>
+<div class="listingblock">
+<div class="title">Example REST resource using @Transactional</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Path("/fruits")
+public class FruitResource {
+
+    @Inject
+    Mutiny.Session session; <i class="conum" data-value="1"></i><b>(1)</b>
+
+    @GET
+    @Path("/{id}")
+    public Uni&lt;Fruit&gt; getFruit(Long id) {
+        return session.find(Fruit.class, id);
+    }
+
+    @POST
+    @Transactional <i class="conum" data-value="2"></i><b>(2)</b>
+    public Uni&lt;Fruit&gt; createFruit(Fruit fruit) {
+        return session.persist(fruit)
+                .chain(() -&gt; session.find(Fruit.class, fruit.getId()));
+    }
+
+    @PUT
+    @Path("/{id}")
+    @Transactional <i class="conum" data-value="3"></i><b>(3)</b>
+    public Uni&lt;Fruit&gt; updateFruit(Long id, @QueryParam("name") String newName) {
+        return session.find(Fruit.class, id)
+                .map(fruit -&gt; {
+                    fruit.setName(newName);
+                    return fruit;
+                });
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Inject the reactive session directly</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Use <code>@Transactional</code> for persist operations - creates new entities in the database</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>Use <code>@Transactional</code> for update operations - modifies existing entities</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The <code>@Transactional</code> interceptor will:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Lazily open a Hibernate Reactive session when first accessed</p>
+</li>
+<li>
+<p>Begin a transaction automatically</p>
+</li>
+<li>
+<p>Commit the transaction when the <code>Uni</code> completes successfully</p>
+</li>
+<li>
+<p>Roll back the transaction if an exception is thrown or the <code>Uni</code> is cancelled</p>
+</li>
+<li>
+<p>Close the session and release the database connection when the reactive chain completes</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>There are some limitations when using <code>@Transactional</code> with Hibernate Reactive, in particular not being able to use a specific <code>TxType</code>, not being able to use multiple persistence units / datasources, or non-functional <code>Uni.combine()</code>/<code>Uni.joining()</code>.</p>
+</div>
+<div class="paragraph">
+<p>See <a href="#hr-limitations">Limitations and other things you should know</a> for more information.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
 <h3 id="hr-configuration-properties"><a class="anchor" href="#hr-configuration-properties"></a>Hibernate Reactive configuration properties</h3>
 <div class="paragraph">
 <p>There are various optional properties useful to refine your session factory or guide Quarkus' guesses.</p>
@@ -889,9 +993,8 @@ this extension you will mostly have the same experience as using the original li
 for some extension points; this should be transparent and useful but if you&#8217;re an expert of Hibernate Reactive you might want to
 know what is being done.</p>
 </div>
-<div class="paragraph">
-<p>Here&#8217;s a list of things to pay attention when using Hibernate Reactive in Quarkus:</p>
-</div>
+<div class="sect2">
+<h3 id="general-limitations"><a class="anchor" href="#general-limitations"></a>General limitations</h3>
 <div class="ulist">
 <ul>
 <li>
@@ -911,12 +1014,58 @@ See <a href="https://github.com/quarkusio/quarkus/issues/15959" class="bare">htt
 <li>
 <p>Integration with the Envers extension is not supported.</p>
 </li>
-<li>
-<p>Transaction demarcation cannot be done using <code>jakarta.transaction.Transactional</code> or <code>QuarkusTransaction</code>;
-if you use <a href="hibernate-reactive-panache">Hibernate Reactive with Panache</a>,
-consider <a href="hibernate-reactive-panache#transactions">using <code>@WithTransaction</code> or <code>Panache.withTransaction()</code></a> instead.</p>
-</li>
 </ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="transaction-management-choosing-between-transactional-and-panache-annotations"><a class="anchor" href="#transaction-management-choosing-between-transactional-and-panache-annotations"></a>Transaction management: choosing between <code>@Transactional</code> and Panache annotations</h3>
+<div class="paragraph">
+<p>With the introduction of the <code>quarkus-reactive-transactions</code> extension, you now have two options for managing transactions in Hibernate Reactive applications:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Use <code>jakarta.transaction.Transactional</code> for declarative transaction management</p>
+</li>
+<li>
+<p>Use Panache&#8217;s transaction annotations (<code>@WithTransaction</code>, <code>@WithSession</code>, <code>@WithSessionOnDemand</code>, or the programmatic <code>Panache.withTransaction()</code>)</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>You must choose one approach and use it consistently throughout your application.
+Mixing both transaction management styles in the same reactive pipeline is not supported and will result in an <code>UnsupportedOperationException</code>.
+In the future, we&#8217;ll deprecate the previous annotations provided by Panache and and support only <code>@Transactional</code>.</p>
+</div>
+<div class="paragraph">
+<p>You can inject either <code>Mutiny.Session</code> or <code>Mutiny.StatelessSession</code>.
+Be careful of injecting both session types in the same bean. Attempting to use both session types within the same transaction will throw an <code>IllegalStateException</code>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="transactional-different-pipelines"><a class="anchor" href="#transactional-different-pipelines"></a>Using Declarative Transaction Management in different reactive pipelines</h3>
+<div class="paragraph">
+<p>When using declarative transaction management with Vert.x context-based interceptors (<code>@Transactional</code>, <code>@WithTransaction</code>, <code>@WithSession</code>, <code>@WithSessionOnDemand</code>) in multiple methods and combining such methods with either <code>Uni.combine().all().unis()</code> or <code>Uni.join().all()</code> the same transaction might be shared by different reactive pipelines causing unpredictable behavior.</p>
+</div>
+<div class="paragraph">
+<p>For this reason, <strong>avoid using declarative transactional management with those methods</strong>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="transactional-others"><a class="anchor" href="#transactional-others"></a>Other Declarative Transactional Management limitations</h3>
+<div class="paragraph">
+<p>Reactive transactions does not use <code>TransactionManager</code>, thus they are local only and do not support XA transactions. Every parameter defined on the <code>TransactionManager</code> (such as <code>quarkus.transaction-manager.default-transaction-timeout</code>) will be ignored. Only a single datasource can participate in a transaction.</p>
+</div>
+<div class="paragraph">
+<p>Reactive transactions also work exclusively within the reactive pipeline.
+If blocking code is executed (for example on a worker thread) as part of that pipeline, it will not be able to participate in the transaction.</p>
+</div>
+<div class="paragraph">
+<p>Declarative reactive transactions with <code>@Transactional</code> can only be applied to methods returning <code>Uni</code>, not <code>Multi</code>, <code>CompletionStage</code>, or <code>CompletableFuture</code>.</p>
+</div>
+<div class="paragraph">
+<p>Currently, only <code>Transactional.TxType.REQUIRED</code> is supported with reactive transactions. Other transaction types (<code>REQUIRES_NEW</code>, <code>MANDATORY</code>, etc.) will throw an <code>UnsupportedOperationException</code>.</p>
+</div>
 </div>
 </div>
 </div>
@@ -3273,6 +3422,7 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#solution">Solution</a></li>
 <li><a href="#hr-getting-started">Setting up and configuring Hibernate Reactive</a>
 <ul class="sectlevel2">
+<li><a href="#using-transactional-with-hibernate-reactive">Using <code>@Transactional</code> with Hibernate Reactive</a></li>
 <li><a href="#hr-configuration-properties">Hibernate Reactive configuration properties</a></li>
 <li><a href="#orm-and-reactive-extension-simultaneously">Hibernate ORM and Reactive extensions simultaneously</a></li>
 <li><a href="#persistence-unit-active">Activate/deactivate persistence units</a></li>
@@ -3284,7 +3434,14 @@ See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/ja
 <li><a href="#multiple-persistence-units">Multiple persistence units</a></li>
 </ul>
 </li>
-<li><a href="#hr-limitations">Limitations and other things you should know</a></li>
+<li><a href="#hr-limitations">Limitations and other things you should know</a>
+<ul class="sectlevel2">
+<li><a href="#general-limitations">General limitations</a></li>
+<li><a href="#transaction-management-choosing-between-transactional-and-panache-annotations">Transaction management: choosing between <code>@Transactional</code> and Panache annotations</a></li>
+<li><a href="#transactional-different-pipelines">Using Declarative Transaction Management in different reactive pipelines</a></li>
+<li><a href="#transactional-others">Other Declarative Transactional Management limitations</a></li>
+</ul>
+</li>
 <li><a href="#simplifying-hibernate-reactive-with-panache">Simplifying Hibernate Reactive with Panache</a></li>
 <li><a href="#validation-modes-and-hibernate-validator-integration">Validation modes and Hibernate Validator integration</a></li>
 <li><a href="#configuration-reference">Configuration Reference for Hibernate Reactive</a></li>
