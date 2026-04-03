@@ -9,6 +9,23 @@
 //FILES templates/=templates/*
 //FILES application.yaml
 
+import io.quarkus.logging.Log;
+import io.quarkus.qute.Location;
+import io.quarkus.qute.Template;
+import io.smallrye.graphql.client.GraphQLClient;
+import io.smallrye.graphql.client.Response;
+import io.smallrye.graphql.client.dynamic.api.DynamicGraphQLClient;
+import jakarta.inject.Inject;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonValue;
+import org.commonmark.node.AbstractVisitor;
+import org.commonmark.node.Link;
+import org.commonmark.node.Node;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import picocli.CommandLine;
+
 import java.io.File;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -24,47 +41,6 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
-
-import org.commonmark.node.AbstractVisitor;
-import org.commonmark.node.BlockQuote;
-import org.commonmark.node.BulletList;
-import org.commonmark.node.Code;
-import org.commonmark.node.CustomBlock;
-import org.commonmark.node.CustomNode;
-import org.commonmark.node.Document;
-import org.commonmark.node.Emphasis;
-import org.commonmark.node.FencedCodeBlock;
-import org.commonmark.node.HardLineBreak;
-import org.commonmark.node.Heading;
-import org.commonmark.node.HtmlBlock;
-import org.commonmark.node.HtmlInline;
-import org.commonmark.node.Image;
-import org.commonmark.node.IndentedCodeBlock;
-import org.commonmark.node.Link;
-import org.commonmark.node.LinkReferenceDefinition;
-import org.commonmark.node.ListItem;
-import org.commonmark.node.Node;
-import org.commonmark.node.OrderedList;
-import org.commonmark.node.Paragraph;
-import org.commonmark.node.SoftLineBreak;
-import org.commonmark.node.StrongEmphasis;
-import org.commonmark.node.Text;
-import org.commonmark.node.ThematicBreak;
-import org.commonmark.node.Visitor;
-import org.commonmark.parser.Parser;
-import org.commonmark.renderer.html.HtmlRenderer;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-
-import io.quarkus.logging.Log;
-import io.quarkus.qute.Location;
-import io.quarkus.qute.Template;
-import io.smallrye.graphql.client.GraphQLClient;
-import io.smallrye.graphql.client.Response;
-import io.smallrye.graphql.client.dynamic.api.DynamicGraphQLClient;
-import jakarta.inject.Inject;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonValue;
-import picocli.CommandLine;
 
 @CommandLine.Command(name = "generate-page", mixinStandardHelpOptions = true)
 public class main implements Callable<Integer> {
@@ -146,7 +122,7 @@ public class main implements Callable<Integer> {
         if (response.hasError()) {
             System.out.println("Errors:\n" + response.getErrors());
         }
-        System.out.println("Data:\n" + response.getData());
+//        System.out.println("Data:\n" + response.getData());
         JsonArray array = response.getData().getJsonObject("organization").getJsonObject("projectsV2")
                 .getJsonArray("nodes");
         for (JsonValue value : array) {
@@ -226,12 +202,14 @@ public class main implements Callable<Integer> {
         private static boolean isMetadata(String singular, String plural, String line) {
             var l = line.toLowerCase().trim();
             return l.startsWith("* " + singular.toLowerCase() + ":")
-                    || l.startsWith("* " + plural.toLowerCase() + ":");
+                    || l.startsWith("* " + plural.toLowerCase() + ":")
+                    || l.startsWith("- " + singular.toLowerCase() + ":")
+                    || l.startsWith("- " + plural.toLowerCase() + ":");
         }
 
         private static boolean isMetadata(String singular, String line) {
             var l = line.toLowerCase().trim();
-            return l.startsWith("* " + singular.toLowerCase() + ":");
+            return l.startsWith("* " + singular.toLowerCase() + ":")  || l.startsWith("- " + singular.toLowerCase() + ":");
         }
 
         public String getDeliverable() {
@@ -269,7 +247,6 @@ public class main implements Callable<Integer> {
                     .filter(s -> isMetadata("Proposal", s))
                     .findFirst()
                     .orElse(null);
-
             return extractLinkFromLine(line);
         }
 
@@ -364,7 +341,7 @@ public class main implements Callable<Integer> {
 
             // Is it staled?
             // Months is an unsupported unit, so using days
-            if (! isLTS()  && update.updateAt().isBefore(Instant.now().minus(60, ChronoUnit.DAYS))) {
+            if (!isLTS() && update.updateAt().isBefore(Instant.now().minus(60, ChronoUnit.DAYS))) {
                 return Status.STALED;
             }
 
