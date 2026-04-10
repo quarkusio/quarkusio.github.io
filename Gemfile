@@ -37,5 +37,8 @@ gem "wdm", "~> 0.1.0" if Gem.win_platform?
 
 gem "webrick", "~> 1.8"
 
+# Pin public_suffix to < 7 for Ruby 3.1 compatibility (bretfisher/jekyll-serve image)
+gem "public_suffix", "< 7"
+
 # Copy search-wc.js from the search-wc server
 gem "open-uri", "~> 0.4.1"
