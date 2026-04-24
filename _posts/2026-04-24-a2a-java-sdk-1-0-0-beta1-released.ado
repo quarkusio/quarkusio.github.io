@@ -1,7 +1,7 @@
 ---
 layout: post
 title: 'A2A Java SDK 1.0.0.Beta1 Released'
-date: 2026-04-22
+date: 2026-04-24
 tags: ai a2a
 synopsis: 'A2A Java SDK 1.0.0.Beta1 is now available, aligned with the final A2A Specification 1.0.0.'
 author: ehsavoie
