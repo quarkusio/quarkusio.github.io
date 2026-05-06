@@ -1,0 +1,302 @@
+---
+layout: post
+title: 'Faster Startup on IBM Semeru with OpenJ9 Shared Classes Cache'
+date: 2026-05-06
+tags: performance aot semeru
+synopsis: 'Quarkus 3.35 brings great startup improvements to IBM Semeru Runtimes. The same `quarkus.package.jar.aot.enabled=true` flag that activates Project Leyden on OpenJDK now automatically generates an OpenJ9 Shared Classes Cache - no code changes needed.'
+author: geoand
+---
+
+Slow startup times have long been a challenge for Java applications. Project Leyden addressed this for OpenJDK 25+, but what about IBM Semeru users?
+
+In our https://quarkus.io/blog/leyden-2/[previous post], we described how we integrated Project Leyden into Quarkus, bringing JVM startup way down.
+
+But not everyone runs OpenJDK.
+
+Many teams, especially in enterprise environments, run https://www.ibm.com/semeru-runtimes[IBM Semeru Runtimes], IBM's production Java runtime built on the https://eclipse.dev/openj9/[Eclipse OpenJ9] JVM.
+These teams deserve the similar startup improvements, with the same ease of use.
+
+That's what we built. Starting with Quarkus 3.35, the same `quarkus.package.jar.aot.enabled=true` flag that activates Leyden on OpenJDK now automatically generates an OpenJ9 Shared Classes Cache on IBM Semeru.
+
+No code changes. No additional configuration. Quarkus detects the JVM and does the right thing.
+
+== What is the OpenJ9 Shared Classes Cache?
+
+The Eclipse OpenJ9 JVM has long offered a feature called https://eclipse.dev/openj9/docs/shrc/[Shared Classes Cache (SCC)].
+The concept is similar to what Project Leyden does for HotSpot, but it predates Leyden by many years and goes further in some respects.
+
+At its core, the SCC is a region of shared memory — either a memory-mapped file (persistent) or shared memory segment (non-persistent) — that stores data the JVM would otherwise have to recompute on every startup.
+When a class is loaded for the first time, OpenJ9 automatically stores it in the cache.
+On subsequent startups, the JVM finds it there and skips parsing, verification, and loading from disk entirely.
+
+But class data is only the beginning. The SCC stores three categories of data:
+
+Class metadata::
+Parsed and verified class structures, ready to use without re-reading JAR files.
+
+AOT-compiled native code::
+The OpenJ9 AOT compiler dynamically compiles Java methods into native code at runtime and stores them in the cache. On subsequent runs, these pre-compiled methods execute immediately instead of being interpreted. The VM https://eclipse.dev/openj9/docs/aot/[automatically selects] which methods to AOT-compile using heuristics that identify the startup phase of large applications — no manual configuration needed.
+
+JIT profiling data and compilation hints::
+The JIT compiler stores profiling information and optimization hints in the cache, allowing subsequent JVM instances to make better compilation decisions from the start. When a cached AOT method runs, the JIT compiler can further optimize it based on actual runtime behavior, giving you the best of both worlds.
+
+The result: significantly faster startup, lower memory overhead during class loading, and a warmer JIT from the very first request.
+
+Unlike other class data sharing implementations, the OpenJ9 SCC is fully dynamic: it is populated transparently as your application runs, without requiring a separate offline step to enumerate classes.
+The cache is also designed for multi-JVM environments — multiple JVM instances can share the same cache simultaneously, reducing the aggregate memory footprint when running several Java applications on the same host.
+
+If you are familiar with how Leyden works, much of this will sound familiar. The key difference is that SCC is specific to the OpenJ9 JVM and has been production-hardened over many years, while Leyden is a newer effort within OpenJDK targeting HotSpot.
+
+== Using it
+
+If you already have `quarkus.package.jar.aot.enabled=true` in your build, you don't need to change anything. Just build with a Semeru JDK:
+
+[source, bash, subs=attributes+, role="primary asciidoc-tabs-sync-maven"]
+.Maven
+----
+./mvnw verify -Dquarkus.package.jar.aot.enabled=true -DskipITs=false
+----
+
+[source, bash, subs=attributes+, role="secondary asciidoc-tabs-sync-gradle"]
+.Gradle
+----
+./gradlew build quarkusIntTest -Dquarkus.package.jar.aot.enabled=true
+----
+
+That's it. The build:
+
+1. Packages your application with the `aot-jar` format.
+2. Starts the application with `-Xshareclasses:name=quarkus-app,cacheDir=app-scc`, which tells OpenJ9 to populate the cache as the application runs.
+3. Your `@QuarkusIntegrationTest` tests run against it, exercising your endpoints and features. During this time, OpenJ9 is continuously populating the cache with class data, AOT-compiled methods, and JIT profiling hints.
+4. When the tests finish and the application shuts down, the `app-scc/` directory contains a fully populated Shared Classes Cache.
+
+Once that is done, verify that your logs contain `Detected IBM Semeru Runtime - using Shared Classes Cache`
+
+To run the application with the cache:
+
+[source, bash]
+----
+cd target/quarkus-app
+java -Xshareclasses:name=quarkus-app,cacheDir=app-scc,readonly -jar quarkus-run.jar
+----
+
+The `readonly` flag prevents the cache from being modified at runtime.
+This is the recommended setting for production: the cache is an artifact of the build, not something that should drift in production.
+
+The generated `app-scc/` directory must be deployed alongside your JAR:
+
+[source]
+----
+target/quarkus-app/
+├── app-scc/              <1>
+├── quarkus-run.jar
+├── lib/
+└── quarkus/
+----
+<1> The Shared Classes Cache directory. Its contents are opaque to the user — OpenJ9 manages the internal structure.
+
+=== Customizing the training run
+
+If you need to pass additional JVM flags during the training run (for example, to increase heap size or enable specific JVM features), you can use:
+
+[source, properties]
+----
+quarkus.package.jar.aot.additional-recording-args=-Xmx512m
+----
+
+=== Troubleshooting
+
+If the cache doesn't seem to improve startup, first verify it is actually being used.
+Enable verbose output by replacing `readonly` with `readonly,verboseIO`:
+
+[source, bash]
+----
+java -Xshareclasses:name=quarkus-app,cacheDir=app-scc,readonly,verboseIO -jar quarkus-run.jar
+----
+
+This prints detailed information about each class loaded from the cache versus the filesystem.
+
+Also make sure you are using the exact same Semeru JVM version to run the application as was used to build the cache.
+OpenJ9 uses internal generation numbers to detect incompatible caches; a version mismatch will cause the cache to be ignored.
+
+== How auto-detection works
+
+When `quarkus.package.jar.aot.enabled=true` is set and no explicit type is configured, Quarkus picks the best strategy for the JVM it detects at build time:
+
+[cols="1,1,1", options="header"]
+|===
+| Build JVM | Strategy | Output
+
+| IBM Semeru
+| Shared Classes Cache (`-Xshareclasses`)
+| `app-scc/` directory
+
+| OpenJDK 25+
+| Leyden AOT (`-XX:AOTCache`)
+| `app.aot` file
+
+| Older OpenJDK
+| AppCDS (`-XX:SharedArchiveFile`)
+| `app-cds.jsa` file
+|===
+
+The detection checks `java.runtime.name` for the string `semeru`. If it matches, the SCC path is chosen. Otherwise, Quarkus checks the Java version: 25 or higher selects Leyden, anything older falls back to AppCDS.
+
+If you need to override the auto-detection (for example, to force AppCDS on Semeru for comparison), you can set the type explicitly:
+
+[source, properties]
+----
+quarkus.package.jar.aot.type=SCC
+----
+
+Valid values are `AUTO` (the default), `AOT`, `AppCDS`, and `SCC`.
+
+== One flag, every JVM
+
+This is the design decision we are most proud of in this work. Your build configuration, CI pipeline, and Dockerfile don't need to know which JVM will run the application. Set `quarkus.package.jar.aot.enabled=true`, and the build adapts.
+
+This matters in practice. Teams that standardize on Semeru for some services and OpenJDK for others can use the same Quarkus build configuration everywhere. Switching JVMs doesn't require touching `application.properties`.
+
+It also means that the Quarkus documentation, guides, and examples work the same way regardless of the JVM.
+When we write "enable AOT for faster startup," that statement is true whether you run HotSpot, Semeru, or an older JDK.
+
+== Differences from Project Leyden
+
+While the user experience is intentionally identical, there are a few technical differences worth noting:
+
+[cols="1,1,1", options="header"]
+|===
+| | Project Leyden (HotSpot) | Shared Classes Cache (OpenJ9)
+
+| *Cache format*
+| Single `app.aot` file
+| `app-scc/` directory
+
+| *What is cached*
+| Loaded/linked classes, method profiles (future: JIT code)
+| Class data, AOT-compiled native code, JIT profiling data and hints
+
+| *AOT compilation*
+| Not yet included (planned for future JDK releases)
+| Included: startup methods are AOT-compiled and stored in the cache
+
+| *Training*
+| Two-step: record configuration, then create cache in a separate JVM invocation
+| Single step: cache is populated during the training run itself
+
+| *JVM requirement*
+| OpenJDK 25+
+| Any IBM Semeru version
+
+| *Maturity*
+| New (JDK 25, actively evolving)
+| Mature (production-hardened over many years in OpenJ9)
+|===
+
+One notable difference is that the SCC already includes AOT-compiled native code for startup methods, whereas Leyden currently caches class loading and linking data plus method profiling information, with compiled code storage planned for future JDK versions.
+
+== Some numbers
+
+To give you a sense of what the SCC brings in practice, we measured startup time and memory usage for the Quarkus REST JSON quickstart application on IBM Semeru 25, with and without the Shared Classes Cache.
+
+[cols="2,2,1,2,1", options="header"]
+|===
+|  | Startup time | Diff | RSS | Diff
+
+| *Default (no SCC)*
+>m| 433 ms
+>m| Reference
+>m| 107 MB
+>m| Reference
+
+| *With Shared Classes Cache*
+>m| 206 ms
+>m| -52%
+>m| 87 MB
+>m| -19%
+|===
+
+The SCC file is `25 MB` in size — a reasonable cost for a 52% startup improvement.
+
+[NOTE]
+====
+These numbers were measured on a developer laptop, not in an isolated lab environment.
+Your results will vary depending on your application's size and complexity.
+The more classes and methods your application loads during startup, the more the SCC helps.
+====
+
+**We were able to start a Quarkus REST application on IBM Semeru in just `206 ms`** — and this is on the JVM, with full JIT compilation, full debugging support, and no native image involved.
+
+== Container images and future work
+
+=== Manual deployment today
+
+Today, you can deploy a Quarkus application with a pre-built SCC by copying the `app-scc/` directory into your container image:
+
+[source, dockerfile]
+----
+FROM icr.io/appcafe/ibm-semeru-runtimes:open-21-jre-ubi-minimal
+COPY target/quarkus-app /deployments
+WORKDIR /deployments
+CMD ["java", \
+     "-Xshareclasses:name=quarkus-app,cacheDir=app-scc,readonly", \
+     "-jar", "quarkus-run.jar"]
+----
+
+This works, but it has a limitation: the SCC must be generated on the same JVM version that will run in the container.
+If your build JVM differs from the container's JVM, the cache will be ignored.
+To ensure a match, generate the cache using the same Semeru image in your CI pipeline.
+
+=== Automated container image integration
+
+The container image integration we described in the https://quarkus.io/blog/leyden-2/[Leyden post] — where Quarkus produces an AOT-optimized container image in a single command — is currently specific to the Leyden AOT path.
+Extending it to support SCC-based container images is on our roadmap.
+
+=== Cache layering for Docker
+
+This is where things get particularly interesting. OpenJ9's SCC supports https://blog.openj9.org/2019/11/05/the-multi-layer-shared-class-cache-for-docker/[multi-layer caches], a feature specifically designed for container environments.
+
+The problem with a single monolithic cache in a container image is Docker's copy-on-write mechanism.
+If a base image contains a populated SCC and a higher layer writes to it (to add application-specific data), Docker duplicates the entire cache into the new layer.
+This defeats the purpose of layer sharing and inflates the image size.
+
+OpenJ9 solves this with the `-Xshareclasses:createLayer` option. Instead of a single cache, you build a stack of cache layers that align with your container image layers:
+
+* Layer 0 (JDK base image): cache populated with JDK and framework classes.
+* Layer 1 (application image): a separate, smaller cache layer containing only the application-specific class data, AOT code, and JIT hints.
+
+Each cache layer is sized individually for its content, and the JVM reads from all layers at startup.
+Because lower layers are never modified by higher ones, Docker's layer sharing works correctly — teams using the same base image share the JDK cache layer across all their application images.
+
+This is the part we are most excited about for future work. We plan to integrate this layered approach into Quarkus's container image extensions (`quarkus-container-image-docker`, `quarkus-container-image-podman`, and `quarkus-container-image-jib`).
+The goal is the same one-command experience we built for Leyden:
+
+[source, bash]
+----
+./mvnw verify -Dquarkus.package.jar.aot.enabled=true -Dquarkus.container-image.build=true -DskipITs=false
+----
+
+This would produce a container image with a properly layered SCC — the framework cache in a shared base layer, the application-specific cache in the top layer — optimized for both startup time and image size.
+
+In microservices architectures where multiple Quarkus services share the same base image and dependency set, this layering could significantly reduce the total storage and transfer cost across all service images.
+
+== Acknowledgements
+
+We would like to thank the OpenJDK team at IBM for their collaboration. The discussions around Leyden and Semeru's shared classes technology were instrumental in shaping this integration.
+
+== Conclusion
+
+The beauty of this integration is its simplicity: one flag, multiple JVMs, optimal performance everywhere. Whether you're running OpenJDK or IBM Semeru, Quarkus has you covered, as Quarkus has always been about meeting developers where they are.
+
+We will continue tracking developments in both Project Leyden and OpenJ9 to bring you the best performance on whatever platform you choose.
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/quarkusio/quarkus/issues[GitHub];
+ * craft some code and https://github.com/quarkusio/quarkus/pulls[push a PR];
+ * discuss with us on https://quarkusio.zulipchat.com/[Zulip] and on the https://groups.google.com/d/forum/quarkus-dev[mailing list];
+ * ask your questions on https://stackoverflow.com/questions/tagged/quarkus[Stack Overflow].
