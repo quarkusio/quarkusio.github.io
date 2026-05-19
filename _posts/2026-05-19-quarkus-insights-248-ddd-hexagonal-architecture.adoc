@@ -1,0 +1,416 @@
+---
+layout: post
+title: 'Quarkus Insights #248: Introduction to Domain-Driven Design and Hexagonal Architecture'
+date: 2026-05-19
+tags: insights ddd architecture design-patterns quarkus
+synopsis: 'Jeremy Davis introduces Domain-Driven Design and Hexagonal Architecture patterns with Quarkus, demonstrating how to structure applications for maintainability and exploring AI-assisted development workflows.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/2PnZ1zzuWn0[watch the video] for the full story.
+
+= Quarkus Insights #248: Introduction to Domain-Driven Design and Hexagonal Architecture
+
+In episode 248 of Quarkus Insights, https://www.linkedin.com/in/jeremyrdavis/[Jeremy Davis], a software engineer at Red Hat with extensive experience in the JBoss ecosystem, provided an in-depth introduction to https://martinfowler.com/bliki/DomainDrivenDesign.html[Domain-Driven Design (DDD)] and Hexagonal Architecture (also known as Ports and Adapters) using https://quarkus.io/[Quarkus].
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/2PnZ1zzuWn0?si=VbQcY8LPfr6Yf-cX" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Why DDD is Having a Moment
+
+Jeremy opened by noting that DDD seems to be experiencing renewed interest, with multiple presentation requests recently. He theorizes this resurgence relates to the rise of AI-assisted development and agentic systems, where DDD's structured approach to organizing business logic makes it easier for AI tools to understand and generate code.
+
+== The Core Principles of Domain-Driven Design
+
+=== Ubiquitous Language
+
+One of Jeremy's favorite aspects of DDD is the emphasis on **ubiquitous language** - a shared vocabulary between developers and business stakeholders. He illustrated this with the restaurant industry example: "86 ketchup" means "we're out of ketchup" to anyone who's worked in restaurants, but is completely nonsensical to outsiders.
+
+The key insight: every industry has its own language, and DDD encourages teams to:
+
+- Identify and document domain-specific terminology
+- Use that language consistently in code, conversations, and documentation
+- Refine the language iteratively with each sprint or development cycle
+
+=== Domains and Subdomains
+
+For the demo, Jeremy built a Quarkus Insights episode scheduling application with several subdomains:
+
+- **Programming**: Managing episode content and scheduling
+- **People**: Managing hosts, presenters, and guests
+- **Engagement**: Handling viewer interactions and notifications
+
+Each subdomain represents a distinct area of business concern with its own models and logic.
+
+== Building Blocks of DDD
+
+=== Aggregates
+
+**Aggregates** are the core business concepts that encapsulate business rules (invariants). In Jeremy's example, the `EpisodeAggregate` serves as the root entity:
+
+[source,java]
+----
+public class EpisodeAggregate {
+    private EpisodeId id;
+    private EpisodeTitle title;
+    private String description;
+    private EpisodeAirDate airDate;
+    private Collection<DomainEvent> domainEvents;
+    
+    public static EpisodeAggregate schedule(
+        EpisodeTitle title, 
+        String description, 
+        EpisodeAirDate airDate) {
+        // Business logic here
+        EpisodeAggregate episode = new EpisodeAggregate();
+        episode.domainEvents.add(new EpisodeScheduledEvent());
+        return episode;
+    }
+}
+----
+
+Key characteristics:
+
+- Aggregates are **POJOs** with no framework dependencies
+- All business logic lives in the aggregate
+- Aggregates maintain **invariants** (rules that must always be true)
+- You interact with the object graph through the aggregate root
+
+=== Value Objects
+
+**Value objects** encapsulate data with no identity. Examples include addresses, email addresses, or in Jeremy's demo, episode titles:
+
+[source,java]
+----
+public record EpisodeTitle(String value) {
+    public EpisodeTitle {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("Episode title cannot be null or blank");
+        }
+        // Could add more validation:
+        // - Must contain "Quarkus"
+        // - Must contain "Insights"
+        // - Must have episode number
+    }
+}
+----
+
+Value objects enable validation at creation time and make the domain model more expressive.
+
+=== Domain Events
+
+**Domain events** represent facts that the business cares about:
+
+[source,java]
+----
+public record EpisodeScheduledEvent(
+    EpisodeId episodeId,
+    EpisodeTitle title,
+    LocalDate airDate
+) implements DomainEvent {
+}
+----
+
+Events are:
+
+- Statements of fact (they have occurred)
+- Immutable
+- Can be replayed
+- Enable event-driven architecture
+
+Unlike **commands** (which can be rejected), events represent things that have already happened.
+
+== Hexagonal Architecture: Ports and Adapters
+
+=== The Layered Approach
+
+Jeremy demonstrated how to structure a DDD application using hexagonal architecture:
+
+**Infrastructure Layer (Adapters)**:
+- REST endpoints (incoming port)
+- Database repositories (outgoing port)
+- Message brokers (outgoing port)
+- DTOs for wire format
+
+**Application Layer**:
+- Application services that orchestrate business logic
+- Command handlers
+- Domain services for logic that doesn't fit in aggregates
+
+**Domain Layer**:
+- Aggregates
+- Value objects
+- Domain events
+- Repository interfaces (not implementations)
+
+=== Application Services
+
+Application services orchestrate the workflow:
+
+[source,java]
+----
+@ApplicationScoped
+public class EpisodeApplicationService {
+    
+    @Inject
+    EpisodeRepository repository;
+    
+    @Inject
+    DomainEventPublisher eventPublisher;
+    
+    public EpisodeDTO scheduleEpisode(ScheduleEpisodeCommand command) {
+        // 1. Validate title doesn't exist
+        if (repository.titleExists(command.title())) {
+            throw new IllegalArgumentException("Title already exists");
+        }
+        
+        // 2. Create aggregate
+        EpisodeAggregate episode = EpisodeAggregate.schedule(
+            command.title(),
+            command.description(),
+            command.airDate()
+        );
+        
+        // 3. Persist
+        episode = repository.persist(episode);
+        
+        // 4. Publish events
+        episode.getDomainEvents().forEach(eventPublisher::publish);
+        
+        return toDTO(episode);
+    }
+}
+----
+
+=== Separating Concerns
+
+A critical aspect of hexagonal architecture is keeping the domain pure:
+
+- **Aggregates** have no knowledge of persistence frameworks
+- **Repositories** handle the translation between aggregates and entities
+- **Mappers** convert between domain objects and database entities
+
+[source,java]
+----
+@ApplicationScoped
+public class EpisodeRepository implements PanacheRepository<EpisodeEntity> {
+    
+    public EpisodeAggregate persist(EpisodeAggregate aggregate) {
+        EpisodeEntity entity = toEntity(aggregate);
+        persist(entity);
+        return rehydrate(entity);
+    }
+    
+    public static EpisodeAggregate rehydrate(EpisodeEntity entity) {
+        return new EpisodeAggregate(
+            entity.id,
+            new EpisodeTitle(entity.title),
+            entity.description,
+            new EpisodeAirDate(entity.airDate)
+        );
+    }
+}
+----
+
+== The Trade-offs
+
+=== More Code, Better Organization
+
+Jeremy was upfront about the main drawback: **you'll write significantly more code** with DDD compared to a simple CRUD application. The demo showed:
+
+- Value objects for each domain concept
+- Separate DTOs for REST endpoints
+- Commands for operations
+- Events for notifications
+- Mappers between layers
+
+=== The Benefits
+
+However, this additional code provides substantial benefits:
+
+**1. Maintainability**: When inheriting code, business logic is easy to find - it's all in the aggregates.
+
+**2. Testability**: Aggregates are POJOs that can be tested with plain JUnit, no framework required.
+
+**3. Flexibility**: Swapping persistence frameworks (e.g., from https://hibernate.org/orm/[Hibernate] to https://firebase.google.com/[Firebase]) only requires changing the repository implementation.
+
+**4. Clear boundaries**: Logic doesn't leak across layers or get scattered in event handlers.
+
+**5. AI-friendly**: The structured approach makes it easier for AI tools to understand and generate code.
+
+== Collaboration Between Domains
+
+Jeremy addressed a key question: how do domains interact?
+
+=== Close Collaboration Pattern
+
+When teams work closely together:
+
+[source,java]
+----
+// People subdomain exposes an API
+public interface PeopleAPI {
+    Collection<PersonDTO> registerHosts(Collection<PersonDTO> hosts);
+    Collection<PersonDTO> registerPresenters(Collection<PersonDTO> presenters);
+}
+
+// Episodes subdomain uses it via a domain service
+@ApplicationScoped
+public class PeopleDomainService {
+    @Inject
+    PeopleAPI peopleAPI;
+    
+    public Collection<PersonDTO> registerHosts(Collection<PersonDTO> hosts) {
+        return peopleAPI.registerHosts(hosts);
+    }
+}
+----
+
+=== Anti-Corruption Layer
+
+When integrating with external systems you don't control, use an anti-corruption layer to translate between their model and yours, protecting your domain from external changes.
+
+=== Transaction Boundaries
+
+**Important**: Transaction boundaries should stay within each domain. If operations span multiple domains, consider:
+
+- Using eventual consistency with domain events
+- Implementing saga patterns for distributed transactions
+- Carefully evaluating if you've drawn domain boundaries correctly
+
+== Validation at Multiple Layers
+
+Jeremy emphasized that validation occurs at different layers for different purposes:
+
+**REST Layer (DTOs)**: Basic validation (not null, not blank)
+[source,java]
+----
+public record CreateEpisodeRequest(
+    @NotBlank String title,
+    @NotBlank String description,
+    @NotNull LocalDate airDate
+) {}
+----
+
+**Domain Layer (Value Objects)**: Business rule validation
+[source,java]
+----
+public record EpisodeAirDate(LocalDate value) {
+    public EpisodeAirDate {
+        if (value.isBefore(LocalDate.now())) {
+            throw new IllegalArgumentException("Episode cannot air in the past");
+        }
+    }
+}
+----
+
+**Application Layer**: Cross-aggregate validation
+[source,java]
+----
+if (repository.titleExists(title)) {
+    throw new IllegalArgumentException("Title already exists");
+}
+----
+
+== AI-Assisted DDD Development
+
+Jeremy demonstrated using https://claude.ai/[Claude AI] to generate DDD boilerplate:
+
+=== Skills and Specifications
+
+He created:
+
+- **Quarkus skills**: Instructions for using https://quarkus.io/guides/hibernate-orm-panache[Panache], REST endpoints, logging
+- **DDD skills**: Patterns for aggregates, value objects, repositories
+- **Specification files**: High-level requirements for the application
+
+=== Results
+
+Using AI with these skills, Jeremy generated a complete DDD application structure in "YOLO mode" (letting the AI run freely). While not perfect (it didn't use Panache as instructed), it created:
+
+- Proper aggregate structure
+- Value objects with validation
+- Repository interfaces
+- Domain events
+- Application services
+
+The key insight: **DDD's structured, boilerplate-heavy nature makes it ideal for AI generation**, while keeping business logic centralized for human review.
+
+=== Best Practices for AI-Assisted Development
+
+Jeremy shared lessons learned:
+
+1. **Set clear boundaries** in prompts (e.g., "always use GitOps, never imperative commands")
+2. **Use structured prompting** like Architecture Definition Language (ADL) from https://www.developertoarchitect.com/[Mark Richards and Neal Ford]
+3. **Review all generated code** - AI handles boilerplate, humans verify business logic
+
+== Testing Architecture with ArchUnit
+
+Jeremy mentioned https://www.archunit.org/[ArchUnit], a library for testing architectural rules:
+
+[source,java]
+----
+@Test
+public void domainLayerShouldNotDependOnInfrastructure() {
+    classes()
+        .that().resideInPackage("..domain..")
+        .should().onlyDependOnClassesThat()
+        .resideInAnyPackage("..domain..", "java..")
+        .check(importedClasses);
+}
+----
+
+This helps enforce architectural boundaries automatically.
+
+== When to Use DDD
+
+Jeremy's guidance on when DDD makes sense:
+
+**Good fit**:
+- Complex business logic
+- Long-lived applications
+- Multiple teams working on different domains
+- Need for clear boundaries and maintainability
+- AI-assisted development workflows
+
+**Overkill**:
+- Simple CRUD applications
+- Prototypes or short-lived projects
+- Small teams with simple requirements
+
+== Resources and Next Steps
+
+Jeremy offered to return for follow-up episodes covering:
+
+- **State distribution** across domains
+- **Event sourcing** and saga patterns
+- **CQRS** for read models
+- **AI-assisted DDD workflows** in depth
+
+He also mentioned:
+
+- Presenting at https://www.dddeurope.com/[Domain-Driven Design Europe]
+- Speaking at https://exploreddd.com/[Explore DDD] in Colorado
+- His blog at https://arrogantprogrammer.com/[The Arrogant Programmer]
+
+== Key Takeaways for Developers
+
+1. **DDD provides structure** that makes business logic easy to find and maintain
+2. **Hexagonal architecture** keeps your domain pure and testable
+3. **More code upfront** pays dividends in maintainability
+4. **Ubiquitous language** bridges the gap between business and technology
+5. **Value objects** enable validation at creation time
+6. **Domain events** enable event-driven architecture naturally
+7. **AI tools** work well with DDD's structured approach
+8. **Transaction boundaries** should stay within domains
+9. **Validation happens at multiple layers** for different purposes
+10. **Not every application needs DDD** - evaluate complexity first
+
+== Conclusion
+
+Domain-Driven Design and Hexagonal Architecture provide powerful patterns for organizing complex business logic in https://quarkus.io/[Quarkus] applications. While they require more upfront code, the benefits in maintainability, testability, and clarity make them valuable for long-lived, complex applications. The structured nature of DDD also makes it particularly well-suited for AI-assisted development, where boilerplate can be generated while keeping business logic centralized and reviewable.
+
+The combination of Quarkus's developer-friendly features (like https://quarkus.io/guides/dev-mode-differences[Dev Mode], https://quarkus.io/guides/cdi-reference[CDI], and Panache) with DDD patterns creates a powerful foundation for building maintainable, scalable applications.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel] and explore more at https://quarkus.io[quarkus.io].
