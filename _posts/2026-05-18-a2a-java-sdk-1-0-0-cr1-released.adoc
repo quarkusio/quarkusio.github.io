@@ -1,0 +1,213 @@
+---
+layout: post
+title: 'A2A Java SDK 1.0.0.CR1 Released'
+date: 2026-05-18
+tags: ai a2a
+synopsis: 'A2A Java SDK 1.0.0.CR1 is now available with v0.3 protocol backward compatibility, Android support, unified HTTP clients, and a spec-compliant SSE parser.'
+author: kkhan
+---
+
+I am pleased to announce the release of https://github.com/a2aproject/a2a-java/releases/tag/v1.0.0.CR1[A2A Java SDK 1.0.0.CR1]. CR (Candidate Release) means all features planned for 1.0 are now complete -- this is the last step before GA. There are no breaking changes from Beta1, so upgrading is straightforward.
+
+The big addition in this release is a *v0.3 protocol version compatibility layer*, so your v1.0 agents can interoperate with agents and clients still running v0.3. We also added an Android HTTP client, unified HTTP client implementations, and a spec-compliant SSE parser.
+
+== What's A2A?
+
+The Agent2Agent (A2A) Protocol is an open standard that enables AI agents to communicate and collaborate with one another, regardless of each agent's underlying framework, language, or vendor. The A2A Java SDK makes it easy to build A2A-compliant agents in Java, with reference implementations based on Quarkus.
+
+== The Journey to 1.0
+
+Since January 2026, we have gone through six pre-releases to get here. Here is a brief recap:
+
+* https://quarkus.io/blog/a2a-java-sdk-1-0-0-alpha1/[*1.0.0.Alpha1*] (January 2026) -- Aligned with the draft A2A 1.0 specification: migrated to Java records, switched from Jackson to Gson, introduced BOMs, and added comprehensive Javadoc.
+* https://quarkus.io/blog/a2a-java-sdk-1-0-0-alpha2-released/[*1.0.0.Alpha2*] (February 2026) -- Added OpenTelemetry-based telemetry, push notification support, and the streamlined `AgentEmitter` API.
+* *1.0.0.Alpha3 / Alpha4* (February-March 2026) -- Maven coordinates changed to `org.a2aproject.sdk`, various protocol alignment improvements, and the addition of Docker/Podman test utilities.
+* https://quarkus.io/blog/a2a-java-sdk-1-0-0-beta1-released/[*1.0.0.Beta1*] (April 2026) -- Fully aligned with the final https://a2a-protocol.org/v1.0.0/specification/[A2A Specification 1.0.0], renamed Java packages to `org.a2aproject.sdk.*`, added structured error codes, and achieved equal support across all three transports.
+
+Each of those blog posts covers its respective release in detail.
+
+== Installation
+
+To use A2A Java SDK 1.0.0.CR1, import the BOM and add the dependencies you need:
+
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.a2aproject.sdk</groupId>
+            <artifactId>a2a-java-sdk-bom</artifactId>
+            <version>1.0.0.CR1</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+----
+
+== Key Features in 1.0.0.CR1
+
+=== v0.3 Protocol Version Compatibility Layer
+
+The move from v0.3 to v1.0 of the A2A protocol introduced significant breaking changes -- different proto namespaces, renamed RPCs, changed HTTP paths, and inverted configuration semantics. Existing agents deployed with v0.3 can't all upgrade at once, so we added a compatibility layer that works across all three transports (JSON-RPC, gRPC, and REST).
+
+It supports three scenarios:
+
+1. Your *v1.0 client* talking to a *v0.3 server* agent
+2. Your *v1.0 server* accepting requests from *v0.3 clients*
+3. A *single server* serving both v1.0 and v0.3 simultaneously
+
+==== Client: Talking to v0.3 Agents
+
+Add the compat client dependency along with the transport you need:
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.a2aproject.sdk</groupId>
+    <artifactId>a2a-java-sdk-compat-0.3-client</artifactId>
+</dependency>
+<!-- Plus the desired transport -->
+<dependency>
+    <groupId>org.a2aproject.sdk</groupId>
+    <artifactId>a2a-java-sdk-compat-0.3-client-transport-jsonrpc</artifactId>
+</dependency>
+----
+
+Then create a `Client_v0_3` instance. It only exposes operations available in v0.3:
+
+[source,java]
+----
+// Fetch the agent card
+AgentCard_v0_3 card = // ... fetch from /.well-known/agent-card.json
+
+// Create the v0.3 compatibility client
+Client_v0_3 client = Client_v0_3.builder(card)
+        .withTransport(
+            JSONRPCTransport_v0_3.class,
+            new JSONRPCTransportConfigBuilder_v0_3())
+        .build();
+----
+
+Return types are v0.3 domain objects from the `org.a2aproject.sdk.compat03.spec` package.
+
+==== Server: Accepting v0.3 Clients
+
+Just add the compat reference dependency for your transport. Your existing `AgentExecutor` works unchanged -- the conversion layer handles translating between v0.3 and v1.0 transparently:
+
+[source,xml]
+----
+<dependency>
+    <groupId>org.a2aproject.sdk</groupId>
+    <artifactId>a2a-java-sdk-compat-0.3-reference-jsonrpc</artifactId>
+</dependency>
+----
+
+No code changes are needed beyond adding the dependency.
+
+==== Multi-Version Deployment
+
+In practice, you'll most likely want to serve both protocol versions from a single server. Multi-version convenience modules bundle v1.0 and v0.3 support with automatic version routing:
+
+[source,xml]
+----
+<!-- Includes v1.0 + v0.3 JSON-RPC with automatic version routing -->
+<dependency>
+    <groupId>org.a2aproject.sdk</groupId>
+    <artifactId>a2a-java-sdk-reference-multiversion-jsonrpc</artifactId>
+</dependency>
+----
+
+An equivalent module is available for REST (`a2a-java-sdk-reference-multiversion-rest`). For gRPC, version dispatch happens naturally through protobuf package namespaces (`a2a.v1` for v0.3 vs `lf.a2a.v1` for v1.0), so you just include both gRPC reference dependencies.
+
+Clients indicate their protocol version via the `A2A-Version` HTTP header (or query parameter). If the header is absent, the server defaults to v0.3 for backward compatibility.
+
+==== Backward-Compatible AgentCard
+
+When serving both protocol versions, v0.3 clients need to be able to parse the agent card. The v1.0 `AgentCard` now has optional `url`, `preferredTransport`, and `additionalInterfaces` fields for this purpose. v1.0 clients use `supportedInterfaces` as before; v0.3 clients use the legacy fields:
+
+[source,java]
+----
+List<AgentInterface> supportedInterfaces = List.of(
+        new AgentInterface("JSONRPC", "http://localhost:9999"));
+
+AgentCard card = AgentCard.builder()
+        .name("My Agent")
+        // ... other fields ...
+        .supportedInterfaces(supportedInterfaces)       // <1>
+        .url("http://localhost:9999")                    // <2>
+        .preferredTransport("JSONRPC")                   // <2>
+        .additionalInterfaces(                           // <2>
+            supportedInterfaces.stream()
+                .map(iface -> new Legacy_0_3_AgentInterface(
+                    iface.protocolBinding(), iface.url()))
+                .toList())
+        .build();
+----
+<1> Used by v1.0 clients
+<2> Used by v0.3 clients -- `additionalInterfaces` uses `Legacy_0_3_AgentInterface` which serializes with the v0.3 field names (`transport` instead of `protocolBinding`)
+
+Push notification payloads are also version-aware: they are formatted according to the protocol version used when the push notification configuration was registered. v0.3 clients receive v0.3 `Task` JSON; v1.0 clients receive the standard `StreamResponse` wrapper.
+
+The entire compatibility layer is validated by multi-version integration tests and a v0.3 TCK conformance suite across all three transports.
+
+=== Android HTTP Client
+
+We now have an `AndroidA2AHttpClient` (artifact `a2a-java-sdk-http-client-android`) that uses `HttpURLConnection`, making the SDK usable on Android. This was contributed by https://github.com/sherryfox[@sherryfox] -- thank you!
+
+=== Unified HTTP Clients
+
+The HTTP client implementations (JDK, Vert.x, and Android) are shared across both v1.0 and v0.3 modules, eliminating duplicated HTTP client code and ensuring consistent behavior regardless of protocol version.
+
+=== Spec-Compliant SSE Parser
+
+A new `ServerSentEvent` record type replaces raw string-based SSE handling across all HTTP client implementations. The `ServerSentEventParser` is fully SSE spec-compliant, supporting multi-line data concatenation, event ID and type, retry intervals, and DoS protection limits.
+
+=== Migration from Reactive Routes to Vert.x Web
+
+We migrated the Quarkus reference server from Quarkus Reactive Routes to direct Vert.x Web Router usage. This gives us finer control over routing, security, and version dispatching. We also added comprehensive security tests as part of this work.
+
+== Bug Fixes
+
+* `historyLength` from `MessageSendConfiguration` is now correctly applied to `SendMessage` responses
+* The `Authorization` header is now included in push notification webhook requests when `AuthenticationInfo` is configured
+* Guard against `JsonNull` when parsing JSON-RPC response error fields
+* Jakarta compatibility fixes for WildFly integration
+
+== Contributors
+
+This release had seven contributors. A special thank you to our four first-time contributors:
+
+* https://github.com/neo1027144-creator[@neo1027144-creator]
+* https://github.com/pratik3558[@pratik3558]
+* https://github.com/sherryfox[@sherryfox]
+* https://github.com/RainYuY[@RainYuY]
+
+And to the returning contributors:
+
+* https://github.com/jmesnil[@jmesnil]
+* https://github.com/kabir[@kabir]
+* https://github.com/ehsavoie[@ehsavoie]
+
+Thank you all for your code, reviews, and feedback!
+
+== What's Next: Road to 1.0.0.GA
+
+CR1 includes all features planned for 1.0. The road to GA is about validation and community feedback. Please try CR1 in your projects and https://github.com/a2aproject/a2a-java/issues[let us know] if you run into any issues.
+
+== Resources
+
+* https://github.com/a2aproject/a2a-java/releases/tag/v1.0.0.CR1[Release Notes on GitHub]
+* https://central.sonatype.com/artifact/org.a2aproject.sdk/a2a-java-sdk-parent/1.0.0.CR1[Maven Central]
+* https://javadoc.io/doc/org.a2aproject.sdk/[JavaDoc]
+* https://a2a-protocol.org/v1.0.0/specification/[A2A Specification]
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements etc. Let's build something great together!
+
+If you are an A2A Java SDK user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/a2aproject/a2a-java/issues[GitHub];
+ * craft some code and https://github.com/a2aproject/a2a-java/pulls[push a PR];
+ * discuss with us in the `#a2a-java` channel on https://discord.gg/jTtSkJB74Q[Discord];
