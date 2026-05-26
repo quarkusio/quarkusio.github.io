@@ -201,7 +201,7 @@
         
         
         
-        <option value="latest" selected>3.34.2 - Latest</option>
+        <option value="latest" selected>3.35.3 - Latest</option>
         
         
         
@@ -258,7 +258,7 @@
 <p>JDK 17+ installed with <code>JAVA_HOME</code> configured appropriately</p>
 </li>
 <li>
-<p>Apache Maven 3.9.12</p>
+<p>Apache Maven 3.9.15</p>
 </li>
 <li>
 <p>A working container runtime (Docker or <a href="podman">Podman</a>)</p>
@@ -271,16 +271,50 @@
 </li>
 </ul>
 </div>
+<div class="paragraph">
+<p>If your extension provides APIs for connecting to an external service, it&#8217;s a good idea to provide a Dev Service implementation.
+This allows your extension to be used for development and testing in a frictionless way, without the hassle of standing up and configuring external services.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="key-concepts"><a class="anchor" href="#key-concepts"></a>Key concepts</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="concept-understanding-the-service-lifecycle"><a class="anchor" href="#concept-understanding-the-service-lifecycle"></a>Concept: Understanding the service lifecycle</h3>
+<div class="paragraph">
+<p>Dev Services can be created by an extension, or the extension can discover and re-use external services.</p>
+</div>
+<div class="sect3">
+<h4 id="starting-and-stopping-services"><a class="anchor" href="#starting-and-stopping-services"></a>Starting and stopping services</h4>
+<div class="paragraph">
+<p>For both discovered and owned services, the services are prepared at build time.
+Discovered services are already started, and will not be started or stopped by the Dev Services infrastructure.
+For an owned service, the service is started by the Quarkus framework after the build, and before runtime.
+Extension code should never start or stop a service directly.
+Instead, extensions provide a <code>Startable</code> to a service builder, so that Quarkus can manage the lifecycle.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="reuse"><a class="anchor" href="#reuse"></a>Reuse</h4>
+<div class="paragraph">
+<p>Services can be re-used between test profiles and across live reload restarts, or a fresh service can be created each time.
+The extension implementation controls how much reuse there is by setting a <code>serviceConfig(Object)</code> with a uniqueness key each build.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="creating-a-dev-service"><a class="anchor" href="#creating-a-dev-service"></a>Creating a Dev Service</h2>
 <div class="sectionbody">
+<div class="sect2">
+<h3 id="dependencies"><a class="anchor" href="#dependencies"></a>Dependencies</h3>
 <div class="paragraph">
-<p>If your extension provides APIs for connecting to an external service, it&#8217;s a good idea to provide a dev service implementation.</p>
+<p>Add the following dependencies to your extension&#8217;s build file.</p>
 </div>
 <div class="paragraph">
-<p>First, you must add the following dependency to the build file, in your <a href="writing-extensions#project-setup">deployement</a> module :</p>
+<p>In your <a href="writing-extensions#project-setup">deployment</a> module:</p>
 </div>
 <div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
 <div class="title">pom.xml</div>
@@ -298,64 +332,60 @@
 </div>
 </div>
 <div class="paragraph">
-<p>Then, add a new build step into the extension processor class that returns a <code>DevServicesResultBuildItem</code>.
-Here, the <a href="https://hub.docker.com/_/hello-world"><code>hello-world</code></a> image is used, but you should set up the right image for your service.</p>
+<p>In your runtime module:</p>
+</div>
+<div class="listingblock primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven">
+<div class="title">pom.xml</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-xml hljs" data-lang="xml">&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-devservices&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+</div>
+</div>
+<div class="listingblock secondary asciidoc-tabs-target-sync-gradle">
+<div class="title">build.gradle</div>
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-gradle hljs" data-lang="gradle">implementation("io.quarkus:quarkus-devservices")</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="implementing-a-startable"><a class="anchor" href="#implementing-a-startable"></a>Implementing a <code>Startable</code></h3>
+<div class="paragraph">
+<p>Provide an implementation of <code>io.quarkus.deployment.builditem.Startable</code> which knows how to start and stop the service.
+For container-based services, extending <code>GenericContainer</code> and implementing <code>Startable</code> is the recommended pattern.
+In that case, <code>GenericContainer</code> already provides a <code>start()</code> method, so the only method that needs to be implemented is <code>close()</code> (which can delegate to the superclass).</p>
+</div>
+<div class="paragraph">
+<p>For example, a minimal <code>Startable</code> implementation might look something like this:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep(onlyIf = { IsDevServicesSupportedByLaunchMode.class, DevServicesConfig.Enabled.class })
-public DevServicesResultBuildItem createContainer() {
-    DockerImageName dockerImageName = DockerImageName.parse("hello-world");
-    GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
-                                     .withExposedPorts(SERVICE_PORT, OTHER_SERVICE_PORT)
-                                     .waitingFor(Wait.forLogMessage(".*Started.*", 1))
-                                     .withReuse(true);
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">private static class MyContainer extends GenericContainer&lt;MyContainer&gt;
+        implements Startable {
 
-    container.start();
+    public MyContainer(String imageName) {
+        super(imageName);
+    }
 
-    String newUrl = "http://%s:%d".formatted(container.getHost(),
-            container.getMappedPort(SERVICE_PORT));
-    Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url", newUrl);
+    @Override
+    public void close() {
+        super.close();
+    }
 
-    return new DevServicesResultBuildItem.RunningDevService(FEATURE,
-            container.getContainerId(),
-            container::close,
-            configOverrides).toBuildItem();
+    @Override
+    public String getConnectionInfo() {
+        return getHost() + ":" + getPort();
+    }
+
+    @Override
+    public String getContainerId() {
+        return super.getContainerId();
+    }
 }</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>With this code, you should be able to see your container starting if you add your extension to a test application and run <code>quarkus dev</code>.
-However, the application will not be able to connect to it, because no ports are exposed.
-To expose ports, add <code>withExposedPorts</code> to the container construction.
-For example,</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">GenericContainer container = new GenericContainer&lt;&gt;(dockerImageName)
-                                 .withExposedPorts(SERVICE_PORT, OTHER_SERVICE_PORT);</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p><code>Testcontainers</code> will map these ports to random ports on the host.
-This avoids port conflicts, but presents a new problem – how do applications connect to the service in the container?</p>
-</div>
-<div class="paragraph">
-<p>To allow applications to connect, the extension should override the default configuration for the service with the mapped ports.
-This must be done after starting the container.
-For example,</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.start();
-String serviceUrl = "http://%s:%d".formatted(container.getHost(),
-        container.getMappedPort(SERVICE_PORT));
-Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url",
-    serviceUrl);</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Other configuration overrides may be included in the same map.</p>
 </div>
 </div>
 </div>
@@ -363,17 +393,141 @@ Map&lt;String, String&gt; configOverrides = Map.of("some-service.base-url",
 <h2 id="waiting-for-the-container-to-start"><a class="anchor" href="#waiting-for-the-container-to-start"></a>Waiting for the container to start</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>You should add a <code>.waitingFor</code> call to the container construction, to wait for the container to start.
-For example</p>
+<p>You should add a <code>.waitingFor</code> call to the container, to wait for it to be ready.
+This is typically done in the <code>configure()</code> method of the <code>GenericContainer</code> subclass.
+For example:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.waitingFor(Wait.forLogMessage(".*Started.*", 1));</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">waitingFor(Wait.forLogMessage(".*Started.*", 1));</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p>Waiting for a port to be open is another option.
 See the <a href="https://java.testcontainers.org/features/startup_and_waits/">Testcontainers documentation</a> for a full discussion on wait strategies.</p>
+</div>
+<div class="sect2">
+<h3 id="configuring-ports"><a class="anchor" href="#configuring-ports"></a>Configuring ports</h3>
+<div class="paragraph">
+<p>If you&#8217;re extending <code>GenericContainer</code>, you should also tell TestContainers what ports to expose.
+This is also typically done in the <code>configure()</code> override.
+For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @Override
+    protected void configure() {
+        super.configure();
+
+        if (fixedExposedPort.isPresent()) {
+            addFixedExposedPort(fixedExposedPort.getAsInt(), SERVICE_PORT);
+        } else {
+            addExposedPort(SERVICE_PORT);
+        }
+
+        waitingFor(Wait.forLogMessage(".*Started.*", 1));
+    }
+
+    public int getPort() {
+        if (fixedExposedPort.isPresent()) {
+            return fixedExposedPort.getAsInt();
+        }
+        return super.getFirstMappedPort();
+    }
+
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>By default, TestContainers will map service ports to random ones on the host.
+In the above code, users can configure a fixed port for the container image, which is then passed to <code>MyContainer</code> as a <code>fixedExposedPort</code> <code>OptionalInt</code>.
+Allowing users to set a fixed port makes it easier to attach external tools to the running container, but increases the risk of port conflicts.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="declaring-a-build-step"><a class="anchor" href="#declaring-a-build-step"></a>Declaring a Build Step</h3>
+<div class="paragraph">
+<p>Add a build step that returns a <code>DevServicesResultBuildItem</code>, using the <code>owned()</code> builder.
+Do <strong>not</strong> call <code>start()</code> on the <code>Startable</code> – Quarkus will start it at the right time.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep(onlyIf = { IsDevServicesSupportedByLaunchMode.class, DevServicesConfig.Enabled.class })
+public DevServicesResultBuildItem createContainer(MyConfig config) {
+    // Guard to check if if service-specific dev services are enabled and if a server had been enabled for this service
+    if (! config.devservices().enabled() || config.myBaseServiceUrl() != null) {
+        return null;
+    }
+
+    // We should create a dev service, let's do it
+    return DevServicesResultBuildItem.owned()
+            .feature(FEATURE)
+            .serviceConfig(config) // this is a re-use key, so does not have to be the config object
+            .startable(() -&gt; new MyContainer(
+                    config.imageName(),
+                    config.port()))
+            .configProvider(
+                    Map.of("some-service.base-url",
+                            s -&gt; "http://" + s.getConnectionInfo()))
+            .build();
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With this code, you should be able to see your container starting if you add your extension to a test application and run <code>quarkus dev</code>.</p>
+</div>
+<div class="paragraph">
+<p>To allow applications to connect to the service, the build step needs to provide configuration overrides.
+This is done lazily, since the actual service port is usually only known at runtime.
+To configure the port, use <code>.configProvider(
+Map.of("the-config-key-for-the-base-url",
+s &#8594; "http://" + s.getConnectionInfo())</code>.</p>
+</div>
+<div class="paragraph">
+<p>If you need to tell the application where the service is living without using Quarkus configuration,
+you can pass information about the service using
+<a href="https://quarkus.io/guides/writing-extensions#injecting-configuration-into-recorders">recorders</a>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="understanding-the-builder"><a class="anchor" href="#understanding-the-builder"></a>Understanding the builder</h3>
+<div class="paragraph">
+<p>The <code>owned()</code> builder has several methods.
+Not all are required, but <code>feature()</code>, <code>serviceConfig()</code>, <code>startable()</code>, and <code>configProvider()</code> are needed in most cases.</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1"><code>feature(String)</code></dt>
+<dd>
+<p>Identifies the owning feature. Used for identification and lifecycle management.</p>
+</dd>
+<dt class="hdlist1"><code>serviceName(String)</code></dt>
+<dd>
+<p>If the feature provides multiple Dev Services, this distinguishes them. Optional.</p>
+</dd>
+<dt class="hdlist1"><code>serviceConfig(Object)</code></dt>
+<dd>
+<p>The configuration object for this service. It is compared reflectively to the previous configuration on each restart.
+If the config has changed, the service is restarted; if it is the same, the running service is reused. This controls service reuse, and should be considered carefully.</p>
+</dd>
+<dt class="hdlist1"><code>startable(Supplier&lt;S&gt;)</code></dt>
+<dd>
+<p>A supplier that creates the <code>Startable</code> instance. The service is created at build time, but it is not started until the right point during Quarkus startup.</p>
+</dd>
+<dt class="hdlist1"><code>configProvider(Map&lt;String, Function&lt;T, String&gt;&gt;)</code></dt>
+<dd>
+<p>Provides configuration values that are only known after the service is started, such as mapped ports.
+The key in the map is the config property name; the value is a function that receives the started <code>Startable</code> and returns the config value.</p>
+<div class="paragraph">
+<p>For config values that are known at build time, use <code>config(Map&lt;String, String&gt;)</code> instead.</p>
+</div>
+</dd>
+<dt class="hdlist1"><code>postStartHook(Consumer&lt;T&gt;)</code></dt>
+<dd>
+<p>An action to perform after the service starts. Any methods used here will be invoked at runtime, not build time, and will affect startup times. Optional.</p>
+</dd>
+</dl>
+</div>
 </div>
 </div>
 </div>
@@ -381,7 +535,7 @@ See the <a href="https://java.testcontainers.org/features/startup_and_waits/">Te
 <h2 id="configuring-the-dev-service"><a class="anchor" href="#configuring-the-dev-service"></a>Configuring the Dev Service</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>To configure the Dev Service launch process, your build step can accept a <code>ConfigPhase.BUILD_TIME</code> config class in its constructor.
+<p>To configure the Dev Service launch process, your build step can accept a <code>ConfigPhase.BUILD_TIME</code> config class.
 For example,</p>
 </div>
 <div class="listingblock">
@@ -391,15 +545,8 @@ public DevServicesResultBuildItem createContainer(MyConfig config) {}</code></pr
 </div>
 </div>
 <div class="paragraph">
-<p>You may wish to use this config to set a fixed port, or set an image name, for example.</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">if (config.port.isPresent()) {
-    String portBinding = "%d:%d".formatted(config.port.get(), SERVICE_PORT);
-    container.setPortBindings(List.of(portBinding));
-}</code></pre>
-</div>
+<p>You may wish to use this config to set a fixed port, or set an image name.
+Pass the config object to <code>serviceConfig()</code> on the builder so that Quarkus can detect config changes and restart the service when needed.</p>
 </div>
 </div>
 </div>
@@ -409,17 +556,82 @@ public DevServicesResultBuildItem createContainer(MyConfig config) {}</code></pr
 <div class="paragraph">
 <p>In dev mode, with live reload, Quarkus may restart frequently.
 By default, this will also restart test containers.
-Quarkus restarts are usually very fast, but containers may take much longer to restart.
-To prevent containers restarting on every code change, you can mark the container as reusable:</p>
+Quarkus restarts are usually very fast, but containers may take much longer to restart.</p>
+</div>
+<div class="paragraph">
+<p>Re-use of services between live reloads is handled centrally by Quarkus based on the <code>serviceConfig()</code> value.
+If the config object passed to <code>serviceConfig()</code> is the same as the previous run (compared reflectively), the running service is reused.
+If it has changed, the service is restarted.</p>
+</div>
+<div class="paragraph">
+<p>It is an anti-pattern (and unlikely to work) to use static fields on the processor to store service state or handle service reuse.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="discovered-services"><a class="anchor" href="#discovered-services"></a>Discovered services</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Rather than starting services, the Dev Services infrastructure can be used to surface existing external services, not managed by Quarkus.
+To make an externally-managed service available for use as a Dev Service, use the <code>discovered()</code> builder instead:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">container.withReuse(true);</code></pre>
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">return DevServicesResultBuildItem.discovered()
+        .feature(FEATURE)
+        .containerId(existingContainerId)
+        .config(Map.of("some-service.base-url", existingUrl))
+        .build();</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="integrating-with-the-dev-ui"><a class="anchor" href="#integrating-with-the-dev-ui"></a>Integrating with the Dev UI</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>It is a nice practice to include links to your Dev Service(s) on the Dev UI card for your extension.
+This is particularly useful when the service has been started on a random port, and users might want to connect to an admin console.
+Because the service url is not known at build time, the <code>dynamicUrlJsonRPCMethodName</code> method should be used, <a href="/guides/dev-ui#runtime-external-links">passing in an RPC method name</a>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">   @BuildStep(onlyIf = IsDevelopment.class)
+   public CardPageBuildItem pages(List&lt;SomeRelevantBuildItem&gt; containers) {
+      CardPageBuildItem cardPageBuildItem = new CardPageBuildItem();
+
+      for (SomeRelevantBuildItem container : containers) {
+         cardPageBuildItem.addPage(Page.externalPageBuilder("My Extension Name")
+               .dynamicUrlJsonRPCMethodName("getMyUrl")
+               .staticLabel(container.label());
+      }
+
+      return cardPageBuildItem;
+   }</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Some Dev Services implement sophisticated reuse logic in which they track the state of the container in the processor itself.
-You may need this if your service has more complex requirements, or needs sharing across instances.</p>
+<p>If needed, you can also pass through parameters on the method call. For example,</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">     .dynamicUrlJsonRPCMethodName("getMyUrl", Map.of("name", "service-name", "configKey", "some-key")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>You will need to use a build step to register the providing class:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">    @BuildStep(onlyIf = IsLocalDevelopment.class)
+    public JsonRPCProvidersBuildItem createJsonRPCService() {
+     return new JsonRPCProvidersBuildItem(MyJsonRPCService.class, BuiltinScope.SINGLETON.getName());
+    }</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>MyJsonRPCService</code> class with a <code>getMyUrl</code> method should live in your extension&#8217;s runtime module.
+It can use injected configuration or injected beans to provide the url.</p>
 </div>
 </div>
 </div>
@@ -442,10 +654,28 @@ You may need this if your service has more complex requirements, or needs sharin
     <div class="grid__item width-4-12 width-12-12-m tocwrapper">
       <div class="hide-mobile toc"><ul class="sectlevel1">
 <li><a href="#prerequisites">Prerequisites</a></li>
-<li><a href="#creating-a-dev-service">Creating a Dev Service</a></li>
-<li><a href="#waiting-for-the-container-to-start">Waiting for the container to start</a></li>
+<li><a href="#key-concepts">Key concepts</a>
+<ul class="sectlevel2">
+<li><a href="#concept-understanding-the-service-lifecycle">Concept: Understanding the service lifecycle</a></li>
+</ul>
+</li>
+<li><a href="#creating-a-dev-service">Creating a Dev Service</a>
+<ul class="sectlevel2">
+<li><a href="#dependencies">Dependencies</a></li>
+<li><a href="#implementing-a-startable">Implementing a <code>Startable</code></a></li>
+</ul>
+</li>
+<li><a href="#waiting-for-the-container-to-start">Waiting for the container to start</a>
+<ul class="sectlevel2">
+<li><a href="#configuring-ports">Configuring ports</a></li>
+<li><a href="#declaring-a-build-step">Declaring a Build Step</a></li>
+<li><a href="#understanding-the-builder">Understanding the builder</a></li>
+</ul>
+</li>
 <li><a href="#configuring-the-dev-service">Configuring the Dev Service</a></li>
 <li><a href="#controlling-re-use">Controlling re-use</a></li>
+<li><a href="#discovered-services">Discovered services</a></li>
+<li><a href="#integrating-with-the-dev-ui">Integrating with the Dev UI</a></li>
 <li><a href="#references">References</a></li>
 </ul></div>
     </div>
@@ -597,6 +827,14 @@ You may need this if your service has more complex requirements, or needs sharin
           
           
           
+            <li><a href="https://www.tiktok.com/@quarkusio" target="_blank">TikTok</a></li>
+          
+          
+          
+            <li><a href="https://www.instagram.com/quarkusio" target="_blank">Instagram</a></li>
+          
+          
+          
             <li><a href="https://github.com/quarkusio" target="_blank">GitHub</a></li>
           
           
@@ -703,7 +941,7 @@ You may need this if your service has more complex requirements, or needs sharin
       <a class="cf-logo" href="https://www.commonhaus.org/" target="_blank"><img src="https://raw.githubusercontent.com/commonhaus/artwork/main/foundation/brand/svg/CF_logo_horizontal_single_reverse.svg"/></a>
     </div>
     <div class="license">
-      Copyright © Quarkus. All rights reserved. For details on our trademarks, please visit our <a href="https://www.commonhaus.org/policies/trademark-policy/">Trademark Policy</a> and <a href="https://www.commonhaus.org/trademarks/">Trademark List</a>. Trademarks of third parties are owned by their respective holders and their mention here does not suggest any endorsement or association.
+      Copyright © <a href="/">Quarkus</a>. All rights reserved. For details on our trademarks, please visit our <a href="https://www.commonhaus.org/policies/trademark-policy/">Trademark Policy</a> and <a href="https://www.commonhaus.org/trademarks/">Trademark List</a>. Trademarks of third parties are owned by their respective holders and their mention here does not suggest any endorsement or association.
     </div>
   </div>
 </div>

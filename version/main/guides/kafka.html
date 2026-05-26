@@ -201,7 +201,7 @@
         
         
         
-        <option value="latest" >3.34.2 - Latest</option>
+        <option value="latest" >3.35.3 - Latest</option>
         
         
         
@@ -336,7 +336,7 @@ For a quick start take a look at <a href="kafka-getting-started">Getting Started
 </td>
 <td class="content">
 <div class="paragraph">
-<p>The extension includes <code>kafka-clients</code> version 3.2.1 as a transitive dependency and is compatible with Kafka brokers version 2.x.</p>
+<p>The extension includes <code>kafka-clients</code> version 4.1.1 as a transitive dependency and is compatible with Kafka brokers version 2.x and above.</p>
 </div>
 </td>
 </tr>
@@ -808,7 +808,7 @@ See <a href="https://smallrye.io/smallrye-reactive-messaging/latest/kafka/receiv
 <div class="sect2">
 <h3 id="error-handling"><a class="anchor" href="#error-handling"></a>4.4. Error Handling Strategies</h3>
 <div class="paragraph">
-<p>If a message produced from a Kafka record is nacked, a failure strategy is applied. The Kafka connector supports three strategies:</p>
+<p>If a message produced from a Kafka record is nacked, a failure strategy is applied. The Kafka connector supports the following strategies:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -820,6 +820,9 @@ See <a href="https://smallrye.io/smallrye-reactive-messaging/latest/kafka/receiv
 </li>
 <li>
 <p><code>dead-letter-queue</code>: the offset of the record that has not been processed correctly is committed, but the record is written to a Kafka dead letter topic.</p>
+</li>
+<li>
+<p><code>delayed-retry-topic</code>: the failed record is sent to delayed retry topics for later reprocessing, with configurable delays and maximum retries.</p>
 </li>
 </ul>
 </div>
@@ -1058,6 +1061,24 @@ The default partitioner uses record key hash to compute the partition for a reco
 <div class="paragraph">
 <p>During normal operation, a Kafka consumer preserves the order of records inside each partition assigned to it.
 SmallRye Reactive Messaging keeps this order for processing, unless <code>@Blocking(ordered = false)</code> is used (see <a href="#blocking-processing">Blocking processing</a>).</p>
+</div>
+<div class="paragraph">
+<p>When using <code>@Blocking(ordered = false)</code>, you can still enforce ordering guarantees with the <code>ordered</code> channel attribute:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>ordered=partition</code>: records from the same partition are processed sequentially, but different partitions can be processed concurrently.</p>
+</li>
+<li>
+<p><code>ordered=key</code>: records with the same key are processed sequentially, regardless of partition.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.your-channel.ordered=key</code></pre>
+</div>
 </div>
 <div class="paragraph">
 <p>Note that due to consumer rebalances, Kafka consumers only guarantee at-least-once processing of single records, meaning that uncommitted records <em>can</em> be processed again by consumers.</p>
@@ -1350,7 +1371,158 @@ You can configure batch mode explicitly with <code>mp.messaging.incoming.$channe
 </div>
 </div>
 <div class="sect2">
-<h3 id="stateful-processing-checkpointing"><a class="anchor" href="#stateful-processing-checkpointing"></a>4.7. Stateful processing with Checkpointing</h3>
+<h3 id="share-groups"><a class="anchor" href="#share-groups"></a>4.7. Share Groups (Kafka Queues)</h3>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Kafka Share Groups require Apache Kafka 4.2+ brokers and are an early access feature in Kafka.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Share Groups (<a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-932">KIP-932</a>) provide a queue-like consumption model for Kafka topics.
+Unlike consumer groups, records are distributed across share consumers without explicit partition assignment&#8201;&#8212;&#8201;the broker handles distribution of records and acquisition locks automatically.
+This provides queue-style workloads where records are processed by any available consumer with at-least-once delivery semantics.</p>
+</div>
+<div class="sect3">
+<h4 id="enabling-share-groups"><a class="anchor" href="#enabling-share-groups"></a>4.7.1. Enabling Share Groups</h4>
+<div class="paragraph">
+<p>To enable share group consumption, set the <code>share-group</code> attribute on the incoming channel:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.queue.connector=smallrye-kafka
+mp.messaging.incoming.queue.topic=prices
+mp.messaging.incoming.queue.value.deserializer=org.apache.kafka.common.serialization.DoubleDeserializer
+mp.messaging.incoming.queue.share-group=true</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Consuming messages works like any other incoming channel:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
+public class KafkaShareGroupConsumer {
+
+    @Incoming("queue")
+    public void consume(double price) {
+        // process price
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="per-record-acknowledgement"><a class="anchor" href="#per-record-acknowledgement"></a>4.7.2. Per-record Acknowledgement</h4>
+<div class="paragraph">
+<p>Share groups support three acknowledgement types:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>ACCEPT</strong>: Record processed successfully (default on ack).</p>
+</li>
+<li>
+<p><strong>RELEASE</strong>: Record failed processing and is eligible for re-delivery to another consumer.</p>
+</li>
+<li>
+<p><strong>REJECT</strong>: Permanent rejection with no re-delivery.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>You can control the acknowledgement per record using <code>ShareGroupAcknowledgement</code> metadata:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("queue")
+@Outgoing("processed")
+public String consume(double msg, ShareGroupAcknowledgement ack) {
+    try {
+        // successful processing is ACCEPT
+        return process(msg);
+    } catch (TransientException e) {
+        ack.release();
+    } catch (Exception e) {
+        ack.reject();
+    }
+    // Skip publishing message
+    return null;
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="acquisition-lock-renewal"><a class="anchor" href="#acquisition-lock-renewal"></a>4.7.3. Acquisition Lock Renewal</h4>
+<div class="paragraph">
+<p>Each acquired record has a time-limited acquisition lock managed by the broker.
+The connector tracks in-processing records and periodically renews their locks to prevent re-delivery.
+The <code>share-group.unprocessed-record-max-age.ms</code> attribute controls this behavior:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.queue.share-group=true
+mp.messaging.incoming.queue.share-group.unprocessed-record-max-age.ms=30000</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When enabled (default: <code>60000</code>), records still in processing are periodically renewed with the broker.
+If a record exceeds this timeout, the health check reports a failure.
+Set to <code>0</code> to disable monitoring and automatic renewal.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="batch-mode"><a class="anchor" href="#batch-mode"></a>4.7.4. Batch Mode</h4>
+<div class="paragraph">
+<p>Share groups support batch consumption.
+Enable it by setting <code>batch=true</code> alongside <code>share-group=true</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.queue.share-group=true
+mp.messaging.incoming.queue.batch=true</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With per-record acknowledgement control, each record inside a batch can be individually acknowledged using <code>IncomingKafkaRecordBatchMetadata</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("queue")
+public void consume(ConsumerRecords&lt;String, String&gt; batch, IncomingKafkaRecordBatchMetadata metadata) {
+    for (var record : batch) {
+        ShareGroupAcknowledgement ack = metadata.getMetadataForRecord(record, ShareGroupAcknowledgement.class);
+        String event = record.value();
+        if (event.startsWith("INVALID")) {
+            Log.warnf("[Batch] Rejecting invalid event: %s", event);
+            ack.reject();
+        } else {
+            Log.infof("[Batch] Accepted event: %s", event);
+            ack.accept();
+        }
+    }
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="incompatible-configuration"><a class="anchor" href="#incompatible-configuration"></a>4.7.5. Incompatible Configuration</h4>
+<div class="paragraph">
+<p>When <code>share-group=true</code>, the following attributes are ignored:
+<code>pattern</code>, <code>assign-seek</code>, <code>partitions</code>, <code>commit-strategy</code>, <code>failure-strategy</code>, and <code>consumer-rebalance-listener.name</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="stateful-processing-checkpointing"><a class="anchor" href="#stateful-processing-checkpointing"></a>4.8. Stateful processing with Checkpointing</h3>
 <div class="admonitionblock important">
 <table>
 <tr>
@@ -1435,7 +1607,7 @@ The <code>setNext</code> method works similarly directly setting the latest stat
 If an outstanding state change can not be persisted for <code>checkpoint.unsynced-state-max-age.ms</code> (default: 10000), the channel is marked unhealthy.</p>
 </div>
 <div class="sect3">
-<h4 id="state-stores"><a class="anchor" href="#state-stores"></a>4.7.1. State stores</h4>
+<h4 id="state-stores"><a class="anchor" href="#state-stores"></a>4.8.1. State stores</h4>
 <div class="paragraph">
 <p>State store implementations determine where and how the processing states are persisted.
 This is configured by the <code>mp.messaging.incoming.[channel-name].checkpoint.state-store</code> property.
@@ -2188,10 +2360,9 @@ providing a default value of <code>"${quarkus.application.name}-${channelName}"<
 </td>
 <td class="content">
 <div class="paragraph">
-<p>While a normal message emitter would support concurrent calls to <code>send</code> methods and consequently queues outgoing messages to be written to Kafka,
-a <code>KafkaTransactions</code> emitter only supports one transaction at a time.
+<p>By default, a <code>KafkaTransactions</code> emitter supports one transaction at a time per producer.
 A transaction is considered in progress from the call to the <code>withTransaction</code> until the returned <code>Uni</code> results in success or failure.
-While a transaction is in progress, subsequent calls to the <code>withTransaction</code>, including nested ones inside the given function, will throw <code>IllegalStateException</code>.</p>
+While a transaction is in progress on the same producer, subsequent calls to the <code>withTransaction</code>, including nested ones inside the given function, will throw <code>IllegalStateException</code>.</p>
 </div>
 <div class="paragraph">
 <p>Note that in Reactive Messaging, the execution of processing methods, is already serialized, unless <code>@Blocking(ordered = false)</code> is used.
@@ -2206,7 +2377,88 @@ This can be done using the <code>@Bulkhead</code> annotation from <a href="small
 </table>
 </div>
 <div class="sect3">
-<h4 id="transaction-aware-consumers"><a class="anchor" href="#transaction-aware-consumers"></a>5.8.1. Transaction-aware consumers</h4>
+<h4 id="concurrent-exactly-once-processing-with-pooled-producers"><a class="anchor" href="#concurrent-exactly-once-processing-with-pooled-producers"></a>5.8.1. Concurrent Exactly-Once Processing with Pooled Producers</h4>
+<div class="paragraph">
+<p>By default, <code>KafkaTransactions</code> uses a single producer, so only one transaction can run at a time.
+The <strong>pooled producer</strong> mode uses a pool of Kafka producers, each with its own <code>transactional.id</code>, derived from the configured <code>transactional.id</code> (e.g., <code>my-tx-id-1</code>, <code>my-tx-id-2</code>, etc.).
+Each transaction reserves a producer from the pool for the duration of the transaction, enabling concurrent exactly-once processing.</p>
+</div>
+<div class="paragraph">
+<p>Combined with <code>@Blocking(ordered = false)</code> and <code>ordered=partition</code> on the incoming channel, records from different partitions can be processed concurrently while maintaining per-partition ordering:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.prices-in.ordered=partition
+mp.messaging.incoming.prices-in.commit-strategy=ignore
+mp.messaging.incoming.prices-in.failure-strategy=ignore
+
+mp.messaging.outgoing.prices-out.pooled-producer=true
+
+// when running on dev mode with Kafka Dev Services, pre-create 3 producers for the 3 partitions
+quarkus.kafka.devservices.topic-partitions.prices-in=3
+quarkus.kafka.devservices.topic-partitions.prices-out=3</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>KafkaTransactions</code> API is the same as for regular exactly-once processing.
+The outgoing record&#8217;s partition defaults to the incoming record&#8217;s partition:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.eclipse.microprofile.reactive.messaging.Channel;
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.OnOverflow;
+
+import io.quarkus.logging.Log;
+import io.smallrye.mutiny.Uni;
+import io.smallrye.reactive.messaging.annotations.Blocking;
+import io.smallrye.reactive.messaging.kafka.KafkaRecord;
+import io.smallrye.reactive.messaging.kafka.api.IncomingKafkaRecordMetadata;
+import io.smallrye.reactive.messaging.kafka.transactions.KafkaTransactions;
+
+@ApplicationScoped
+public class ConcurrentExactlyOnceProcessor {
+
+    @Channel("prices-out")
+    @OnOverflow(value = OnOverflow.Strategy.BUFFER, bufferSize = 500)
+    KafkaTransactions&lt;Integer&gt; txProducer;
+
+    @Incoming("prices-in")
+    @Blocking(ordered = false)
+    public void process(ConsumerRecord&lt;String, Integer&gt; record, <i class="conum" data-value="1"></i><b>(1)</b>
+            IncomingKafkaRecordMetadata&lt;String, Integer&gt; metadata) {
+        txProducer.withTransactionAndAwait(metadata, emitter -&gt; { <i class="conum" data-value="2"></i><b>(2)</b>
+            emitter.send(KafkaRecord.of(record.key(), record.value() + 1));
+            return Uni.createFrom().voidItem();
+        });
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td><code>@Blocking(ordered = false)</code> enables concurrent processing across worker threads. With <code>ordered=partition</code>, records from the same partition are still processed sequentially. The record payload and metadata are injected directly as method parameters.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td><code>withTransactionAndAwait</code> is the synchronous variant that blocks the worker thread until the transaction completes. It accepts <code>IncomingKafkaRecordMetadata</code> for managing consumer offset commits within the transaction. Each call acquires a separate producer from the pool.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>Producers are returned to the pool after commit or abort.
+On abort, only the partitions involved in that transaction are reset so other concurrent transactions are not affected.
+By default, the pool grows lazily to match actual concurrency, up to <code>pooled-producer.max-pool-size</code> (default 10).
+Number of producers that are pre-created at startup can be configured with <code>pooled-producer.initial-pool-size</code> (default 0).</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="transaction-aware-consumers"><a class="anchor" href="#transaction-aware-consumers"></a>5.8.2. Transaction-aware consumers</h4>
 <div class="paragraph">
 <p>If you&#8217;d like to consume records only written and committed inside a Kafka transaction you need to configure the <code>isolation.level</code> property on the incoming channel as such:</p>
 </div>
@@ -3725,9 +3977,8 @@ mp.messaging.incoming.orders.auto.offset.reset=earliest</code></pre>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@QuarkusTestResource(value = KafkaCompanionResource.class, initArgs = {
-        @ResourceArg(name = "strimzi.kafka.image", value = "quay.io/strimzi-test-container/test-container:0.112.0-kafka-4.1.0"), // Image name
+        @ResourceArg(name = "strimzi.kafka.image", value = "quay.io/strimzi-test-container/test-container:0.115.0-kafka-4.2.0"), // Image name
         @ResourceArg(name = "kafka.port", value = "9092"), // Fixed port for kafka, by default it will be exposed on a random port
-        @ResourceArg(name = "kraft", value = "true"), // Enable Kraft mode
         @ResourceArg(name = "num.partitions", value = "3"), // Other custom broker configurations
 })
 public class OrderProcessorTest {
@@ -3791,7 +4042,7 @@ The application is configured automatically.</p>
 <i class="fa icon-important" title="Important"></i>
 </td>
 <td class="content">
-Because starting a Kafka broker can be long, Dev Services for Kafka uses <a href="https://redpanda.com">Redpanda</a>, a Kafka compatible broker which starts in ~1 second.
+By default, Dev Services for Kafka uses the <a href="https://hub.docker.com/r/apache/kafka-native">Apache Kafka native</a> image which starts in ~1 second.
 </td>
 </tr>
 </table>
@@ -3861,30 +4112,32 @@ You can set the port by configuring the <code>quarkus.kafka.devservices.port</co
 <div class="sect2">
 <h3 id="configuring-the-image"><a class="anchor" href="#configuring-the-image"></a>23.4. Configuring the image</h3>
 <div class="paragraph">
-<p>Dev Services for Kafka supports <a href="https://redpanda.com">Redpanda</a>, <a href="https://github.com/ozangunalp/kafka-native">kafka-native</a>
-and <a href="https://strimzi.io">Strimzi</a> (in <a href="https://github.com/apache/kafka/blob/trunk/config/kraft/README.md">Kraft</a> mode)  images.</p>
+<p>Dev Services for Kafka supports the following container providers:</p>
 </div>
 <div class="paragraph">
-<p><strong>Redpanda</strong> is a Kafka compatible event streaming platform.
-Because it provides a fast startup times, Dev Services defaults to Redpanda images from <code>redpandadata/redpanda</code>.
-You can select any version from <a href="https://hub.docker.com/r/redpandadata/redpanda" class="bare">https://hub.docker.com/r/redpandadata/redpanda</a>.</p>
+<p><strong>upstream-kafka-native</strong> (default) uses the official <a href="https://hub.docker.com/r/apache/kafka-native">Apache Kafka native</a> image, compiled with GraalVM for fast startup.</p>
 </div>
 <div class="paragraph">
-<p><strong>kafka-native</strong> provides images of standard Apache Kafka distribution compiled to native binary using Quarkus and GraalVM.
-While still being <em>experimental</em>, it provides very fast startup times with small footprint.</p>
-</div>
-<div class="paragraph">
-<p>Image type can be configured using</p>
+<p><strong>upstream-kafka</strong> uses the official <a href="https://hub.docker.com/r/apache/kafka">Apache Kafka</a> JVM image.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.provider=kafka-native</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.provider=upstream-kafka</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Redpanda</strong> is a Kafka compatible event streaming platform.
+You can select any version from <a href="https://hub.docker.com/r/redpandadata/redpanda" class="bare">https://hub.docker.com/r/redpandadata/redpanda</a>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.provider=redpanda</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p><strong>Strimzi</strong> provides container images and Operators for running Apache Kafka on Kubernetes.
 While Strimzi is optimized for Kubernetes, the images work perfectly in classic container environments.
-Strimzi container images run "genuine" Kafka broker on JVM, which is slower to start.</p>
+Strimzi container images run a Kafka broker on JVM, which is slower to start.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3896,7 +4149,7 @@ Strimzi container images run "genuine" Kafka broker on JVM, which is slower to s
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.image-name=quay.io/strimzi-test-container/test-container:0.112.0-kafka-4.1.0</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.kafka.devservices.image-name=quay.io/strimzi-test-container/test-container:0.115.0-kafka-4.2.0</code></pre>
 </div>
 </div>
 </div>
@@ -3964,7 +4217,7 @@ It relies on a <code>compose-devservices.yml</code>, such as:</p>
 <pre class="highlightjs highlight"><code class="language-yaml hljs" data-lang="yaml">name: &lt;application name&gt;
 services:
   kafka:
-    image: apache/kafka-native:3.9.0
+    image: apache/kafka-native:4.2.0
     restart: "no"
     ports:
       - '9092'
@@ -4018,7 +4271,7 @@ services:
 <p>If Dev Services for Kafka has been explicitly enabled or disabled. Dev Services are generally enabled by default, unless there is an existing configuration present. For Kafka, Dev Services starts a broker unless <code>kafka.bootstrap.servers</code> is set or if all the Reactive Messaging Kafka channel are configured with a <code>bootstrap.servers</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81787">QUARKUS_KAFKA_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81787" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91426">QUARKUS_KAFKA_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91426" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4042,7 +4295,7 @@ services:
 <p>If not defined, the port will be chosen randomly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81788">QUARKUS_KAFKA_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81788" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91427">QUARKUS_KAFKA_DEVSERVICES_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91427" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4063,7 +4316,7 @@ services:
 <p>Kafka dev service container type.</p>
 </div>
 <div class="paragraph">
-<p>Redpanda, Strimzi and kafka-native container providers are supported. Default is redpanda.</p>
+<p>Redpanda, Strimzi, kafka-native and upstream kafka container providers are supported. Default is upstream-kafka-native.</p>
 </div>
 <div class="paragraph">
 <p>For Redpanda: See <a href="https://docs.redpanda.com/current/get-started/quick-start/" class="bare">https://docs.redpanda.com/current/get-started/quick-start/</a> and <a href="https://hub.docker.com/r/redpandadata/redpanda" class="bare">https://hub.docker.com/r/redpandadata/redpanda</a></p>
@@ -4075,10 +4328,10 @@ services:
 <p>For Kafka Native: See <a href="https://github.com/ozangunalp/kafka-native" class="bare">https://github.com/ozangunalp/kafka-native</a> and <a href="https://quay.io/repository/ogunalp/kafka-native" class="bare">https://quay.io/repository/ogunalp/kafka-native</a></p>
 </div>
 <div class="paragraph">
-<p>Note that Strimzi and Kafka Native images are launched in Kraft mode.</p>
+<p>For Upstream Kafka: See <a href="https://hub.docker.com/r/apache/kafka" class="bare">https://hub.docker.com/r/apache/kafka</a> and <a href="https://hub.docker.com/r/apache/kafka-native" class="bare">https://hub.docker.com/r/apache/kafka-native</a></p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81789">QUARKUS_KAFKA_DEVSERVICES_PROVIDER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81789" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91428">QUARKUS_KAFKA_DEVSERVICES_PROVIDER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91428" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4086,9 +4339,9 @@ services:
 <p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
 </div></div></td>
 <td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
-<p><code>redpanda</code>, <code>strimzi</code>, <code>kafka-native</code></p>
+<p><code>redpanda</code>, <code>strimzi</code>, <code>kafka-native</code>, <code>upstream-kafka</code>, <code>upstream-kafka-native</code></p>
 </div></div></td>
-<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>redpanda</code></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>upstream-kafka-native</code></p></td>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
@@ -4104,7 +4357,7 @@ services:
 <p>Dependent on the provider.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81790">QUARKUS_KAFKA_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81790" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91429">QUARKUS_KAFKA_DEVSERVICES_IMAGE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91429" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4131,7 +4384,7 @@ services:
 <p>Container sharing is only used in dev mode.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81791">QUARKUS_KAFKA_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81791" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91430">QUARKUS_KAFKA_DEVSERVICES_SHARED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91430" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4155,7 +4408,7 @@ services:
 <p>This property is used when you need multiple shared Kafka brokers.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81792">QUARKUS_KAFKA_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81792" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91431">QUARKUS_KAFKA_DEVSERVICES_SERVICE_NAME</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91431" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4179,7 +4432,7 @@ services:
 <p>The topic creation will not try to re-partition existing topics with different number of partitions.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81793">QUARKUS_KAFKA_DEVSERVICES_TOPIC_PARTITIONS__TOPIC_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81793" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91432">QUARKUS_KAFKA_DEVSERVICES_TOPIC_PARTITIONS__TOPIC_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91432" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4203,7 +4456,7 @@ services:
 <p>Defaults to 2 seconds.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81794">QUARKUS_KAFKA_DEVSERVICES_TOPIC_PARTITIONS_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81794" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91433">QUARKUS_KAFKA_DEVSERVICES_TOPIC_PARTITIONS_TIMEOUT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91433" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4224,7 +4477,7 @@ services:
 <p>Environment variables that are passed to the container.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81795">QUARKUS_KAFKA_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81795" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91434">QUARKUS_KAFKA_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91434" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4245,7 +4498,7 @@ services:
 <p>Enables transaction support. Also enables the producer idempotence. Find more info about Redpanda transaction support on <a href="https://vectorized.io/blog/fast-transactions/">https://vectorized.io/blog/fast-transactions/</a>. Notice that <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-447%3A+Producer+scalability+for+exactly+once+semantics">KIP-447 (producer scalability for exactly once semantic)</a> and <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=89068820">KIP-360 (Improve reliability of idempotent/transactional producer)</a> are <em>not</em> supported.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81796">QUARKUS_KAFKA_DEVSERVICES_REDPANDA_TRANSACTION_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81796" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91435">QUARKUS_KAFKA_DEVSERVICES_REDPANDA_TRANSACTION_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91435" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4269,7 +4522,7 @@ services:
 <p>If not defined, the port will be chosen randomly.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81797">QUARKUS_KAFKA_DEVSERVICES_REDPANDA_PROXY_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81797" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91436">QUARKUS_KAFKA_DEVSERVICES_REDPANDA_PROXY_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91436" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4290,7 +4543,7 @@ services:
 <p>Configuration properties that will be added to the server properties file provided to the Kafka broker by the Strimzi provider.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-81798">QUARKUS_KAFKA_DEVSERVICES_STRIMZI_SERVER_CONFIGS__SERVER_CONFIGS_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-81798" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-91437">QUARKUS_KAFKA_DEVSERVICES_STRIMZI_SERVER_CONFIGS__SERVER_CONFIGS_</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-91437" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -4591,6 +4844,20 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-readiness-disabled</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the topic verification is disabled for the readiness health check.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-startup-disabled</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the topic verification is disabled for the startup health check.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-timeout</strong></span></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">During the startup and readiness health check, the connector connects to the broker and retrieves the list of topics. This attribute specifies the maximum duration (in ms) for the retrieval. If exceeded, the channel is considered not-ready.</p>
 <p class="tableblock">Type: <em>long</em></p></td>
@@ -4606,7 +4873,7 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>client-id-prefix</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix for Kafka client <code>client.id</code> attribute. If defined configured or generated <code>client.id</code> will be prefixed with the given value, otherwise <code>kafka-consumer-</code> is the prefix.</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix for Kafka client <code>client.id</code> attribute. If defined configured or generated <code>client.id</code> will be prefixed with the given value.</p>
 <p class="tableblock">Type: <em>string</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"></td>
@@ -4627,7 +4894,7 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>checkpoint.unsynced-state-max-age.ms</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">While using the <code>checkpoint</code> commit-strategy, specify the max age in milliseconds that the processing state must be persisted before the connector is marked as unhealthy. Setting this attribute to <code>0</code> disables this monitoring.</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">While using the <code>checkpoint</code> commit-strategy, specify the max age in milliseconds that the processing state must be persisted before the connector is marked as unhealthy. Setting this attribute to 0 disables this monitoring.</p>
 <p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>10000</code></p></td>
@@ -4659,6 +4926,13 @@ As described in <a href="#blocking-processing">Blocking processing</a>, you need
 <p class="tableblock">Type: <em>boolean</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>assign-seek</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Assign partitions and optionally seek to offsets, instead of subscribing to topics. A comma-separating list of triplets in form of <code>&lt;topic&gt;:|&lt;partition&gt;|:&lt;offset&gt;</code> to assign statically to the consumer and seek to the given offsets. Offset <code>0</code> seeks to beginning and offset <code>-1</code> seeks to the end of the topic-partition. If the topic is omitted the configured topic will be used. If the offset is omitted partitions are assigned to the consumer but won&#8217;t be seeked to offset.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>key.deserializer</strong></span></p></td>
@@ -4708,7 +4982,7 @@ You can explicitly ask for automatically generated unique id by setting this pro
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>retry</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the connection to the broker is re-attempted in case of failure</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether or not the connection to the broker is re-attempted in case of failure</p>
 <p class="tableblock">Type: <em>boolean</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
@@ -4743,7 +5017,7 @@ You can explicitly ask for automatically generated unique id by setting this pro
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>failure-strategy</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Specify the failure strategy to apply when a message produced from a record is acknowledged negatively (nack). Values can be <code>fail</code> (default), <code>ignore</code>, or <code>dead-letter-queue</code></p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Specify the failure strategy to apply when a message produced from a record is acknowledged negatively (nack). Values can be <code>fail</code> (default), <code>ignore</code>, <code>dead-letter-queue</code>, or <code>delayed-retry-topic</code></p>
 <p class="tableblock">Type: <em>string</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>fail</code></p></td>
@@ -4752,6 +5026,20 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>commit-strategy</strong></span></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Specify the commit strategy to apply when a message produced from a record is acknowledged. Values can be <code>latest</code>, <code>ignore</code> or <code>throttled</code>. If <code>enable.auto.commit</code> is true then the default is <code>ignore</code> otherwise it is <code>throttled</code></p>
 <p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>ordered</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Configures ordering guarantees for concurrent processing. Possible values: <code>key</code> for per-key sequential processing, or <code>partition</code> for per-partition sequential processing. Requires <code>@Blocking(ordered = false)</code> for concurrency. Works with any commit strategy.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>ordered.max-concurrency</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Maximum number of groups (keys or partitions) that can be processed concurrently. Defaults to <code>max.poll.records</code>.</p>
+<p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"></td>
 </tr>
@@ -4765,6 +5053,13 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>dead-letter-queue.topic</strong></span></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">When the <code>failure-strategy</code> is set to <code>dead-letter-queue</code> indicates on which topic the record is sent. Defaults is <code>dead-letter-topic-$channel</code></p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>dead-letter-queue.producer-client-id</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">When the <code>failure-strategy</code> is set to <code>dead-letter-queue</code> indicates what client id the generated producer should use. Defaults is <code>kafka-dead-letter-topic-producer-$client-id</code></p>
 <p class="tableblock">Type: <em>string</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"></td>
@@ -4784,15 +5079,36 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>delayed-retry-topic.topics</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">When the <code>failure-strategy</code> is set to <code>delayed-retry-topic</code> indicates topics to use. If not set the source channel name is used, with 10, 20 and 50 seconds delayed topics.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>delayed-retry-topic.max-retries</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">When the <code>failure-strategy</code> is set to <code>delayed-retry-topic</code> indicates the maximum number of retries. If higher than the number of delayed retry topics, last topic is used.</p>
+<p class="tableblock">Type: <em>int</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>delayed-retry-topic.timeout</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">When the <code>failure-strategy</code> is set to <code>delayed-retry-topic</code> indicates the global timeout per record.</p>
+<p class="tableblock">Type: <em>int</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>120000</code></p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>partitions</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">The number of partitions to be consumed concurrently. The connector creates the specified amount of Kafka consumers. It should match the number of partition of the targeted topic</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><em>deprecated</em> - The number of partitions to be consumed concurrently. The connector creates the specified amount of Kafka consumers. It should match the number of partition of the targeted topic. Deprecated: Use <code>concurrency</code> channel attribute instead.</p>
 <p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>1</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>requests</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">When <code>partitions</code> is greater than 1, this attribute allows configuring how many records are requested by each consumer every time.</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><em>deprecated</em> - When <code>partitions</code> is greater than 1, this attribute allows configuring how many records are requested by each consumers every time. Deprecated: Use <code>concurrency</code> channel attribute instead.</p>
 <p class="tableblock">Type: <em>int</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>128</code></p></td>
@@ -4827,7 +5143,7 @@ You can explicitly ask for automatically generated unique id by setting this pro
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>graceful-shutdown</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a graceful shutdown should be attempted when the application terminates.</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether or not a graceful shutdown should be attempted when the application terminates.</p>
 <p class="tableblock">Type: <em>boolean</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
@@ -4860,6 +5176,34 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>2</code></p></td>
 </tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>share-group</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether to use Kafka Share Groups for consumption. When enabled, the consumer will use a ShareConsumer which provides cooperative record processing across multiple consumers without explicit partition assignment.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>share-group.failure-acknowledgement-type</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Default acknowledgement type to apply to the record, when the message is nacked.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>release</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>share-group.failure-deserialization-acknowledgement-type</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Default acknowledgement type to apply to the record, when the message is nacked because of failure on deserialization.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>reject</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>share-group.unprocessed-record-max-age.ms</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">While using share groups, specify the max age in milliseconds that an unprocessed record can be before the connector reports a failure. Setting this attribute to 0 disables this monitoring.</p>
+<p class="tableblock">Type: <em>int</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>60000</code></p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -4889,7 +5233,7 @@ You can explicitly ask for automatically generated unique id by setting this pro
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.incoming.[channel].max.block.ms=10000</code></pre>
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">mp.messaging.outgoing.[channel].max.block.ms=10000</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -4937,18 +5281,18 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>localhost:9092</code></p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>client-id-prefix</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix for Kafka client <code>client.id</code> attribute. If defined configured or generated <code>client.id</code> will be prefixed with the given value, otherwise <code>kafka-producer-</code> is the prefix.</p>
-<p class="tableblock">Type: <em>string</em></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
-<td class="tableblock halign-left valign-top"></td>
-</tr>
-<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>buffer.memory</strong></span></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">The total bytes of memory the producer can use to buffer records waiting to be sent to the server.</p>
 <p class="tableblock">Type: <em>long</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>33554432</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>client-id-prefix</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix for Kafka client <code>client.id</code> attribute. If defined configured or generated <code>client.id</code> will be prefixed with the given value.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>close-timeout</strong></span></p></td>
@@ -4983,7 +5327,7 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>cloud-events-insert-timestamp</strong></span></p>
 <p class="tableblock"><span class="no-hyphens"><em>(cloud-events-default-timestamp)</em></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the connector should insert automatically the <code>time</code> attribute into the outgoing Cloud Event. Requires <code>cloud-events</code> to be set to <code>true</code>. This value is used if the message does not configure the <code>time</code> attribute itself</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether or not the connector should insert automatically the <code>time</code> attribute into the outgoing Cloud Event. Requires <code>cloud-events</code> to be set to <code>true</code>. This value is used if the message does not configure the <code>time</code> attribute itself</p>
 <p class="tableblock">Type: <em>boolean</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
@@ -5055,11 +5399,32 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-readiness-disabled</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the topic verification is disabled for the readiness health check.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-startup-disabled</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the topic verification is disabled for the startup health check.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>health-topic-verification-timeout</strong></span></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">During the startup and readiness health check, the connector connects to the broker and retrieves the list of topics. This attribute specifies the maximum duration (in ms) for the retrieval. If exceeded, the channel is considered not-ready.</p>
 <p class="tableblock">Type: <em>long</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>2000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>interceptor-bean</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">The name set in <code>@Identifier</code> of a bean that implements <code>org.apache.kafka.clients.producer.ProducerInterceptor</code>. If set, the identified bean will be used as the producer interceptor.</p>
+<p class="tableblock">Type: <em>string</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>kafka-configuration</strong></span></p></td>
@@ -5118,8 +5483,29 @@ You can explicitly ask for automatically generated unique id by setting this pro
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>-1</code></p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>pooled-producer</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether to use a pool of Kafka producers for concurrent transactions. Each transaction scope acquires a producer from the pool, enabling concurrent exactly-once processing. Requires transactional.id to be set.</p>
+<p class="tableblock">Type: <em>boolean</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>pooled-producer.initial-pool-size</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of Kafka producers to pre-create in the pool at startup. Respects the lazy-client setting. Defaults to 0 (lazy creation).</p>
+<p class="tableblock">Type: <em>int</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>pooled-producer.max-pool-size</strong></span></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Maximum number of Kafka producers in the pool. When all producers are in use and the pool is exhausted, an exception is thrown. Defaults to 10.</p>
+<p class="tableblock">Type: <em>int</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>10</code></p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><span class="no-hyphens"><strong>propagate-headers</strong></span></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">A comma-separated list of incoming record headers to be propagated to the outgoing record</p>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A comma-separating list of incoming record headers to be propagated to the outgoing record</p>
 <p class="tableblock">Type: <em>string</em></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">false</p></td>
 <td class="tableblock halign-left valign-top"></td>
@@ -6514,7 +6900,8 @@ It utilizes Quarkus Messaging to build data streaming applications.</p>
 <li><a href="#error-handling">4.4. Error Handling Strategies</a></li>
 <li><a href="#consumer-groups">4.5. Consumer Groups</a></li>
 <li><a href="#receiving-kafka-records-in-batches">4.6. Receiving Kafka Records in Batches</a></li>
-<li><a href="#stateful-processing-checkpointing">4.7. Stateful processing with Checkpointing</a></li>
+<li><a href="#share-groups">4.7. Share Groups (Kafka Queues)</a></li>
+<li><a href="#stateful-processing-checkpointing">4.8. Stateful processing with Checkpointing</a></li>
 </ul>
 </li>
 <li><a href="#sending-messages-to-kafka">5. Sending messages to Kafka</a>
@@ -6817,6 +7204,14 @@ It utilizes Quarkus Messaging to build data streaming applications.</p>
           
           
           
+            <li><a href="https://www.tiktok.com/@quarkusio" target="_blank">TikTok</a></li>
+          
+          
+          
+            <li><a href="https://www.instagram.com/quarkusio" target="_blank">Instagram</a></li>
+          
+          
+          
             <li><a href="https://github.com/quarkusio" target="_blank">GitHub</a></li>
           
           
@@ -6923,7 +7318,7 @@ It utilizes Quarkus Messaging to build data streaming applications.</p>
       <a class="cf-logo" href="https://www.commonhaus.org/" target="_blank"><img src="https://raw.githubusercontent.com/commonhaus/artwork/main/foundation/brand/svg/CF_logo_horizontal_single_reverse.svg"/></a>
     </div>
     <div class="license">
-      Copyright © Quarkus. All rights reserved. For details on our trademarks, please visit our <a href="https://www.commonhaus.org/policies/trademark-policy/">Trademark Policy</a> and <a href="https://www.commonhaus.org/trademarks/">Trademark List</a>. Trademarks of third parties are owned by their respective holders and their mention here does not suggest any endorsement or association.
+      Copyright © <a href="/">Quarkus</a>. All rights reserved. For details on our trademarks, please visit our <a href="https://www.commonhaus.org/policies/trademark-policy/">Trademark Policy</a> and <a href="https://www.commonhaus.org/trademarks/">Trademark List</a>. Trademarks of third parties are owned by their respective holders and their mention here does not suggest any endorsement or association.
     </div>
   </div>
 </div>
