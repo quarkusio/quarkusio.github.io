@@ -1,14 +1,15 @@
 ---
 layout: usage
-title: Quarkus at Foundation
+title: Quarkus at Commonhaus Foundation
 subtitle: Help us make Quarkus even better, in a vendor neutral way.
 permalink: /foundation/
 ---
 
-Quarkus is in the process of joining the https://commonhaus.org[Commonhaus Foundation], a vendor-neutral foundation that will provide a home for the Quarkus project. The foundation will be a place where the community can collaborate on the future of Quarkus, and where the project can grow and evolve in a vendor-neutral way.
+Quarkus has joined the [Commonhaus Foundation](https://commonhaus.org). The foundation is a place where the community can collaborate on the future of Quarkus, and where the project can grow and evolve in a vendor-neutral way.
 
 For more information see:
 
-* The intent to join a foundation [blog](/blog/quarkus-at-foundation/)
+* The intent to join a foundation [blog post](/blog/quarkus-at-foundation/)
 * The announcement on joining the Commonhaus Foundation [blog](/blog/quarkus-moving-to-commonhaus/)
-* [Frequently-asked questions](/foundation/faq)
+* [Frequently-asked questions](/foundation/faq) about the move to Commonhaus Foundation
+* Learn how you can [support](https://www.commonhaus.org/community/#support-our-efforts) Commonhaus Foundation
