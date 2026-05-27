@@ -1,0 +1,175 @@
+---
+layout: post
+title: 'Profile-Guided Optimization for Quarkus Native Images'
+date: 2026-05-27
+tags: performance native graalvm pgo
+synopsis: 'Quarkus 3.35 introduces Profile-Guided Optimization (PGO) support for native images. Enable it with quarkus.native.pgo.enabled=true and let your integration tests drive the profiling - the build automatically produces an optimized native binary tailored to your application''s actual runtime behavior.'
+author: geoand
+---
+
+Native images are fast. But what if they could be even faster?
+
+Profile-Guided Optimization (PGO) is a compiler technique that has been used in native code compilation for decades. The idea is simple: run your application with a representative workload, collect profiling data about which code paths are hot, then recompile with that knowledge to produce a better-optimized binary.
+
+GraalVM has supported PGO for years, but using it required manual steps: build an instrumented binary, run it with your workload, collect the profile, then rebuild with the profile. This workflow didn't fit naturally into the typical Quarkus development cycle.
+
+Starting with Quarkus 3.35, we've integrated PGO directly into the native build process. The same integration tests you already write to verify your application now automatically drive the profiling. One flag, one build command, and you get a PGO-optimized native image.
+
+== What is Profile-Guided Optimization?
+
+Profile-Guided Optimization is a two-phase compilation technique:
+
+Phase 1 - Instrumentation::
+The compiler generates an instrumented binary that records execution data as it runs. This binary is slightly slower and larger than a normal build because it contains profiling instrumentation.
+
+Phase 2 - Optimization::
+The compiler uses the collected profile data to make better optimization decisions: which methods to inline, how to lay out code for better cache locality, which branches are likely vs. unlikely, and where to focus optimization effort.
+
+The result is a binary that is optimized for your application's actual runtime behavior — which methods are hot, which branches are taken, which types appear at call sites — rather than generic heuristics. The profile is stored in a `.iprof` file that GraalVM's `native-image` tool consumes during the optimized build.
+
+== Getting started
+
+If you already have `@QuarkusIntegrationTest` tests in your project, enabling PGO is a single property:
+
+[source, properties]
+----
+quarkus.native.pgo.enabled=true
+----
+
+Then build as usual (PGO requires a native build, so `-Dnative` is needed):
+
+[source, bash]
+----
+./mvnw verify -Dnative -Dquarkus.native.pgo.enabled=true
+----
+
+The build process now has three phases:
+
+1. **Instrumented build**: Quarkus builds a native image with `--pgo-instrument`. This binary contains profiling instrumentation.
+2. **Training run**: Your `@QuarkusIntegrationTest` tests run against the instrumented binary. As they exercise your endpoints and features, the binary writes profiling data to `default.iprof`.
+3. **Optimized build**: Quarkus automatically rebuilds the native image with `--pgo=default.iprof`, producing an optimized binary that replaces the instrumented one.
+
+The final binary in `target/` is the PGO-optimized version. The instrumented binary is kept alongside it with an `.instrumented` suffix for reference.
+
+=== Requirements
+
+PGO requires **Oracle GraalVM**. Community builds of GraalVM (including Mandrel and Liberica NIK) do not include PGO support.
+
+If you try to enable PGO with a non-Oracle GraalVM distribution, the build will fail with a clear error message:
+
+[source]
+----
+Profile-Guided Optimization (PGO) requires Oracle GraalVM.
+Detected distribution: MANDREL.
+Please use Oracle GraalVM or disable PGO with quarkus.native.pgo.enabled=false
+----
+
+You can download Oracle GraalVM from https://www.oracle.com/java/technologies/downloads/#graalvmjava25[oracle.com] or use https://sdkman.io/[SDKMAN]:
+
+[source, bash]
+----
+sdk install java 25-graal
+sdk use java 25-graal
+----
+
+=== What makes a good training workload?
+
+The quality of PGO optimization depends entirely on the profiling data. Your `@QuarkusIntegrationTest` tests should exercise the code paths that matter in production:
+
+* **Cover your hot paths**: If 90% of production requests hit a specific endpoint, make sure your tests exercise it heavily.
+* **Use realistic data**: If your application processes JSON payloads, use realistic payload sizes and structures in your tests.
+* **Include error paths**: If your application handles validation errors or retries, include tests that trigger those paths.
+* **Avoid cold paths**: Don't spend test time on rarely-used admin endpoints or debug features unless they're performance-critical.
+
+The instrumented binary is slower than a normal native image (typically 2-3x), so keep your test suite focused. You don't need exhaustive coverage - you need representative coverage of production behavior. You can also use smaller data sizes than production for profiling; the compiler mostly cares about which code paths are hot, not the volume of data flowing through them.
+
+Any `quarkus.native.additional-build-args` you configure apply to both the instrumented and optimized native-image builds, so custom resource configs, serialization configs, or other `native-image` flags carry over automatically.
+
+== How it works internally
+
+The implementation follows the same pattern we used for Project Leyden AOT support. When `quarkus.native.pgo.enabled=true` is set:
+
+1. **Instrumented build**: The build adds `--pgo-instrument` to the `native-image` arguments and saves the full argument list for the rebuild phase.
+
+2. **Training run**: The test framework adds `-XX:ProfilesDumpFile=default.iprof` when launching the instrumented binary, telling it where to write the profile.
+
+3. **Post-test rebuild**: After integration tests complete, the `build-enhanced-artifact` Maven goal detects `default.iprof` and triggers a second `native-image` build with `--pgo=default.iprof` instead of `--pgo-instrument`.
+
+The rebuild uses the exact same arguments as the original build, ensuring consistency. This means PGO works with all native image configurations — custom resource configs, reflection configs, additional build args, etc. The PGO layer is orthogonal to everything else.
+
+== Performance impact
+
+The actual improvement depends on your application and the quality of the training workload. Applications with hot loops, polymorphic call sites, or complex code paths tend to benefit most. The GraalVM team has https://www.graalvm.org/latest/reference-manual/native-image/guides/optimize-native-executable-with-pgo/[documented significant improvements] in their own benchmarks.
+
+The instrumented binary is larger and slower than a normal native image, but this is only used during the training run. The final optimized binary is the same size as a regular native image.
+
+PGO is complementary to other native image optimizations — you can combine it with G1 GC (`-H:+UseG1GC`), custom resource configs, or any other native-image flags. The build time cost is roughly double (since the native image is built twice), but this is a one-time cost. The optimized binary runs faster for its entire lifetime.
+
+== Container images
+
+Automatically packaging the PGO-optimized native image into a container image (similar to what we have for Leyden AOT container images) is not yet supported, but we plan to add it in a future release.
+
+== Differences from Project Leyden
+
+While both PGO and Leyden use profiling to improve performance, they solve different problems:
+
+* **PGO** targets native images. It improves throughput by generating more optimized machine code — better inlining decisions, improved code layout, and more aggressive devirtualization based on observed runtime behavior.
+* **Project Leyden** targets the JVM. It aims (among other things) to allow the JVM to reach maximum throughput faster by caching class loading, linking, and JIT compilation work from a training run so subsequent startups skip that warmup cost.
+
+Both techniques use your integration tests as the training workload, and both are enabled with a single flag.
+
+If you're deploying native images, use PGO (`-Dquarkus.native.pgo.enabled=true`). If you're deploying on the JVM, use AOT i.e. Leyden (`-Dquarkus.package.jar.aot.enabled=true`)
+
+== Troubleshooting
+
+=== Profile not generated
+
+The profile data is written when the instrumented binary shuts down gracefully. If the optimized build doesn't happen, check that:
+
+1. `default.iprof` exists in `target/` after tests run
+2. Your tests actually start the application (check test logs)
+3. The instrumented binary shut down cleanly (a crash or `SIGKILL` prevents the profile from being written)
+
+Enable verbose logging to see what's happening:
+
+[source, properties]
+----
+quarkus.log.category."io.quarkus.deployment.pkg".level=DEBUG
+----
+
+=== Build fails with "PGO requires Oracle GraalVM"
+
+You're using a GraalVM distribution that doesn't support PGO. Download Oracle GraalVM from https://www.oracle.com/java/technologies/downloads/#graalvmjava25[oracle.com] or use SDKMAN:
+
+[source, bash]
+----
+sdk install java 25-graal
+sdk use java 25-graal
+----
+
+=== Optimized binary is slower
+
+This usually means the training workload doesn't match production behavior. Review your `@QuarkusIntegrationTest` tests:
+
+* Do they exercise the same endpoints as production?
+* Do they use realistic data sizes and patterns?
+* Do they run long enough to collect meaningful profiles?
+
+The instrumented binary needs at least a few seconds of runtime to collect useful data. If your tests complete in milliseconds, the profile will be sparse.
+
+== Conclusion
+
+Profile-Guided Optimization brings a proven compiler technique to Quarkus native images. The integration is designed to be invisible: enable one flag, and your existing integration tests drive the profiling automatically. The cost is a longer build time, but for production deployments where performance matters, that's a trade-off worth making.
+
+We'd like to thank the GraalVM team at Oracle for their collaboration on PGO support. We'll continue tracking GraalVM's PGO development and improving the integration as new capabilities become available.
+
+== Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+ * provide feedback on https://github.com/quarkusio/quarkus/issues[GitHub];
+ * craft some code and https://github.com/quarkusio/quarkus/pulls[push a PR];
+ * discuss with us on https://quarkusio.zulipchat.com/[Zulip] and on the https://groups.google.com/d/forum/quarkus-dev[mailing list];
+ * ask your questions on https://stackoverflow.com/questions/tagged/quarkus[Stack Overflow].
