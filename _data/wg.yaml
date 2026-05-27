@@ -1,5 +1,236 @@
 ---
 working-groups:
+    - title: "Modularity (JPMS) and JLink"
+      board-url: "https://github.com/orgs/quarkusio/projects/76"
+      short-description: |
+        Make Quarkus applications fully modular using JPMS (Java Platform Module System) and enable jlink as a first-class packaging strategy, producing smaller, faster, self-contained application images, with the long-term goal of making modular packaging the default and phasing out the legacy fast-jar lay
+      readme: |
+        <h2>Objective</h2>
+        <p>Make Quarkus applications fully modular using JPMS (Java Platform Module System) and enable <code>jlink</code> as a first-class packaging strategy, producing smaller, faster, self-contained application images, with the long-term goal of making modular packaging the default and phasing out the legacy fast-jar layout.</p>
+        <h2>The Problem</h2>
+        <h3>Class Loading Architecture Debt</h3>
+        <p>The Quarkus codebase contains between 15 and 20 class loader implementations, each with different behavior. These serve a variety of purposes, exposing hidden APIs, setting up execution environments for different launch modes, working around upstream issues, customizing parent delegation; but the ad hoc approach creates concurrency issues, virtual thread pinning, delegation bugs, and makes it nearly impossible to support JPMS properly.</p>
+        <h3>No JPMS Support</h3>
+        <p>Quarkus applications cannot take advantage of the Java Platform Module System. This means:</p>
+        <ul>
+        <li><strong>No module isolation</strong>: all application code, extensions, and dependencies share a flat classpath. There is no enforcement of encapsulation boundaries between artifacts at runtime.</li>
+        <li><strong>No <code>jlink</code> support</strong>: applications cannot use <code>jlink</code> to produce optimized, stripped-down JVM images containing only the modules actually needed, resulting in unnecessarily large deployments.</li>
+        <li><strong>No forward compatibility</strong>: future JDK features (FFM restrictions, Leyden AOT, serialization restrictions) increasingly assume or require JPMS. Without module support, Quarkus will face growing friction with each JDK release.</li>
+        <li><strong>Split packages and service loading issues</strong>: the current flat classpath tolerates split packages and uncontrolled service loading, which masks real dependency problems and makes the classpath fragile.</li>
+        </ul>
+        <h3>Packaging Inefficiency</h3>
+        <p>The current fast-jar packaging produces application images that are significantly larger than they need to be:</p>
+        <ul>
+        <li>Applications bundle the entire JDK (or require one to be pre-installed), even though most applications use a small fraction of JDK modules</li>
+        <li>No tree-shaking of unused JDK modules</li>
+        <li>Container images cannot effectively share JVM layers across different Quarkus applications</li>
+        <li>Image size comparison from prototype work shows: <strong>GraalVM native &lt; jlink (modular) &lt; fast-jar &lt; AOT</strong> — meaning jlink provides a substantial size improvement over fast-jar without the complexity and limitations of native compilation</li>
+        </ul>
+        <h3>No Optimized Container Layering</h3>
+        <p>A <code>jlink</code>-based modular image contains its own JVM, which allows container images to use a minimal base layer (no JDK required in the base). This opens the door to effective layer sharing across Quarkus applications running the same Quarkus version, the Quarkus core + JDK modules layer can be shared, with only the application layer differing. Today, this is not possible.</p>
+        <h2>The Proposed Solution</h2>
+        <h3>JPMS Modularization of Quarkus</h3>
+        <p>Systematically modularize the Quarkus codebase so that each dependency/artifact gets its own class loader and module:</p>
+        <ul>
+        <li>Artifacts with <code>module-info.java</code> are created as named modules</li>
+        <li>Other artifacts are created as unnamed modules with automatic module names</li>
+        <li>A modular class loader architecture (based on David's <code>modules3</code> prototype) replaces the current ad hoc class loaders</li>
+        <li>Each module has proper <code>exports</code>, <code>opens</code>, <code>requires</code>, <code>uses</code>, and <code>provides</code> declarations</li>
+        </ul>
+        <p><strong>Current prototype status:</strong> David's prototype (<code>dmlloyd/quarkus@modular</code> + <code>dmlloyd/modules3</code>) demonstrates this approach working. In the <code>getting-started</code> example, 39 out of 111 JARs are already modular. The remaining need automatic module names or full <code>module-info</code> files. Approximately 6-7 manual module patches are still required to start an application.</p>
+        <p><strong>Key challenges to resolve:</strong></p>
+        <ul>
+        <li>Split packages between artifacts (tracked in #44710, not as bad as it initially appears)</li>
+        <li>Generated classes at build time need a module home (#44657, more serious)</li>
+        <li>Service loading across module boundaries needs correct <code>uses</code>/<code>provides</code> declarations</li>
+        <li>Some artifacts will remain as unnamed modules until upstream projects add <code>module-info</code></li>
+        </ul>
+        <h3>JLink Packaging</h3>
+        <p>Introduce <code>jlink</code> as a packaging type for Quarkus applications:</p>
+        <ul>
+        <li>Produce a self-contained application image with only the JDK modules actually used</li>
+        <li>The image includes a custom JVM runtime, the modular application, and a launcher</li>
+        <li>No external JDK installation required to run the application</li>
+        <li>Performance is slightly better than fast-jar even without AOT (demonstrated in prototype)</li>
+        </ul>
+        <p><strong>Image layout:</strong></p>
+        <ul>
+        <li>A <code>jlink</code>-produced image is a directory containing <code>bin/</code> (launcher), <code>lib/</code> (JVM modules + application modules), and <code>conf/</code></li>
+        <li>The layout naturally supports container image layering: JVM + Quarkus core in a shared base layer, application modules in the top layer</li>
+        </ul>
+        <h3>Container Image Optimization</h3>
+        <p>Leverage the modular architecture for optimized container images:</p>
+        <ul>
+        <li><strong>Shared base layers</strong>: multiple Quarkus applications running the same Quarkus version share a common layer containing the JDK modules and Quarkus core, dramatically reducing per-application image size</li>
+        <li><strong>Minimal base image</strong>: since jlink embeds the JVM, containers can use a minimal base (e.g., <code>ubi-micro</code>, <code>scratch</code> or <code>distroless</code>) instead of a JDK base image</li>
+        <li><strong>AOT layering</strong>: AOT cache currently causes prohibitive image size bloat, but a layering strategy (AOT cache in a shared layer) may provide a partial solution; this needs investigation</li>
+        </ul>
+        <h3>Long-Term: Default Modular Packaging</h3>
+        <p>The long-term goal is to make modular packaging the default build and test mode, phasing out the legacy fast-jar layout:</p>
+        <ol>
+        <li>First, modular packaging exists as an opt-in alternative (<code>MODULAR</code> packaging type or dedicated extension)</li>
+        <li>Then, CI builds and tests run against both fast-jar and modular packaging</li>
+        <li>Eventually, modular packaging becomes the default, with fast-jar available as a fallback</li>
+        <li>Finally, fast-jar is deprecated and removed</li>
+        </ol>
+        <h3>Leyden / CDS Integration</h3>
+        <p>The modular architecture positions Quarkus well for Project Leyden:</p>
+        <ul>
+        <li>The Quarkus core and bootstrap layer is loaded by the system class loader, making it eligible for Leyden premain optimizations</li>
+        <li>A shared Leyden-trained layer (JDK modules + Quarkus core) could be reused across applications</li>
+        <li>Extension and user code in separate module layers can benefit from Leyden independently</li>
+        <li>Full Leyden integration is out of scope for this WG but the architecture should not preclude it</li>
+        </ul>
+        <h2>Definition of Done</h2>
+        <ul>
+        <li>[ ] Quarkus core modules have <code>module-info.java</code> descriptors (or automatic module names as an intermediate step)</li>
+        <li>[ ] Applications can be built with modular packaging (<code>jlink</code> output)</li>
+        <li>[ ] A <code>jlink</code>-packaged application starts and runs correctly (getting-started, REST, database scenarios)</li>
+        <li>[ ] No manual module patches required to start an application</li>
+        <li>[ ] Split package issues resolved for core Quarkus modules</li>
+        <li>[ ] Generated classes have a proper module home</li>
+        <li>[ ] Service loading works correctly across module boundaries</li>
+        <li>[ ] <code>jlink</code> image size is smaller than fast-jar for equivalent applications</li>
+        <li>[ ] Container image guide documents the layering strategy for modular images</li>
+        <li>[ ] Performance is on par with or better than fast-jar</li>
+        <li>[ ] Dev mode works with modular class loading</li>
+        <li>[ ] Extension developer guide for making extensions module-friendly</li>
+        </ul>
+        <h2>Scope of Work</h2>
+        <h3>In Scope</h3>
+        <ul>
+        <li>JPMS modularization of Quarkus core modules (<code>module-info.java</code> + automatic module names)</li>
+        <li>Modular class loader architecture (replacing ad hoc class loaders for the modular packaging path)</li>
+        <li><code>jlink</code> packaging type for Quarkus applications (name to be defined)</li>
+        <li>Resolving split packages and generated class module assignment</li>
+        <li>Service loading across module boundaries</li>
+        <li>Container image layering strategy for modular images</li>
+        <li>Dev mode support with modular class loading</li>
+        <li>Extension author guidance for module compatibility</li>
+        <li>Performance validation (startup time, memory, image size)</li>
+        </ul>
+        <h3>Out of Scope</h3>
+        <ul>
+        <li>Full rewrite of all 15-20 existing class loaders (incremental cleanup continues separately)</li>
+        <li>Test class loading rework (covered by a separate WG)</li>
+        <li>Project Leyden / CDS integration (parrallel work, but architecture should not preclude it)</li>
+        <li>Modularizing third-party dependencies (upstream responsibility; Quarkus handles them as unnamed/automatic modules)</li>
+        </ul>
+        <h2>Organizing the Work</h2>
+        <h3>Communication</h3>
+        <ul>
+        <li>Proposal: https://github.com/quarkusio/quarkus/discussions/53223</li>
+        <li>Discussion: <a href="https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/wg-modularity/with/581640512">#wg-modularity</a></li>
+        <li>Point of contact: @dmlloyd</li>
+        </ul>
+        <h3>Existing Issues and Discussions</h3>
+        <ul>
+        <li><a href="https://github.com/quarkusio/quarkus/discussions/43749">#43749</a> — Class loading WG discussion</li>
+        <li><a href="https://github.com/quarkusio/quarkus/issues/43726">#43726</a> — Class loader cleanup umbrella</li>
+        <li><a href="https://github.com/quarkusio/quarkus/issues/44710">#44710</a> — Split packages</li>
+        <li><a href="https://github.com/quarkusio/quarkus/issues/44657">#44657</a> — Generated classes and modules</li>
+        </ul>
+      status: on track
+      lts: false
+      completed: false
+      last-activity: 2026-05-27
+      last-update-date: 2026-05-08
+      last-update: |
+        Quarkus Community call scheduled for May 12 for next steps.
+      point-of-contact: "@dmlloyd"
+      proposal: https://github.com/quarkusio/quarkus/discussions/53223
+      discussion: https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/wg-modularity/with/581640512
+    - title: "AOT Support"
+      board-url: "https://github.com/orgs/quarkusio/projects/68"
+      short-description: |
+        The main objective of this working group is to consolidate, enhance, and modernize Quarkus's Ahead-of-Time (AOT) and runtime efficiency (in JVM mode) capabilities. We aim to leverage OpenJDK's Project Leyden, IBM Semeru's advanced features, and JLink to provide a unified, "native-like" startup exper
+      readme: |
+        <h3>Objective</h3>
+        <p>The main objective of this working group is to consolidate, enhance, and modernize Quarkus's Ahead-of-Time (AOT) and runtime efficiency (in JVM mode) capabilities. We aim to leverage OpenJDK's Project Leyden, IBM Semeru's advanced features, and JLink to provide a unified, &quot;native-like&quot; startup experience on the JVM.</p>
+        <h3>The Problem</h3>
+        <p>Currently, AOT file handling and runtime optimization in Quarkus are fragmented. While we support features like AppCDS and AWS Snapstart, the strategy lacks cohesion:</p>
+        <ul>
+        <li><strong>Usability:</strong> Configuration is obscure (legacy AppCDS naming) and hard to discover.</li>
+        <li><strong>Integration:</strong> There is no seamless way to generate and embed AOT caches or custom runtimes (JLink) within our container image generation pipeline.</li>
+        <li><strong>Missed Opportunities:</strong>
+        <ul>
+        <li><strong>Project Leyden:</strong> We are not fully-prepared to exploit the standardized AOT capabilities arriving in Java 25.</li>
+        <li><strong>IBM Semeru:</strong> We are underutilizing Semeru's &quot;Shared Classes Cache&quot; (a Leyden-like mechanism available today) and &quot;InstantOn&quot; (CRIU/snapshotting), which offer immediate gains.</li>
+        <li><strong>JLink:</strong> We heavily rely on full JDK/JRE images (UBI Java runtime), missing the chance to build minimal, modular runtimes that complement AOT optimizations for faster startup and lower storage costs.</li>
+        </ul>
+        </li>
+        </ul>
+        <h3>The Proposed Solution</h3>
+        <p>This working group is structuring a dedicated effort to focus on JVM AOT support in Quarkus. The working group will focus on:</p>
+        <ol>
+        <li><strong>Unified AOT Configuration:</strong> Redesigning configuration to be intuitive and forward-looking (aligned with Project Leyden), abstracting the underlying mechanism (CDS, Leyden AOT Cache, Semeru SCC).</li>
+        <li><strong>Dedicated Packaging (<strong>aot-jar (proposal)</strong>):</strong> Defining and implementing a specific packaging type (e.g., quarkus.package.type=aot-jar) that automatically orchestrates the transparent training phase to generate AOT artifacts (CDS, SCC), bundles them with the application, and configures the startup scripts, removing the need for manual cache management.</li>
+        <li><strong>Container &amp; Runtime Integration:</strong>
+        <ul>
+        <li><strong>AOT Embedding:</strong> Build-time support to generate and embed AOT caches (CDS/SCC) directly into container images.</li>
+        <li><strong>JLink Support:</strong> Introduce a mechanism to generate custom, stripped-down JREs using jlink. Combining AOT caches with a minimal JLink runtime will yield the smallest, fastest non-native container possible.</li>
+        </ul>
+        </li>
+        <li><strong>Vendor-Specific Optimizations:</strong>
+        <ul>
+        <li><strong>IBM Semeru:</strong> Explicit support for <strong>Semeru InstantOn</strong> (CRaC-like snapshotting) and their <strong>Shared Classes Cache</strong> (SCC), which effectively provides &quot;Leyden-like&quot; benefits (cached classes + AOT code) today.</li>
+        </ul>
+        </li>
+        <li><strong>Measurement &amp; Validation:</strong> Establishing benchmarks to measure RSS usage, startup time, and image size specifically attributed to these enhancements.</li>
+        </ol>
+        <h3>Definition of Done</h3>
+        <p>The working group will be considered successfully closed when:</p>
+        <ul>
+        <li>The AOT configuration namespace has been refactored.</li>
+        <li>aot-jar <strong>Packaging:</strong> The new packaging type is implemented and fully supported in Maven/Gradle plugins.</li>
+        <li>Container builders (Docker/Podman) support automatic generation/embedding of AOT caches.</li>
+        <li><strong>JLink integration</strong> is available to build minimal runtime images with Quarkus applications.</li>
+        <li><strong>Semeru InstantOn</strong> and <strong>SCC</strong> are first-class, configurable options in the Quarkus build.</li>
+        <li>A comprehensive guide on &quot;JVM Efficiency: AOT, JLink, and Caching&quot; is published.</li>
+        <li><strong>Blog Post:</strong> A comparative blog post is published analyzing Plain JVM, AOT (using the new aot-jar), and Native Image. The analysis should use the Quarkus Super-Heroes microservices suite to cover diverse use cases and provide concrete, reproducible data on Startup Time and RSS usage gains.</li>
+        <li>All sub-tasks in <a href="https://github.com/quarkusio/quarkus/issues/51976">Issue #51976</a> are resolved.</li>
+        </ul>
+        <h3>Scope of Work</h3>
+        <p><strong>In Scope:</strong></p>
+        <ul>
+        <li>Refactoring quarkus.package.jar.appcds.* and related configurations.</li>
+        <li><strong>Implementation of the</strong> aot-jar <strong>packaging type.</strong></li>
+        <li>Integration with OpenJDK Project Leyden (Java 25 AOT cache).</li>
+        <li><strong>JLink Integration:</strong> Tooling to create custom runtime images during the build.</li>
+        <li><strong>IBM Semeru Integration:</strong>
+        <ul>
+        <li>Configuration for Shared Classes Cache (SCC).</li>
+        <li>Support/Guide for &quot;InstantOn&quot; (CRIU snapshotting).</li>
+        </ul>
+        </li>
+        <li>Modifying container image generation (Jib, Docker) to support these artifacts.</li>
+        <li><strong>Benchmarking:</strong> executing performance tests using the Quarkus Super-Heroes suite to validate the aot-jar benefits.</li>
+        <li>Documentation and Blog Post creation.</li>
+        </ul>
+        <p>⠀<strong>Out of Scope:</strong></p>
+        <ul>
+        <li>General runtime performance optimizations unrelated to Startup/Warmup/Footprint.</li>
+        </ul>
+        <h3>Organizing the Work</h3>
+        <ul>
+        <li>Point of contact: Guillaume Smet (@gmset) / Georgios Andrianakis (@geoand)</li>
+        <li>Timeline: Features will be delivered step by step between now and Quarkus 4.</li>
+        <li>Repositories: quarkusio/quarkus</li>
+        <li>Discussion: <a href="https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/AOT.20cache.20-.20Global.20thread/with/568847190">Zulip</a></li>
+        <li>Proposal: https://github.com/quarkusio/quarkus/discussions/52017</li>
+        </ul>
+      status: on track
+      lts: false
+      completed: false
+      last-activity: 2026-05-27
+      last-update-date: 2026-05-26
+      last-update: |
+        The AOT Support group is no longer preinitializing UUID infrastructure for Vert.x. We're now tracking AOT support for modular JLink extensions.
+        
+        (This status update was automatically generated using AI.)
+      point-of-contact: "Guillaume Smet (@gmset) / Georgios Andrianakis (@geoand)"
+      proposal: https://github.com/quarkusio/quarkus/discussions/52017
+      discussion: https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/AOT.20cache.20-.20Global.20thread/with/568847190
     - title: "Quarkus 4"
       board-url: "https://github.com/orgs/quarkusio/projects/51"
       short-description: |
@@ -331,237 +562,6 @@ working-groups:
       point-of-contact: "@FroMage  (@<strong>Stephane Epardaud</strong>  on Zulip)"
       proposal: https://github.com/quarkusio/quarkus/discussions/48949
       discussion: https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/WG.20-.20Panache.2ENext/with/529258261
-    - title: "Modularity (JPMS) and JLink"
-      board-url: "https://github.com/orgs/quarkusio/projects/76"
-      short-description: |
-        Make Quarkus applications fully modular using JPMS (Java Platform Module System) and enable jlink as a first-class packaging strategy, producing smaller, faster, self-contained application images, with the long-term goal of making modular packaging the default and phasing out the legacy fast-jar lay
-      readme: |
-        <h2>Objective</h2>
-        <p>Make Quarkus applications fully modular using JPMS (Java Platform Module System) and enable <code>jlink</code> as a first-class packaging strategy, producing smaller, faster, self-contained application images, with the long-term goal of making modular packaging the default and phasing out the legacy fast-jar layout.</p>
-        <h2>The Problem</h2>
-        <h3>Class Loading Architecture Debt</h3>
-        <p>The Quarkus codebase contains between 15 and 20 class loader implementations, each with different behavior. These serve a variety of purposes, exposing hidden APIs, setting up execution environments for different launch modes, working around upstream issues, customizing parent delegation; but the ad hoc approach creates concurrency issues, virtual thread pinning, delegation bugs, and makes it nearly impossible to support JPMS properly.</p>
-        <h3>No JPMS Support</h3>
-        <p>Quarkus applications cannot take advantage of the Java Platform Module System. This means:</p>
-        <ul>
-        <li><strong>No module isolation</strong>: all application code, extensions, and dependencies share a flat classpath. There is no enforcement of encapsulation boundaries between artifacts at runtime.</li>
-        <li><strong>No <code>jlink</code> support</strong>: applications cannot use <code>jlink</code> to produce optimized, stripped-down JVM images containing only the modules actually needed, resulting in unnecessarily large deployments.</li>
-        <li><strong>No forward compatibility</strong>: future JDK features (FFM restrictions, Leyden AOT, serialization restrictions) increasingly assume or require JPMS. Without module support, Quarkus will face growing friction with each JDK release.</li>
-        <li><strong>Split packages and service loading issues</strong>: the current flat classpath tolerates split packages and uncontrolled service loading, which masks real dependency problems and makes the classpath fragile.</li>
-        </ul>
-        <h3>Packaging Inefficiency</h3>
-        <p>The current fast-jar packaging produces application images that are significantly larger than they need to be:</p>
-        <ul>
-        <li>Applications bundle the entire JDK (or require one to be pre-installed), even though most applications use a small fraction of JDK modules</li>
-        <li>No tree-shaking of unused JDK modules</li>
-        <li>Container images cannot effectively share JVM layers across different Quarkus applications</li>
-        <li>Image size comparison from prototype work shows: <strong>GraalVM native &lt; jlink (modular) &lt; fast-jar &lt; AOT</strong> — meaning jlink provides a substantial size improvement over fast-jar without the complexity and limitations of native compilation</li>
-        </ul>
-        <h3>No Optimized Container Layering</h3>
-        <p>A <code>jlink</code>-based modular image contains its own JVM, which allows container images to use a minimal base layer (no JDK required in the base). This opens the door to effective layer sharing across Quarkus applications running the same Quarkus version, the Quarkus core + JDK modules layer can be shared, with only the application layer differing. Today, this is not possible.</p>
-        <h2>The Proposed Solution</h2>
-        <h3>JPMS Modularization of Quarkus</h3>
-        <p>Systematically modularize the Quarkus codebase so that each dependency/artifact gets its own class loader and module:</p>
-        <ul>
-        <li>Artifacts with <code>module-info.java</code> are created as named modules</li>
-        <li>Other artifacts are created as unnamed modules with automatic module names</li>
-        <li>A modular class loader architecture (based on David's <code>modules3</code> prototype) replaces the current ad hoc class loaders</li>
-        <li>Each module has proper <code>exports</code>, <code>opens</code>, <code>requires</code>, <code>uses</code>, and <code>provides</code> declarations</li>
-        </ul>
-        <p><strong>Current prototype status:</strong> David's prototype (<code>dmlloyd/quarkus@modular</code> + <code>dmlloyd/modules3</code>) demonstrates this approach working. In the <code>getting-started</code> example, 39 out of 111 JARs are already modular. The remaining need automatic module names or full <code>module-info</code> files. Approximately 6-7 manual module patches are still required to start an application.</p>
-        <p><strong>Key challenges to resolve:</strong></p>
-        <ul>
-        <li>Split packages between artifacts (tracked in #44710, not as bad as it initially appears)</li>
-        <li>Generated classes at build time need a module home (#44657, more serious)</li>
-        <li>Service loading across module boundaries needs correct <code>uses</code>/<code>provides</code> declarations</li>
-        <li>Some artifacts will remain as unnamed modules until upstream projects add <code>module-info</code></li>
-        </ul>
-        <h3>JLink Packaging</h3>
-        <p>Introduce <code>jlink</code> as a packaging type for Quarkus applications:</p>
-        <ul>
-        <li>Produce a self-contained application image with only the JDK modules actually used</li>
-        <li>The image includes a custom JVM runtime, the modular application, and a launcher</li>
-        <li>No external JDK installation required to run the application</li>
-        <li>Performance is slightly better than fast-jar even without AOT (demonstrated in prototype)</li>
-        </ul>
-        <p><strong>Image layout:</strong></p>
-        <ul>
-        <li>A <code>jlink</code>-produced image is a directory containing <code>bin/</code> (launcher), <code>lib/</code> (JVM modules + application modules), and <code>conf/</code></li>
-        <li>The layout naturally supports container image layering: JVM + Quarkus core in a shared base layer, application modules in the top layer</li>
-        </ul>
-        <h3>Container Image Optimization</h3>
-        <p>Leverage the modular architecture for optimized container images:</p>
-        <ul>
-        <li><strong>Shared base layers</strong>: multiple Quarkus applications running the same Quarkus version share a common layer containing the JDK modules and Quarkus core, dramatically reducing per-application image size</li>
-        <li><strong>Minimal base image</strong>: since jlink embeds the JVM, containers can use a minimal base (e.g., <code>ubi-micro</code>, <code>scratch</code> or <code>distroless</code>) instead of a JDK base image</li>
-        <li><strong>AOT layering</strong>: AOT cache currently causes prohibitive image size bloat, but a layering strategy (AOT cache in a shared layer) may provide a partial solution; this needs investigation</li>
-        </ul>
-        <h3>Long-Term: Default Modular Packaging</h3>
-        <p>The long-term goal is to make modular packaging the default build and test mode, phasing out the legacy fast-jar layout:</p>
-        <ol>
-        <li>First, modular packaging exists as an opt-in alternative (<code>MODULAR</code> packaging type or dedicated extension)</li>
-        <li>Then, CI builds and tests run against both fast-jar and modular packaging</li>
-        <li>Eventually, modular packaging becomes the default, with fast-jar available as a fallback</li>
-        <li>Finally, fast-jar is deprecated and removed</li>
-        </ol>
-        <h3>Leyden / CDS Integration</h3>
-        <p>The modular architecture positions Quarkus well for Project Leyden:</p>
-        <ul>
-        <li>The Quarkus core and bootstrap layer is loaded by the system class loader, making it eligible for Leyden premain optimizations</li>
-        <li>A shared Leyden-trained layer (JDK modules + Quarkus core) could be reused across applications</li>
-        <li>Extension and user code in separate module layers can benefit from Leyden independently</li>
-        <li>Full Leyden integration is out of scope for this WG but the architecture should not preclude it</li>
-        </ul>
-        <h2>Definition of Done</h2>
-        <ul>
-        <li>[ ] Quarkus core modules have <code>module-info.java</code> descriptors (or automatic module names as an intermediate step)</li>
-        <li>[ ] Applications can be built with modular packaging (<code>jlink</code> output)</li>
-        <li>[ ] A <code>jlink</code>-packaged application starts and runs correctly (getting-started, REST, database scenarios)</li>
-        <li>[ ] No manual module patches required to start an application</li>
-        <li>[ ] Split package issues resolved for core Quarkus modules</li>
-        <li>[ ] Generated classes have a proper module home</li>
-        <li>[ ] Service loading works correctly across module boundaries</li>
-        <li>[ ] <code>jlink</code> image size is smaller than fast-jar for equivalent applications</li>
-        <li>[ ] Container image guide documents the layering strategy for modular images</li>
-        <li>[ ] Performance is on par with or better than fast-jar</li>
-        <li>[ ] Dev mode works with modular class loading</li>
-        <li>[ ] Extension developer guide for making extensions module-friendly</li>
-        </ul>
-        <h2>Scope of Work</h2>
-        <h3>In Scope</h3>
-        <ul>
-        <li>JPMS modularization of Quarkus core modules (<code>module-info.java</code> + automatic module names)</li>
-        <li>Modular class loader architecture (replacing ad hoc class loaders for the modular packaging path)</li>
-        <li><code>jlink</code> packaging type for Quarkus applications (name to be defined)</li>
-        <li>Resolving split packages and generated class module assignment</li>
-        <li>Service loading across module boundaries</li>
-        <li>Container image layering strategy for modular images</li>
-        <li>Dev mode support with modular class loading</li>
-        <li>Extension author guidance for module compatibility</li>
-        <li>Performance validation (startup time, memory, image size)</li>
-        </ul>
-        <h3>Out of Scope</h3>
-        <ul>
-        <li>Full rewrite of all 15-20 existing class loaders (incremental cleanup continues separately)</li>
-        <li>Test class loading rework (covered by a separate WG)</li>
-        <li>Project Leyden / CDS integration (parrallel work, but architecture should not preclude it)</li>
-        <li>Modularizing third-party dependencies (upstream responsibility; Quarkus handles them as unnamed/automatic modules)</li>
-        </ul>
-        <h2>Organizing the Work</h2>
-        <h3>Communication</h3>
-        <ul>
-        <li>Proposal: https://github.com/quarkusio/quarkus/discussions/53223</li>
-        <li>Discussion: <a href="https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/wg-modularity/with/581640512">#wg-modularity</a></li>
-        <li>Point of contact: @dmlloyd</li>
-        </ul>
-        <h3>Existing Issues and Discussions</h3>
-        <ul>
-        <li><a href="https://github.com/quarkusio/quarkus/discussions/43749">#43749</a> — Class loading WG discussion</li>
-        <li><a href="https://github.com/quarkusio/quarkus/issues/43726">#43726</a> — Class loader cleanup umbrella</li>
-        <li><a href="https://github.com/quarkusio/quarkus/issues/44710">#44710</a> — Split packages</li>
-        <li><a href="https://github.com/quarkusio/quarkus/issues/44657">#44657</a> — Generated classes and modules</li>
-        </ul>
-      status: on track
-      lts: false
-      completed: false
-      last-activity: 2026-05-27
-      last-update-date: 2026-05-08
-      last-update: |
-        Quarkus Community call scheduled for May 12 for next steps.
-      point-of-contact: "@dmlloyd"
-      proposal: https://github.com/quarkusio/quarkus/discussions/53223
-      discussion: https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/wg-modularity/with/581640512
-    - title: "AOT Support"
-      board-url: "https://github.com/orgs/quarkusio/projects/68"
-      short-description: |
-        The main objective of this working group is to consolidate, enhance, and modernize Quarkus's Ahead-of-Time (AOT) and runtime efficiency (in JVM mode) capabilities. We aim to leverage OpenJDK's Project Leyden, IBM Semeru's advanced features, and JLink to provide a unified, "native-like" startup exper
-      readme: |
-        <h3>Objective</h3>
-        <p>The main objective of this working group is to consolidate, enhance, and modernize Quarkus's Ahead-of-Time (AOT) and runtime efficiency (in JVM mode) capabilities. We aim to leverage OpenJDK's Project Leyden, IBM Semeru's advanced features, and JLink to provide a unified, &quot;native-like&quot; startup experience on the JVM.</p>
-        <h3>The Problem</h3>
-        <p>Currently, AOT file handling and runtime optimization in Quarkus are fragmented. While we support features like AppCDS and AWS Snapstart, the strategy lacks cohesion:</p>
-        <ul>
-        <li><strong>Usability:</strong> Configuration is obscure (legacy AppCDS naming) and hard to discover.</li>
-        <li><strong>Integration:</strong> There is no seamless way to generate and embed AOT caches or custom runtimes (JLink) within our container image generation pipeline.</li>
-        <li><strong>Missed Opportunities:</strong>
-        <ul>
-        <li><strong>Project Leyden:</strong> We are not fully-prepared to exploit the standardized AOT capabilities arriving in Java 25.</li>
-        <li><strong>IBM Semeru:</strong> We are underutilizing Semeru's &quot;Shared Classes Cache&quot; (a Leyden-like mechanism available today) and &quot;InstantOn&quot; (CRIU/snapshotting), which offer immediate gains.</li>
-        <li><strong>JLink:</strong> We heavily rely on full JDK/JRE images (UBI Java runtime), missing the chance to build minimal, modular runtimes that complement AOT optimizations for faster startup and lower storage costs.</li>
-        </ul>
-        </li>
-        </ul>
-        <h3>The Proposed Solution</h3>
-        <p>This working group is structuring a dedicated effort to focus on JVM AOT support in Quarkus. The working group will focus on:</p>
-        <ol>
-        <li><strong>Unified AOT Configuration:</strong> Redesigning configuration to be intuitive and forward-looking (aligned with Project Leyden), abstracting the underlying mechanism (CDS, Leyden AOT Cache, Semeru SCC).</li>
-        <li><strong>Dedicated Packaging (<strong>aot-jar (proposal)</strong>):</strong> Defining and implementing a specific packaging type (e.g., quarkus.package.type=aot-jar) that automatically orchestrates the transparent training phase to generate AOT artifacts (CDS, SCC), bundles them with the application, and configures the startup scripts, removing the need for manual cache management.</li>
-        <li><strong>Container &amp; Runtime Integration:</strong>
-        <ul>
-        <li><strong>AOT Embedding:</strong> Build-time support to generate and embed AOT caches (CDS/SCC) directly into container images.</li>
-        <li><strong>JLink Support:</strong> Introduce a mechanism to generate custom, stripped-down JREs using jlink. Combining AOT caches with a minimal JLink runtime will yield the smallest, fastest non-native container possible.</li>
-        </ul>
-        </li>
-        <li><strong>Vendor-Specific Optimizations:</strong>
-        <ul>
-        <li><strong>IBM Semeru:</strong> Explicit support for <strong>Semeru InstantOn</strong> (CRaC-like snapshotting) and their <strong>Shared Classes Cache</strong> (SCC), which effectively provides &quot;Leyden-like&quot; benefits (cached classes + AOT code) today.</li>
-        </ul>
-        </li>
-        <li><strong>Measurement &amp; Validation:</strong> Establishing benchmarks to measure RSS usage, startup time, and image size specifically attributed to these enhancements.</li>
-        </ol>
-        <h3>Definition of Done</h3>
-        <p>The working group will be considered successfully closed when:</p>
-        <ul>
-        <li>The AOT configuration namespace has been refactored.</li>
-        <li>aot-jar <strong>Packaging:</strong> The new packaging type is implemented and fully supported in Maven/Gradle plugins.</li>
-        <li>Container builders (Docker/Podman) support automatic generation/embedding of AOT caches.</li>
-        <li><strong>JLink integration</strong> is available to build minimal runtime images with Quarkus applications.</li>
-        <li><strong>Semeru InstantOn</strong> and <strong>SCC</strong> are first-class, configurable options in the Quarkus build.</li>
-        <li>A comprehensive guide on &quot;JVM Efficiency: AOT, JLink, and Caching&quot; is published.</li>
-        <li><strong>Blog Post:</strong> A comparative blog post is published analyzing Plain JVM, AOT (using the new aot-jar), and Native Image. The analysis should use the Quarkus Super-Heroes microservices suite to cover diverse use cases and provide concrete, reproducible data on Startup Time and RSS usage gains.</li>
-        <li>All sub-tasks in <a href="https://github.com/quarkusio/quarkus/issues/51976">Issue #51976</a> are resolved.</li>
-        </ul>
-        <h3>Scope of Work</h3>
-        <p><strong>In Scope:</strong></p>
-        <ul>
-        <li>Refactoring quarkus.package.jar.appcds.* and related configurations.</li>
-        <li><strong>Implementation of the</strong> aot-jar <strong>packaging type.</strong></li>
-        <li>Integration with OpenJDK Project Leyden (Java 25 AOT cache).</li>
-        <li><strong>JLink Integration:</strong> Tooling to create custom runtime images during the build.</li>
-        <li><strong>IBM Semeru Integration:</strong>
-        <ul>
-        <li>Configuration for Shared Classes Cache (SCC).</li>
-        <li>Support/Guide for &quot;InstantOn&quot; (CRIU snapshotting).</li>
-        </ul>
-        </li>
-        <li>Modifying container image generation (Jib, Docker) to support these artifacts.</li>
-        <li><strong>Benchmarking:</strong> executing performance tests using the Quarkus Super-Heroes suite to validate the aot-jar benefits.</li>
-        <li>Documentation and Blog Post creation.</li>
-        </ul>
-        <p>⠀<strong>Out of Scope:</strong></p>
-        <ul>
-        <li>General runtime performance optimizations unrelated to Startup/Warmup/Footprint.</li>
-        </ul>
-        <h3>Organizing the Work</h3>
-        <ul>
-        <li>Point of contact: Guillaume Smet (@gmset) / Georgios Andrianakis (@geoand)</li>
-        <li>Timeline: Features will be delivered step by step between now and Quarkus 4.</li>
-        <li>Repositories: quarkusio/quarkus</li>
-        <li>Discussion: <a href="https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/AOT.20cache.20-.20Global.20thread/with/568847190">Zulip</a></li>
-        <li>Proposal: https://github.com/quarkusio/quarkus/discussions/52017</li>
-        </ul>
-      status: on track
-      lts: false
-      completed: false
-      last-activity: 2026-05-27
-      last-update-date: 2026-05-26
-      last-update: |
-        The AOT Support group is no longer preinitializing UUID infrastructure for Vert.x. We're now tracking AOT support for modular JLink extensions.
-        
-        (This status update was automatically generated using AI.)
-      point-of-contact: "Guillaume Smet (@gmset) / Georgios Andrianakis (@geoand)"
-      proposal: https://github.com/quarkusio/quarkus/discussions/52017
-      discussion: https://quarkusio.zulipchat.com/#narrow/channel/187038-dev/topic/AOT.20cache.20-.20Global.20thread/with/568847190
     - title: "Spring-Style Testing"
       board-url: "https://github.com/orgs/quarkusio/projects/60"
       short-description: |
