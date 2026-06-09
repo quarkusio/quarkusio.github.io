@@ -7,7 +7,7 @@ synopsis: A comprehensive analysis attributing binary size increase to specific 
 author: zakkak
 ---
 
-This article is a follow-up to [Exploring why native executables produced with Mandrel 23.0 are bigger than with Mandrel 22.3](../mandrel-23-0-image-size-increase/).
+This article is a follow-up to [Exploring why native executables produced with Mandrel 23.0 are bigger than with Mandrel 22.3](/blog/mandrel-23-0-image-size-increase/).
 
 Starting with Quarkus 3.5 the default Mandrel version was updated from 23.0 to 23.1.
 
