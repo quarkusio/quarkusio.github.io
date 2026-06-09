@@ -9,7 +9,7 @@ Quarkus has joined the [Commonhaus Foundation](https://commonhaus.org). The foun
 
 For more information see:
 
-* The intent to join a foundation [blog post](/blog/quarkus-at-foundation/)
+* The intent to join a foundation [blog post](/blog/quarkus-in-a-foundation/)
 * The announcement on joining the Commonhaus Foundation [blog](/blog/quarkus-moving-to-commonhaus/)
 * [Frequently-asked questions](/foundation/faq) about the move to Commonhaus Foundation
 * Learn how you can [support](https://www.commonhaus.org/community/#support-our-efforts) Commonhaus Foundation
