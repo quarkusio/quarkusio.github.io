@@ -1,0 +1,128 @@
+# This workflow crawls the live quarkus.io site to find broken external links,
+# then raises GitHub issues for any it finds and auto-closes issues for links
+# that have been fixed.
+#
+# Unlike the PR build workflow, this does NOT build the site locally — it
+# crawls the live production site directly. This is simpler and also means
+# we're checking what users actually see. The trade-off is that we won't catch
+# broken links in unmerged PRs, but the PR build's internal link crawler
+# covers that case (with external checking disabled for speed).
+#
+# Guides are still checked, but via /version/main/guides/ (the main snapshot)
+# rather than /guides/ (the release). This catches broken links before release.
+#
+# Broken links on guide pages (/guides/*, /version/*) are filed in
+# quarkusio/quarkus; all others are filed in quarkusio/quarkusio.github.io.
+
+name: Check external links
+
+on:
+  schedule:
+    - cron: '0 15 * * 1,4' # Monday and Thursday 3pm UTC
+  pull_request:
+    paths:
+      - '.github/workflows/check-external-links.yml'
+      - 'pom.xml'
+      - 'src/test/java/io/quarkusio/LinkCrawlerTest.java'
+      - 'src/test/java/io/quarkusio/BrowserTest.java'
+      - 'tools/dead-link-issue.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: check-external-links-${{ github.event.pull_request.number || 'scheduled' }}
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    if: github.repository == 'quarkusio/quarkusio.github.io'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Maven repository
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pom.xml') }}
+
+      - name: Compile tests
+        run: mvn -B test-compile
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+
+      - name: Run link crawler with external checks
+        continue-on-error: true
+        timeout-minutes: 200
+        run: >-
+          mvn -B test -Pe2e -Dtest.url=https://quarkus.io
+          -Dtest.crawl.check-external=true
+          -Dtest.crawl.results-file=target/broken-links.json
+          -Dtest.crawl.exclude-paths=/guides/,/version/2,/version/3,/version/4,/version/main/guides/doc-reference,/extensions,/quarkus-workshop-langchain4j
+          -Dtest.crawl.exclude-urls=linkedin.com/shareArticle,x.com/intent,twitter.com/intent
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
+
+      - name: Print findings summary
+        if: always()
+        run: |
+          if [ -f target/broken-links.json ]; then
+            echo "## Broken Links Found" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| URL | Status | Found On |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|-----|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.[] | "| \(.url) | \(.status) \(.statusText) | \(.referrer) |"' target/broken-links.json >> "$GITHUB_STEP_SUMMARY"
+            echo ""
+            echo "=== Broken Links Report ==="
+            jq -r '.[] | "\(.status) \(.url)\n       linked from: \(.referrer)\n"' target/broken-links.json
+            echo "=== End of Report ==="
+            echo ""
+            echo "Total: $(jq length target/broken-links.json) broken link(s)"
+          else
+            echo "No results file found — crawler may not have completed."
+          fi
+
+      - name: Raise defects if needed
+        if: github.event_name != 'pull_request'
+        uses: jbangdev/jbang-action@v0.137.0
+        with:
+          script: tools/dead-link-issue.java
+          scriptargs: >-
+            --token=${{ secrets.GITHUB_TOKEN }}
+            --guideIssueRepo=quarkusio/quarkus
+            --siteIssueRepo=${{ github.repository }}
+            --runId=${{ github.run_id }}
+            --siteUrl=https://quarkus.io
+            --resultsFile=target/broken-links.json
+
+      - name: Dry-run defect report
+        if: github.event_name == 'pull_request'
+        uses: jbangdev/jbang-action@v0.137.0
+        with:
+          script: tools/dead-link-issue.java
+          scriptargs: >-
+            --token=${{ secrets.GITHUB_TOKEN }}
+            --guideIssueRepo=quarkusio/quarkus
+            --siteIssueRepo=${{ github.repository }}
+            --runId=${{ github.run_id }}
+            --siteUrl=https://quarkus.io
+            --resultsFile=target/broken-links.json
+            --dryRun
