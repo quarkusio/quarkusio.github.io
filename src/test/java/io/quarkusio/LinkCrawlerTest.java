@@ -304,6 +304,85 @@ public class LinkCrawlerTest extends BrowserTest {
                     ")",
             Pattern.CASE_INSENSITIVE);
 
+    // Falls back to plain HTTP when Playwright can't navigate (downloads, bad schemes, meta-refresh).
+    // Returns null if reachable, BrokenLink otherwise.
+    private static BrokenLink probeWithHttp(String url) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return new BrokenLink(0, "unsupported scheme", null);
+        }
+
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+
+            String body = response.body();
+            if (body != null) {
+                Matcher m = META_REFRESH_PATTERN.matcher(body);
+                if (m.find()) {
+                    String target = m.group(1) != null ? m.group(1) : m.group(2);
+                    target = target.strip();
+                    BrokenLink targetCheck = checkUrlReachable(target, url);
+                    if (targetCheck != null) {
+                        return new BrokenLink(targetCheck.status,
+                                "meta-refresh target unreachable: " + target + " (" + targetCheck.statusText + ")", null);
+                    }
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static BrokenLink checkUrlReachable(String url, String sourceUrl) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            try {
+                url = URI.create(sourceUrl).resolve(url).toString();
+            } catch (IllegalArgumentException e) {
+                return new BrokenLink(0, "invalid redirect target: " + url, null);
+            }
+        }
+
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static final Pattern META_REFRESH_PATTERN = Pattern.compile(
+            "<meta\\s[^>]*?(?:" +
+                    "http-equiv\\s*=\\s*[\"']?refresh[\"']?[^>]*?content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)" +
+                    "|" +
+                    "content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)[^>]*?http-equiv\\s*=\\s*[\"']?refresh[\"']?" +
+                    ")",
+            Pattern.CASE_INSENSITIVE);
+
     private BrokenLink probeWithHttp(String url) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             return new BrokenLink(0, "unsupported scheme", null);
