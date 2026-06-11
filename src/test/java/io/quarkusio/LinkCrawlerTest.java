@@ -418,7 +418,10 @@ public class LinkCrawlerTest extends BrowserTest {
                 }
             }
 
-            if (status == 403 && isForbiddenOkHost(url)) {
+            if (status == 403 && hostMatches(url, FORBIDDEN_OK_HOSTS)) {
+                return null;
+            }
+            if (status == 405 && hostMatches(url, METHOD_NOT_ALLOWED_OK_HOSTS)) {
                 return null;
             }
 
@@ -431,14 +434,14 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
-    private static boolean isForbiddenOkHost(String url) {
+    private static boolean hostMatches(String url, List<String> hosts) {
         try {
             String host = URI.create(url).getHost();
             if (host == null) {
                 return false;
             }
             String hostLower = host.toLowerCase();
-            for (String h : FORBIDDEN_OK_HOSTS) {
+            for (String h : hosts) {
                 if (hostLower.endsWith(h)) {
                     return true;
                 }
@@ -692,11 +695,19 @@ public class LinkCrawlerTest extends BrowserTest {
             "quarkus-auth0", "stage.code.quarkus.io"
     );
 
+    // Sites that return 403 Forbidden for bot requests but 404 for genuinely dead links
     private static final List<String> FORBIDDEN_OK_HOSTS = List.of(
             "medium.com"
     );
 
+    // Sites that return 405 Method Not Allowed for bot requests but 404 for genuinely dead links
+    private static final List<String> METHOD_NOT_ALLOWED_OK_HOSTS = List.of(
+            "infoq.com"
+    );
+
     private static final List<String> DO_NOT_CHECK = List.of(
+            "linkedin.com",
+            "pexels.com",
             "docs.gitlab.com",
             "search.maven.org",
             "linux.die.net",
