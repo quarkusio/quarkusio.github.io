@@ -219,6 +219,13 @@ public class LinkCrawlerTest extends BrowserTest {
                 continue;
             }
 
+            // In incremental mode, only extract links from seed pages (the
+            // changed pages). Non-seed pages are visited only to verify their
+            // status — a depth-1 check from each changed page.
+            if (incrementalMode && !seedUrls.contains(currentUrl)) {
+                continue;
+            }
+
             // Use the browser's actual URL (after redirects) as the base for
             // resolving relative URLs — e.g. /newsletter/18 redirects to
             // /newsletter/18/ and relative src="index_files/img.png" must
