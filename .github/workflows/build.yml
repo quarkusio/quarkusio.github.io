@@ -118,13 +118,83 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
+      - name: Determine link checker scope
+        id: link_scope
+        run: |
+          # If build infrastructure or the link checker itself changed, run a full check
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            INFRA_CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..HEAD -- \
+              .github/workflows/build.yml \
+              pom.xml \
+              src/test/java/ 2>/dev/null || true)
+          else
+            INFRA_CHANGED="not-a-pr"
+          fi
+
+          if [ -n "$INFRA_CHANGED" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "Infrastructure files changed, running full link check"
+            exit 0
+          fi
+
+          # Compare the built site to what is currently deployed on gh-pages
+          git fetch origin gh-pages 2>/dev/null || {
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "Could not fetch gh-pages, running full link check"
+            exit 0
+          }
+
+          git worktree add --detach /tmp/gh-pages origin/gh-pages 2>/dev/null || {
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "Could not check out gh-pages, running full link check"
+            exit 0
+          }
+
+          RSYNC_OUT=$(rsync -rcn --out-format='%n' \
+            --include='*/' --include='*.html' --exclude='*' \
+            _site/ /tmp/gh-pages/ 2>/dev/null) || {
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "Site comparison failed, running full link check"
+            git worktree remove /tmp/gh-pages 2>/dev/null || true
+            exit 0
+          }
+
+          CHANGED=$(echo "$RSYNC_OUT" | grep '\.html$' || true)
+
+          git worktree remove /tmp/gh-pages 2>/dev/null || true
+
+          if [ -z "$CHANGED" ]; then
+            echo "mode=skip" >> $GITHUB_OUTPUT
+            echo "No HTML files changed, skipping link crawl"
+            exit 0
+          fi
+
+          COUNT=$(echo "$CHANGED" | wc -l | tr -d ' ')
+          echo "$COUNT changed HTML file(s)"
+
+          if [ "$COUNT" -gt 15 ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "More than 15 files changed, running full link check"
+          else
+            PATHS=$(echo "$CHANGED" | sed 's|index\.html$||; s|^|/|' | tr '\n' ',' | sed 's/,$//')
+            echo "mode=partial" >> $GITHUB_OUTPUT
+            echo "paths=$PATHS" >> $GITHUB_OUTPUT
+            echo "Targeted check: $PATHS"
+          fi
+
       # Versioned guides (2.x-5.x) are excluded from this build by
       # _only_latest_guides_config.yml, so skip crawling those paths.
       - name: Run link crawler
-        run: >-
-          mvn -B test -Pe2e -Dtest.url=http://localhost:8090
-          -Dtest.crawl.check-external=false
-          -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main/guides/doc-reference
+        if: steps.link_scope.outputs.mode != 'skip'
+        run: |
+          CHANGED_PATHS_ARG=""
+          if [ "${{ steps.link_scope.outputs.mode }}" = "partial" ]; then
+            CHANGED_PATHS_ARG="-Dtest.crawl.changed-paths=${{ steps.link_scope.outputs.paths }}"
+          fi
+          mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
+            -Dtest.crawl.check-external=false \
+            -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main/guides/doc-reference \
+            $CHANGED_PATHS_ARG
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 

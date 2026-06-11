@@ -59,6 +59,7 @@ public class LinkCrawlerTest extends BrowserTest {
         boolean checkInternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-internal", "true"));
         boolean checkExternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-external", "false"));
         List<String> excludePaths = parseExcludePaths(System.getProperty("test.crawl.exclude-paths", ""));
+        List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
         ConcurrentLinkedQueue<String> queue = new ConcurrentLinkedQueue<>();
@@ -67,7 +68,17 @@ public class LinkCrawlerTest extends BrowserTest {
         Set<String> checkedExternal = ConcurrentHashMap.newKeySet();
         AtomicInteger crawledCount = new AtomicInteger();
 
-        queue.add(normalize(baseUrl + "/"));
+        Set<String> seedUrls = ConcurrentHashMap.newKeySet();
+        if (!changedPaths.isEmpty()) {
+            System.out.println("Incremental mode: checking " + changedPaths.size() + " changed page(s)");
+            for (String path : changedPaths) {
+                String url = normalize(baseUrl + path);
+                seedUrls.add(url);
+                queue.add(url);
+            }
+        } else {
+            queue.add(normalize(baseUrl + "/"));
+        }
 
         ExecutorService executor = Executors.newFixedThreadPool(threads);
         for (int i = 0; i < threads; i++) {
@@ -81,7 +92,7 @@ public class LinkCrawlerTest extends BrowserTest {
                     p.setDefaultNavigationTimeout(30_000);
 
                     crawLoop(p, queue, visited, broken, foundOn, checkedExternal,
-                            crawledCount, maxPages, checkInternal, checkExternal, excludePaths);
+                            crawledCount, maxPages, checkInternal, checkExternal, excludePaths, seedUrls);
 
                     ctx.close();
                     br.close();
@@ -114,7 +125,9 @@ public class LinkCrawlerTest extends BrowserTest {
                            int maxPages,
                            boolean checkInternal,
                            boolean checkExternal,
-                           List<String> excludePaths) {
+                           List<String> excludePaths,
+                           Set<String> seedUrls) {
+        boolean incrementalMode = !seedUrls.isEmpty();
         int idlePolls = 0;
         while (idlePolls < 3) {
             if (crawledCount.get() >= maxPages) {
@@ -174,6 +187,13 @@ public class LinkCrawlerTest extends BrowserTest {
                 if (checkInternal) {
                     broken.put(currentUrl, new BrokenLink(status, response.statusText(), foundOn.get(currentUrl)));
                 }
+                continue;
+            }
+
+            // In incremental mode, only extract links from seed pages (the
+            // changed pages). Non-seed pages are visited only to verify their
+            // status — a depth-1 check from each changed page.
+            if (incrementalMode && !seedUrls.contains(currentUrl)) {
                 continue;
             }
 
