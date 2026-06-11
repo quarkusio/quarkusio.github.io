@@ -321,7 +321,7 @@ public class LinkCrawlerTest extends BrowserTest {
         String resolved;
         boolean internal;
         if (href.startsWith("http://") || href.startsWith("https://")) {
-            if (isLocalhostUrl(href) || isPlaceholderUrl(href)) {
+            if (isLocalhostUrl(href) || isExampleUrl(href)) {
                 return null;
             }
             resolved = href;
@@ -418,6 +418,10 @@ public class LinkCrawlerTest extends BrowserTest {
                 }
             }
 
+            if (status == 403 && isForbiddenOkHost(url)) {
+                return null;
+            }
+
             if (status >= 400) {
                 return new BrokenLink(status, "HTTP " + status, null);
             }
@@ -425,6 +429,24 @@ public class LinkCrawlerTest extends BrowserTest {
         } catch (Exception e) {
             return new BrokenLink(0, e.getMessage(), null);
         }
+    }
+
+    private static boolean isForbiddenOkHost(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            String hostLower = host.toLowerCase();
+            for (String h : FORBIDDEN_OK_HOSTS) {
+                if (hostLower.endsWith(h)) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // ignore
+        }
+        return false;
     }
 
     private static int sendWithRetry(HttpRequest request) throws IOException, InterruptedException {
@@ -661,13 +683,17 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private static final Pattern TEMPLATE_VAR_PATTERN = Pattern.compile("\\$\\{|\\{[a-zA-Z]");
 
-    private static final List<String> PLACEHOLDER_HOSTS = List.of(
+    private static final List<String> EXAMPLE_HOSTS = List.of(
             "example.com", "example.org", "example.net", "1.2.3.4",
             "your-domain", "your-dns", "your-ngrok",
             "application.com", "service.example",
             "SERVER_HOST", "SERVER_PORT",
-            "myservice.com", "openshift-helloworld",
-            "quarkus-auth0"
+            "myservice.com", "my-service.com", "openshift-helloworld",
+            "quarkus-auth0", "stage.code.quarkus.io"
+    );
+
+    private static final List<String> FORBIDDEN_OK_HOSTS = List.of(
+            "medium.com"
     );
 
     private static final List<String> DO_NOT_CHECK = List.of(
@@ -684,7 +710,7 @@ public class LinkCrawlerTest extends BrowserTest {
             "pt.quarkus.io/blog"
     );
 
-    private static boolean isPlaceholderUrl(String url) {
+    private static boolean isExampleUrl(String url) {
         if (TEMPLATE_VAR_PATTERN.matcher(url).find()) {
             return true;
         }
@@ -694,8 +720,8 @@ public class LinkCrawlerTest extends BrowserTest {
                 return true;
             }
             String hostLower = host.toLowerCase();
-            for (String placeholder : PLACEHOLDER_HOSTS) {
-                if (hostLower.contains(placeholder.toLowerCase())) {
+            for (String example : EXAMPLE_HOSTS) {
+                if (hostLower.contains(example.toLowerCase())) {
                     return true;
                 }
             }
