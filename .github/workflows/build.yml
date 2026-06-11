@@ -35,10 +35,11 @@ jobs:
         with:
           ruby-version: 3.2.3
 
-      # git restore-mtime is currently broken in the GH Actions images so using our own updated local copy
-      # see https://github.com/MestreLion/git-tools/blob/main/git-restore-mtime
-      - name: Restore mtime
-        run: ./tools/git-restore-mtime
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
 
       - name: Cache Ruby gems
         if: steps.check_jekyll.outputs.jekyll_exists == 'true'
@@ -48,7 +49,26 @@ jobs:
           key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
           restore-keys: ${{ runner.os }}-gems-
 
-      - name: Install dependencies
+      - name: Cache Maven repository
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pom.xml') }}
+
+      # git restore-mtime is currently broken in the GH Actions images so using our own updated local copy
+      # see https://github.com/MestreLion/git-tools/blob/main/git-restore-mtime
+      - name: Restore mtime
+        run: ./tools/git-restore-mtime
+
+      - name: Install Ruby dependencies
         if: steps.check_jekyll.outputs.jekyll_exists == 'true'
         run: |
           bundle config path vendor/bundle
@@ -58,17 +78,17 @@ jobs:
         if: steps.check_jekyll.outputs.jekyll_exists == 'true'
         run: bundle exec jekyll build --future --config _config.yml,_only_latest_guides_config.yml
 
-      - name: Check for Maven project
-        id: check_maven
+      - name: Check for Roq project
+        id: check_roq
         run: |
-          if [ -f "pom.xml" ]; then
-            echo "maven_exists=true" >> $GITHUB_OUTPUT
+          if [ -f "src/main" ]; then
+            echo "roq_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "maven_exists=false" >> $GITHUB_OUTPUT
+            echo "roq_exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up JDK
-        if: steps.check_maven.outputs.maven_exists == 'true'
+        if: steps.check_roq.outputs.roq_exists == 'true'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: '21'
@@ -76,8 +96,37 @@ jobs:
           cache: 'maven'
 
       - name: Build with Maven
-        if: steps.check_maven.outputs.maven_exists == 'true'
+        if: steps.check_roq.outputs.roq_exists == 'true'
         run: QUARKUS_ROQ_GENERATOR_BATCH=true mvn -B package quarkus:run
+
+      - name: Compile tests
+        run: mvn -B test-compile
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+
+      # Jekyll serve handles extensionless URLs (e.g. /guides/getting-started)
+      # the same way GitHub Pages does; a plain HTTP server would 404 on them.
+      - name: Start test server
+        run: |
+          bundle exec jekyll serve --port 8090 --no-watch --skip-initial-build &
+          timeout 30 bash -c 'until curl -s http://localhost:8090 > /dev/null 2>&1; do sleep 0.5; done'
+
+      - name: Run smoke tests
+        run: mvn -B test -Dtest.url=http://localhost:8090
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
+
+      # Versioned guides (2.x-5.x) are excluded from this build by
+      # _only_latest_guides_config.yml, so skip crawling those paths.
+      - name: Run link crawler
+        run: >-
+          mvn -B test -Pe2e -Dtest.url=http://localhost:8090
+          -Dtest.crawl.check-external=false
+          -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main/guides/doc-reference
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
       - name: Store PR id
         run: echo ${{ github.event.number }} > ./_site/pr-id.txt
