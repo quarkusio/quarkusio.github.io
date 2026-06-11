@@ -5,7 +5,7 @@
         <title>Quarkus</title>
         <link>https://quarkus.io</link>
         <description>Quarkus: Supersonic Subatomic Java</description>
-        <lastBuildDate>Thu, 11 Jun 2026 04:32:22 +0000</lastBuildDate>
+        <lastBuildDate>Thu, 11 Jun 2026 06:01:23 +0000</lastBuildDate>
         
         
         <item>
@@ -468,6 +468,333 @@
             
             
             <author>James Cobb (https://twitter.com/insectengine)</author>
+            
+        </item>
+        
+        <item>
+            <title>Why isn&apos;t Quarkus 2x faster than Spring on my machine?</title>
+            <link>
+                https://quarkus.io/blog/hidden-cost-rootless-container-networking/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A community member ran our &lt;a href=&quot;https://github.com/quarkusio/spring-quarkus-perf-comparison&quot;&gt;Quarkus vs Spring CRUD benchmark&lt;/a&gt; on their bare-metal Fedora workstation and asked:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;quoteblock&quot;&gt;
+&lt;blockquote&gt;
+&lt;div class=&quot;paragraph lead&quot;&gt;
+&lt;p&gt;&lt;em&gt;Why do I see only 1.19x instead of 2x?&lt;/em&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/blockquote&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Our perf-lab shows Quarkus at 2.08x Spring&amp;#8217;s throughput, but locally the gap nearly disappears.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This post walks through the investigation that found the culprit.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;the-gap&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-gap&quot;&gt;&lt;/a&gt;The gap&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The benchmark is a REST/CRUD application backed by PostgreSQL. The app runs on the host, PostgreSQL in a rootless podman container. Each HTTP request executes 2 SQL queries (confirmed via &lt;a href=&quot;https://www.postgresql.org/docs/current/pgstatstatements.html&quot;&gt;pg_stat_statements&lt;/a&gt;).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/hidden-cost-rootless-container-networking/throughput-gap.svg&quot; alt=&quot;Throughput comparison: Local vs Perf-lab&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Spring delivers roughly the same throughput in both environments. Quarkus swings from 15.5K to 24.5K TPS — it is being held back locally. &lt;strong&gt;Something in the local environment is capping Quarkus but not Spring.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;mpstat-where-is-the-cpu-going&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#mpstat-where-is-the-cpu-going&quot;&gt;&lt;/a&gt;mpstat: where is the CPU going?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The benchmark collects &lt;a href=&quot;https://man7.org/linux/man-pages/man1/mpstat.1.html&quot;&gt;mpstat&lt;/a&gt; data during every run — per-CPU utilization split into &lt;code&gt;%usr&lt;/code&gt; (application code), &lt;code&gt;%sys&lt;/code&gt; (kernel), &lt;code&gt;%soft&lt;/code&gt; (softirq, mainly network packet processing), and &lt;code&gt;%idle&lt;/code&gt;. This is part of our &lt;a href=&quot;https://github.com/quarkusio/spring-quarkus-perf-comparison/issues/62&quot;&gt;active benchmarking practice&lt;/a&gt;: observing the system &lt;em&gt;while it runs&lt;/em&gt;, not just collecting final TPS numbers.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Both environments run Quarkus at 2.3GHz with the same workload and CPU pinning. The mpstat profiles could not be more different:&lt;/p&gt;
+&lt;/div&gt;
+&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
+&lt;colgroup&gt;
+&lt;col style=&quot;width: 33.3333%;&quot;&gt;
+&lt;col style=&quot;width: 16.6666%;&quot;&gt;
+&lt;col style=&quot;width: 16.6666%;&quot;&gt;
+&lt;col style=&quot;width: 16.6666%;&quot;&gt;
+&lt;col style=&quot;width: 16.6669%;&quot;&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Environment&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;%usr&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;%sys&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;%soft&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;%idle&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Local (Fedora, 15,504 TPS)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;39-50%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;34-41%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;9-17%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;3-5%&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Perf-lab (RHEL, 24,472 TPS)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;87-94%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;5-11%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;0-2%&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;0%&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;%usr&lt;/code&gt; is time running application code. &lt;code&gt;%sys&lt;/code&gt; is time in the kernel. On perf-lab, over 85% of CPU goes to the application. Locally, nearly half goes to the kernel. Same application, same clock speed, same workload: &lt;strong&gt;locally, a significant fraction of CPU time is spent in the kernel rather than in application code.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;where-is-the-kernel-time-going&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#where-is-the-kernel-time-going&quot;&gt;&lt;/a&gt;Where is the kernel time going?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A &lt;a href=&quot;https://www.brendangregg.com/flamegraphs.html&quot;&gt;differential flamegraph&lt;/a&gt; of the JFR CPU profiles (collected via &lt;a href=&quot;https://github.com/async-profiler/async-profiler&quot;&gt;async-profiler&lt;/a&gt;) from the perf-lab and local Quarkus runs shows exactly where the extra kernel time is spent:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;a class=&quot;image&quot; href=&quot;/assets/images/posts/hidden-cost-rootless-container-networking/diff-flamegraph-gap.svg&quot;&gt;&lt;img src=&quot;/assets/images/posts/hidden-cost-rootless-container-networking/diff-flamegraph-gap.png&quot; alt=&quot;Differential flamegraph: perf-lab vs local&quot;&gt;&lt;/a&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Red frames appear more in the local run; blue frames appear more on the perf-lab. The brightest red hotspots are kernel spin locks (&lt;code&gt;_raw_spin_unlock_irqrestore&lt;/code&gt;), nftables firewall evaluation (&lt;code&gt;nft_do_chain&lt;/code&gt;, &lt;code&gt;nft_meta_get_eval&lt;/code&gt;), and TCP packet processing (&lt;code&gt;tcp_clean_rtx_queue&lt;/code&gt;, &lt;code&gt;skb_defer_free_flush&lt;/code&gt;). The blue band at the bottom is application code that gets more CPU on the perf-lab — because the kernel isn&amp;#8217;t eating it. &lt;strong&gt;The local kernel is spending cycles on network packet processing and firewall rules that the perf-lab doesn&amp;#8217;t need.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The brightest red frame — &lt;code&gt;_raw_spin_unlock_irqrestore&lt;/code&gt; — is worth a closer look. The stack trace shows it&amp;#8217;s triggered by Agroal (Quarkus&amp;#8217;s connection pool) returning a JDBC connection after a query: &lt;code&gt;ConnectionPool.returnConnectionHandler&lt;/code&gt; → &lt;code&gt;LinkedTransferQueue.tryTransfer&lt;/code&gt; → &lt;code&gt;LockSupport.unpark&lt;/code&gt; → kernel &lt;code&gt;futex_wake&lt;/code&gt; → &lt;code&gt;try_to_wake_up&lt;/code&gt; → spin lock. If network round-trips are slower, JDBC connections are held longer and more threads pile up waiting for a free connection. Every connection return triggers a &lt;code&gt;futex_wake&lt;/code&gt; to unpark a waiter — the higher the network latency, the more waiters accumulate, and the more kernel time is spent waking them.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;the-suspect-pasta-the-userspace-tcp-proxy&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-suspect-pasta-the-userspace-tcp-proxy&quot;&gt;&lt;/a&gt;The suspect: pasta, the userspace TCP proxy&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Rootless podman on Fedora uses &lt;a href=&quot;https://passt.top/passt/&quot;&gt;pasta (passt)&lt;/a&gt; to forward container ports. Unlike rootful podman (which uses kernel-level port forwarding), pasta is a userspace process that proxies every TCP packet:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre&gt;With pasta (default rootless):
+  App  --&amp;gt;  kernel  --&amp;gt;  pasta (userspace)  --&amp;gt;  kernel  --&amp;gt;  container netns  --&amp;gt;  PostgreSQL
+
+With --network=host:
+  App  --&amp;gt;  kernel  --&amp;gt;  PostgreSQL (same network namespace)&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Every JDBC packet traverses two extra kernel/userspace boundary crossings plus a userspace copy in the pasta process. For a chatty protocol like JDBC with small, frequent packets, this adds up fast. The kernel functions visible in the flamegraph — &lt;code&gt;nft_do_chain&lt;/code&gt;, &lt;code&gt;tcp_clean_rtx_queue&lt;/code&gt;, &lt;code&gt;skb_defer_free_flush&lt;/code&gt; — are not pasta&amp;#8217;s own CPU time (pasta runs in a separate process), but they are the kernel-side cost of the extra network hops that the application&amp;#8217;s syscalls now traverse. The connection pool contention (&lt;code&gt;futex_wake&lt;/code&gt; from Agroal) could be a consequence of the added queuing delay: if each round-trip takes longer, connections are held longer, and waiters accumulate.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Crucially, &lt;strong&gt;pasta is single-threaded&lt;/strong&gt;. It processes all forwarded packets on a single CPU core. If that core saturates, packet processing queues up — latency spikes and throughput hits a ceiling regardless of how many cores the application has available. The alternative is &lt;code&gt;--network=host&lt;/code&gt;: the container shares the host&amp;#8217;s network namespace, so packets stay in the kernel and never pass through a proxy.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;quantifying-the-overhead-with-pgbench&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#quantifying-the-overhead-with-pgbench&quot;&gt;&lt;/a&gt;Quantifying the overhead with pgbench&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To measure pasta&amp;#8217;s impact on database traffic, we ran &lt;a href=&quot;https://www.postgresql.org/docs/current/pgbench.html&quot;&gt;pgbench&lt;/a&gt; with the same 2-query workload (50 clients — matching the default JDBC connection pool size for both Quarkus and Spring — prepared statements, 30 seconds) over different network paths. We also tested with Fedora&amp;#8217;s &lt;a href=&quot;https://wiki.nftables.org/&quot;&gt;nftables&lt;/a&gt; firewall disabled, since the flamegraph showed &lt;code&gt;nft_do_chain&lt;/code&gt; in the kernel stacks:&lt;/p&gt;
+&lt;/div&gt;
+&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
+&lt;colgroup&gt;
+&lt;col style=&quot;width: 66.6666%;&quot;&gt;
+&lt;col style=&quot;width: 33.3334%;&quot;&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Network path&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;TPS&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Host &amp;#8594; container (pasta + nftables)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;18,106&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Host &amp;#8594; container (pasta, no nftables)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;20,402&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Host &amp;#8594; container (&lt;code&gt;--network=host&lt;/code&gt;)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;53,262&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With &lt;code&gt;--network=host&lt;/code&gt;, throughput jumps from 18K to 53K TPS — roughly a 3x increase. Pasta caps at ~18K TPS for this 2-query workload: that is the ceiling imposed by a single-threaded proxy.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;the-fix&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#the-fix&quot;&gt;&lt;/a&gt;The fix&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Run the PostgreSQL container with &lt;code&gt;--network=host&lt;/code&gt; instead of port-mapping (&lt;code&gt;-p 5432:5432&lt;/code&gt;). We added &lt;code&gt;DB_HOST_NETWORK=true&lt;/code&gt; to the benchmark&amp;#8217;s &lt;a href=&quot;https://github.com/quarkusio/spring-quarkus-perf-comparison/blob/main/scripts/infra.sh&quot;&gt;infrastructure script&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;table class=&quot;tableblock frame-all grid-all stretch&quot;&gt;
+&lt;colgroup&gt;
+&lt;col style=&quot;width: 40%;&quot;&gt;
+&lt;col style=&quot;width: 20%;&quot;&gt;
+&lt;col style=&quot;width: 20%;&quot;&gt;
+&lt;col style=&quot;width: 20%;&quot;&gt;
+&lt;/colgroup&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Configuration&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Quarkus TPS&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Spring TPS&lt;/th&gt;
+&lt;th class=&quot;tableblock halign-left valign-top&quot;&gt;Ratio&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Default (pasta + nftables)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;15,504&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;13,062&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;1.19x&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;--network=host&lt;/code&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;24,116&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;13,368&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;1.80x&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;&lt;code&gt;--network=host&lt;/code&gt; + no nftables&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;26,039&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;13,214&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;1.97x&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;Perf-lab (RHEL 9.6, different hardware)&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;24,472&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;11,783&lt;/p&gt;&lt;/td&gt;
+&lt;td class=&quot;tableblock halign-left valign-top&quot;&gt;&lt;p class=&quot;tableblock&quot;&gt;2.08x&lt;/p&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;With host networking, Quarkus throughput improves by 55% while Spring moves by +2.3%.&lt;/strong&gt; Disabling the firewall on top recovers another 8% for Quarkus, bringing the ratio from 1.19x back to 1.97x — close to the perf-lab&amp;#8217;s 2.08x.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Fedora&amp;#8217;s &lt;code&gt;firewalld&lt;/code&gt; loads nearly 1000 &lt;a href=&quot;https://wiki.nftables.org/&quot;&gt;nftables&lt;/a&gt; rules that every packet traverses. This is independent of pasta — disabling the firewall adds another 13% throughput in the pgbench test (18,106 → 20,402 TPS).&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;why-quarkus-is-affected-but-spring-is-not&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#why-quarkus-is-affected-but-spring-is-not&quot;&gt;&lt;/a&gt;Why Quarkus is affected but Spring is not&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;As the pgbench data shows, pasta caps at ~18,000 TPS for a 2-query workload. pgbench is a minimal client that does nothing between queries — it represents the maximum throughput pasta can forward. Quarkus, which also processes HTTP requests, runs ORM and serialization between SQL queries, reaches 15,504 TPS through pasta — lower than pgbench&amp;#8217;s 18,106 because the application work between queries reduces the pressure on the proxy, but still constrained by it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With host networking, Quarkus reaches ~24,000 TPS — well above what pasta can deliver. Spring reaches ~13,000 TPS, which is below pasta&amp;#8217;s ceiling regardless of networking mode. &lt;strong&gt;Any application that can push close to pasta&amp;#8217;s ceiling will be constrained by it; any application that stays well below it will not notice.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;confirming-the-fix&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#confirming-the-fix&quot;&gt;&lt;/a&gt;Confirming the fix&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A second differential flamegraph — this time comparing the local default (pasta) run with the local &lt;code&gt;--network=host&lt;/code&gt; run — confirms the overhead is gone:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;a class=&quot;image&quot; href=&quot;/assets/images/posts/hidden-cost-rootless-container-networking/diff-flamegraph.svg&quot;&gt;&lt;img src=&quot;/assets/images/posts/hidden-cost-rootless-container-networking/diff-flamegraph.png&quot; alt=&quot;Differential flamegraph: default pasta vs host networking&quot;&gt;&lt;/a&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Red means more CPU in the default (pasta) run; blue means more CPU with host networking. The red stacks that dominated the first flamegraph — &lt;code&gt;_raw_spin_unlock_irqrestore&lt;/code&gt;, &lt;code&gt;nft_do_chain&lt;/code&gt;, &lt;code&gt;tcp_clean_rtx_queue&lt;/code&gt; — have disappeared.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;With &lt;code&gt;--network=host&lt;/code&gt;, the app and PostgreSQL share the same network namespace; packets never leave the kernel.&lt;/strong&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;takeaways&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#takeaways&quot;&gt;&lt;/a&gt;Takeaways&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;A benchmark that saturates an unexpected resource and component is not measuring what you think.&lt;/strong&gt; This is what Brendan Gregg calls &lt;a href=&quot;https://www.brendangregg.com/activebenchmarking.html&quot;&gt;active benchmarking&lt;/a&gt;:&lt;/p&gt;
+&lt;div class=&quot;quoteblock&quot;&gt;
+&lt;blockquote&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;em&gt;You benchmark A, but actually measure B, and conclude you&amp;#8217;ve measured C.&lt;/em&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/blockquote&gt;
+&lt;div class=&quot;attribution&quot;&gt;
+&amp;#8212; Brendan Gregg
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We benchmarked framework throughput, but Quarkus was saturating pasta&amp;#8217;s single CPU core — so we were measuring pasta&amp;#8217;s forwarding capacity, not framework performance. Only by collecting &lt;a href=&quot;https://man7.org/linux/man-pages/man1/mpstat.1.html&quot;&gt;mpstat&lt;/a&gt; and flamegraphs &lt;em&gt;during&lt;/em&gt; the run — as &lt;a href=&quot;https://github.com/quarkusio/spring-quarkus-perf-comparison/issues/62&quot;&gt;required by our benchmarking practice&lt;/a&gt; — did we identify which resource and component was saturated. Without that, the 1.19x ratio would have been taken at face value.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;The impact is asymmetric.&lt;/strong&gt; Pasta&amp;#8217;s single-threaded ceiling affects only applications whose throughput would otherwise exceed it. In this benchmark, Quarkus exceeds the ceiling and is capped; Spring does not and is unaffected. The same logic applies to any workload — the proxy is invisible until you hit its limit.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Check your networking path.&lt;/strong&gt; Run &lt;code&gt;podman info | grep rootlessNetworkCmd&lt;/code&gt; to see your backend. If it says &lt;code&gt;pasta&lt;/code&gt; and your benchmark talks to a containerized database, use &lt;code&gt;--network=host&lt;/code&gt; for the database container.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Firewall rules add up.&lt;/strong&gt; Nearly 1000 nftables rules cost 8-13% throughput on this workload (8% for Quarkus with host networking, 13% for pgbench through pasta). For benchmarking, consider temporarily disabling the firewall or using a minimal ruleset.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;known-upstream-issues&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#known-upstream-issues&quot;&gt;&lt;/a&gt;Known upstream issues&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Our findings are consistent with several known issues in the podman/pasta ecosystem:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;pasta is single-threaded by design&lt;/strong&gt; and degrades under concurrent load. Community reports confirm that above ~8 connections, even the older &lt;a href=&quot;https://github.com/rootless-containers/slirp4netns&quot;&gt;slirp4netns&lt;/a&gt; backend can outperform it. (&lt;a href=&quot;https://github.com/containers/podman/discussions/22559&quot;&gt;Podman Discussion #22559&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;pasta consuming 90-100% CPU&lt;/strong&gt; has been reported under sustained network load, e.g. Wireguard tunnels on kernel 6.x. (&lt;a href=&quot;https://github.com/containers/podman/issues/23686&quot;&gt;Podman Issue #23686&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Java + PostgreSQL hang&lt;/strong&gt;&amp;#8201;&amp;#8212;&amp;#8201;a Spring app running PostgreSQL &lt;code&gt;COPY FROM STDIN&lt;/code&gt; via pasta consistently freezes mid-transfer. &lt;code&gt;--network=host&lt;/code&gt; fixes it. (&lt;a href=&quot;https://github.com/containers/podman/issues/22593&quot;&gt;Podman Issue #22593&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Throughput far below host capacity&lt;/strong&gt;&amp;#8201;&amp;#8212;&amp;#8201;rootless containers on multi-gigabit hosts achieving only ~100 Mbit/s through pasta. (&lt;a href=&quot;https://github.com/containers/podman/issues/17865&quot;&gt;Podman Issue #17865&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Traffic stalls under sustained load&lt;/strong&gt;&amp;#8201;&amp;#8212;&amp;#8201;TCP downloads through pasta start normally then halt, with pasta pinned at high CPU. (&lt;a href=&quot;https://github.com/containers/podman/issues/17703&quot;&gt;Podman Issue #17703&lt;/a&gt;)&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The official &lt;a href=&quot;https://github.com/containers/podman/blob/main/docs/tutorials/performance.md&quot;&gt;Podman performance tutorial&lt;/a&gt; documents &lt;code&gt;--network=host&lt;/code&gt; and socket activation as workarounds for network-sensitive workloads.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Mon, 08 Jun 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/hidden-cost-rootless-container-networking/
+            </guid>
+            
+            
+            
+            <author>Francesco Nigro</author>
             
         </item>
         
@@ -11576,84 +11903,6 @@ Many many thanks to each and everyone of them.&lt;/p&gt;
             <pubDate>Wed, 28 Jan 2026 00:00:00 +0000</pubDate>
             <guid>
                 https://quarkus.io/blog/quarkus-3-31-released/
-            </guid>
-            
-            
-            
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-            
-        </item>
-        
-        <item>
-            <title>Quarkus 3.30.8 - Maintenance release</title>
-            <link>
-                https://quarkus.io/blog/quarkus-3-30-8-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Today, we released Quarkus 3.30.8, a new maintenance release for our 3.30 stream.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It fixes a regression impacting OpenTelemetry and MDC data propagation introduced in 3.30.7.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;update&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#update&quot;&gt;&lt;/a&gt;Update&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;To update to Quarkus 3.30, we recommend updating to the latest version of the Quarkus CLI and run:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;listingblock&quot;&gt;
-&lt;div class=&quot;content&quot;&gt;
-&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-bash hljs&quot; data-lang=&quot;bash&quot;&gt;quarkus update&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Note that &lt;code&gt;quarkus update&lt;/code&gt; can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.30.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;For more information about the adjustments you need to make to your applications, please refer to the &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.30&quot;&gt;Quarkus 3.30 migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;full-changelog&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#full-changelog&quot;&gt;&lt;/a&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get the full changelog of &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/3.30.8&quot;&gt;3.30.8&lt;/a&gt; on GitHub.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;come-join-us&quot;&gt;&lt;a class=&quot;anchor&quot; href=&quot;#come-join-us&quot;&gt;&lt;/a&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Fri, 23 Jan 2026 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-3-30-8-released/
             </guid>
             
             
