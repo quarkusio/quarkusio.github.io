@@ -16,7 +16,12 @@ public class SmokePageTest extends BrowserTest {
             "/blog/",
             "/guides/",
             "/get-started/",
-            "/support/"
+            "/support/",
+            "/extensions/",
+            "/newsletter/",
+            "/community/",
+            "/events/",
+            "/userstories/"
     })
     void criticalPageReturns200(String path) {
         Response response = page.navigate(baseUrl + path);
