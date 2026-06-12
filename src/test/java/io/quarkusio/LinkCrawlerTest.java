@@ -31,6 +31,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -142,9 +144,6 @@ public class LinkCrawlerTest extends BrowserTest {
                 response = p.navigate(currentUrl,
                         new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
             } catch (Exception e) {
-                // A meta-refresh redirect fires during navigate(), destroying
-                // the execution context. If the browser landed on a different
-                // URL the page redirected successfully — not broken.
                 try {
                     if (!currentUrl.equals(normalize(p.url()))) {
                         continue;
@@ -152,14 +151,20 @@ public class LinkCrawlerTest extends BrowserTest {
                 } catch (Exception ignored) {
                 }
                 if (checkInternal) {
-                    broken.put(currentUrl, new BrokenLink(0, e.getMessage(), foundOn.get(currentUrl)));
+                    BrokenLink probe = probeWithHttp(currentUrl);
+                    if (probe != null) {
+                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
+                    }
                 }
                 continue;
             }
 
             if (response == null) {
                 if (checkInternal) {
-                    broken.put(currentUrl, new BrokenLink(0, "null response", foundOn.get(currentUrl)));
+                    BrokenLink probe = probeWithHttp(currentUrl);
+                    if (probe != null) {
+                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
+                    }
                 }
                 continue;
             }
@@ -172,10 +177,6 @@ public class LinkCrawlerTest extends BrowserTest {
                 continue;
             }
 
-            // Pages with <meta http-equiv="refresh"> or JS redirects can navigate
-            // away between navigate() and evaluate(), destroying the execution
-            // context. Safe to skip: the page returned 200, and the redirect target
-            // will be discovered via other links.
             List<String> hrefs;
             try {
                 @SuppressWarnings("unchecked")
@@ -183,7 +184,16 @@ public class LinkCrawlerTest extends BrowserTest {
                         "() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href'))");
                 hrefs = result;
             } catch (PlaywrightException e) {
-                hrefs = Collections.emptyList();
+                // Context destroyed — typically a meta-refresh or JS redirect fired
+                // after navigate() returned. Probe with HTTP to verify the redirect
+                // target is actually reachable.
+                if (checkInternal) {
+                    BrokenLink probe = probeWithHttp(currentUrl);
+                    if (probe != null) {
+                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
+                    }
+                }
+                continue;
             }
 
             for (String href : hrefs) {
@@ -264,6 +274,108 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
+    private static final Pattern META_REFRESH_PATTERN = Pattern.compile(
+            "<meta\\s[^>]*?(?:" +
+                    "http-equiv\\s*=\\s*[\"']?refresh[\"']?[^>]*?content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)" +
+                    "|" +
+                    "content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)[^>]*?http-equiv\\s*=\\s*[\"']?refresh[\"']?" +
+                    ")",
+            Pattern.CASE_INSENSITIVE);
+
+    private BrokenLink probeWithHttp(String url) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return new BrokenLink(0, "unsupported scheme", null);
+        }
+
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+
+            String body = response.body();
+            if (body != null) {
+                Matcher m = META_REFRESH_PATTERN.matcher(body);
+                if (m.find()) {
+                    String target = m.group(1) != null ? m.group(1) : m.group(2);
+                    target = target.strip();
+                    target = rewriteToLocal(target);
+                    if (target.startsWith(baseUrl)) {
+                        BrokenLink targetCheck = checkUrlReachable(target, url);
+                        if (targetCheck != null) {
+                            return new BrokenLink(targetCheck.status,
+                                    "meta-refresh target unreachable: " + target + " (" + targetCheck.statusText + ")", null);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static BrokenLink checkUrlReachable(String url, String sourceUrl) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            try {
+                url = URI.create(sourceUrl).resolve(url).toString();
+            } catch (IllegalArgumentException e) {
+                return new BrokenLink(0, "invalid redirect target: " + url, null);
+            }
+        }
+
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
+
+    // Meta-refresh redirects bake in the production site.url (e.g. https://quarkus.io/guides/foo)
+    // at build time. When testing against localhost, rewrite those back to the local server.
+    // Redirects to genuinely external sites (e.g. quarkiverse.github.io) are left as-is.
+    private String rewriteToLocal(String target) {
+        if (!target.startsWith("http://") && !target.startsWith("https://")) {
+            return target;
+        }
+        try {
+            URI targetUri = URI.create(target);
+            if (PRODUCTION_HOSTS.contains(targetUri.getHost())) {
+                String path = targetUri.getPath();
+                if (path != null && !path.isEmpty()) {
+                    return baseUrl + path;
+                }
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return target;
+    }
+
     private static List<String> parseExcludePaths(String property) {
         if (property == null || property.isBlank()) {
             return List.of();
@@ -276,8 +388,8 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private boolean isExcluded(String url, List<String> excludePaths) {
         String path = url.startsWith(baseUrl) ? url.substring(baseUrl.length()) : url;
-        for (String prefix : excludePaths) {
-            if (path.startsWith(prefix)) {
+        for (String excluded : excludePaths) {
+            if (path.contains(excluded)) {
                 return true;
             }
         }
