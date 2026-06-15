@@ -20,17 +20,24 @@ jobs:
           fetch-depth: 5000
           fetch-tags: false
 
-      - name: Check for Jekyll site
-        id: check_jekyll
+      - name: Detect site generator
+        id: detect
         run: |
           if [ -f "Gemfile" ]; then
-            echo "jekyll_exists=true" >> $GITHUB_OUTPUT
+            echo "jekyll=true" >> $GITHUB_OUTPUT
+            echo "site_dir=_site" >> $GITHUB_OUTPUT
           else
-            echo "jekyll_exists=false" >> $GITHUB_OUTPUT
+            echo "jekyll=false" >> $GITHUB_OUTPUT
+          fi
+          if [ -d "src/main" ]; then
+            echo "roq=true" >> $GITHUB_OUTPUT
+            echo "site_dir=target/roq" >> $GITHUB_OUTPUT
+          else
+            echo "roq=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up ruby
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
         with:
           ruby-version: 3.2.3
@@ -42,7 +49,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Cache Ruby gems
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: vendor/bundle
@@ -69,26 +76,17 @@ jobs:
         run: ./tools/git-restore-mtime
 
       - name: Install Ruby dependencies
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         run: |
           bundle config path vendor/bundle
           bundle install --jobs 4 --retry 3
 
       - name: Build Jekyll site
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         run: bundle exec jekyll build --future --config _config.yml,_only_latest_guides_config.yml
 
-      - name: Check for Roq project
-        id: check_roq
-        run: |
-          if [ -f "src/main" ]; then
-            echo "roq_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "roq_exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Set up JDK
-        if: steps.check_roq.outputs.roq_exists == 'true'
+        if: steps.detect.outputs.roq == 'true'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: '21'
@@ -96,8 +94,8 @@ jobs:
           cache: 'maven'
 
       - name: Build with Maven
-        if: steps.check_roq.outputs.roq_exists == 'true'
-        run: QUARKUS_ROQ_GENERATOR_BATCH=true mvn -B package quarkus:run
+        if: steps.detect.outputs.roq == 'true'
+        run: QUARKUS_ROQ_GENERATOR_BATCH=true mvn -B package quarkus:run -DskipTests # for now, for parity, we need to stand up a test server to run tests
 
       - name: Compile tests
         run: mvn -B test-compile
@@ -109,10 +107,19 @@ jobs:
       # Jekyll serve handles extensionless URLs (e.g. /guides/getting-started)
       # the same way GitHub Pages does; a plain HTTP server would 404 on them.
       - name: Start Jekyll test server
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         run: |
           bundle exec jekyll serve --port 8090 --no-watch --skip-initial-build &
           timeout 30 bash -c 'until curl -s http://localhost:8090 > /dev/null 2>&1; do sleep 0.5; done'
+
+      - uses: jbangdev/setup-jbang@main
+        if: steps.detect.outputs.roq == 'true'
+
+      - name: Start Java test server
+        if: steps.detect.outputs.roq == 'true'
+        run: |
+          jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
+          jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 &
 
       - name: Run smoke tests
         run: mvn -B test -Dtest.url=http://localhost:8090
@@ -153,7 +160,7 @@ jobs:
 
           RSYNC_OUT=$(rsync -rcn --out-format='%n' \
             --include='*/' --include='*.html' --exclude='*' \
-            _site/ /tmp/gh-pages/ 2>/dev/null) || {
+            ${{ steps.detect.outputs.site_dir }}/ /tmp/gh-pages/ 2>/dev/null) || {
             echo "mode=full" >> $GITHUB_OUTPUT
             echo "Site comparison failed, running full link check"
             git worktree remove /tmp/gh-pages 2>/dev/null || true
@@ -200,21 +207,22 @@ jobs:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
       - name: Store PR id
-        run: echo ${{ github.event.number }} > ./_site/pr-id.txt
+        run: echo ${{ github.event.number }} > ./${{ steps.detect.outputs.site_dir }}/pr-id.txt
 
       - name: Reduce the size of the website to be compatible with surge
         run: |
-          find assets/images/posts/ -mindepth 1 -maxdepth 1 -type d -mtime +50 -exec rm -rf _site/{} \;
-          find newsletter/ -mindepth 1 -maxdepth 1 -type d -mtime +50 -exec rm -rf _site/{} \;
-          rm -rf _site/assets/stickers
-          rm -rf _site/assets/images/worldtour/2023
-          rm -rf _site/assets/images/worldtour/2024
-          rm -rf _site/assets/images/desktopwallpapers
-          rm -rf _site/assets/images/stickers
+          SITE_DIR="${{ steps.detect.outputs.site_dir }}"
+          find assets/images/posts/ -mindepth 1 -maxdepth 1 -type d -mtime +50 -exec rm -rf "$SITE_DIR"/{} \;
+          find newsletter/ -mindepth 1 -maxdepth 1 -type d -mtime +50 -exec rm -rf "$SITE_DIR"/{} \;
+          rm -rf "$SITE_DIR"/assets/stickers
+          rm -rf "$SITE_DIR"/assets/images/worldtour/2023
+          rm -rf "$SITE_DIR"/assets/images/worldtour/2024
+          rm -rf "$SITE_DIR"/assets/images/desktopwallpapers
+          rm -rf "$SITE_DIR"/assets/images/stickers
 
       - name: Publishing directory for PR preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: site
-          path: ./_site
+          path: ./${{ steps.detect.outputs.site_dir }}
           retention-days: 3
