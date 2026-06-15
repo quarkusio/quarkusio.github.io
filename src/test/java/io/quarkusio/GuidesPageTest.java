@@ -29,4 +29,20 @@ public class GuidesPageTest extends BrowserTest {
         assertTrue(sectionCount >= 3,
                 "Expected at least 3 guide category sections but found " + sectionCount);
     }
+
+    @Test
+    void guidesPageHasVersionSelector() {
+        page.navigate(baseUrl + "/guides/");
+        int versionCount = page.locator(".pulldown.version, select:has(option), [class*='version']").count();
+        assertTrue(versionCount > 0,
+                "Expected a version selector on the guides page");
+    }
+
+    @Test
+    void guidesPageHasCategoryFilter() {
+        page.navigate(baseUrl + "/guides/");
+        int categoryCount = page.locator(".pulldown.category, [class*='category']").count();
+        assertTrue(categoryCount > 0,
+                "Expected a category filter on the guides page");
+    }
 }
