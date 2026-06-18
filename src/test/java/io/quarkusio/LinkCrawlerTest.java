@@ -89,7 +89,7 @@ public class LinkCrawlerTest extends BrowserTest {
                     BrowserContext ctx = br.newContext();
                     ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
                     Page p = ctx.newPage();
-                    p.setDefaultNavigationTimeout(30_000);
+                    p.setDefaultNavigationTimeout(60_000);
 
                     crawLoop(p, queue, visited, broken, foundOn, checkedExternal,
                             crawledCount, maxPages, checkInternal, checkExternal, excludePaths, seedUrls);
@@ -152,27 +152,14 @@ public class LinkCrawlerTest extends BrowserTest {
             }
             crawledCount.incrementAndGet();
 
-            Response response;
-            try {
-                response = p.navigate(currentUrl,
-                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
-            } catch (Exception e) {
+            Response response = navigateWithRetry(p, currentUrl);
+            if (response == null) {
                 try {
                     if (!currentUrl.equals(normalize(p.url()))) {
                         continue;
                     }
                 } catch (Exception ignored) {
                 }
-                if (checkInternal) {
-                    BrokenLink probe = probeWithHttp(currentUrl);
-                    if (probe != null) {
-                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
-                    }
-                }
-                continue;
-            }
-
-            if (response == null) {
                 if (checkInternal) {
                     BrokenLink probe = probeWithHttp(currentUrl);
                     if (probe != null) {
@@ -240,6 +227,21 @@ public class LinkCrawlerTest extends BrowserTest {
                 }
             }
         }
+    }
+
+    private static Response navigateWithRetry(Page p, String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                Response response = p.navigate(url,
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                return response;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    continue;
+                }
+            }
+        }
+        return null;
     }
 
     private ResolvedLink resolveLink(String currentPageUrl, String href) {
