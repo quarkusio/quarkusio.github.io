@@ -1,0 +1,190 @@
+---
+layout: post
+title: 'Quarkus Insights #251: Faster Startup with IBM Semeru Runtimes and OpenJ9'
+date: 2026-06-16
+tags: insights performance
+synopsis: 'Mark Stoodley explains how IBM Semeru Runtimes and the Eclipse OpenJ9 JVM deliver faster startup times and lower memory footprint through shared classes cache technology, and how Quarkus makes it easy to take advantage of these benefits.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/ql0wK79DxtY[watch the video] for the full story.
+
+= Quarkus Insights #251: Faster Startup with IBM Semeru Runtimes and OpenJ9
+
+Episode 251 of Quarkus Insights explored how developers can achieve faster startup times and reduced memory footprint by using https://developer.ibm.com/languages/java/semeru-runtimes/[IBM Semeru Runtimes] with Quarkus. Mark Stoodley, Chief Architect for Java at IBM and project co-lead for https://www.eclipse.org/openj9/[Eclipse OpenJ9], joined the show to explain the technology behind these performance improvements and how Quarkus has made it trivially easy to take advantage of them.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/ql0wK79DxtY" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== What is IBM Semeru Runtimes?
+
+IBM Semeru Runtimes is a Java distribution built by IBM that has been used in hundreds of product releases since 2006. It is based on https://openjdk.org/[OpenJDK] class libraries but uses the Eclipse OpenJ9 JVM instead of HotSpot.
+
+Key characteristics include:
+
+- **100% open source** - All development happens in the Eclipse OpenJ9 and https://www.eclipse.org/omr/[Eclipse OMR] projects
+- **Freely available** - No features behind paywalls, with quarterly updates for Java 8, 11, 17, 21, and 26
+- **Broad platform support** - Runs on x86, ARM64, Power, and Z mainframe architectures
+- **Production proven** - Used by a significant fraction of the Fortune 500
+
+Mark emphasized that despite misconceptions, Semeru is not just for IBM's Power and mainframe platforms. It runs very well on x86 and ARM64, supporting the full range of platforms where IBM software needs to run.
+
+== The Eclipse OpenJ9 JVM
+
+Eclipse OpenJ9 is the JVM technology that powers Semeru Runtimes. Originally developed in the 1990s for embedded devices like cell phones and oscilloscopes, it was designed from the start to be memory-efficient and fast-starting.
+
+=== A Different Design Philosophy
+
+OpenJ9 takes a more balanced approach to performance optimization compared to HotSpot:
+
+- **Multiple performance metrics matter** - Not just raw throughput, but also startup time, memory footprint, ramp-up time, and disk space
+- **Optimizing for one metric can hurt others** - The team carefully balances improvements across all dimensions
+- **The last 10% of raw speed might be better spent elsewhere** - Dramatic improvements in startup or memory may provide more value than marginal throughput gains
+
+This philosophy has made OpenJ9 particularly well-suited for cloud deployments where startup time and memory efficiency directly impact cost.
+
+=== Key Technical Innovations
+
+Mark highlighted several architectural decisions that distinguish OpenJ9:
+
+**ROM/RAM Separation** - Internal data structures are carefully separated into read-only and read-write components, enabling efficient sharing across JVM instances.
+
+**Single JIT Compiler** - Unlike HotSpot's C1/C2 model, OpenJ9 uses a single adaptive compiler with multiple optimization levels (cold, warm, hot, very hot, scorching) based on a temperature metaphor.
+
+**JIT as a Service** - The compiler can run as a separate server process, allowing multiple JVM clients to share compilation resources.
+
+**Single Source for All Java Versions** - The same JVM codebase is built into Java 8, 11, 17, 21, 25, and 26, enabling innovations to reach all supported versions simultaneously.
+
+== The Shared Classes Cache: The Secret Sauce
+
+The centerpiece of the episode was OpenJ9's shared classes cache technology, which has been available since Java 5 (2005).
+
+=== How It Works
+
+The shared classes cache is a memory-mapped file that stores:
+
+- **Loaded classes** - Avoiding the cost of class loading on subsequent runs
+- **Profile data** - Information about how the application behaves
+- **JIT compiled code** - Pre-compiled methods that can be loaded ~100x faster than JIT compilation
+
+When you run a Java application with `-Xshareclasses`, OpenJ9 automatically creates and populates this cache. On subsequent "warm" runs, the JVM loads classes and compiled code directly from the cache, dramatically reducing startup time.
+
+=== Training Runs and Warm Runs
+
+The model requires a "training run" (cold run) to populate the cache, followed by "warm runs" that benefit from the cached data. This two-phase approach has historically been a challenge for container deployments, where each container start might be a cold run.
+
+Mark acknowledged this limitation and noted that the team is working on:
+
+- Improving first-run performance
+- Providing pre-populated caches for common frameworks
+- Making it easier to perform training runs during container builds
+
+=== Layered Caches for Containers
+
+One of the most interesting features is the cache's layered architecture, which mirrors container layers:
+
+1. **JDK layer** - Pre-populated classes and code from the JDK
+2. **Framework layer** - Classes and code from frameworks like Quarkus or application servers
+3. **Application layer** - Application-specific classes and code
+
+This design enables efficient container distribution since only the top layer changes between application updates, and it avoids copy-on-write memory overhead.
+
+== Performance Improvements
+
+Mark shared benchmark data showing significant improvements with Semeru compared to HotSpot:
+
+- **Startup time** - Dramatic reductions, especially on warm runs with a populated cache
+- **Memory footprint** - 18-50% lower memory usage, with some workloads showing 3x improvements
+- **Ramp-up time** - Faster time to peak performance, especially in resource-constrained environments
+
+These improvements are sustained across the application lifecycle, not just at startup.
+
+== Quarkus Integration
+
+The https://quarkus.io/blog/semeru-scc/[recent work to integrate Semeru with Quarkus] makes it trivially easy to take advantage of these benefits.
+
+Developers can enable shared classes cache support with a single property:
+
+```
+-Dquarkus.package.jar.aot.enabled=true
+```
+
+When running Quarkus tests with `@QuarkusIntegrationTest`, the test execution automatically serves as the training run, populating the cache with realistic application behavior. This means good tests naturally lead to good cache population without extra effort.
+
+== Comparing with Project Leyden
+
+Mark provided a point-in-time comparison between OpenJ9's shared classes cache and https://openjdk.org/projects/leyden/[Project Leyden], the OpenJDK effort for ahead-of-time optimization:
+
+**Similarities:**
+ 
+* Both use training runs to improve subsequent executions
+* Both create archives/caches that must be distributed with applications
+
+**Key Differences:**
+
+- **Maturity** - OpenJ9's cache has been production-ready since 2005; Leyden is still under development
+- **Class loader support** - OpenJ9 supports application class loaders; Leyden currently only supports bootstrap loaders
+- **Flexibility** - OpenJ9's cache works transparently; Leyden requires explicit cache management
+- **Compiled code** - OpenJ9 caches JIT code today; Leyden's AOT compilation is still in development
+- **Multi-application support** - OpenJ9 caches can be shared across multiple applications; Leyden uses single-application archives
+- **Container layers** - OpenJ9's layered cache design maps naturally to container layers
+
+Mark emphasized this is a point-in-time comparison and both technologies continue to evolve.
+
+== When to Choose Semeru Over Native Image
+
+A question from the audience asked about choosing between Semeru and https://www.graalvm.org/latest/reference-manual/native-image/[GraalVM Native Image].
+
+Mark's perspective:
+
+**Choose Native Image when:**
+- Near-instant startup is critical
+- Your application fits within Native Image's constraints
+
+- Near-instant startup is critical
+- Your application fits within Native Image's constraints
+
+**Choose Semeru when:**
+
+- You need full Java specification compliance
+- Your application uses dynamic class loading
+- You want JIT optimization for your specific workload
+- You need to support existing applications without modification
+- Build time is a concern
+
+Quarkus makes both options easy, so the choice depends on your specific requirements.
+
+== Eclipse OMR: The Foundation
+
+Mark also introduced https://www.eclipse.org/omr/[Eclipse OMR], the language-agnostic runtime components that underpin OpenJ9. This ~1 million line codebase provides:
+
+- Garbage collection
+- Threading libraries
+- Platform porting layers
+- Compiler infrastructure
+
+While OMR hasn't been widely adopted by other language runtimes, it represents a significant investment in reusable runtime technology and includes JitBuilder, a library for rapidly creating JIT compilers.
+
+== Key Takeaways
+
+1. **IBM Semeru Runtimes is a free, open-source Java distribution** based on OpenJDK with the Eclipse OpenJ9 JVM.
+2. **OpenJ9 prioritizes balanced performance** across startup, memory, throughput, and ramp-up time.
+3. **The shared classes cache dramatically improves startup** by caching loaded classes and JIT-compiled code.
+4. **Training runs populate the cache** for subsequent warm runs to benefit from.
+5. **Layered caches work naturally with container architectures**, enabling efficient distribution and memory sharing.
+6. **Quarkus integration is trivial** - just set `quarkus.package.jar.aot.enabled=true`.
+7. **Running Quarkus integration tests automatically creates a good training run**.
+8. **Performance improvements are significant** - faster startup, lower memory, better ramp-up.
+9. **The technology is production-proven** - in use since 2005 across hundreds of IBM products.
+10. **It's a different trade-off than Native Image** - full JVM compliance with excellent startup and memory characteristics.
+
+== Conclusion
+
+IBM Semeru Runtimes and Eclipse OpenJ9 represent a mature, production-proven alternative to HotSpot that delivers significant improvements in startup time and memory footprint without sacrificing Java compatibility. The shared classes cache technology, refined over nearly two decades, provides a compelling option for cloud deployments where these metrics directly impact cost.
+
+The recent Quarkus integration makes it easier than ever to try Semeru – just swap the JVM and enable AOT. The Quarkus team is planning to run their own benchmarks to quantify the improvements, and Mark encouraged the community to try it and share feedback.
+
+For applications that need fast startup and low memory but want to stay within the full Java specification, Semeru offers a compelling middle ground between traditional JVMs and Native Image.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. Download IBM Semeru Runtimes at https://developer.ibm.com/languages/java/semeru-runtimes/[developer.ibm.com/languages/java/semeru-runtimes] and learn more about Eclipse OpenJ9 at https://www.eclipse.org/openj9/[eclipse.org/openj9].

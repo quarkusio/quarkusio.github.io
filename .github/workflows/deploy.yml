@@ -26,17 +26,24 @@ jobs:
     steps:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Check for Jekyll site
-        id: check_jekyll
+      - name: Detect site generator
+        id: detect
         run: |
           if [ -f "Gemfile" ]; then
-            echo "jekyll_exists=true" >> $GITHUB_OUTPUT
+            echo "jekyll=true" >> $GITHUB_OUTPUT
+            echo "site_dir=_site" >> $GITHUB_OUTPUT
           else
-            echo "jekyll_exists=false" >> $GITHUB_OUTPUT
+            echo "jekyll=false" >> $GITHUB_OUTPUT
+          fi
+          if [ -d "src/main" ]; then
+            echo "roq=true" >> $GITHUB_OUTPUT
+            echo "site_dir=target/roq" >> $GITHUB_OUTPUT
+          else
+            echo "roq=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up ruby
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
         with:
           ruby-version: 3.2.3
@@ -48,26 +55,17 @@ jobs:
           key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
           restore-keys: ${{ runner.os }}-gems-
       - name: Install dependencies
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         run: |
           bundle config path vendor/bundle
           bundle install --jobs 4 --retry 3
 
       - name: Build Jekyll site
-        if: steps.check_jekyll.outputs.jekyll_exists == 'true'
+        if: steps.detect.outputs.jekyll == 'true'
         run: bundle exec jekyll build
 
-      - name: Check for Roq project
-        id: check_roq
-        run: |
-          if [ -f "src/main" ]; then
-            echo "roq_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "roq_exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Set up JDK
-        if: steps.check_roq.outputs.roq_exists == 'true'
+        if: steps.detect.outputs.roq == 'true'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: '21'
@@ -75,13 +73,13 @@ jobs:
           cache: 'maven'
 
       - name: Build with Maven
-        if: steps.check_roq.outputs.roq_exists == 'true'
+        if: steps.detect.outputs.roq == 'true'
         run: QUARKUS_ROQ_GENERATOR_BATCH=true mvn -B package quarkus:run
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v4.0.1
         with:
-          path: ./_site
+          path: ./${{ steps.detect.outputs.site_dir }}
           include-hidden-files: true
       - name: Deploy to GitHub Pages
         id: deploy
@@ -91,7 +89,7 @@ jobs:
       - name: Sync gh-pages branch
         run: |
           SITE_DIR=$(mktemp -d)
-          rsync -a ./_site/ "$SITE_DIR"
+          rsync -a ./${{ steps.detect.outputs.site_dir }}/ "$SITE_DIR"
           
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -101,7 +99,7 @@ jobs:
 
           rsync -a --delete --exclude='.git' --exclude='.nojekyll' "$SITE_DIR"/ .
           git add -A
-          git rm -rf --cached --ignore-unmatch _site
+          git rm -rf --cached --ignore-unmatch ${{ steps.detect.outputs.site_dir }}
 
           git commit --allow-empty -m "deploy: ${{ github.sha }}"
           git push origin gh-pages
