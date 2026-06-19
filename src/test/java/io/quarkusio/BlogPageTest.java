@@ -7,6 +7,12 @@ import static org.junit.jupiter.api.Assertions.*;
 public class BlogPageTest extends BrowserTest {
 
     @Test
+    void blogPageTitleIsExact() {
+        page.navigate(baseUrl + "/blog/");
+        assertEquals("Blog - Quarkus", page.title());
+    }
+
+    @Test
     void blogPageHasAtLeastFivePosts() {
         page.navigate(baseUrl + "/blog/");
         int postCount = page.locator(".blog-list-item").count();
