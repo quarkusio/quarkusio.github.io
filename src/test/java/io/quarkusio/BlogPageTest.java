@@ -102,6 +102,42 @@ public class BlogPageTest extends BrowserTest {
     }
 
     @Test
+    void multiAuthorPostShowsAllAuthors() {
+        page.navigate(baseUrl + BLOG_PATH);
+
+        String postHref = null;
+        int indexAuthorCount = 0;
+
+        while (postHref == null) {
+            var posts = page.locator(".blog-list-item");
+            int postCount = posts.count();
+            for (int i = 0; i < postCount; i++) {
+                var post = posts.nth(i);
+                int authorCount = post.locator(".byline a[href*='/author/']").count();
+                if (authorCount > 1) {
+                    postHref = post.locator(".post-title a").getAttribute("href");
+                    indexAuthorCount = authorCount;
+                    break;
+                }
+            }
+            if (postHref == null) {
+                var olderPosts = page.locator("a:has-text('Older Posts')");
+                assertFalse(olderPosts.count() == 0,
+                        "Could not find any multi-author blog post");
+                olderPosts.click();
+                page.waitForLoadState();
+            }
+        }
+
+        page.navigate(postHref.startsWith("http") ? postHref : baseUrl + postHref);
+        int postPageAuthorCount = page.locator(".byline a[href*='/author/']").count();
+        assertEquals(indexAuthorCount, postPageAuthorCount,
+                "Post page should show the same number of authors as the blog index");
+        assertTrue(postPageAuthorCount > 1,
+                "Expected multiple authors on post page but found " + postPageAuthorCount);
+    }
+
+    @Test
     void blogPostsDoNotContainUnrenderedMarkup() {
         page.navigate(baseUrl + BLOG_PATH);
         var postLinks = page.locator(".blog-list-item .post-title a");
