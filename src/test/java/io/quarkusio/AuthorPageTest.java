@@ -2,6 +2,8 @@ package io.quarkusio;
 
 import org.junit.jupiter.api.Test;
 
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class AuthorPageTest extends BrowserTest {
@@ -37,5 +39,17 @@ public class AuthorPageTest extends BrowserTest {
         int postCount = page.locator(".blog-list-item").count();
         assertTrue(postCount >= 1,
                 "Expected at least 1 post on author page but found " + postCount);
+    }
+
+    @Test
+    void authorIndexDoesNotContainUnrenderedMarkup() {
+        page.navigate(baseUrl + "/author/");
+        assertDoesNotContainUnrenderedMarkup(page, "Author index");
+    }
+
+    @Test
+    void authorIndexDoesNotContainRawHtmlTags() {
+        page.navigate(baseUrl + "/author/");
+        assertDoesNotContainRawHtml(page, "Author index");
     }
 }

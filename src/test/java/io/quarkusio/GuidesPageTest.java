@@ -2,6 +2,7 @@ package io.quarkusio;
 
 import org.junit.jupiter.api.Test;
 
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class GuidesPageTest extends BrowserTest {
@@ -50,5 +51,11 @@ public class GuidesPageTest extends BrowserTest {
         int categoryCount = page.locator(".pulldown.category, [class*='category']").count();
         assertTrue(categoryCount > 0,
                 "Expected a category filter on the guides page");
+    }
+
+    @Test
+    void guidesPageDoesNotContainUnrenderedMarkup() {
+        page.navigate(baseUrl + "/guides/");
+        assertDoesNotContainUnrenderedMarkup(page, "Guides page");
     }
 }
