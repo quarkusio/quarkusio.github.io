@@ -60,7 +60,7 @@ Once the **warmup** load hits, the picture changes.
 
 Spring worker threads are involuntarily preempted 20x more than Quarkus threads. Quarkus threads yield the CPU voluntarily 4x more: **they complete request work faster and return to I/O wait, leaving scheduling gaps for the C2 compiler**.
 
-**Starvation also degrades code quality.** When the C2 queue grows too large, HotSpot's compilation policy kicks in a **backpressure mechanism**: it skips tier 3 (C1 with full profiling) and compiles methods at tier 2 (C1 without full profiling) instead, reducing the load on C2. When the queue pressure drops, methods get promoted from tier 2 to tier 3 and eventually to tier 4 (C2). For spring4-jvm, JFR execution samples show this directly: during warmup, **C1-compiled code dominates at ~60% of leaf frames while C2-inlined code stays at ~30%**. The C2 queue peaks at over **3,000 pending methods** and stays there for the entire warmup. After the 30-second cooldown gives C2 the CPU it needs, the picture flips: **C2-inlined code jumps to ~80% and C1 drops to ~20%**. The throughput jump after cooldown is the C2-compiled code finally running.
+**Starvation also degrades code quality.** When the C2 queue grows too large, HotSpot's compilation policy kicks in a https://github.com/openjdk/jdk25u/blob/master/src/hotspot/share/compiler/compilationPolicy.cpp#L1365[**backpressure mechanism**]: it skips tier 3 (C1 with full profiling) and compiles methods at tier 2 (C1 without full profiling) instead, reducing the load on C2. When the queue pressure drops, methods get promoted from tier 2 to tier 3 and eventually to tier 4 (C2). For spring4-jvm, JFR execution samples show this directly: during warmup, **C1-compiled code dominates at ~60% of leaf frames while C2-inlined code stays at ~30%**. The C2 queue peaks at over **3,000 pending methods** and stays there for the entire warmup. After the 30-second cooldown gives C2 the CPU it needs, the picture flips: **C2-inlined code jumps to ~80% and C1 drops to ~20%**. The throughput jump after cooldown is the C2-compiled code finally running.
 
 == Virtual threads change the equation
 
@@ -125,11 +125,13 @@ image::/assets/images/posts/when-the-jit-cant-keep-up/warmup-tps-local-eevdf.png
 
 The peak throughput is different because, although clocked at the same speed, this is a different CPU architecture than the lab. The important comparison is the **shape of the curve**: spring4-jvm now reaches peak **during warmup** (~110 seconds), while on CFS it was still at ~3,300 req/s after the full 2-minute warmup. Quarkus peaks at ~35 seconds instead of ~60.
 
-The C2 compiler thread chart confirms why:
+For comparison, here is the CFS C2 chart from earlier alongside the EEVDF one:
+
+image::/assets/images/posts/when-the-jit-cant-keep-up/c2-wait-baseline.png[C2 thread CPU and wait on RHEL 9.6 (CFS): spring4-jvm vs quarkus3-jvm]
 
 image::/assets/images/posts/when-the-jit-cant-keep-up/c2-wait-local-eevdf.png[C2 thread CPU and wait on Fedora 43 (EEVDF): spring4-jvm vs quarkus3-jvm]
 
-Compare this to the CFS charts above: C2 threads now get significantly more CPU time (green) during warmup. **The EEVDF scheduler gives C2 threads more CPU time under contention.** It does not eliminate the problem, but it reduces the severity.
+On EEVDF, C2 threads get significantly more CPU time (green) during warmup. **The EEVDF scheduler gives C2 threads more CPU time under contention.** It does not eliminate the problem, but it reduces the severity.
 
 == Does this happen in production?
 
