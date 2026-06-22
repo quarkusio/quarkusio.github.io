@@ -1,0 +1,61 @@
+name: Sync contributors
+
+env:
+  JVM_VERSION: '21'
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # weekly on Monday
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: github.repository == 'quarkusio/quarkusio.github.io'
+    runs-on: ubuntu-latest
+    environment: quarkus-push-website
+    steps:
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.generate-token.outputs.token }}
+
+      - name: Install JDK ${{ env.JVM_VERSION }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JVM_VERSION }}
+
+      - name: Set up JBang
+        uses: jbangdev/setup-jbang@2b1b465a7b75f4222b81426f23a01e013aa7b95c # v0.1.1
+
+      - name: Run script
+        run: |
+          jbang --java ${JVM_VERSION} -Dcontributors.output=_data/contributors.yaml contributors/main.java
+        env:
+          GITHUB_TOKEN: ${{ secrets.SYNC_WORKING_GROUP_TOKEN }}
+
+      - name: Configure Git author
+        run: |
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+
+      - name: Commit changes
+        shell: bash
+        run: |
+            git add _data/contributors.yaml
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -am "Sync contributors"
+            fi
+            git pull origin main --rebase
+            git push origin main
