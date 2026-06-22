@@ -57,6 +57,8 @@ public class RssFeedTest extends BrowserTest {
 
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setAttribute("jdk.xml.maxGeneralEntitySizeLimit", 0);
+            factory.setAttribute("jdk.xml.totalEntitySizeLimit", 0);
             factory.newDocumentBuilder().parse(new InputSource(new StringReader(body)));
         } catch (Exception e) {
             fail("Feed XML is not valid: " + e.getMessage());
@@ -75,6 +77,8 @@ public class RssFeedTest extends BrowserTest {
         String body = response.body();
 
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setAttribute("jdk.xml.maxGeneralEntitySizeLimit", 0);
+        factory.setAttribute("jdk.xml.totalEntitySizeLimit", 0);
         Document doc = factory.newDocumentBuilder().parse(new InputSource(new StringReader(body)));
 
         int itemCount = doc.getElementsByTagName("item").getLength();
