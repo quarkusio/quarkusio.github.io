@@ -7,6 +7,12 @@ import static org.junit.jupiter.api.Assertions.*;
 public class GuidesPageTest extends BrowserTest {
 
     @Test
+    void guidesPageTitleIsExact() {
+        page.navigate(baseUrl + "/guides/");
+        assertEquals("Guides - Latest - Quarkus", page.title());
+    }
+
+    @Test
     void guidesPageRendersWithSubstantialContent() {
         page.navigate(baseUrl + "/guides/");
         int guideCount = page.locator(".docslist h4 a[href*='/guides/']").count();
