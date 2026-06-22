@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,7 +22,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,10 +37,13 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.fail;
 
 @Tag("e2e")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class LinkCrawlerTest extends BrowserTest {
 
     private static final int DEFAULT_MAX_PAGES = Integer.MAX_VALUE;
     private static final int DEFAULT_THREADS = 8;
+
+    private CrawlResults crawlResults;
 
     @BeforeEach
     @Override
@@ -52,8 +55,37 @@ public class LinkCrawlerTest extends BrowserTest {
     void closeContext() {
     }
 
+    private synchronized CrawlResults getCrawlResults() throws InterruptedException {
+        if (crawlResults != null) {
+            return crawlResults;
+        }
+        crawlResults = runCrawl();
+        return crawlResults;
+    }
+
     @Test
     void crawlAndCheckLinks() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenLinks.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(results.brokenLinks.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenLinks.size() + " broken link(s):\n" + buildLinkReport(sorted));
+        }
+    }
+
+    @Test
+    void crawlAndCheckImages() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenImages.isEmpty()) {
+            List<Map.Entry<String, BrokenImage>> sorted = new ArrayList<>(results.brokenImages.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenImages.size() + " broken image(s):\n" + buildImageReport(sorted));
+        }
+    }
+
+    private CrawlResults runCrawl() throws InterruptedException {
         int maxPages = Integer.getInteger("test.crawl.max-pages", DEFAULT_MAX_PAGES);
         int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
         boolean checkInternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-internal", "true"));
@@ -63,9 +95,11 @@ public class LinkCrawlerTest extends BrowserTest {
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
         ConcurrentLinkedQueue<String> queue = new ConcurrentLinkedQueue<>();
-        Map<String, BrokenLink> broken = new ConcurrentHashMap<>();
-        Map<String, String> foundOn = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> brokenLinks = new ConcurrentHashMap<>();
+        Map<String, BrokenImage> brokenImages = new ConcurrentHashMap<>();
+        Map<String, String> referrers = new ConcurrentHashMap<>();
         Set<String> checkedExternal = ConcurrentHashMap.newKeySet();
+        Set<String> checkedImages = ConcurrentHashMap.newKeySet();
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
@@ -87,12 +121,13 @@ public class LinkCrawlerTest extends BrowserTest {
                     Browser br = pw.chromium().launch(
                             new BrowserType.LaunchOptions().setHeadless(true));
                     BrowserContext ctx = br.newContext();
-                    ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+                    ctx.route("**/*.{css,woff,woff2,ttf,eot}", Route::abort);
                     Page p = ctx.newPage();
                     p.setDefaultNavigationTimeout(60_000);
 
-                    crawLoop(p, queue, visited, broken, foundOn, checkedExternal,
-                            crawledCount, maxPages, checkInternal, checkExternal, excludePaths, seedUrls);
+                    crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
+                            checkedExternal, checkedImages, crawledCount, maxPages,
+                            checkInternal, checkExternal, excludePaths, seedUrls);
 
                     ctx.close();
                     br.close();
@@ -105,22 +140,22 @@ public class LinkCrawlerTest extends BrowserTest {
 
         System.out.println("Crawled " + crawledCount.get() + " internal pages"
                 + (checkExternal ? ", checked " + checkedExternal.size() + " external links" : "")
-                + ", found " + broken.size() + " broken links"
+                + ", checked " + checkedImages.size() + " unique images"
+                + ", found " + brokenLinks.size() + " broken links"
+                + ", found " + brokenImages.size() + " broken images"
                 + " (" + threads + " threads)");
 
-        if (!broken.isEmpty()) {
-            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(broken.entrySet());
-            sorted.sort(Map.Entry.comparingByKey());
-            fail("Found " + broken.size() + " broken link(s):\n" + buildReport(sorted));
-        }
+        return new CrawlResults(brokenLinks, brokenImages);
     }
 
     private void crawLoop(Page p,
                            ConcurrentLinkedQueue<String> queue,
                            Set<String> visited,
-                           Map<String, BrokenLink> broken,
-                           Map<String, String> foundOn,
+                           Map<String, BrokenLink> brokenLinks,
+                           Map<String, BrokenImage> brokenImages,
+                           Map<String, String> referrers,
                            Set<String> checkedExternal,
+                           Set<String> checkedImages,
                            AtomicInteger crawledCount,
                            int maxPages,
                            boolean checkInternal,
@@ -163,7 +198,7 @@ public class LinkCrawlerTest extends BrowserTest {
                 if (checkInternal) {
                     BrokenLink probe = probeWithHttp(currentUrl);
                     if (probe != null) {
-                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
+                        brokenLinks.put(currentUrl, new BrokenLink(probe.status, probe.statusText, referrers.get(currentUrl)));
                     }
                 }
                 continue;
@@ -172,7 +207,7 @@ public class LinkCrawlerTest extends BrowserTest {
             int status = response.status();
             if (status >= 400) {
                 if (checkInternal) {
-                    broken.put(currentUrl, new BrokenLink(status, response.statusText(), foundOn.get(currentUrl)));
+                    brokenLinks.put(currentUrl, new BrokenLink(status, response.statusText(), referrers.get(currentUrl)));
                 }
                 continue;
             }
@@ -184,20 +219,39 @@ public class LinkCrawlerTest extends BrowserTest {
                 continue;
             }
 
+            // Use the browser's actual URL (after redirects) as the base for
+            // resolving relative URLs — e.g. /newsletter/18 redirects to
+            // /newsletter/18/ and relative src="index_files/img.png" must
+            // resolve against the trailing-slash form.
+            String pageUrl = p.url();
+
             List<String> hrefs;
+            List<String> imageSrcs;
             try {
                 @SuppressWarnings("unchecked")
-                var result = (List<String>) p.evaluate(
+                var linkResult = (List<String>) p.evaluate(
                         "() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href'))");
-                hrefs = result;
+                hrefs = linkResult;
+
+                @SuppressWarnings("unchecked")
+                var imageResult = (List<String>) p.evaluate("""
+                        () => {
+                          const srcs = new Set();
+                          document.querySelectorAll('img[src]').forEach(img => srcs.add(img.getAttribute('src')));
+                          document.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
+                            el.getAttribute('srcset').split(',').forEach(entry => {
+                              const url = entry.trim().split(/\\s+/)[0];
+                              if (url) srcs.add(url);
+                            });
+                          });
+                          return [...srcs];
+                        }""");
+                imageSrcs = imageResult;
             } catch (PlaywrightException e) {
-                // Context destroyed — typically a meta-refresh or JS redirect fired
-                // after navigate() returned. Probe with HTTP to verify the redirect
-                // target is actually reachable.
                 if (checkInternal) {
                     BrokenLink probe = probeWithHttp(currentUrl);
                     if (probe != null) {
-                        broken.put(currentUrl, new BrokenLink(probe.status, probe.statusText, foundOn.get(currentUrl)));
+                        brokenLinks.put(currentUrl, new BrokenLink(probe.status, probe.statusText, referrers.get(currentUrl)));
                     }
                 }
                 continue;
@@ -208,7 +262,7 @@ public class LinkCrawlerTest extends BrowserTest {
                     continue;
                 }
 
-                ResolvedLink resolved = resolveLink(currentUrl, href);
+                ResolvedLink resolved = resolveLink(pageUrl, href);
                 if (resolved == null) {
                     continue;
                 }
@@ -217,12 +271,30 @@ public class LinkCrawlerTest extends BrowserTest {
                     String normalized = normalize(resolved.url);
                     if (!visited.contains(normalized) && !isExcluded(normalized, excludePaths)) {
                         queue.add(normalized);
-                        foundOn.putIfAbsent(normalized, currentUrl);
+                        referrers.putIfAbsent(normalized, currentUrl);
                     }
                 } else if (checkExternal && checkedExternal.add(resolved.url)) {
                     BrokenLink result = checkExternalLink(resolved.url);
                     if (result != null) {
-                        broken.put(resolved.url, new BrokenLink(result.status, result.statusText, currentUrl));
+                        brokenLinks.put(resolved.url, new BrokenLink(result.status, result.statusText, currentUrl));
+                    }
+                }
+            }
+
+            for (String src : imageSrcs) {
+                if (src == null || src.isBlank() || src.startsWith("data:")) {
+                    continue;
+                }
+
+                String resolvedImage = resolveImageUrl(pageUrl, src);
+                if (resolvedImage == null || !resolvedImage.startsWith(baseUrl)) {
+                    continue;
+                }
+
+                if (checkedImages.add(resolvedImage)) {
+                    BrokenImage result = checkImageUrl(resolvedImage);
+                    if (result != null) {
+                        brokenImages.put(resolvedImage, new BrokenImage(result.status, result.statusText, currentUrl));
                     }
                 }
             }
@@ -260,8 +332,11 @@ public class LinkCrawlerTest extends BrowserTest {
             internal = href.startsWith(baseUrl);
         } else {
             try {
-                resolved = URI.create(currentPageUrl).resolve(href).toString();
-            } catch (IllegalArgumentException e) {
+                resolved = resolveRelativeUrl(currentPageUrl, href);
+            } catch (Exception e) {
+                return null;
+            }
+            if (resolved == null) {
                 return null;
             }
             internal = true;
@@ -273,6 +348,57 @@ public class LinkCrawlerTest extends BrowserTest {
         }
 
         return new ResolvedLink(resolved, internal);
+    }
+
+    private static String resolveImageUrl(String currentPageUrl, String src) {
+        if (src.startsWith("http://") || src.startsWith("https://")) {
+            return src;
+        }
+        return resolveRelativeUrl(currentPageUrl, src);
+    }
+
+    private static String resolveRelativeUrl(String base, String relative) {
+        try {
+            URI resolved = URI.create(base).resolve(relative).normalize();
+            String path = resolved.getPath();
+            while (path.startsWith("/../")) {
+                path = path.substring(3);
+            }
+            return new URI(resolved.getScheme(), resolved.getAuthority(), path,
+                    resolved.getQuery(), resolved.getFragment()).toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static BrokenImage checkImageUrl(String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try (HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build()) {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+                int status = response.statusCode();
+                if (status >= 400) {
+                    if (attempt == 0) {
+                        continue;
+                    }
+                    return new BrokenImage(status, "HTTP " + status, null);
+                }
+                return null;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    continue;
+                }
+                return new BrokenImage(0, e.getMessage(), null);
+            }
+        }
+        return null;
     }
 
     private static BrokenLink checkExternalLink(String url) {
@@ -378,9 +504,6 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
 
-    // Meta-refresh redirects bake in the production site.url (e.g. https://quarkus.io/guides/foo)
-    // at build time. When testing against localhost, rewrite those back to the local server.
-    // Redirects to genuinely external sites (e.g. quarkiverse.github.io) are left as-is.
     private String rewriteToLocal(String target) {
         if (!target.startsWith("http://") && !target.startsWith("https://")) {
             return target;
@@ -429,7 +552,7 @@ public class LinkCrawlerTest extends BrowserTest {
         return url;
     }
 
-    private static String buildReport(List<Map.Entry<String, BrokenLink>> entries) {
+    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
         StringBuilder sb = new StringBuilder();
         for (var entry : entries) {
             BrokenLink link = entry.getValue();
@@ -442,9 +565,28 @@ public class LinkCrawlerTest extends BrowserTest {
         return sb.toString();
     }
 
+    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenImage img = entry.getValue();
+            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
+            if (img.referrer != null) {
+                sb.append("\n       found on: ").append(img.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
     record ResolvedLink(String url, boolean internal) {
     }
 
     record BrokenLink(int status, String statusText, String referrer) {
+    }
+
+    record BrokenImage(int status, String statusText, String referrer) {
+    }
+
+    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages) {
     }
 }
