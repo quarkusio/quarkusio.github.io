@@ -4,6 +4,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static io.quarkusio.UnrenderedMarkupDetector.findUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -135,6 +137,18 @@ public class BlogPageTest extends BrowserTest {
                 "Post page should show the same number of authors as the blog index");
         assertTrue(postPageAuthorCount > 1,
                 "Expected multiple authors on post page but found " + postPageAuthorCount);
+    }
+
+    @Test
+    void blogIndexDoesNotContainUnrenderedMarkup() {
+        page.navigate(baseUrl + BLOG_PATH);
+        assertDoesNotContainUnrenderedMarkup(page, "Blog index");
+    }
+
+    @Test
+    void blogIndexDoesNotContainRawHtmlTags() {
+        page.navigate(baseUrl + BLOG_PATH);
+        assertDoesNotContainRawHtml(page, "Blog index");
     }
 
     @Test
