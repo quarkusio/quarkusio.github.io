@@ -67,6 +67,36 @@ class UnrenderedMarkupDetectorTest {
     }
 
     @Test
+    void detectsTemplateTags() {
+        assertDetects("before {% if page.layout %} after", "Template tag");
+        assertDetects("before {%- for item in list -%} after", "Template tag");
+    }
+
+    @Test
+    void detectsTemplateOutput() {
+        assertDetects("Hello {{ user.name }} welcome", "Template output");
+    }
+
+    @Test
+    void detectsTemplateErrors() {
+        assertDetects("Liquid error: undefined variable", "Template error");
+        assertDetects("template syntax error in tag", "Template error");
+    }
+
+    @Test
+    void detectsYamlFrontMatter() {
+        assertDetects("---\ntitle: My Page\n---\nContent", "YAML front matter");
+    }
+
+    @Test
+    void doesNotFlagYamlFrontMatterMidText() {
+        List<String> findings = findUnrenderedMarkup(
+                "Some text before\n---\nsome text after");
+        assertTrue(findings.stream().noneMatch(f -> f.contains("YAML front matter")),
+                "Should not flag --- in the middle of text but got: " + findings);
+    }
+
+    @Test
     void doesNotFlagCleanHtml() {
         List<String> findings = findUnrenderedMarkup(
                 "This is a normal blog post with headings and paragraphs. "
