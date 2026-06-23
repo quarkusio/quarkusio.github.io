@@ -147,8 +147,10 @@ jobs:
             exit 0
           fi
 
-          # Compare the built site to what is currently deployed on gh-pages
-          git fetch origin gh-pages 2>/dev/null || {
+          # Compare the built site to what is currently deployed on gh-pages.
+          # Use --filter=blob:none so only tree objects are fetched initially,
+          # then sparse-checkout to materialise just *.html files for rsync.
+          git fetch origin gh-pages --filter=blob:none 2>/dev/null || {
             echo "mode=full" >> $GITHUB_OUTPUT
             echo "Could not fetch gh-pages, running full link check"
             exit 0
@@ -160,6 +162,8 @@ jobs:
             exit 0
           }
 
+          git -C /tmp/gh-pages sparse-checkout set --no-cone '*.html'
+
           RSYNC_OUT=$(rsync -rcn --out-format='%n' \
             --include='*/' --include='*.html' --exclude='*' \
             ${{ steps.detect.outputs.site_dir }}/ /tmp/gh-pages/ 2>/dev/null) || {
@@ -169,7 +173,10 @@ jobs:
             exit 0
           }
 
-          CHANGED=$(echo "$RSYNC_OUT" | grep '\.html$' || true)
+          # Filter out version/main/ guides — these are synced daily from the
+          # quarkus repo and will almost always differ from gh-pages, but are
+          # not part of the PR's changes.
+          CHANGED=$(echo "$RSYNC_OUT" | grep '\.html$' | grep -v '^version/main/' || true)
 
           git worktree remove /tmp/gh-pages 2>/dev/null || true
 
@@ -204,7 +211,7 @@ jobs:
           fi
           mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
             -Dtest.crawl.check-external=false \
-            -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main/guides/doc-reference \
+            -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main \
             $CHANGED_PATHS_ARG
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
