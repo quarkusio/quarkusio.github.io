@@ -15,6 +15,11 @@ public class SiteNameTest extends BrowserTest {
     }
 
     @Test
+    void failOnPurpose() {
+        fail("Intentional failure to test build report");
+    }
+
+    @Test
     void guidesPageTitleContainsQuarkus() {
         page.navigate(baseUrl + "/guides/");
         String title = page.title();
