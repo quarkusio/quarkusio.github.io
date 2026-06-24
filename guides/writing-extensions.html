@@ -1015,7 +1015,7 @@ The above <code>maven-compiler-plugin</code> configuration requires version 3.5+
 <i class="fa icon-tip" title="Tip"></i>
 </td>
 <td class="content">
-You may not specify any parameter to use the interactive mode: <code>mvn io.quarkus.platform:quarkus-maven-plugin:3.36.3:create-extension -N</code>
+You may not specify any parameter to use the interactive mode: <code>mvn io.quarkus.platform:quarkus-maven-plugin:3.37.0:create-extension -N</code>
 </td>
 </tr>
 </table>
@@ -1027,7 +1027,7 @@ You may not specify any parameter to use the interactive mode: <code>mvn io.quar
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">git clone https://github.com/quarkusio/quarkus.git
 cd quarkus
-mvn io.quarkus.platform:quarkus-maven-plugin:3.36.3:create-extension -N \
+mvn io.quarkus.platform:quarkus-maven-plugin:3.37.0:create-extension -N \
     -DextensionId=my-ext \
     -DextensionName="My Extension" \
     -DextensionDescription="Do something useful."</code></pre>
@@ -1171,7 +1171,7 @@ So you may consider omitting explicit <code>name</code> in some cases.
 </table>
 </div>
 <div class="paragraph">
-<p>Please refer to <a href="https://github.com/quarkusio/quarkus/blob/3.36.3/devtools/maven/src/main/java/io/quarkus/maven/CreateExtensionMojo.java">CreateExtensionMojo JavaDoc</a> for all the available options of the mojo.</p>
+<p>Please refer to <a href="https://github.com/quarkusio/quarkus/blob/3.37.0/devtools/maven/src/main/java/io/quarkus/maven/CreateExtensionMojo.java">CreateExtensionMojo JavaDoc</a> for all the available options of the mojo.</p>
 </div>
 </div>
 </div>
@@ -1195,7 +1195,7 @@ quarkusExtension {
 }
 
 dependencies {
-    implementation platform('io.quarkus:quarkus-bom:3.36.3')
+    implementation platform('io.quarkus:quarkus-bom:3.37.0')
 }</code></pre>
 </div>
 </div>
@@ -1375,42 +1375,17 @@ public void registerSeveralServices(
 
 /**
  * This build step aggregates all the produced service providers
- * and outputs them as resources.
+ * and registers them via GeneratedServiceProviderBuildItem.
  */
 @BuildStep
-public void produceServiceFiles(
+public void produceServiceProviders(
     List&lt;ServiceWriterBuildItem&gt; items,
-    BuildProducer&lt;GeneratedResourceBuildItem&gt; resourceProducer
-) throws IOException {
-    // Aggregate all the providers
-
-    Map&lt;String, Set&lt;String&gt;&gt; map = new HashMap&lt;&gt;();
+    BuildProducer&lt;GeneratedServiceProviderBuildItem&gt; serviceProviderProducer
+) {
     for (ServiceWriterBuildItem item : items) {
-        String serviceName = item.getName();
         for (String implName : item.getImplementations()) {
-            map.computeIfAbsent(
-                serviceName,
-                (k, v) -&gt; new LinkedHashSet&lt;&gt;()
-            ).add(implName);
-        }
-    }
-
-    // Now produce the resource(s) for the SPI files
-    for (Map.Entry&lt;String, Set&lt;String&gt;&gt; entry : map.entrySet()) {
-        String serviceName = entry.getKey();
-        try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
-            try (OutputStreamWriter w = new OutputStreamWriter(os, StandardCharsets.UTF_8)) {
-                for (String implName : entry.getValue()) {
-                    w.write(implName);
-                    w.write(System.lineSeparator());
-                }
-                w.flush();
-            }
-            resourceProducer.produce(
-                new GeneratedResourceBuildItem(
-                    "META-INF/services/" + serviceName,
-                    os.toByteArray()
-                )
+            serviceProviderProducer.produce(
+                new GeneratedServiceProviderBuildItem(item.getName(), implName)
             );
         }
     }
@@ -2625,7 +2600,7 @@ Build step ShutdownListenerBuildStep.setupShutdown completed in: 1ms</code></pre
 <h4 id="using-gizmo"><a class="anchor" href="#using-gizmo"></a>2.6.4. Using Gizmo</h4>
 <div class="paragraph">
 <p>In some scenarios, more significant manipulation of bytecode may be needed.
-If bytecode recording isn&#8217;t sufficient, <a href="https://github.com/quarkusio/gizmo/blob/main/MANUAL.adoc">Gizmo</a> is a convenient alternative to ASM, with a higher-level API.</p>
+If bytecode recording isn&#8217;t sufficient, <a href="https://github.com/quarkusio/gizmo/blob/main/USAGE.adoc">Gizmo</a> is a convenient alternative to ASM, with a higher-level API.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2639,35 +2614,23 @@ The proper way for an extension to perform this check is to use <code>io.quarkus
 <div class="sect2">
 <h3 id="generating-resources"><a class="anchor" href="#generating-resources"></a>2.7. Generating Resources</h3>
 <div class="paragraph">
-<p>It is possible to generate resources using extensions, in some scenarios you need to generate a resource into <code>META-INF</code> directory, the resource can be a service for SPI or a simple HTML, CSS, Javascript files.</p>
+<p>It is possible to generate resources using extensions.
+For <code>META-INF/services/</code> entries (Java SPI service providers), use <code>GeneratedServiceProviderBuildItem</code>.
+For other resources (e.g., configuration files, HTML, CSS, JavaScript), use <code>GeneratedResourceBuildItem</code> or <code>GeneratedStaticResourceBuildItem</code>.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">/**
- * This build step aggregates all the produced service providers
- * and outputs them as resources.
- */
-@BuildStep
-public void produceServiceFiles(
-    BuildProducer&lt;GeneratedStaticResourceBuildItem&gt; generatedStaticResourceProducer,
-    BuildProducer&lt;GeneratedResourceBuildItem&gt; generatedResourceProducer
-) throws IOException {
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep
+public void generateResources(
+    BuildProducer&lt;GeneratedServiceProviderBuildItem&gt; serviceProviderProducer, <i class="conum" data-value="1"></i><b>(1)</b>
+    BuildProducer&lt;GeneratedStaticResourceBuildItem&gt; generatedStaticResourceProducer <i class="conum" data-value="2"></i><b>(2)</b>
+) {
+    serviceProviderProducer.produce(
+        new GeneratedServiceProviderBuildItem(
+            "io.quarkus.services.GreetingService",
+            "com.example.HelloService"));
 
-    generatedResourceProducer.produce( <i class="conum" data-value="1"></i><b>(1)</b>
-        new GeneratedResourceBuildItem(
-            "META-INF/services/io.quarkus.services.GreetingService",
-            """
-            public class HelloService implements GreetingService {
-
-                @Override
-                public void do() {
-                    System.out.println("Hello!");
-                }
-            }
-            """.getBytes(StandardCharsets.UTF_8)));
-
-
-    generatedStaticResourceProducer.produce( <i class="conum" data-value="2"></i><b>(2)</b>
+    generatedStaticResourceProducer.produce(
         new GeneratedStaticResourceBuildItem(
             "/index.js",
             "console.log('Hello World!')".getBytes(StandardCharsets.UTF_8))
@@ -2678,7 +2641,7 @@ public void produceServiceFiles(
 <div class="olist arabic">
 <ol class="arabic">
 <li>
-<p>Producing a SPI service implementation as a resource in META-INF/services</p>
+<p>Registering a SPI service provider via <code>GeneratedServiceProviderBuildItem</code> — do NOT use <code>GeneratedResourceBuildItem</code> for <code>META-INF/services/</code> paths</p>
 </li>
 <li>
 <p>Producing a static resource (e.g., JavaScript file) served by Vertx</p>
@@ -2690,14 +2653,33 @@ public void produceServiceFiles(
 <div class="olist arabic">
 <ol class="arabic">
 <li>
+<p><strong><code>GeneratedServiceProviderBuildItem</code></strong></p>
+<div class="ulist">
+<ul>
+<li>
+<p>The correct way to register a Java SPI service provider (<code>META-INF/services/</code> entry) from a build step.</p>
+</li>
+<li>
+<p>Packaging steps consume this item and write the appropriate <code>META-INF/services/&lt;interface&gt;</code> file.</p>
+</li>
+<li>
+<p>Passing a <code>META-INF/services/</code> path to <code>GeneratedResourceBuildItem</code> will throw an <code>IllegalArgumentException</code>.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
 <p><strong><code>GeneratedResourceBuildItem</code></strong></p>
 <div class="ulist">
 <ul>
 <li>
-<p>Generates resources that are persisted in production mode.</p>
+<p>Generates arbitrary classpath resources (e.g., <code>META-INF/native-image/</code>, configuration files) that are persisted in production mode.</p>
 </li>
 <li>
 <p>In development and other non-production modes, the resources are kept in memory and loaded using the <code>QuarkusClassLoader</code>.</p>
+</li>
+<li>
+<p>Must NOT be used for <code>META-INF/services/</code> paths — use <code>GeneratedServiceProviderBuildItem</code> instead.</p>
 </li>
 </ul>
 </div>
@@ -2719,9 +2701,19 @@ public void produceServiceFiles(
 </div>
 </div>
 <div class="sect3">
-<h4 id="differences-between-generatedresourcebuilditem-and-generatedstaticresourcebuilditem"><a class="anchor" href="#differences-between-generatedresourcebuilditem-and-generatedstaticresourcebuilditem"></a>2.7.2. Differences Between <code>GeneratedResourceBuildItem</code> and <code>GeneratedStaticResourceBuildItem</code></h4>
+<h4 id="differences-between-generatedserviceproviderbuilditem-generatedresourcebuilditem-and-generatedstaticresourcebuilditem"><a class="anchor" href="#differences-between-generatedserviceproviderbuilditem-generatedresourcebuilditem-and-generatedstaticresourcebuilditem"></a>2.7.2. Differences Between <code>GeneratedServiceProviderBuildItem</code>, <code>GeneratedResourceBuildItem</code>, and <code>GeneratedStaticResourceBuildItem</code></h4>
 <div class="paragraph">
-<p>While both are used to generate resources, their purposes and behaviors differ:</p>
+<p><strong><code>GeneratedServiceProviderBuildItem</code>:</strong></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Used exclusively for Java SPI service provider registrations (<code>META-INF/services/</code>).</p>
+</li>
+<li>
+<p>Decouples the declaration of a service provider from its packaging, allowing future support for JPMS module descriptors.</p>
+</li>
+</ul>
 </div>
 <div class="paragraph">
 <p><strong><code>GeneratedResourceBuildItem</code>:</strong></p>
@@ -2729,7 +2721,7 @@ public void produceServiceFiles(
 <div class="ulist">
 <ul>
 <li>
-<p>Used for resources required at runtime (e.g., SPI service definitions).</p>
+<p>Used for arbitrary classpath resources required at runtime.</p>
 </li>
 <li>
 <p>Persisted only in production mode; otherwise, stored in memory.</p>
@@ -3981,7 +3973,7 @@ using the Quarkus maven plugin as shown in this example taken from the <a href="
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.36.3:create \
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">mvn io.quarkus.platform:quarkus-maven-plugin:3.37.0:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-json \
     -DclassName="org.acme.rest.json.FruitResource" \
@@ -5017,10 +5009,16 @@ When your repository contains multiple extensions, you need to create a separate
         <li class="guide"><a href="/guides/extension-codestart">Extension codestart</a></li>
       
         
+        <li class="reference"><a href="/guides/modularity-reference">Modularity SPI reference</a></li>
+      
+        
         <li class="guide"><a href="/guides/extension-metadata">Quarkus Extension Metadata</a></li>
       
         
         <li class="guide"><a href="/guides/extension-registry-user">Quarkus Extension Registry</a></li>
+      
+        
+        <li class="concepts"><a href="/guides/modularity">Quarkus modularity</a></li>
       
         
         <li class="guide"><a href="/guides/writing-native-applications-tips">Tips for writing native applications</a></li>
