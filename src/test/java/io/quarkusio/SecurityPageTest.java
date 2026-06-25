@@ -27,8 +27,8 @@ public class SecurityPageTest extends BrowserTest {
                 "Expected at least 4 rows (latest, LTS, older, pre-3.0) but found " + rows.count());
 
         String firstRowText = rows.first().textContent();
-        assertTrue(firstRowText.contains("Latest") && firstRowText.contains(".x"),
-                "First row should show 'Latest X.x' but was: " + firstRowText);
+        assertTrue(firstRowText.matches("(?s).*Latest \\d+\\.x.*"),
+                "First row should show 'Latest <number>.x' but was: " + firstRowText);
         assertTrue(firstRowText.contains("✅"), "Latest release should be marked as supported");
     }
 
