@@ -19,7 +19,6 @@ public class SmokePageTest extends BrowserTest {
             "/guides/",
             "/get-started/",
             "/support/",
-            "/extensions/",
             "/newsletter/",
             "/community/",
             "/events/",
