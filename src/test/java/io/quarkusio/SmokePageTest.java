@@ -24,7 +24,8 @@ public class SmokePageTest extends BrowserTest {
             "/events/",
             "/userstories/",
             "/releases/",
-            "/eol/"
+            "/eol/",
+            "/security/"
     })
     void criticalPageReturns200(String path) {
         Response response = page.navigate(baseUrl + path);
