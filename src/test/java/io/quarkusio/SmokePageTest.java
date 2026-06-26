@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
+import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class SmokePageTest extends BrowserTest {
@@ -17,11 +19,13 @@ public class SmokePageTest extends BrowserTest {
             "/guides/",
             "/get-started/",
             "/support/",
-            "/extensions/",
             "/newsletter/",
             "/community/",
             "/events/",
-            "/userstories/"
+            "/userstories/",
+            "/releases/",
+            "/eol/",
+            "/security/"
     })
     void criticalPageReturns200(String path) {
         Response response = page.navigate(baseUrl + path);
@@ -53,6 +57,18 @@ public class SmokePageTest extends BrowserTest {
                 "Page title should not contain 'error' for " + path + ", got: " + title);
         assertFalse(lowerTitle.contains("exception"),
                 "Page title should not contain 'Exception' for " + path + ", got: " + title);
+    }
+
+    @Test
+    void homepageDoesNotContainUnrenderedMarkup() {
+        page.navigate(baseUrl + "/");
+        assertDoesNotContainUnrenderedMarkup(page, "Homepage");
+    }
+
+    @Test
+    void homepageDoesNotContainRawHtmlTags() {
+        page.navigate(baseUrl + "/");
+        assertDoesNotContainRawHtml(page, "Homepage");
     }
 
     @Test

@@ -3,17 +3,17 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc
 ////
-= Simplified Hibernate with Panache Next
+= Simplified Hibernate with Quarkus Data Hibernate
 include::_attributes.adoc[]
 :categories: data
-:summary: Hibernate is the de facto Jakarta Persistence implementation and offers you the full breadth of an Object Relational Mapper. It makes complex mappings possible, but it does not make simple and common mappings trivial. Hibernate with Panache Next focuses on making your entities trivial and fun to write.
+:summary: Hibernate is the de facto Jakarta Persistence implementation and offers you the full breadth of an Object Relational Mapper. It makes complex mappings possible, but it does not make simple and common mappings trivial. Quarkus Data Hibernate focuses on making your entities trivial and fun to write.
 :config-file: application.properties
 :topics: data,hibernate-orm,hibernate-reactive,panache,sql,jdbc
-:extensions: io.quarkus:quarkus-hibernate-panache-next,io.quarkus:quarkus-hibernate-orm,io.quarkus:quarkus-hibernate-reactive
+:extensions: io.quarkus:quarkus-data-hibernate,io.quarkus:quarkus-hibernate-orm,io.quarkus:quarkus-hibernate-reactive
 :hibernate-panache-api: https://javadoc.io/doc/io.quarkus.hibernate.panache/hibernate-panache/{quarkus-version}
 :extension-status: experimental
 
-Hibernate with Panache Next is the perfect solution if you want to get started using Hibernate in Quarkus.
+Quarkus Data Hibernate is the perfect solution if you want to get started using Hibernate in Quarkus.
 
 include::{includes}/extension-status.adoc[]
 
@@ -24,7 +24,7 @@ or via link:https://github.com/orgs/quarkusio/projects/50/views/1[GitHub issues]
 
 == Walk-through
 
-Let's take a progressive approach to learning how to use Hibernate with Panache, and start with a simple entity.
+Let's take a progressive approach to learning how to use Quarkus Data Hibernate, and start with a simple entity.
 
 This guide is not going to go into the specifics of using either
 xref:hibernate-orm.adoc[Hibernate], or its underlying
@@ -36,10 +36,10 @@ because both already have great documentation that you can and should use for mo
 [source,xml,role="primary asciidoc-tabs-target-sync-cli asciidoc-tabs-target-sync-maven"]
 .pom.xml
 ----
-<!-- Import the Hibernate with Panache extension -->
+<!-- Import the Quarkus Data Hibernate extension -->
 <dependency>
     <groupId>io.quarkus</groupId>
-    <artifactId>quarkus-hibernate-panache-next</artifactId>
+    <artifactId>quarkus-data-hibernate</artifactId>
 </dependency>
 <!-- Pick your database driver -->
 <dependency>
@@ -51,8 +51,8 @@ because both already have great documentation that you can and should use for mo
 [source,gradle,role="secondary asciidoc-tabs-target-sync-gradle"]
 .build.gradle
 ----
-// Import the Hibernate with Panache extension
-implementation("io.quarkus:quarkus-hibernate-panache-next")
+// Import the Quarkus Data Hibernate extension
+implementation("io.quarkus:quarkus-data-hibernate")
 
 // Pick your database driver
 implementation("io.quarkus:quarkus-jdbc-postgresql")
@@ -106,7 +106,7 @@ mode: if you don't, a dev service will be provided for you):
 
 == Our first entity
 
-What this guide will focus on is the basics of how to use Hibernate with Panache, so let's start with how to
+What this guide will focus on is the basics of how to use Quarkus Data Hibernate, so let's start with how to
 create an entity:
 
 [source,java]
@@ -214,7 +214,7 @@ public class Cat extends PanacheEntity {
 }
 ----
 
-A Hibernate with Panache repository is:
+A Quarkus Data Hibernate repository is:
 
 - An interface nested in the entity (though it could be a toplevel interface if you prefer)
 - Which extends the `PanacheRepository` interface, with the entity in question as type parameter
@@ -1172,6 +1172,110 @@ types of repositories in your entity to support managed entities.
 
 TIP: You can also use <<Use stateless sessions,Panache Stateless repositories>> or
 <<Reactive and stateless,Panache Stateless Reactive repositories>>.
+
+== REST integration
+
+When your application uses both `quarkus-data-hibernate` and `quarkus-rest-jackson`, Quarkus automatically
+adds REST support for common Jakarta Data parameter types. This lets you declare Jakarta Data types directly as
+REST endpoint parameters, and they will be populated from HTTP query parameters without any manual parsing.
+
+=== Supported parameter types
+
+The following Jakarta Data types are automatically mapped from query parameters:
+
+[cols="1,2,1,2"]
+|===
+|Jakarta Data type|Query parameters|Defaults|Example URL
+
+|`PageRequest`
+|`page`, `size`, `requestTotal`
+|`page=1`, `size=10`, `requestTotal=true`
+|`?page=2&size=25`
+
+|`Sort<?>`
+|`sort`
+|`null`
+|`?sort=name` (asc) or `?sort=-name` (desc)
+
+|`Order<?>`
+|`sort` (repeating)
+|`null`
+|`?sort=name&sort=-salary`
+
+|`Limit`
+|`limit`, `startAt`, `endAt`
+|`null` (no limit), `startAt=1`
+|`?limit=10` or `?limit=10&startAt=51` or `?startAt=51&endAt=60`
+
+|`Direction`
+|`direction`
+|`null`
+|`?direction=ASC` or `?direction=desc`
+
+|===
+
+For `Sort` and `Order`, prefix the property name with `-` to indicate descending order.
+
+NOTE: Cursor-based pagination (`PageRequest.Mode.CURSOR_NEXT` / `CURSOR_PREVIOUS`) is not currently supported
+by this REST integration. Only offset-based pagination is available via query parameters.
+
+=== Page serialization
+
+When a REST endpoint returns a `jakarta.data.page.Page`, it is serialized as a JSON object with pagination
+metadata, rather than as a plain array:
+
+[source,json]
+----
+{
+  "content": [ ... ],
+  "hasNext": true,
+  "hasPrevious": false,
+  "totalElements": 100,
+  "totalPages": 34
+}
+----
+
+The `totalElements` and `totalPages` fields are only included when the `PageRequest` was created with
+`requestTotal=true`.
+
+=== Example endpoint
+
+Here is an example of a REST endpoint that uses `PageRequest` and `Order` to return a paginated, sorted
+list of cats. `PanacheRepository` already provides a `findAll(PageRequest, Order)` method, so you can use
+the entity and repository we defined earlier directly:
+
+[source,java]
+----
+import jakarta.data.Order;
+import jakarta.data.page.Page;
+import jakarta.data.page.PageRequest;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@Path("cats")
+public class CatResource {
+
+    @Inject
+    Cat.Repo repo;
+
+    @GET
+    public Page<Cat> list(PageRequest pageRequest, Order<Cat> order) { // <1>
+        return repo.findAll(pageRequest, order);
+    }
+}
+----
+<1> `PageRequest` is populated from `page`, `size`, and `requestTotal` query parameters.
+`Order` is populated from repeating `sort` query parameters.
+
+A client can then call:
+
+[source]
+----
+GET /cats?page=1&size=20&sort=name&sort=-birth
+----
+
+This produces a `PageRequest.ofPage(1, 20, true)` and `Order.by(Sort.asc("name"), Sort.desc("birth"))`.
 
 == HQL, JD-QL, Jakarta-QL, Panache-QL
 
