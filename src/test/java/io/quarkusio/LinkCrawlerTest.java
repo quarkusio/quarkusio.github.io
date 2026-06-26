@@ -705,6 +705,26 @@ public class LinkCrawlerTest extends BrowserTest {
         if (isOldNewsletter(path)) {
             return true;
         }
+        if (isOldBlogPost(path)) {
+            return true;
+        }
+        return false;
+    }
+
+    // Blog posts contain external links that naturally go stale over time.
+    // Old posts are rarely updated, so broken links in them are not actionable.
+    private static final Pattern BLOG_DATE_PATTERN = Pattern.compile("^/blog/(\\d{4})-(\\d{2})-(\\d{2})-");
+    private static final int BLOG_MAX_AGE_YEARS = 4;
+
+    private static boolean isOldBlogPost(String path) {
+        Matcher m = BLOG_DATE_PATTERN.matcher(path);
+        if (m.find()) {
+            java.time.LocalDate postDate = java.time.LocalDate.of(
+                    Integer.parseInt(m.group(1)),
+                    Integer.parseInt(m.group(2)),
+                    Integer.parseInt(m.group(3)));
+            return postDate.isBefore(java.time.LocalDate.now().minusYears(BLOG_MAX_AGE_YEARS));
+        }
         return false;
     }
 
