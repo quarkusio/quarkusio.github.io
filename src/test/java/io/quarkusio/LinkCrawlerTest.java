@@ -737,7 +737,8 @@ public class LinkCrawlerTest extends BrowserTest {
             "application.com", "service.example",
             "SERVER_HOST", "SERVER_PORT",
             "myservice.com", "my-service.com", "openshift-helloworld",
-            "quarkus-auth0", "stage.code.quarkus.io"
+            "quarkus-auth0", "stage.code.quarkus.io",
+            "nip.io", "cluster.local", "ocp.host"
     );
 
     // Sites that return 403 Forbidden for bot requests but 404 for genuinely dead links
