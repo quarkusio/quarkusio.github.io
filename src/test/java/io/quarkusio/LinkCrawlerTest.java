@@ -702,6 +702,29 @@ public class LinkCrawlerTest extends BrowserTest {
                 return true;
             }
         }
+        if (isOldNewsletter(path)) {
+            return true;
+        }
+        return false;
+    }
+
+    // Newsletters are monthly link roundups that naturally accumulate dead external
+    // links over time. Checking old issues generates noise without actionable fixes,
+    // since no one wants to invest time editing historical newsletter archives.
+    private static final Pattern NEWSLETTER_PATTERN = Pattern.compile("^/newsletter/(\\d+)");
+    private static final int NEWSLETTER_EPOCH_YEAR = 2020;
+    private static final int NEWSLETTER_EPOCH_MONTH = 10; // October 2020 = issue #1
+    private static final int NEWSLETTER_MAX_AGE_MONTHS = 6;
+
+    private static boolean isOldNewsletter(String path) {
+        Matcher m = NEWSLETTER_PATTERN.matcher(path);
+        if (m.find()) {
+            int issue = Integer.parseInt(m.group(1));
+            java.time.LocalDate now = java.time.LocalDate.now();
+            int monthsSinceEpoch = (now.getYear() - NEWSLETTER_EPOCH_YEAR) * 12
+                    + now.getMonthValue() - NEWSLETTER_EPOCH_MONTH;
+            return issue <= monthsSinceEpoch - NEWSLETTER_MAX_AGE_MONTHS;
+        }
         return false;
     }
 
