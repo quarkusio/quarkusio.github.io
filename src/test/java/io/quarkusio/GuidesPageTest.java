@@ -193,4 +193,18 @@ public class GuidesPageTest extends BrowserTest {
                 "The qs-guide custom element is not registered. "
                         + "The search-wc.js script that renders guide type icons may not be loaded.");
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/getting-started",
+            "/guides/rest",
+            "/guides/cdi"
+    })
+    void guideTitleIsNotDuplicated(String path) {
+        page.navigate(baseUrl + path);
+        int h1Count = page.locator(".guide h1").count();
+        assertEquals(1, h1Count,
+                path + ": Expected exactly one h1 in the guide content area, but found " + h1Count
+                        + ". The title may be rendered by both the layout and the AsciiDoc content.");
+    }
 }
