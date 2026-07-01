@@ -126,4 +126,32 @@ public class GuidesPageTest extends BrowserTest {
         page.navigate(baseUrl + path);
         assertDoesNotContainUnrenderedMarkup(page, path);
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/getting-started",
+            "/guides/rest",
+            "/guides/cdi"
+    })
+    void guideAdmonitionsHaveFontIcons(String path) {
+        page.navigate(baseUrl + path);
+        int admonitionCount = page.locator(".admonitionblock").count();
+        assertTrue(admonitionCount > 0,
+                path + ": Expected admonition blocks (NOTE, TIP, WARNING, etc.)");
+        int iconCount = page.locator(".admonitionblock td.icon i[class*='icon-']").count();
+        assertTrue(iconCount > 0,
+                path + ": Found " + admonitionCount + " admonition blocks but no font-based icon elements. "
+                        + "Check that the AsciiDoc :icons: font attribute is set.");
+    }
+
+    @Test
+    void guidesIndexWebComponentsAreRegistered() {
+        page.navigate(baseUrl + "/guides/");
+        page.waitForLoadState();
+        Boolean defined = (Boolean) page.evaluate(
+                "() => customElements.get('qs-guide') !== undefined");
+        assertTrue(defined,
+                "The qs-guide custom element is not registered. "
+                        + "The search-wc.js script that renders guide type icons may not be loaded.");
+    }
 }
