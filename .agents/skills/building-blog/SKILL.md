@@ -66,8 +66,13 @@ The script auto-detects what you were working on and opens the right page:
 |---|---|
 | 1 post | `/blog/` (listing) + `/blog/<slug>/` (deep-link) |
 | 2–4 posts | `/blog/` (listing) + a tab for each post |
-| 5+ posts | `/blog/` (listing only) |
+| 5+ posts | `/blog/` (listing only), unless git narrows it (see below) |
 | No changes | `/blog/` (listing only) |
+
+When the timestamp marker is stale and detects 5+ changed posts, the
+script cross-references with git to find posts you actually added or
+modified. If the intersection is smaller (1–4 posts), those are used
+instead and deep links open as in the 1-post or 2–4-post cases above.
 
 The slug is derived from the filename: strip the `YYYY-MM-DD-` prefix
 and the file extension (`.adoc`, `.asciidoc`, or `.md`).
