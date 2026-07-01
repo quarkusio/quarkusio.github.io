@@ -60,6 +60,13 @@ jobs:
           key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
           restore-keys: ${{ runner.os }}-gems-
 
+      - name: Cache npm packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-npm-
+
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -114,6 +121,13 @@ jobs:
         run: mvn -B test -Dtest.url=http://localhost:8090
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
+
+      - name: Run Lighthouse CI
+        run: |
+          npm ci
+          npx lhci autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
 
       - name: Determine link checker scope
         id: link_scope
@@ -211,8 +225,33 @@ jobs:
           path: |
             target/*-reports/TEST-*.xml
             target/build-report.json
+            .lighthouseci/
             README.md
           retention-days: 2
+
+      - name: Lighthouse report
+        if: always()
+        run: |
+          {
+            echo "### Lighthouse Results"
+            echo ""
+            echo "| Page | Performance | Accessibility | Best Practices | SEO |"
+            echo "|------|:----------:|:------------:|:--------------:|:---:|"
+            for f in .lighthouseci/lhr-*.json; do
+              [ -f "$f" ] || continue
+              url=$(jq -r '.requestedUrl' "$f")
+              path=$(echo "$url" | sed 's|http://[^/]*||')
+              perf=$(jq '.categories.performance.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              a11y=$(jq '.categories.accessibility.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              bp=$(jq '.categories["best-practices"].score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              seo=$(jq '.categories.seo.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              perf_icon=$( [ "$perf" -ge 90 ] && echo ":green_circle:" || ( [ "$perf" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              a11y_icon=$( [ "$a11y" -ge 90 ] && echo ":green_circle:" || ( [ "$a11y" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              bp_icon=$( [ "$bp" -ge 90 ] && echo ":green_circle:" || ( [ "$bp" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              seo_icon=$( [ "$seo" -ge 90 ] && echo ":green_circle:" || ( [ "$seo" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              echo "| \`${path:-/}\` | ${perf_icon} ${perf} | ${a11y_icon} ${a11y} | ${bp_icon} ${bp} | ${seo_icon} ${seo} |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Test report
         if: always()
