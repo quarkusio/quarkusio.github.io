@@ -85,6 +85,73 @@ public class AsciidocExtensionTest extends BrowserTest {
     }
 
     @Test
+    void clickingChevronExpandsAndCollapsesConfigRow() {
+        page.navigate(baseUrl + "/guides/redis-reference");
+        page.waitForLoadState();
+
+        Locator decoration = page.locator("tr.row-collapsible.row-collapsed .description-decoration").first();
+        decoration.scrollIntoViewIfNeeded();
+        Locator row = page.locator("tr.row-collapsible").first();
+
+        decoration.click();
+
+        assertTrue(row.locator(".description-expanded").count() > 0,
+                "After clicking, description should have 'description-expanded'");
+        assertTrue(row.locator(".fa-chevron-up").count() > 0,
+                "After expanding, chevron should point up");
+
+        row.locator(".description-decoration").click();
+
+        assertTrue(row.locator(".description-collapsed").count() > 0,
+                "After second click, description should be collapsed again");
+        assertTrue(row.locator(".fa-chevron-down").count() > 0,
+                "After collapsing, chevron should point down again");
+    }
+
+    @Test
+    void searchFilterHidesNonMatchingConfigRows() {
+        page.navigate(baseUrl + "/guides/redis-reference");
+        page.waitForLoadState();
+
+        Locator searchInput = page.locator("input[type='search'][placeholder='FILTER CONFIGURATION']").first();
+
+        searchInput.click();
+        searchInput.pressSequentially("quarkus.redis.hosts");
+        page.waitForTimeout(500);
+
+        int hiddenRows = page.locator("table.configuration-reference tr[style*='display: none']").count();
+        assertTrue(hiddenRows > 0,
+                "Expected some config rows to be hidden after filtering");
+
+        Locator highlights = page.locator("span.configuration-highlight");
+        assertTrue(highlights.count() > 0,
+                "Expected highlighted text in matching rows");
+
+        searchInput.fill("");
+        page.waitForTimeout(500);
+
+        int hiddenAfterClear = page.locator("table.configuration-reference tr[style*='display: none']").count();
+        assertEquals(0, hiddenAfterClear,
+                "All config rows should be visible again after clearing the search");
+    }
+
+    @Test
+    void copyButtonShowsFeedbackOnClick() {
+        page.navigate(baseUrl + "/guides/redis-reference");
+
+        Locator copyButton = page.locator("button.btn-copy.inline-btn-copy").first();
+        assertTrue(copyButton.count() > 0, "Expected at least one inline copy button");
+
+        copyButton.click();
+
+        assertTrue(copyButton.locator(".fa-check").count() > 0
+                        || copyButton.getAttribute("class").contains("fa-check"),
+                "After clicking, copy button should show a check icon");
+        assertEquals("Copied!", copyButton.getAttribute("title"),
+                "After clicking, copy button title should be 'Copied!'");
+    }
+
+    @Test
     void tooltipMacroRendersTooltipSpan() {
         page.navigate(baseUrl + "/guides/security-oidc-configuration-properties-reference");
 
