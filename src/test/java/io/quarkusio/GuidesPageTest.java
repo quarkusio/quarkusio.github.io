@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -125,6 +126,44 @@ public class GuidesPageTest extends BrowserTest {
     void specificGuideDoesNotContainUnrenderedMarkup(String path) {
         page.navigate(baseUrl + path);
         assertDoesNotContainUnrenderedMarkup(page, path);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guidesSearchFiltersResults(String path) {
+        page.navigate(baseUrl + path);
+
+        Locator searchInput = page.locator("input[type='search']");
+        searchInput.waitFor();
+
+        int initialCount = page.locator("qs-guide h4 a").count();
+        assertTrue(initialCount >= 50,
+                path + ": Expected at least 50 guides before filtering but found " + initialCount);
+
+        searchInput.fill("hibernate");
+
+        // Wait for filtering: either the web component replaces content with search hits,
+        // or the local fallback hides non-matching guides
+        page.waitForCondition(() -> {
+            boolean hasSearchHits = page.locator("[aria-label='Search Hits']").count() > 0;
+            boolean guidesFiltered = page.locator("qs-guide h4 a").count() < initialCount;
+            return hasSearchHits || guidesFiltered;
+        });
+
+        int filteredCount;
+        if (page.locator("[aria-label='Search Hits']").count() > 0) {
+            filteredCount = page.locator("[aria-label='Search Hits'] .qs-guide").count();
+        } else {
+            filteredCount = page.locator("qs-guide h4 a").count();
+        }
+
+        assertTrue(filteredCount > 0,
+                path + ": Expected some guides to match 'hibernate'");
+        assertTrue(filteredCount < initialCount,
+                path + ": Expected fewer guides after filtering, but got " + filteredCount + " (was " + initialCount + ")");
     }
 
     @ParameterizedTest
