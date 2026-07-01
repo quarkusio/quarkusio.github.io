@@ -277,4 +277,70 @@ public class GuidesPageTest extends BrowserTest {
                 path + ": Expected exactly one h1 in the guide content area, but found " + h1Count
                         + ". The title may be rendered by both the layout and the AsciiDoc content.");
     }
+
+    // The tests below verify rendered output that depends on _plugins/regex_filter.rb (the
+    // replace_regex Liquid filter). They will break if the regex filter plugin is not working properly.
+
+    @Test
+    void latestGuideVersionDropdownShowsShortVersionNumber() {
+        page.navigate(baseUrl + "/guides/getting-started");
+
+        Locator selectedOption = page.locator("#guide-version-dropdown option[selected]");
+        assertTrue(selectedOption.count() > 0,
+                "Expected a selected option in the version dropdown");
+
+        String text = selectedOption.first().textContent().trim();
+        assertFalse(text.contains(".Final"),
+                "Version dropdown should show trimmed version (not '.Final'), got: " + text);
+        assertTrue(text.toLowerCase().contains("latest"),
+                "Version dropdown for default guide should show 'Latest', got: " + text);
+    }
+
+    @Test
+    void versionedGuideCanonicalUrlOmitsVersionPrefix() {
+        page.navigate(baseUrl + "/version/main/guides/getting-started");
+
+        Locator canonical = page.locator("link[rel='canonical']");
+        assertTrue(canonical.count() > 0, "Expected a canonical link element");
+
+        String href = canonical.first().getAttribute("href");
+        assertNotNull(href, "Canonical link should have an href");
+        assertFalse(href.contains("/version/main/"),
+                "Canonical URL should not contain '/version/main/', got: " + href);
+        assertTrue(href.contains("/guides/getting-started"),
+                "Canonical URL should contain the guide path, got: " + href);
+    }
+
+    @Test
+    void versionedGuideDropdownHasCorrectVersionSelected() {
+        page.navigate(baseUrl + "/version/main/guides/getting-started");
+
+        Locator selectedOption = page.locator("#guide-version-dropdown option[selected]");
+        assertTrue(selectedOption.count() > 0,
+                "Expected a selected option in the version dropdown");
+
+        String selectedValue = selectedOption.first().getAttribute("value");
+        assertEquals("main", selectedValue,
+                "Version dropdown should have 'main' selected");
+    }
+
+    @Test
+    void versionedGuideTitleIncludesVersionSuffix() {
+        page.navigate(baseUrl + "/version/main/guides/getting-started");
+
+        String title = page.title();
+        assertTrue(title.contains("- main"),
+                "Versioned guide title should include '- main' suffix, got: " + title);
+    }
+
+    @Test
+    void nonVersionedGuideTitleOmitsVersionSuffix() {
+        page.navigate(baseUrl + "/guides/getting-started");
+
+        String title = page.title();
+        assertFalse(title.contains("- main"),
+                "Non-versioned guide title should not include '- main', got: " + title);
+        assertFalse(title.contains("- latest"),
+                "Non-versioned guide title should not include '- latest', got: " + title);
+    }
 }
