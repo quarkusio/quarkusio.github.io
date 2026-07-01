@@ -2,7 +2,7 @@
 SCRIPTDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 1
 cd "$SCRIPTDIR" || exit 1
 
-for cmd in find mktemp curl grep sed sort head tail basename date seq tee wc tr; do
+for cmd in find mktemp curl grep sed sort comm head tail basename date seq tee wc tr; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command not found: $cmd"
     exit 1
@@ -264,6 +264,24 @@ fi
 POST_COUNT=0
 if [ -n "$CHANGED_POSTS" ]; then
   POST_COUNT=$(printf '%s\n' "$CHANGED_POSTS" | wc -l | tr -d ' ')
+fi
+
+if [ "$POST_COUNT" -ge 5 ] \
+    && command -v git >/dev/null 2>&1 \
+    && git -C "$SCRIPTDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_POSTS=$(my_changed_posts)
+  if [ -n "$GIT_POSTS" ]; then
+    INTERSECTED=$(comm -12 \
+      <(printf '%s\n' "$CHANGED_POSTS" | sort) \
+      <(printf '%s\n' "$GIT_POSTS" | sort))
+    if [ -n "$INTERSECTED" ]; then
+      INT_COUNT=$(printf '%s\n' "$INTERSECTED" | wc -l | tr -d ' ')
+      if [ "$INT_COUNT" -lt "$POST_COUNT" ]; then
+        CHANGED_POSTS="$INTERSECTED"
+        POST_COUNT="$INT_COUNT"
+      fi
+    fi
+  fi
 fi
 
 PREVIEW_URLS=("http://127.0.0.1:4000/blog/")
