@@ -1,11 +1,6 @@
 module.exports = {
   ci: {
     collect: {
-      url: [
-        'http://localhost:8090/',
-        'http://localhost:8090/guides/',
-        'http://localhost:8090/blog/',
-      ],
       numberOfRuns: 1,
       settings: {
         onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
