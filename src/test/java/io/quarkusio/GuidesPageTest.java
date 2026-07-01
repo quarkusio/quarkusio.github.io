@@ -135,18 +135,9 @@ public class GuidesPageTest extends BrowserTest {
     @Nested
     class StringsFilterTests {
 
-        private String findNumericVersion() {
-            page.navigate(baseUrl + "/guides/");
-            Locator options = page.locator("#guide-version-dropdown option");
-            for (int i = 0; i < options.count(); i++) {
-                String value = options.nth(i).getAttribute("value");
-                if (value != null && value.matches("\\d+\\.\\d+")) {
-                    return value;
-                }
-            }
-            fail("No numeric version found in the guide version dropdown");
-            return null;
-        }
+        // Ideally we'd test with a numeric version (e.g. 3.17), but the CI build
+        // profile excludes numbered version guides, so we use "main" instead.
+        private static final String VERSION = "main";
 
         @Test
         void pageTitleWithoutQuarkusGetsSuffix() {
@@ -158,11 +149,10 @@ public class GuidesPageTest extends BrowserTest {
 
         @Test
         void versionedGuideTitleIncludesVersion() {
-            String version = findNumericVersion();
-            page.navigate(baseUrl + "/version/" + version + "/guides/redis-reference");
+            page.navigate(baseUrl + "/version/" + VERSION + "/guides/redis-reference");
             String title = page.title();
-            assertTrue(title.contains(version),
-                    "Versioned guide title should include the version number, but was: " + title);
+            assertTrue(title.contains(VERSION),
+                    "Versioned guide title should include the version, but was: " + title);
         }
 
         @Test
@@ -175,12 +165,11 @@ public class GuidesPageTest extends BrowserTest {
 
         @Test
         void versionedGuideBackLinkPointsToVersionedIndex() {
-            String version = findNumericVersion();
-            page.navigate(baseUrl + "/version/" + version + "/guides/redis-reference");
+            page.navigate(baseUrl + "/version/" + VERSION + "/guides/redis-reference");
             Locator backLink = page.locator("a.returnlink");
             assertTrue(backLink.count() > 0, "Expected a 'Back to Guides' link");
             String href = backLink.first().getAttribute("href");
-            assertTrue(href.contains("/version/" + version + "/guides/"),
+            assertTrue(href.contains("/version/" + VERSION + "/guides/"),
                     "Versioned guide 'Back to Guides' should link to versioned index, but was: " + href);
         }
 
