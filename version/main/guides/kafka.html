@@ -2612,8 +2612,202 @@ If the incoming record does have a <em>null</em> key, the <code>mp.messaging.out
 <p>Kafka Transactions allows managing consumer offsets inside a transaction, together with produced messages.
 This enables coupling a consumer with a transactional producer in a <em>consume-transform-produce</em> pattern, also known as <strong>exactly-once processing</strong>.</p>
 </div>
+<div class="sect3">
+<h4 id="declarative-exactly-once-with-exactlyonce"><a class="anchor" href="#declarative-exactly-once-with-exactlyonce"></a>7.2.1. Declarative Exactly-Once with <code>@ExactlyOnce</code></h4>
 <div class="paragraph">
-<p>The <code>KafkaTransactions</code> custom emitter provides a way to apply exactly-once processing to an incoming Kafka message inside a transaction.</p>
+<p>The simplest way to enable exactly-once processing is to annotate a processor method with <code>@ExactlyOnce</code>.
+The method must have both <code>@Incoming</code> and <code>@Outgoing</code> annotations, and both channels must be managed by the Kafka connector:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+import io.quarkus.smallrye.reactivemessaging.kafka.ExactlyOnce;
+import io.smallrye.reactive.messaging.kafka.Record;
+
+@ApplicationScoped
+public class OrderProcessor {
+
+    @Incoming("orders-in")
+    @Outgoing("orders-out")
+    @ExactlyOnce
+    Record&lt;String, Integer&gt; process(Record&lt;String, Integer&gt; order) {
+        return Record.of(order.key(), order.value() + 1);
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Each incoming record is consumed and the result is produced within a single Kafka transaction, ensuring atomic consumption and production&#8201;&#8212;&#8201;no duplicates and no message loss.</p>
+</div>
+<div class="paragraph">
+<p>The method can also return a <code>List</code> to produce multiple records per input:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+List&lt;Record&lt;String, Integer&gt;&gt; process(Record&lt;String, Integer&gt; order) {
+    return List.of(
+            Record.of(order.key(), order.value() * 10),
+            Record.of(order.key(), order.value() * 10 + 1));
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Quarkus auto-configures the following Kafka properties when <code>@ExactlyOnce</code> is detected:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Property</th>
+<th class="tableblock halign-left valign-top">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>transactional.id</code> (outgoing)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>${quarkus.application.name}-&lt;channel-name&gt;</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>enable.idempotence</code> (outgoing)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>acks</code> (outgoing)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>all</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>commit-strategy</code> (incoming)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>ignore</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>isolation.level</code> (incoming)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>read_committed</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>These can be overridden in <code>application.properties</code> if needed.</p>
+</div>
+<div class="paragraph">
+<p>The method can also return reactive types (<code>Uni</code>, <code>CompletionStage</code>).
+In that case, the method runs non-blocking and the transaction commits when the returned <code>Uni</code> completes:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+Uni&lt;Record&lt;String, Integer&gt;&gt; process(Record&lt;String, Integer&gt; order) {
+    return invokeExternalService(order)
+            .onItem().transform(result -&gt; Record.of(order.key(), result));
+}</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><code>@ExactlyOnce</code> methods must use payload parameters (e.g., <code>Record&lt;K, V&gt;</code>, plain types), not <code>Message&lt;?&gt;</code>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect4">
+<h5 id="combining-with-database-transactions"><a class="anchor" href="#combining-with-database-transactions"></a>7.2.1.1. Combining with Database Transactions</h5>
+<div class="paragraph">
+<p><code>@ExactlyOnce</code> can be combined with database transactions.
+The database transaction runs inside the Kafka transaction: if the database commit fails, the Kafka transaction is rolled back too.
+If the database commit succeeds but the Kafka transaction fails, the database changes persist but the message will be reprocessed.
+So you need to design your consumer to be idempotent to handle this case.
+For stronger guarantees, consider using the transactional outbox pattern.</p>
+</div>
+<div class="paragraph">
+<p>For <strong>Hibernate ORM</strong> (blocking), use <code>@Transactional</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+@Transactional
+Record&lt;String, Order&gt; process(Record&lt;String, Order&gt; order) {
+    OrderEntity entity = new OrderEntity(order.value());
+    entity.persist();
+    return Record.of(order.key(), order.value());
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For <strong>Hibernate Reactive</strong>, use <code>@Transactional</code> or <code>@WithTransaction</code> with a reactive return type:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+@Transactional
+Uni&lt;Record&lt;String, Order&gt;&gt; process(Record&lt;String, Order&gt; order) {
+    OrderEntity entity = new OrderEntity(order.value());
+    return entity.persist()
+            .map(e -&gt; Record.of(order.key(), order.value()));
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="error-handling-2"><a class="anchor" href="#error-handling-2"></a>7.2.1.2. Error Handling</h5>
+<div class="paragraph">
+<p>When an <code>@ExactlyOnce</code> method throws an exception, the Kafka transaction is aborted and the consumer offset is reset to the last committed position.
+The message will be retried automatically on the next poll.
+If the method is also annotated with <code>@Transactional</code>, the database transaction is rolled back as well.</p>
+</div>
+<div class="paragraph">
+<p>Using the <code>@ExactlyOnce</code> annotation, the incoming channel <code>commit-strategy</code> and <code>failure-strategy</code> attributes are set by default to <code>ignore</code>,
+in order to allow the Kafka transaction to manage the offset commits.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="routing-to-a-different-topic"><a class="anchor" href="#routing-to-a-different-topic"></a>7.2.1.3. Routing to a Different Topic</h5>
+<div class="paragraph">
+<p>To route records to a different topic within the exactly-once transaction (e.g., a dead-letter topic), return a <code>ProducerRecord</code> with the target topic:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+ProducerRecord&lt;String, Order&gt; process(Record&lt;String, Order&gt; order) {
+    if (order.value().isInvalid()) {
+        return new ProducerRecord&lt;&gt;("orders-dlq", order.key(), order.value());
+    }
+    return new ProducerRecord&lt;&gt;("orders-out", order.key(), order.value());
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The record is sent transactionally — if the transaction is aborted, neither the main output nor the dead-letter record is published.</p>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="manual-exactly-once-with-kafkatransactions"><a class="anchor" href="#manual-exactly-once-with-kafkatransactions"></a>7.2.2. Manual Exactly-Once with <code>KafkaTransactions</code></h4>
+<div class="paragraph">
+<p>For more advanced use cases, the <code>KafkaTransactions</code> custom emitter provides a way to apply exactly-once processing to an incoming Kafka message inside a transaction.</p>
 </div>
 <div class="paragraph">
 <p>The following example includes a batch of Kafka records inside a transaction.</p>
@@ -2692,8 +2886,9 @@ The consumer should have <code>enable.auto.commit=false</code> (the default) and
 mp.messaging.incoming.prices-in.failure-strategy=ignore</code></pre>
 </div>
 </div>
+</div>
 <div class="sect3">
-<h4 id="error-handling-for-the-exactly-once-processing"><a class="anchor" href="#error-handling-for-the-exactly-once-processing"></a>7.2.1. Error handling for the exactly-once processing</h4>
+<h4 id="error-handling-for-the-exactly-once-processing"><a class="anchor" href="#error-handling-for-the-exactly-once-processing"></a>7.2.3. Error handling for the exactly-once processing</h4>
 <div class="paragraph">
 <p>The <code>Uni</code> returned from the <code>KafkaTransactions#withTransaction</code> will yield a failure if the transaction fails and is aborted.
 The application can choose to handle the error case, but if a failing <code>Uni</code> is returned from the <code>@Incoming</code> method, the incoming channel will effectively fail and stop the reactive stream.</p>
