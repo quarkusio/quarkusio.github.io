@@ -1,0 +1,60 @@
+name: Sync releases
+
+on:
+  schedule:
+    - cron: '23 */12 * * *' # every 12 hours
+  pull_request:
+    paths:
+      - 'tools/releases-sync/**'
+      - '.github/workflows/sync-releases.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          token: ${{ steps.generate-token.outputs.token || github.token }}
+
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: jbangdev/setup-jbang@main
+
+      - name: Run release sync
+        run: jbang tools/releases-sync/main.java ${{ github.event_name == 'pull_request' && '--dry-run' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || github.token }}
+          RELEASES_ORG: quarkusio
+          RELEASES_REPO: quarkus
+          RELEASES_INPUT: _data/releases.yaml
+          RELEASES_OUTPUT: _data/releases.yaml
+
+      - name: Commit and push
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _data/releases.yaml
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Sync releases data"
+            git pull origin main --rebase
+            git push origin main
+          fi
