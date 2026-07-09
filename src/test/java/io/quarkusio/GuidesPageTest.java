@@ -2,6 +2,7 @@ package io.quarkusio;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -126,6 +127,75 @@ public class GuidesPageTest extends BrowserTest {
     void specificGuideDoesNotContainUnrenderedMarkup(String path) {
         page.navigate(baseUrl + path);
         assertDoesNotContainUnrenderedMarkup(page, path);
+    }
+
+    // These tests exercise behaviour that depends on the custom Liquid filters in
+    // _plugins/strings.rb (startswith, endswith). If that plugin is not loaded during
+    // the site build, titles and back-links will be wrong and these tests will fail.
+    @Nested
+    class StringsFilterTests {
+
+        // Ideally we'd test with a numeric version (e.g. 3.17), but the CI build
+        // profile excludes numbered version guides, so we use "main" instead.
+        private static final String VERSION = "main";
+
+        @Test
+        void pageTitleWithoutQuarkusGetsSuffix() {
+            page.navigate(baseUrl + "/guides/redis-reference");
+            String title = page.title();
+            assertTrue(title.endsWith(" - Quarkus"),
+                    "A guide whose title does not contain 'Quarkus' should get ' - Quarkus' suffix, but was: " + title);
+        }
+
+        @Test
+        void versionedGuideTitleIncludesVersion() {
+            page.navigate(baseUrl + "/version/" + VERSION + "/guides/redis-reference");
+            String title = page.title();
+            assertTrue(title.contains(VERSION),
+                    "Versioned guide title should include the version, but was: " + title);
+        }
+
+        @Test
+        void nonVersionedGuideTitleDoesNotIncludeVersionSuffix() {
+            page.navigate(baseUrl + "/guides/redis-reference");
+            String title = page.title();
+            assertFalse(title.matches(".*\\d+\\.\\d+ - Quarkus$"),
+                    "Non-versioned guide title should not have a version suffix, but was: " + title);
+        }
+
+        @Test
+        void versionedGuideBackLinkPointsToVersionedIndex() {
+            page.navigate(baseUrl + "/version/" + VERSION + "/guides/redis-reference");
+            Locator backLink = page.locator("a.returnlink");
+            assertTrue(backLink.count() > 0, "Expected a 'Back to Guides' link");
+            String href = backLink.first().getAttribute("href");
+            assertTrue(href.contains("/version/" + VERSION + "/guides/"),
+                    "Versioned guide 'Back to Guides' should link to versioned index, but was: " + href);
+        }
+
+        @Test
+        void nonVersionedGuideBackLinkPointsToLatestIndex() {
+            page.navigate(baseUrl + "/guides/redis-reference");
+            Locator backLink = page.locator("a.returnlink");
+            assertTrue(backLink.count() > 0, "Expected a 'Back to Guides' link");
+            String href = backLink.first().getAttribute("href");
+            assertFalse(href.contains("/version/"),
+                    "Non-versioned guide 'Back to Guides' should not link to a versioned index, but was: " + href);
+        }
+
+        @Test
+        void internalGuideLinksDoNotOpenInNewTab() {
+            page.navigate(baseUrl + "/guides/");
+            Locator guideLinks = page.locator("qs-guide a[href^='/']");
+            assertTrue(guideLinks.count() > 0, "Expected at least one internal guide link");
+
+            for (int i = 0; i < Math.min(guideLinks.count(), 10); i++) {
+                String target = guideLinks.nth(i).getAttribute("target");
+                String href = guideLinks.nth(i).getAttribute("href");
+                assertNull(target,
+                        "Internal guide link should not have target attribute, but " + href + " has target='" + target + "'");
+            }
+        }
     }
 
     @ParameterizedTest
