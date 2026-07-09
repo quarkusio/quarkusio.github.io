@@ -262,6 +262,9 @@ public class LinkCrawlerTest extends BrowserTest {
                     continue;
                 }
 
+                // Rewrite production URLs to localhost for testing
+                href = rewriteToLocal(href);
+
                 ResolvedLink resolved = resolveLink(pageUrl, href);
                 if (resolved == null) {
                     continue;
@@ -504,6 +507,12 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
 
+    // Paths that should NOT be rewritten to localhost - they are served from different repos
+    private static final Set<String> EXTERNAL_QUARKUSIO_PATHS = Set.of(
+            "/extensions",     // Extensions registry (separate service)
+            "/benchmarks"      // Benchmark results (separate service)
+    );
+
     private String rewriteToLocal(String target) {
         if (!target.startsWith("http://") && !target.startsWith("https://")) {
             return target;
@@ -513,6 +522,12 @@ public class LinkCrawlerTest extends BrowserTest {
             if (PRODUCTION_HOSTS.contains(targetUri.getHost())) {
                 String path = targetUri.getPath();
                 if (path != null && !path.isEmpty()) {
+                    // Don't rewrite paths that are served from other repositories
+                    for (String externalPath : EXTERNAL_QUARKUSIO_PATHS) {
+                        if (path.equals(externalPath) || path.startsWith(externalPath + "/")) {
+                            return target;  // Keep original production URL
+                        }
+                    }
                     return baseUrl + path;
                 }
             }
