@@ -489,12 +489,14 @@ import java.util.stream.Collectors;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
-import org.apache.http.entity.ContentType;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.util.EntityUtils;
-import org.elasticsearch.client.Request;
-import org.elasticsearch.client.Response;
-import org.elasticsearch.client.RestClient;
+import co.elastic.clients.transport.rest5_client.low_level.Request;
+import co.elastic.clients.transport.rest5_client.low_level.Response;
+import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
+
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.ParseException;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.StringEntity;
 
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -502,7 +504,7 @@ import io.vertx.core.json.JsonObject;
 @ApplicationScoped
 public class FruitService {
     @Inject
-    RestClient restClient; <i class="conum" data-value="1"></i><b>(1)</b>
+    Rest5Client restClient; <i class="conum" data-value="1"></i><b>(1)</b>
 
     public void index(Fruit fruit) throws IOException {
         Request request = new Request(
@@ -548,7 +550,7 @@ public class FruitService {
         restClient.performRequest(request);
     }
 
-    public Fruit get(String id) throws IOException {
+    public Fruit get(String id) throws IOException, ParseException {
         Request request = new Request(
                 "GET",
                 "/fruits/_doc/" + id);
@@ -558,15 +560,15 @@ public class FruitService {
         return json.getJsonObject("_source").mapTo(Fruit.class);
     }
 
-    public List&lt;Fruit&gt; searchByColor(String color) throws IOException {
+    public List&lt;Fruit&gt; searchByColor(String color) throws IOException, ParseException {
         return search("color", color);
     }
 
-    public List&lt;Fruit&gt; searchByName(String name) throws IOException {
+    public List&lt;Fruit&gt; searchByName(String name) throws IOException, ParseException {
         return search("name", name);
     }
 
-    private List&lt;Fruit&gt; search(String term, String match) throws IOException {
+    private List&lt;Fruit&gt; search(String term, String match) throws IOException, ParseException {
         Request request = new Request(
                 "GET",
                 "/fruits/_search");
@@ -601,7 +603,7 @@ public class FruitService {
 <table>
 <tr>
 <td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>We inject an Elasticsearch low level <code>RestClient</code> into our service.</td>
+<td>We inject an Elasticsearch low level <code>Rest5Client</code> into our service.</td>
 </tr>
 <tr>
 <td><i class="conum" data-value="2"></i><b>2</b></td>
@@ -777,7 +779,7 @@ we recommend that you use the <code>%prod.</code> profile to define your Elastic
 <div class="sect2">
 <h3 id="programmatically-configuring-elasticsearch"><a class="anchor" href="#programmatically-configuring-elasticsearch"></a>Programmatically Configuring Elasticsearch</h3>
 <div class="paragraph">
-<p>On top of the parametric configuration, you can also programmatically apply additional configuration to the client by implementing a <code>RestClientBuilder.HttpClientConfigCallback</code> and annotating it with <code>ElasticsearchClientConfig</code>. You may provide multiple implementations and configuration provided by each implementation will be applied in a randomly ordered cascading manner.</p>
+<p>On top of the parametric configuration, you can also programmatically apply additional configuration to the client by implementing a <code>ElasticsearchClientConfigConfigurer</code> and annotating it with <code>ElasticsearchClientConfig</code>. You may provide multiple implementations and configuration provided by each implementation will be applied in a randomly ordered cascading manner.</p>
 </div>
 <div class="paragraph">
 <p>For example, when accessing an Elasticsearch cluster that is set up for TLS on the HTTP layer, the client needs to trust the certificate that Elasticsearch is using. The following is an example of setting up the client to trust the CA that has signed the certificate that Elasticsearch is using, when that CA certificate is available in a PKCS#12 keystore.</p>
@@ -785,10 +787,11 @@ we recommend that you use the <code>%prod.</code> profile to define your Elastic
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.elasticsearch.restclient.lowlevel.ElasticsearchClientConfig;
-import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
-import org.apache.http.ssl.SSLContextBuilder;
-import org.apache.http.ssl.SSLContexts;
-import org.elasticsearch.client.RestClientBuilder;
+import org.apache.hc.client5.http.impl.async.HttpAsyncClientBuilder;
+import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
+import org.apache.hc.core5.ssl.SSLContextBuilder;
+import org.apache.hc.core5.ssl.SSLContexts;
 
 import jakarta.enterprise.context.Dependent;
 import javax.net.ssl.SSLContext;
@@ -799,9 +802,9 @@ import java.nio.file.Paths;
 import java.security.KeyStore;
 
 @ElasticsearchClientConfig
-public class SSLContextConfigurator implements RestClientBuilder.HttpClientConfigCallback {
+public class SSLContextConfigurator implements ElasticsearchClientConfigConfigurer {
     @Override
-    public HttpAsyncClientBuilder customizeHttpClient(HttpAsyncClientBuilder httpClientBuilder) {
+    public void accept(HttpAsyncClientBuilder httpClientBuilder) {
         try {
             String keyStorePass = "password-for-keystore";
             Path trustStorePath = Paths.get("/path/to/truststore.p12");
@@ -812,12 +815,18 @@ public class SSLContextConfigurator implements RestClientBuilder.HttpClientConfi
             SSLContextBuilder sslBuilder = SSLContexts.custom()
                     .loadTrustMaterial(truststore, null);
             SSLContext sslContext = sslBuilder.build();
-            httpClientBuilder.setSSLContext(sslContext);
+
+            httpClientBuilder.setConnectionManager(
+                    PoolingAsyncClientConnectionManagerBuilder
+                            .create().setTlsStrategy(
+                                    ClientTlsStrategyBuilder.create()
+                                            .setSslContext(sslContext).buildAsync()
+                            ).build()
+            );
+
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-
-        return httpClientBuilder;
     }
 }</code></pre>
 </div>
