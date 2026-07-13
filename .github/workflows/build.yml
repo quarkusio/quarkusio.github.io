@@ -60,6 +60,13 @@ jobs:
           key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
           restore-keys: ${{ runner.os }}-gems-
 
+      - name: Cache npm packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-npm-
+
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -187,6 +194,23 @@ jobs:
             echo "Targeted check: $PATHS"
           fi
 
+      - name: Run Lighthouse CI
+        if: steps.link_scope.outputs.mode != 'skip'
+        run: |
+          npm ci
+          URLS=""
+          if [ "${{ steps.link_scope.outputs.mode }}" = "partial" ]; then
+            IFS=',' read -ra PATHS <<< "${{ steps.link_scope.outputs.paths }}"
+            for p in "${PATHS[@]:0:5}"; do
+              URLS="$URLS --collect.url=http://localhost:8090${p}"
+            done
+          else
+            URLS="--collect.url=http://localhost:8090/ --collect.url=http://localhost:8090/guides/ --collect.url=http://localhost:8090/blog/"
+          fi
+          npx lhci autorun $URLS
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
       # Versioned guides (2.x-5.x) are excluded from this build by
       # _only_latest_guides_config.yml, so skip crawling those paths.
       - name: Run link crawler
@@ -211,8 +235,38 @@ jobs:
           path: |
             target/*-reports/TEST-*.xml
             target/build-report.json
+            .lighthouseci/
             README.md
           retention-days: 2
+
+      - name: Lighthouse report
+        if: always()
+        run: |
+          {
+            echo "### Lighthouse Results"
+            echo ""
+            echo "| Page | Performance | Accessibility | Best Practices | SEO | Report |"
+            echo "|------|:----------:|:------------:|:--------------:|:---:|--------|"
+            for f in .lighthouseci/lhr-*.json; do
+              [ -f "$f" ] || continue
+              url=$(jq -r '.requestedUrl' "$f")
+              path=$(echo "$url" | sed 's|http://[^/]*||')
+              perf=$(jq '.categories.performance.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              a11y=$(jq '.categories.accessibility.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              bp=$(jq '.categories["best-practices"].score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              seo=$(jq '.categories.seo.score // 0' "$f" | awk '{printf "%d", $1 * 100}')
+              perf_icon=$( [ "$perf" -ge 90 ] && echo ":green_circle:" || ( [ "$perf" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              a11y_icon=$( [ "$a11y" -ge 90 ] && echo ":green_circle:" || ( [ "$a11y" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              bp_icon=$( [ "$bp" -ge 90 ] && echo ":green_circle:" || ( [ "$bp" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              seo_icon=$( [ "$seo" -ge 90 ] && echo ":green_circle:" || ( [ "$seo" -ge 50 ] && echo ":orange_circle:" || echo ":red_circle:" ) )
+              link=""
+              if [ -f .lighthouseci/links.json ]; then
+                report_url=$(jq -r --arg u "$url" '.[$u] // empty' .lighthouseci/links.json)
+                [ -n "$report_url" ] && link="[Full report](${report_url})"
+              fi
+              echo "| \`${path:-/}\` | ${perf_icon} ${perf} | ${a11y_icon} ${a11y} | ${bp_icon} ${bp} | ${seo_icon} ${seo} | ${link} |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Test report
         if: always()
