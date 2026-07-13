@@ -329,6 +329,121 @@ public class GuidesPageTest extends BrowserTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guideElementsHaveValidStatusAttribute(String path) {
+        page.navigate(baseUrl + path);
+
+        Locator guides = page.locator("qs-guide[status]");
+        int guideCount = guides.count();
+        assertTrue(guideCount > 0, path + ": Expected qs-guide elements with status attribute");
+
+        // Check all guides - status should be empty string or a valid value, never NOT_FOUND
+        for (int i = 0; i < guideCount; i++) {
+            String status = guides.nth(i).getAttribute("status");
+            String title = guides.nth(i).getAttribute("title");
+
+            assertNotNull(status, path + ": Guide '" + title + "' has null status attribute");
+            assertFalse(status.equals("NOT_FOUND"),
+                    path + ": Guide '" + title + "' has status='NOT_FOUND'. "
+                            + "The guide index should provide a status field (e.g., 'stable', 'preview', '') "
+                            + "or the template should use a default value (empty string) instead of NOT_FOUND.");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guideElementsHaveValidKeywordsAttribute(String path) {
+        page.navigate(baseUrl + path);
+
+        Locator guides = page.locator("qs-guide[keywords]");
+        int guideCount = guides.count();
+        assertTrue(guideCount > 0, path + ": Expected qs-guide elements with keywords attribute");
+
+        // Check all guides - keywords should be empty string or valid comma-separated topics
+        for (int i = 0; i < guideCount; i++) {
+            String keywords = guides.nth(i).getAttribute("keywords");
+            String title = guides.nth(i).getAttribute("title");
+
+            assertNotNull(keywords, path + ": Guide '" + title + "' has null keywords attribute");
+            assertFalse(keywords.equals("NOT_FOUND"),
+                    path + ": Guide '" + title + "' has keywords='NOT_FOUND'. "
+                            + "The guide index should map :topics: frontmatter to the keywords field, "
+                            + "or the template should use a default empty string instead of NOT_FOUND.");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guideElementsHaveValidOriginAttribute(String path) {
+        page.navigate(baseUrl + path);
+
+        Locator guides = page.locator("qs-guide[origin]");
+        int guideCount = guides.count();
+        assertTrue(guideCount > 0, path + ": Expected qs-guide elements with origin attribute");
+
+        // Check all guides - origin should be empty string or valid value like 'quarkus', 'quarkiverse'
+        for (int i = 0; i < guideCount; i++) {
+            String origin = guides.nth(i).getAttribute("origin");
+            String title = guides.nth(i).getAttribute("title");
+
+            assertNotNull(origin, path + ": Guide '" + title + "' has null origin attribute");
+            assertFalse(origin.equals("NOT_FOUND"),
+                    path + ": Guide '" + title + "' has origin='NOT_FOUND'. "
+                            + "The guide index should provide an origin field (e.g., 'quarkus', 'quarkiverse', '') "
+                            + "or the template should use a default value (empty string) instead of NOT_FOUND.");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void knownGuideHasExpectedAttributes(String path) {
+        page.navigate(baseUrl + path);
+
+        // Look for "Getting Started" guide - a stable guide that should always exist
+        // Don't assume order, use attribute selector
+        Locator gettingStartedGuide = page.locator("qs-guide[url*='getting-started']").first();
+
+        assertTrue(gettingStartedGuide.count() > 0,
+                path + ": Expected to find a guide with URL containing 'getting-started'");
+
+        String title = gettingStartedGuide.getAttribute("title");
+        String status = gettingStartedGuide.getAttribute("status");
+        String keywords = gettingStartedGuide.getAttribute("keywords");
+        String origin = gettingStartedGuide.getAttribute("origin");
+        String categories = gettingStartedGuide.getAttribute("categories");
+
+        // Verify the guide exists and has a title
+        assertNotNull(title, path + ": Getting Started guide should have a title");
+        assertTrue(title.toLowerCase().contains("getting") || title.toLowerCase().contains("first"),
+                path + ": Expected 'Getting Started' or 'First Application' in title, got: " + title);
+
+        // Verify attributes are not NOT_FOUND (should be empty string or valid values)
+        assertFalse("NOT_FOUND".equals(status),
+                path + ": Getting Started guide has status='NOT_FOUND'");
+        assertFalse("NOT_FOUND".equals(keywords),
+                path + ": Getting Started guide has keywords='NOT_FOUND'");
+        assertFalse("NOT_FOUND".equals(origin),
+                path + ": Getting Started guide has origin='NOT_FOUND'");
+
+        // Verify categories is populated (this comes from AsciiDoc :categories: frontmatter)
+        assertNotNull(categories, path + ": Getting Started guide should have categories");
+        assertTrue(categories.contains("getting-started"),
+                path + ": Getting Started guide categories should contain 'getting-started', got: " + categories);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
             "/guides/getting-started",
             "/guides/rest",
             "/guides/cdi"
