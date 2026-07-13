@@ -266,6 +266,69 @@ public class GuidesPageTest extends BrowserTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guidesPageSearchFieldIsBlankOnLoad(String path) {
+        page.navigate(baseUrl + path);
+
+        // Find the search input in the "By Category" filter bar
+        Locator searchInput = page.locator("input[type='search'][name='q']");
+        searchInput.waitFor();
+
+        String searchValue = searchInput.inputValue();
+        assertEquals("", searchValue,
+                path + ": Expected search field to be blank on page load but found: '" + searchValue + "'");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guidesPageDoesNotContainNotFoundText(String path) {
+        page.navigate(baseUrl + path);
+
+        // Check that "NOT_FOUND" does not appear in the visible page content
+        String pageContent = page.content();
+        int notFoundCount = countOccurrences(pageContent, "NOT_FOUND");
+        assertEquals(0, notFoundCount,
+                path + ": Found " + notFoundCount + " occurrences of 'NOT_FOUND' text. "
+                        + "This typically indicates missing data file entries (e.g., index-docs.texts.all_categories)");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/guides/",
+            "/version/main/guides/"
+    })
+    void guidesPageCategoryDropdownDefaultOptionIsNotNotFound(String path) {
+        page.navigate(baseUrl + path);
+
+        // Check the default option in the category dropdown under "By Category" label
+        Locator categorySelect = page.locator("select[name='categories']");
+        categorySelect.waitFor();
+
+        Locator defaultOption = categorySelect.locator("option[value='']");
+        String optionText = defaultOption.textContent();
+
+        assertFalse(optionText.contains("NOT_FOUND"),
+                path + ": Category dropdown default option contains 'NOT_FOUND' (was: '" + optionText + "'). "
+                        + "This indicates a missing translation in _data/index-docs.yaml (texts.all_categories)");
+    }
+
+    private int countOccurrences(String text, String substring) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(substring, index)) != -1) {
+            count++;
+            index += substring.length();
+        }
+        return count;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
             "/guides/getting-started",
             "/guides/rest",
             "/guides/cdi"
