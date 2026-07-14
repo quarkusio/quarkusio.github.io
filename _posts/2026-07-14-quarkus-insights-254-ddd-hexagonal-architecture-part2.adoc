@@ -1,0 +1,163 @@
+---
+layout: post
+title: 'Quarkus Insights #254: Domain-Driven Design and Hexagonal Architecture - Part 2'
+date: 2026-07-14
+tags: quarkus-insights
+synopsis: 'Jeremy Davis returns for a deep dive into a call-for-papers application that demonstrates DDD patterns in action: commands, aggregates, value objects, the outbox pattern, subdomain collaboration, architecture tests with ArchUnit, and how coding agents can follow DDD conventions.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://www.youtube.com/watch?v=xUUAbstEthQ[watch the video] for the full story.
+
+== Quarkus Insights #254: Domain-Driven Design and Hexagonal Architecture - Part 2
+
+https://www.linkedin.com/in/jeremyrdavis/[Jeremy Davis] returns for a follow-up to episode 248's introduction to https://martinfowler.com/bliki/DomainDrivenDesign.html[Domain-Driven Design (DDD)] and Hexagonal Architecture. The first session generated so many questions that Jeremy didn't get through all of his material, so episode 254 picks up where that one left off — this time anchored around a fully working call-for-papers application that you can clone and run locally.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/xUUAbstEthQ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus 4 Update
+
+Before diving into DDD, the hosts shared a brief status update: the main branch has now switched to version 4, meaning new feature development is targeting the 4.x line. On the 3.x side, 3.40 is expected to be the last minor release. The biggest in-flight changes heading into Quarkus 4 include a https://vertx.io/[Vert.x] 5 upgrade and a https://github.com/FasterXML/jackson[Jackson] 3 upgrade — significant library bumps that warrant the major version bump.
+
+== The Demo Application: A Call for Papers
+
+Jeremy built a https://sessionize.com/[Sessionize]-inspired call-for-papers application to ground the discussion. The application lets speakers browse conferences, submit session proposals, and receive acceptance or rejection notifications. Reviewers can then accept, waitlist, or decline proposals through a review screen.
+
+The frontend is built with Quinoa and https://react.dev/[React]. The full repo can be cloned and run locally with `mvn quarkus:dev` (or the Maven wrapper).
+
+=== Package Structure and Subdomains
+
+The application is organised around two subdomains inside a monolith:
+
+- **CFP (Call for Papers)** — handles proposal submission and review
+- **Communications** — handles outbound notifications to presenters
+
+Jeremy is deliberately pragmatic about package structure: don't be dogmatic, but do make subdomains visible at the top level.
+
+== Walking the Full Request Path
+
+Jeremy walked through a proposal submission end-to-end, from the REST adapter to the aggregate and back.
+
+=== The Incoming Adapter: REST Resource
+
+The `SessionProposalResource` is a standard JAX-RS endpoint. It receives a `SessionProposalParameters` object — a plain record that models the JSON coming over the wire — and applies https://jakarta.ee/specifications/bean-validation/[Jakarta Validation] annotations at this layer. This is intentional: frameworks like Jakarta Validation belong at the outer adapter layer, not inside the domain.
+
+=== Commands
+
+After validation, the parameters are mapped into a `CreateSessionProposalCommand` — an immutable Java record. The command belongs inside the `application` package because it forms the API through which any adapter (REST, messaging, file transfer) communicates with the application core. Using basic Java validation inside the command, rather than a framework annotation, keeps the internal model framework-agnostic.
+
+The command is then passed to the `CFPApplicationService`.
+
+=== The Application Service
+
+The application service orchestrates the work. Its `createSessionProposal` method can be called from any kind of adapter — that is the core promise of hexagonal architecture. The service:
+
+1. Builds a `SubmissionContext` (open/close dates, session formats, tracks, existing sessions) so the aggregate can make informed decisions without touching infrastructure
+2. Calls the static factory method `SessionProposal.create(command, context)` on the aggregate
+3. Passes the resulting aggregate to the repository for persistence
+4. Returns a DTO
+
+=== The Aggregate
+
+`SessionProposal` is the aggregate root for the CFP subdomain. It is a plain Java object — no persistence annotations, no framework dependencies. All business logic (invariants) lives here: checking submission windows, preventing duplicate proposals, enforcing track validity. A UUID is generated inside the aggregate at creation time so the object is immediately fully-formed and can be tested in isolation with plain https://junit.org/junit5/[JUnit], no container required.
+
+=== Value Objects
+
+Jeremy highlighted the `EmailAddress` value object on the `Presenter` type as a concrete example. It applies a regex pattern check at construction time and overrides `toString()` to return the address string. Validation that matters everywhere — regardless of whether input arrives via REST, https://kafka.apache.org/[Kafka], or a spreadsheet file — belongs inside the value object, not only at the API boundary.
+
+The `ConferenceSessionFormat` type is another value object, this time backed by a database record (conference organizers can configure their own formats). Its identity is defined entirely by its attributes — two formats are equal if their data is equal.
+
+=== Repositories and the Persistence Boundary
+
+The `SessionProposalRepository` wraps a https://quarkus.io/guides/hibernate-orm-panache[Panache] repository. Critically, JPA entities never escape the `persistence` package. The repository exposes `toEntity()` and `toDomain()` marshalling methods that translate between the aggregate and the entity. Swapping the persistence backend (to https://www.mongodb.com/[MongoDB], or to a document store like https://firebase.google.com/products/firestore[Cloud Firestore] as Jeremy has done on a side project) only requires changing the repository implementation — nothing else in the application needs to change.
+
+== The Submission Context and Domain Services
+
+The `SubmissionContext` object deserves special attention. An aggregate should be able to make decisions without reaching into infrastructure. But sometimes it needs data from other parts of the system — in this case, whether the CFP is open, which tracks exist, and which proposals the presenter has already submitted.
+
+The solution is a service (sitting between the application and domain layers) that assembles this context object and hands it to the aggregate. Jeremy noted this probably belongs in the domain package as a domain service rather than the application package — a distinction worth revisiting in real projects.
+
+== The Communications Subdomain and the Outbox Pattern
+
+When a proposal is accepted, the system needs to notify the presenter. This is handled by a separate `communications` subdomain.
+
+=== Why a Separate Subdomain?
+
+A plain email-sending library would be a shared utility. The communications subdomain earns its place because it will own decisions about _which channel_ to use (email today, social notifications tomorrow) and _what language_ to use in the message — content decisions that belong to a distinct bounded context.
+
+=== Integration Events vs. Domain Events
+
+The `SessionProposalAccepted` event is an integration event, not a domain event in the strict sense. Domain events are consumed within the same bounded context; integration events are consumed by other subdomains or services. Jeremy acknowledged the current placement in the `domain-events` package is slightly wrong — it should be in an `integration-events` package to make the distinction clear.
+
+=== The Outbox Pattern
+
+Rather than firing a CDI event directly inside the `acceptProposal` transaction, Jeremy implemented the outbox pattern:
+
+1. When a proposal is accepted, the `SessionProposalAccepted` event is written to an `outbox` database table (with an aggregate ID, event type, timestamp, and JSON payload) inside the same transaction as the status update.
+2. A scheduled bean (using https://quarkus.io/guides/scheduler[Quarkus Scheduler]) polls the outbox table every 30 seconds and fires the events as CDI events.
+3. The communications subdomain catches the CDI event, writes it to its own delivery table, and a second scheduler loops through pending deliveries and sends emails via https://quarkus.io/guides/mailer[Quarkus Mailer] (visible in https://mailpit.axllent.org/[Mailpit] during development).
+
+This two-phase approach means that even if the application restarts mid-flight, no events are lost. It also prevents the case where an accepted talk email is sent before the database transaction commits — a subtle but real failure mode when CDI events are fired inside a transaction.
+
+Jeremy noted the outbox code is not yet fully modelled using DDD conventions and that is intentional: you do not have to apply DDD to every corner of an application. At the boundary where the pattern genuinely helps, use it; at the plumbing layer, pragmatism is fine.
+
+== Validation at Multiple Layers
+
+A recurring audience question: where does validation go? Jeremy's answer: at every layer that has a reason to care.
+
+- **REST adapter** — Jakarta Validation annotations on the `SessionProposalParameters` record (not-null, not-blank, valid format)
+- **Value objects** — constructor-level checks (regex, range, business rules) that apply regardless of how input arrived
+- **Aggregate** — cross-field and cross-entity rules (is the CFP window open? has this presenter already submitted the maximum number of talks?)
+- **Database** — constraints as a last line of defence
+
+Each layer validates for its own reasons. This is not redundancy — it is defence in depth.
+
+== Architecture Tests with ArchUnit
+
+The project includes a test package that enforces architectural rules using https://www.archunit.org/[ArchUnit]. The key rules:
+
+- **No cyclic dependencies** between packages
+- **Subdomains communicate only through their API packages** — a class in the `communications` subdomain must not import a repository class from `cfp` directly; it must go through a published API
+
+ArchUnit tests run as part of the standard JUnit suite. For teams inheriting a "big ball of mud" codebase, ArchUnit's `freeze` feature is especially useful: you can freeze existing violations so that tests only fail on _new_ violations, letting you introduce DDD patterns incrementally without breaking the build from day one.
+
+== AI Agents Following DDD Conventions
+
+Jeremy ran a live experiment during the episode: he gave both https://platform.openai.com/docs/assistants/overview[OpenAI Codex] and https://claude.ai/[Claude] the same specification — a minimal attendee registration subdomain — and let them generate code independently. The results were compared live.
+
+Both agents produced structurally similar output:
+
+- Value objects for name and email
+- A command record
+- An application service
+- A repository
+- Domain-specific exceptions
+
+Neither output was perfect (one missed Panache, neither added ArchUnit tests), but the overall structure was recognisably DDD-compliant. Jeremy's takeaway: DDD's explicit conventions about where things go — aggregates hold logic, repositories handle persistence, commands enter through the application layer — give coding agents a predictable scaffold to follow. Well-structured specifications plus DDD conventions produce more consistent generated code than under-specified CRUD codebases.
+
+He recommended spending more time writing detailed specifications and reviewing AI output than on code generation itself, and noted that adding DDD-specific skills (prompt files) to the agent configuration improves adherence to patterns like correct placement of business logic, value object validation, and ArchUnit rule compliance.
+
+== Upcoming
+
+Jeremy mentioned he is preparing an updated hands-on workshop (cloneable from GitHub) based on this material, and will be co-presenting a similar workshop with Rob Cedor at https://exploreddd.com/[Explore DDD] in Colorado in September. The next Quarkus Insights (skipping one week for the summer schedule) will cover Quarkus in the real world — an experience report with real-world performance metrics.
+
+== Key Takeaways
+
+1. **Commands are the API between adapters and the application core** — any adapter (REST, messaging, file) creates the same command and passes it to the same service.
+2. **Aggregates own all business logic** — invariants, UUID generation, event creation. They are plain Java objects, testable without a container.
+3. **The persistence boundary is absolute** — JPA entities live only inside the repository; nothing outside the `persistence` package imports them.
+4. **The Submission Context pattern** lets aggregates make informed decisions without knowing about infrastructure.
+5. **The outbox pattern** decouples event publishing from the originating transaction, preventing lost events and premature notifications.
+6. **Integration events and domain events are different** — name and package them accordingly.
+7. **Validation belongs at every layer** for different reasons; value objects enforce rules that apply regardless of input source.
+8. **ArchUnit enforces subdomain boundaries** as part of the test suite, with a freeze option for incremental adoption in legacy codebases.
+9. **DDD conventions make AI-generated code more predictable** — structured specifications plus explicit patterns produce consistent output across different agents.
+10. **You don't have to apply DDD everywhere** — be pragmatic at the plumbing layer; reserve the extra ceremony for areas where the business logic complexity justifies it.
+
+== Conclusion
+
+Episode 254 makes the DDD discussion concrete with a complete, runnable application. The call-for-papers demo shows how patterns introduced in episode 248 — aggregates, value objects, commands, and domain events — play out across a full request lifecycle, including cross-subdomain collaboration via the outbox pattern and enforceable architecture rules. The live AI coding experiment adds a timely angle: as development teams lean more heavily on coding agents, the predictable structure of DDD may be one of its strongest arguments in a world where generated code needs to be reviewable and maintainable.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. Explore more about DDD at https://www.dddeurope.com/[Domain-Driven Design Europe] and https://exploreddd.com/[Explore DDD].
