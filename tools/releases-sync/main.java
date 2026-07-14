@@ -578,6 +578,26 @@ public class main implements Callable<Integer> {
         // Sort all releases by version (latest first)
         processedReleases.sort((a, b) -> compareVersions(b.version, a.version));
 
+        // Compute EOL dates for non-LTS releases that don't have one explicitly set.
+        // Policy: non-LTS releases are supported "until the next minor release",
+        // so EOL date = release date of the next higher minor version.
+        for (int i = 0; i < processedReleases.size(); i++) {
+            Release release = processedReleases.get(i);
+            if (release.hasExplicitEolDate || Boolean.TRUE.equals(release.upcoming)) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(release.lts)) {
+                continue;
+            }
+            // Find the next higher version (previous index since sorted latest-first)
+            if (i > 0) {
+                Release nextRelease = processedReleases.get(i - 1);
+                if (nextRelease.releaseDate != null) {
+                    release.eolDate = nextRelease.releaseDate;
+                }
+            }
+        }
+
         // Build result
         ReleaseData result = new ReleaseData();
         result.policy = existingData.policy;
