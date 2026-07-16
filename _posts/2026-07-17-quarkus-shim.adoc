@@ -1,0 +1,172 @@
+---
+layout: post
+title: 'Patch Java classes at build time with Quarkus Shim'
+date: 2026-07-17
+tags: extension
+synopsis: 'Quarkus Shim lets you change the behavior of Java classes during the Quarkus build, with support for JVM mode, dev mode, and native executables.'
+author: eng-fouad
+---
+
+Applications often rely on Java classes from libraries that cannot be changed directly.
+You may need to fix a small issue, add some logging, or adjust a return value while you wait for a change in the original library.
+
+https://github.com/quarkiverse/quarkus-shim[Quarkus Shim] is a Quarkus extension for these cases.
+It lets you add, wrap, or replace behavior in a Java class during the Quarkus build.
+
+The change happens during augmentation.
+There is no Java agent and no runtime instrumentation.
+The transformed class works in JVM mode, dev mode, and native executables.
+
+== Add the extension
+
+Add Quarkus Shim to your application:
+
+[source,xml]
+....
+<dependency>
+    <groupId>io.quarkiverse.shim</groupId>
+    <artifactId>quarkus-shim</artifactId>
+    <version>0.1.1</version>
+</dependency>
+....
+
+You can find the latest version on https://central.sonatype.com/artifact/io.quarkiverse.shim/quarkus-shim[Maven Central].
+
+== Replace a method
+
+Imagine that a library contains this class:
+
+[source,java]
+....
+public class Greeter {
+
+    public String greet(String name) {
+        return "Hello " + name;
+    }
+}
+....
+
+You want a different greeting, but the class belongs to a dependency.
+Create a shim class and point it at `Greeter`:
+
+[source,java]
+....
+import io.quarkiverse.shim.Shim;
+import io.quarkiverse.shim.ShimReplace;
+
+@Shim(Greeter.class)
+public class GreeterShim {
+
+    @ShimReplace(method = "greet")
+    public static String greet(Greeter self, String name) {
+        return "Welcome " + name;
+    }
+}
+....
+
+`@Shim` selects the class to change.
+`@ShimReplace` replaces the body of the selected method.
+For an instance method, the first parameter receives the current object.
+The other parameters and the return type match the original method.
+
+Quarkus validates the shim during the build.
+If the method does not exist or the signature is wrong, the build fails with an explanation.
+
+== Wrap existing behavior
+
+Sometimes you want to keep the original method and only adjust its result.
+Use `@ShimAround` and call the original method through `ShimCall`:
+
+[source,java]
+....
+import io.quarkiverse.shim.ShimAround;
+import io.quarkiverse.shim.ShimCall;
+
+@ShimAround(method = "greet")
+public static String greet(ShimCall<String> original, Greeter self, String name) {
+    return original.proceed().toUpperCase();
+}
+....
+
+This hook runs in place of the target method.
+It can call the original behavior, transform the result, or return early.
+
+== Run code before and after a method
+
+Use `@ShimBefore` when code should run at method entry.
+Use `@ShimAfter` when code should run before a normal return:
+
+[source,java]
+....
+@ShimBefore(method = "process")
+public static void beforeProcess(Pipeline self, String input) {
+    System.out.println("Processing " + input);
+}
+
+@ShimAfter(method = "process")
+public static void afterProcess(Pipeline self, String returned) {
+    System.out.println("Result " + returned);
+}
+....
+
+Both hooks must be static and return `void`.
+The before hook can receive the target object and method arguments.
+The after hook can receive the target object and returned value.
+It only runs when the target method returns normally.
+
+== Access private members
+
+A shim can use `ShimFields` and `ShimMethods` to reach private members.
+For example, this alternative replacement updates a private counter and calls a private helper:
+
+[source,java]
+....
+@ShimReplace(method = "greet")
+public static String greet(Greeter self, String name) {
+    int count = ShimFields.<Integer>get(self, "greetCount") + 1;
+    ShimFields.set(self, "greetCount", count);
+    return ShimMethods.invoke(self, "decorate", "Welcome " + name);
+}
+....
+
+The helpers cache their reflection work.
+Quarkus Shim also registers target classes for reflection, so this approach works in native executables.
+
+== Select one overloaded method
+
+If a class has several methods with the same name, use `paramTypes` to select one of them:
+
+[source,java]
+....
+@ShimReplace(method = "format", paramTypes = { int.class })
+public static String format(int value) {
+    return "Number " + value;
+}
+....
+
+This shim changes `format(int)` and leaves other `format` methods unchanged.
+
+== When is this useful
+
+Quarkus Shim can help when you need a focused change in code that you do not own.
+For example, you can use it for a temporary library fix, extra diagnostics, or a small compatibility adjustment.
+
+It is best to keep each shim small and well tested.
+A shim changes bytecode, so readers of the original class cannot see the new behavior there.
+The shim should explain why the change exists and when it can be removed.
+
+There are also limits.
+Quarkus Shim can change application classes and indexed dependency classes loaded by Quarkus.
+It cannot change JDK classes.
+Abstract and native methods cannot be changed.
+
+== What happens during the build
+
+Quarkus Shim discovers shim classes and validates their hooks during augmentation.
+It then uses the Quarkus bytecode transformation support and ASM to update the target classes.
+
+This build time approach is the main reason the same shim can work across the usual Quarkus execution modes.
+It also means mistakes are reported early, before the application starts.
+
+https://github.com/quarkiverse/quarkus-shim[Quarkus Shim] gives you a focused way to adapt code you do not own while keeping the change inside your Quarkus build.
+Explore the project, try it in your application, and share your experience with us.
