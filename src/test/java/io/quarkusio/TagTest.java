@@ -1,5 +1,9 @@
 package io.quarkusio;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -124,6 +128,27 @@ public class TagTest extends BrowserTest {
                 "Navigating to tag link should reach a page with a heading, not a 404");
         assertTrue(heading.first().textContent().contains("Tagged posts"),
                 "Tag page heading should say 'Tagged posts'");
+    }
+
+    @Test
+    void blogSidebarTagsHaveNoDuplicates() {
+        page.navigate(baseUrl + BLOG_PATH);
+        var sidebarTagLinks = page.locator(".tags-label").locator("xpath=..").locator("a[href*='/blog/tag/']");
+        int count = sidebarTagLinks.count();
+        assertTrue(count > 0, "Expected at least one tag in the sidebar");
+
+        List<String> tagTexts = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            tagTexts.add(sidebarTagLinks.nth(i).textContent().trim().toLowerCase());
+        }
+
+        List<String> duplicates = tagTexts.stream()
+                .filter(t -> Collections.frequency(tagTexts, t) > 1)
+                .distinct()
+                .toList();
+
+        assertTrue(duplicates.isEmpty(),
+                "Sidebar contains duplicate tags (case-insensitive): " + duplicates);
     }
 
     @Test
