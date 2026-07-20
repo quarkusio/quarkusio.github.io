@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class RedirectTest extends BrowserTest {
 
     private static final Pattern META_REFRESH = Pattern.compile(
-            "<meta\\s+http-equiv=['\"]refresh['\"]\\s+content=['\"]0;\\s*url=([^'\"]+)['\"]",
+            "<meta\\s+http-equiv=['\"]refresh['\"]\\s+content=['\"]0;\\s*url='?([^'\"]+)'?['\"]",
             Pattern.CASE_INSENSITIVE);
 
     @Override
