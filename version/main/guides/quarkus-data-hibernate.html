@@ -710,6 +710,8 @@ packed with most of the operations you need to work on your entity, such as, out
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.hibernate.panache.blocking.PanacheBlockingQuery;
+import jakarta.data.Order;
+import jakarta.data.Sort;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import org.hibernate.Session;
@@ -735,6 +737,7 @@ public class Code {
         List&lt;Cat&gt; allCats = repo.listAll();
         repo.streamAll().forEach(kitty -&gt; kitty.name = kitty.name.toUpperCase());
         PanacheBlockingQuery&lt;Cat&gt; catQuery = repo.findAll();
+        List&lt;Cat&gt; sortedCats = repo.findAll().sort(Sort.asc("name")).list();
         // operations on the Hibernate session
         repo.flush();
         Session session = repo.getSession();
@@ -758,6 +761,8 @@ you want to write non-type-safe queries, you can always use the provided methods
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.hibernate.panache.blocking.PanacheBlockingQuery;
+import jakarta.data.Order;
+import jakarta.data.Sort;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import org.hibernate.Session;
@@ -785,8 +790,27 @@ public class Code {
         repo.count("breed = ?1 and name is null", Cat.Breed.HAIRLESS);
         // Make every cat cute
         repo.update("breed = CUTE");
+        // Sort results using PanacheQuery
+        List&lt;Cat&gt; sortedByName = repo.findAll().sort(Sort.asc("name")).list();
+        List&lt;Cat&gt; sortedMatches = repo.find("breed = ?1", Cat.Breed.CUTE)
+                .sort(Sort.desc("name"))
+                .list();
     }
 }</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Sorting is applied on the <code>PanacheQuery</code> returned by <code>find()</code> and <code>findAll()</code>, not on the shortcut
+<code>list()</code>, <code>listAll()</code>, <code>stream()</code>, or <code>streamAll()</code> methods. For a single criterion, pass a <code>Sort</code>
+directly — there is no need to wrap it in <code>Order.by()</code>. Use <code>Order</code> only when you need multiple
+criteria, or when receiving an <code>Order</code> from a REST endpoint:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">List&lt;Cat&gt; byName = repo.findAll().sort(Sort.asc("name")).list();
+List&lt;Cat&gt; byNameThenBirth = repo.findAll()
+        .sort(Order.by(Sort.asc("name"), Sort.desc("birth")))
+        .list();</code></pre>
 </div>
 </div>
 </div>
@@ -1803,15 +1827,15 @@ REST endpoint parameters, and they will be populated from HTTP query parameters 
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>?page=2&amp;size=25</code></p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>Sort&lt;?&gt;</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>Sort&lt;Cat&gt;</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>sort</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>null</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>?sort=name</code> (asc) or <code>?sort=-name</code> (desc)</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>Order&lt;?&gt;</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>Order&lt;Cat&gt;</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>sort</code> (repeating)</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>null</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">empty <code>Order.by()</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>?sort=name&amp;sort=-salary</code></p></td>
 </tr>
 <tr>
@@ -1830,6 +1854,13 @@ REST endpoint parameters, and they will be populated from HTTP query parameters 
 </table>
 <div class="paragraph">
 <p>For <code>Sort</code> and <code>Order</code>, prefix the property name with <code>-</code> to indicate descending order.</p>
+</div>
+<div class="paragraph">
+<p>When binding sort parameters from REST endpoints to <code>PanacheQuery</code>, prefer <code>Order&lt;Cat&gt;</code> over
+<code>Sort&lt;Cat&gt;</code>. A missing <code>sort</code> query parameter yields <code>null</code> for <code>Sort&lt;Cat&gt;</code> but an empty
+<code>Order.by()</code> for <code>Order&lt;Cat&gt;</code>. If you use <code>Sort&lt;Cat&gt;</code> and the parameter is <code>null</code>, you can
+safely call <code>.sort(null)</code> and it is a no-op; <code>Order</code> is still preferred when multiple columns
+may be requested.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -1871,17 +1902,17 @@ metadata, rather than as a plain array:</p>
 <h3 id="example-endpoint"><a class="anchor" href="#example-endpoint"></a>Example endpoint</h3>
 <div class="paragraph">
 <p>Here is an example of a REST endpoint that uses <code>PageRequest</code> and <code>Order</code> to return a paginated, sorted
-list of cats. <code>PanacheRepository</code> already provides a <code>findAll(PageRequest, Order)</code> method, so you can use
-the entity and repository we defined earlier directly:</p>
+list of cats. Paging and sorting are configured on the <code>PanacheQuery</code> returned by <code>findAll()</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.data.Order;
-import jakarta.data.page.Page;
 import jakarta.data.page.PageRequest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
+
+import java.util.List;
 
 @Path("cats")
 public class CatResource {
@@ -1890,8 +1921,8 @@ public class CatResource {
     Cat.Repo repo;
 
     @GET
-    public Page&lt;Cat&gt; list(PageRequest pageRequest, Order&lt;Cat&gt; order) { <i class="conum" data-value="1"></i><b>(1)</b>
-        return repo.findAll(pageRequest, order);
+    public List&lt;Cat&gt; list(PageRequest pageRequest, Order&lt;Cat&gt; order) { <i class="conum" data-value="1"></i><b>(1)</b>
+        return repo.findAll().pages().request(pageRequest).sort(order).list();
     }
 }</code></pre>
 </div>

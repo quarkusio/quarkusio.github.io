@@ -475,7 +475,7 @@ are in the build directory:  <code>target/</code> for maven, <code>build/</code>
 <div class="ulist">
 <ul>
 <li>
-<p><code>function.zip</code> - lambda deployment file</p>
+<p><code>function.zip</code> - lambda deployment file (produced when using the default <code>legacy-jar</code> packaging)</p>
 </li>
 <li>
 <p><code>manage.sh</code> - wrapper around aws lambda cli calls</p>
@@ -490,6 +490,11 @@ are in the build directory:  <code>target/</code> for maven, <code>build/</code>
 <p><code>sam.native.yaml</code> - (optional) for use with sam cli and native local testing</p>
 </li>
 </ul>
+</div>
+<div class="paragraph">
+<p>By default, <code>quarkus-amazon-lambda</code> uses <code>quarkus.package.jar.type=legacy-jar</code> so that <code>function.zip</code> matches the layout expected by ZIP/SAM deployments.
+For JVM container images that need the fast-jar layout (<code>target/quarkus-app/</code>) and <code>Dockerfile.jvm</code>, set <code>quarkus.package.jar.type=fast-jar</code>.
+In that case <code>function.zip</code> is not generated.</p>
 </div>
 </div>
 </div>
@@ -809,6 +814,12 @@ and changes will automatically be recompiled and available the next invocation y
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">$ curl -d "{\"name\":\"John\"}" -X POST http://localhost:8080</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>If you also have an HTTP extension on the classpath (for example <code>quarkus-rest</code>), both Vert.x HTTP and the
+Lambda mock event server would otherwise default to port <code>8080</code>. In that case Quarkus automatically assigns an
+ephemeral port to the mock event server in Dev Mode and logs the chosen address so you can still invoke it.
+You can also set the port explicitly (see below).</p>
 </div>
 <div class="paragraph">
 <p>For your unit tests, you can also invoke on the mock event server using any HTTP client you want.  Here&#8217;s an example
@@ -1233,11 +1244,14 @@ docker rm {container-id-from-above}</code></pre>
 <div class="sect2">
 <h3 id="jvm-container-image"><a class="anchor" href="#jvm-container-image"></a>JVM container image</h3>
 <div class="paragraph">
-<p>For a regular JVM distribution you need to base your image off the official AWS Java base images. Below is an example of a Dockerfile that would create a container image from your Quarkus Lambda project. It assumes that <code>mvn package</code> has been executed and binaries are available in the <code>target/</code> directory:</p>
+<p>For a regular JVM distribution you need to base your image off the official AWS Java base images. Below is an example of a Dockerfile that would create a container image from your Quarkus Lambda project. It assumes that <code>mvn package</code> has been executed and binaries are available in the <code>target/</code> directory.</p>
+</div>
+<div class="paragraph">
+<p>The default packaging is <code>legacy-jar</code>, which produces a runner jar plus a <code>lib/</code> directory:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-Dockerfile hljs" data-lang="Dockerfile">FROM  public.ecr.aws/lambda/java:11
+<pre class="highlightjs highlight"><code class="language-Dockerfile hljs" data-lang="Dockerfile">FROM  public.ecr.aws/lambda/java:21
 
 ADD target/my-service-0.0.1-SNAPSHOT-runner.jar /var/task/lib/my-service.jar
 ADD target/lib/  /var/task/lib/
@@ -1245,11 +1259,24 @@ ADD target/lib/  /var/task/lib/
 CMD ["io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"]</code></pre>
 </div>
 </div>
+<div class="paragraph">
+<p>To use fast-jar instead (for the <code>quarkus-app</code> layout, or so the container-image extension selects <code>Dockerfile.jvm</code>), set:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.package.jar.type=fast-jar</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then package with <code>mvn package</code> (or enable the container-image extension with <code>-Dquarkus.container-image.build=true</code>).
+The build will succeed without requiring <code>legacy-jar</code>, and <code>function.zip</code> will not be produced.
+If you deploy with the official AWS Lambda Java base image, adapt the <code>COPY</code> paths to the <code>target/quarkus-app/</code> layout.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="native-executable-container-image"><a class="anchor" href="#native-executable-container-image"></a>Native executable container image</h3>
 <div class="paragraph">
-<p>To create a lambda container image that uses the native executable we&#8217;ll need to do things a little differently. In this case, we won&#8217;t need to use the <code>java:11</code> base image from AWS, but instead we&#8217;ll use a special image that assumes that the runtime environment for the lambda is provided. The example below creates such a container. It assumes that a Maven build has been executed (such as <code>mvn package -Dnative=true</code>) and has generated the native binary into the <code>target/</code> directory. The binary needs to be named <code>bootstrap</code> and be placed in <code>/var/runtime/</code>:</p>
+<p>To create a lambda container image that uses the native executable we&#8217;ll need to do things a little differently. In this case, we won&#8217;t need to use the AWS Java base image, but instead we&#8217;ll use a special image that assumes that the runtime environment for the lambda is provided. The example below creates such a container. It assumes that a Maven build has been executed (such as <code>mvn package -Dnative=true</code>) and has generated the native binary into the <code>target/</code> directory. The binary needs to be named <code>bootstrap</code> and be placed in <code>/var/runtime/</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
