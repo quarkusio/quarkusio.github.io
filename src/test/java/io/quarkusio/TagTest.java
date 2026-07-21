@@ -63,8 +63,9 @@ public class TagTest extends BrowserTest {
         assertEquals("Tags", tagsLabel.first().textContent().trim());
 
         var sidebarTagLinks = page.locator(".tags-label").locator("xpath=..").locator("a[href*='/blog/tag/']");
-        assertTrue(sidebarTagLinks.count() > 0,
-                "Expected tag links in the sidebar");
+        int tagCount = sidebarTagLinks.count();
+        assertTrue(tagCount > 1, "Expected more than one tag link in the sidebar, but found " + tagCount
+                                       + ". If only 1 tag is shown, the tag list is likely being collapsed to a single string.");
     }
 
     @Test
