@@ -1,8 +1,8 @@
 ---
 name: building-blog
 description: >
-  How to preview blog posts locally: one-command container-based
-  Jekyll serve with auto-detection of changed posts and deep-linking.
+  How to preview blog posts locally using the Roq-based dev server:
+  start the site with serve-noguides.sh for fast iteration.
 ---
 
 # Building Blog Posts
@@ -10,11 +10,12 @@ description: >
 ## Supported Platforms
 
 This workflow is supported on Linux, macOS, and Windows through WSL2.
-Native Windows shells (PowerShell, CMD, Git Bash) are not supported.
+Java 21+ and Maven (or the included `./mvnw` wrapper) are required.
 
 ## Quick Start
 
-Run the full preview pipeline in one command:
+Run the full preview pipeline in one command — starts the dev server, detects which
+posts you changed, and opens the right URLs in your browser:
 
 ```bash
 just blog-preview
@@ -26,39 +27,25 @@ Or directly:
 bash blog-preview.sh
 ```
 
+To just start the dev server without the auto-open behaviour:
+
+```bash
+./serve-noguides.sh
+```
+
+Then browse to [http://localhost:8080/blog/](http://localhost:8080/blog/).
+
 ## How It Works
 
-The script uses marker files to track state across runs:
+The site is built with [Quarkus Roq](https://docs.quarkiverse.io/quarkus-roq/dev/index.html),
+a Quarkus-based static site generator. Running `mvn quarkus:dev` starts a live-reload
+dev server — edits to content files are picked up automatically without a server restart.
 
-* `.blog-preview-last-run` — timestamp of the last preview run.
-  Used to detect recently changed posts and open the right URL.
-* `.blog-preview.lock` — directory-based lock to prevent concurrent runs.
+`blog-preview.sh` starts the dev server in the background, waits for it to be ready,
+then detects recently changed posts and opens the right URLs in your browser before
+bringing the server to the foreground. Press Ctrl-C to stop.
 
-Both files are gitignored. Delete `.blog-preview-last-run` to reset
-change detection.
-
-## What the Script Does
-
-### Step 1 — Environment Detection
-
-Detects the container runtime (`podman` or `docker`), SELinux state
-(sets `:z` volume flag if needed), and browser command (`xdg-open`,
-`open`, or `wslview`).
-
-### Step 2 — Container Management
-
-Builds a Jekyll image from `jekyll-container/Dockerfile` in this repo
-and starts a preview container. If a healthy container is already
-running from a previous invocation, it is reused without restart.
-
-The container runs with:
-* `--future` — always included so posts with future dates are visible
-* `--livereload` — browser auto-refreshes on file changes (port 35729)
-* `--incremental` — only rebuilds changed pages
-* `_noguides_config.yml` — excludes guides for fast builds (~10s)
-* Named volume `quarkus-blog-jekyll-bundles` — persists gems across restarts
-
-### Step 3 — Detect and Open
+### Detect and Open
 
 The script auto-detects what you were working on and opens the right page:
 
@@ -66,58 +53,56 @@ The script auto-detects what you were working on and opens the right page:
 |---|---|
 | 1 post | `/blog/` (listing) + `/blog/<slug>/` (deep-link) |
 | 2–4 posts | `/blog/` (listing) + a tab for each post |
-| 5+ posts | `/blog/` (listing only), unless git narrows it (see below) |
+| 5+ posts | `/blog/` (listing only), unless git narrows it |
 | No changes | `/blog/` (listing only) |
 
-When the timestamp marker is stale and detects 5+ changed posts, the
-script cross-references with git to find posts you actually added or
-modified. If the intersection is smaller (1–4 posts), those are used
-instead and deep links open as in the 1-post or 2–4-post cases above.
+The slug is derived from the filename: strip the `YYYY-MM-DD-` prefix and the file extension.
 
-The slug is derived from the filename: strip the `YYYY-MM-DD-` prefix
-and the file extension (`.adoc`, `.asciidoc`, or `.md`).
+Change detection uses a `.blog-preview-last-run` timestamp file on repeat runs, and
+falls back to `git diff`/`git log` on first run. Delete `.blog-preview-last-run` to reset.
+
+### Profiles
+
+| Script | Profile | What it includes |
+|---|---|---|
+| `./serve.sh` | (default) | Full site with all guides |
+| `./serve-noguides.sh` | `noguides` | Site without guides (fast) |
+| `./serve-only-latest-guides.sh` | `only-latest-guides` | Site with latest + main guides |
+
+For blog-only work, `serve-noguides.sh` is the fastest option.
+
+## Blog Post File Conventions
+
+- Location: `content/posts/YYYY-MM-DD-slug.adoc` (or `.asciidoc`, `.md`)
+- Front matter fields: `layout: post`, `title`, `date`, `tags`, `synopsis`, `author`
+- `author` must match a key in `_data/authors.yaml`
+- Tags: lowercase, space-separated — e.g. `tags: extension kafka`
+- Images: store in `public/assets/images/posts/<slug>/`, reference with `:imagesdir: /assets/images/posts/<slug>`
+
+## Future-Dated Posts
+
+Posts with a `date` value in the future are served normally by the local dev server.
+No special flag or workaround is needed — just run `./serve-noguides.sh` and the post will appear.
 
 ## Iteration Loop
 
 ```
-Edit .adoc → save → Jekyll auto-rebuilds → browser auto-refreshes
+Edit content/posts/YYYY-MM-DD-slug.adoc → save → Roq rebuilds → browser refreshes
 ```
 
-The container stays running. LiveReload on port 35729 triggers the
-browser refresh automatically — no manual reload needed.
-
-## The `--future` Flag
-
-The `--future` flag is always included because blog contributors
-typically work on posts with today's or a future publication date.
-Without this flag, Jekyll silently excludes future-dated posts from
-the generated site.
+Quarkus dev mode watches for file changes and triggers an incremental rebuild automatically.
 
 ## Troubleshooting
 
-**Port 4000 or 35729 already in use** — Another process is using the
-preview ports. Stop the existing container:
-`podman rm -f quarkus-blog-preview` (or `docker`).
+**Port 8080 already in use** — Another process is occupying the default port.
+Pass a different port: `./serve-noguides.sh -Dquarkus.http.port=8081`.
 
-**`Failed to delete .cache/` or permission errors** — Rootless Podman
-UID mapping. Fix: `podman unshare rm -rf .cache/`. With Docker:
-`rm -rf .cache/`.
+**Changes not appearing** — Quarkus dev mode watches source files. If a change is not picked
+up, press `s` in the terminal running the dev server to force a restart, or stop and re-run
+`./serve-noguides.sh`.
 
-**Volume mount errors on macOS/Ubuntu** — SELinux `:z` flag applied
-on a system without SELinux. The script detects this automatically;
-if it persists, check `getenforce` output.
+**Post not appearing** — Check that the file is in `content/posts/` with the correct
+`YYYY-MM-DD-slug.adoc` naming and that the front matter `layout: post` and `author` fields
+are present and valid.
 
-**Preview shows stale content** — Jekyll's `--incremental` mode can
-sometimes miss dependency changes. Restart the container and re-run:
-```bash
-podman rm -f quarkus-blog-preview
-just blog-preview
-```
-
-**Container image build fails** — Check the build log printed by the
-script. To force a rebuild of the local image:
-`podman rmi quarkus-blog-jekyll:local` (or `docker`).
-
-**Post not appearing** — Check that the file is in `_posts/` with the
-correct `YYYY-MM-DD-slug.adoc` naming and that the front matter `date`
-matches the filename date.
+**Slow first start** — The first run downloads Maven dependencies. Subsequent starts are fast.
