@@ -85,6 +85,17 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
+    @Test
+    void crawlAndCheckFragmentAnchors() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenFragments.isEmpty()) {
+            List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(results.brokenFragments.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenFragments.size() + " broken fragment anchor(s):\n" + buildFragmentReport(sorted));
+        }
+    }
+
     private CrawlResults runCrawl() throws InterruptedException {
         int maxPages = Integer.getInteger("test.crawl.max-pages", DEFAULT_MAX_PAGES);
         int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
@@ -100,6 +111,7 @@ public class LinkCrawlerTest extends BrowserTest {
         Map<String, String> referrers = new ConcurrentHashMap<>();
         Set<String> checkedExternal = ConcurrentHashMap.newKeySet();
         Set<String> checkedImages = ConcurrentHashMap.newKeySet();
+        Map<String, FragmentLink> fragmentLinks = new ConcurrentHashMap<>();
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
@@ -126,7 +138,8 @@ public class LinkCrawlerTest extends BrowserTest {
                     p.setDefaultNavigationTimeout(60_000);
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
-                            checkedExternal, checkedImages, crawledCount, maxPages,
+                            checkedExternal, checkedImages, fragmentLinks,
+                            crawledCount, maxPages,
                             checkInternal, checkExternal, excludePaths, seedUrls);
 
                     ctx.close();
@@ -145,7 +158,9 @@ public class LinkCrawlerTest extends BrowserTest {
                 + ", found " + brokenImages.size() + " broken images"
                 + " (" + threads + " threads)");
 
-        return new CrawlResults(brokenLinks, brokenImages);
+        Map<String, FragmentLink> brokenFragments = verifyFragments(fragmentLinks);
+
+        return new CrawlResults(brokenLinks, brokenImages, brokenFragments);
     }
 
     private void crawLoop(Page p,
@@ -156,6 +171,7 @@ public class LinkCrawlerTest extends BrowserTest {
                            Map<String, String> referrers,
                            Set<String> checkedExternal,
                            Set<String> checkedImages,
+                           Map<String, FragmentLink> fragmentLinks,
                            AtomicInteger crawledCount,
                            int maxPages,
                            boolean checkInternal,
@@ -276,6 +292,11 @@ public class LinkCrawlerTest extends BrowserTest {
                         queue.add(normalized);
                         referrers.putIfAbsent(normalized, currentUrl);
                     }
+                    if (resolved.fragment != null) {
+                        String key = normalized + "#" + resolved.fragment;
+                        fragmentLinks.putIfAbsent(key,
+                                new FragmentLink(normalized, resolved.fragment, currentUrl));
+                    }
                 } else if (checkExternal && checkedExternal.add(resolved.url)) {
                     BrokenLink result = checkExternalLink(resolved.url);
                     if (result != null) {
@@ -321,8 +342,20 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private ResolvedLink resolveLink(String currentPageUrl, String href) {
         if (href.startsWith("mailto:") || href.startsWith("javascript:")
-                || href.startsWith("tel:") || href.startsWith("#")) {
+                || href.startsWith("tel:")) {
             return null;
+        }
+
+        if (href.equals("#")) {
+            return null;
+        }
+
+        if (href.startsWith("#")) {
+            String fragment = href.substring(1);
+            if (fragment.isEmpty()) {
+                return null;
+            }
+            return new ResolvedLink(currentPageUrl, true, fragment);
         }
 
         String resolved;
@@ -345,12 +378,17 @@ public class LinkCrawlerTest extends BrowserTest {
             internal = true;
         }
 
+        String fragment = null;
         int fragmentIndex = resolved.indexOf('#');
         if (fragmentIndex >= 0) {
+            fragment = resolved.substring(fragmentIndex + 1);
+            if (fragment.isEmpty()) {
+                fragment = null;
+            }
             resolved = resolved.substring(0, fragmentIndex);
         }
 
-        return new ResolvedLink(resolved, internal);
+        return new ResolvedLink(resolved, internal, fragment);
     }
 
     private static String resolveImageUrl(String currentPageUrl, String src) {
@@ -536,6 +574,97 @@ public class LinkCrawlerTest extends BrowserTest {
         return target;
     }
 
+    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenLink link = entry.getValue();
+            sb.append("  ").append(link.status).append(" ").append(entry.getKey());
+            if (link.referrer != null) {
+                sb.append("\n       linked from: ").append(link.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenImage img = entry.getValue();
+            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
+            if (img.referrer != null) {
+                sb.append("\n       found on: ").append(img.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildFragmentReport(List<Map.Entry<String, FragmentLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            FragmentLink frag = entry.getValue();
+            sb.append("  ").append(frag.url).append("#").append(frag.fragment);
+            sb.append("\n       linked from: ").append(frag.referrer);
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private Map<String, FragmentLink> verifyFragments(Map<String, FragmentLink> fragmentLinks) {
+        if (fragmentLinks.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, FragmentLink> broken = new ConcurrentHashMap<>();
+        BrowserContext ctx = browser.newContext();
+        ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+        Page p = ctx.newPage();
+        p.setDefaultNavigationTimeout(30_000);
+
+        List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(fragmentLinks.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        String lastUrl = null;
+        boolean pageOk = false;
+
+        for (var entry : sorted) {
+            FragmentLink link = entry.getValue();
+
+            if (!link.url.equals(lastUrl)) {
+                lastUrl = link.url;
+                try {
+                    Response response = p.navigate(link.url,
+                            new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                    pageOk = response != null && response.status() < 400;
+                } catch (Exception e) {
+                    pageOk = false;
+                }
+            }
+
+            if (!pageOk) {
+                continue;
+            }
+
+            try {
+                Boolean exists = (Boolean) p.evaluate(
+                        "(id) => document.getElementById(id) !== null", link.fragment);
+                if (!Boolean.TRUE.equals(exists)) {
+                    broken.put(entry.getKey(), link);
+                }
+            } catch (PlaywrightException e) {
+                // Page navigated away (meta-refresh, etc.) — skip
+            }
+        }
+
+        ctx.close();
+
+        System.out.println("Checked " + fragmentLinks.size() + " fragment anchors, found "
+                + broken.size() + " broken");
+
+        return broken;
+    }
+
     private static List<String> parseExcludePaths(String property) {
         if (property == null || property.isBlank()) {
             return List.of();
@@ -567,33 +696,10 @@ public class LinkCrawlerTest extends BrowserTest {
         return url;
     }
 
-    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
-        StringBuilder sb = new StringBuilder();
-        for (var entry : entries) {
-            BrokenLink link = entry.getValue();
-            sb.append("  ").append(link.status).append(" ").append(entry.getKey());
-            if (link.referrer != null) {
-                sb.append("\n       linked from: ").append(link.referrer);
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
+    record ResolvedLink(String url, boolean internal, String fragment) {
     }
 
-    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
-        StringBuilder sb = new StringBuilder();
-        for (var entry : entries) {
-            BrokenImage img = entry.getValue();
-            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
-            if (img.referrer != null) {
-                sb.append("\n       found on: ").append(img.referrer);
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
-    }
-
-    record ResolvedLink(String url, boolean internal) {
+    record FragmentLink(String url, String fragment, String referrer) {
     }
 
     record BrokenLink(int status, String statusText, String referrer) {
@@ -602,6 +708,7 @@ public class LinkCrawlerTest extends BrowserTest {
     record BrokenImage(int status, String statusText, String referrer) {
     }
 
-    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages) {
+    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages,
+                         Map<String, FragmentLink> brokenFragments) {
     }
 }
