@@ -6,7 +6,7 @@
   - [FroMage L38](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474324243)
 - [x] 2. Remove `target/generated-sources/annotations/` path — not accurate for Gradle
   - [Yoan L57](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472630195)
-- [ ] 3. Add link to datasource guide listing available JDBC extensions
+- [x] 3. Add link to datasource guide listing available JDBC extensions
   - [Yoan L52](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472619481)
 - [ ] 4. Replace @SQL/@NativeQuery user-facing note with a TODO comment
   - [Yoan L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472750545)
