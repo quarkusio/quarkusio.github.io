@@ -8,7 +8,7 @@
   - [Yoan L57](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472630195)
 - [x] 3. Add link to datasource guide listing available JDBC extensions
   - [Yoan L52](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472619481)
-- [ ] 4. Replace @SQL/@NativeQuery user-facing note with a TODO comment
+- [x] 4. Replace @SQL/@NativeQuery user-facing note with a TODO comment
   - [Yoan L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472750545)
   - [FroMage L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474539795)
 - [ ] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
