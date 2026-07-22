@@ -59,7 +59,7 @@
   - [Yoan L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472657083)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474452646)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474454085)
-- [ ] 20. [DEFERRED] Infer @RunOnVertxContext from UniAsserter — needs Quarkus changes
+- [x] 20. ~~[DEFERRED] Infer @RunOnVertxContext from UniAsserter~~ SKIPPED — needs Quarkus changes
   - [Yoan L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3473021174)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474824829)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475376459)
