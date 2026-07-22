@@ -26,7 +26,7 @@
 - [x] 10. Rewrite managed-vs-stateless summary: remove N+1 mention, clarify
   - [Yoan L677](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472991574)
   - [FroMage L677](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474806993)
-- [ ] 11. Fix "Notice how the persistence concerns..." sentence
+- [x] 11. Fix "Notice how the persistence concerns..." sentence
   - [FroMage L560](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474767275)
 - [ ] 12. Dev Services TIP: move before `quarkus test` so readers know they don't need to install a DB
   - [Yoan L145](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472735988)
