@@ -11,7 +11,7 @@
 - [x] 4. Replace @SQL/@NativeQuery user-facing note with a TODO comment
   - [Yoan L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472750545)
   - [FroMage L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474539795)
-- [ ] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
+- [x] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
   - [FroMage L175](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474544870)
 - [ ] 6. Add footnote for the intentional `proce` typo so readers know it's deliberate
   - [FroMage L167](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474555076)
