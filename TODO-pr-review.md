@@ -63,7 +63,7 @@
   - [Yoan L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3473021174)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474824829)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475376459)
-- [ ] 21. [DEFERRED] FroMage's type renames (ManagedEntity, RecordEntity, StatelessEntity, etc.) — blocked on rename branch merge
+- [x] 21. ~~[DEFERRED] FroMage's type renames (ManagedEntity, RecordEntity, StatelessEntity, etc.)~~ SKIPPED — part of https://github.com/quarkusio/quarkus/pull/54610#issuecomment-5044282342 but needs a new Quarkus release to see them
   - [FroMage L283](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474636027)
   - [FroMage L288](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474637158)
   - [FroMage L372](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474682846)
