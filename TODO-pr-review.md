@@ -28,12 +28,12 @@
   - [FroMage L677](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474806993)
 - [x] 11. Fix "Notice how the persistence concerns..." sentence
   - [FroMage L560](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474767275)
-- [ ] 12. Dev Services TIP: move before `quarkus test` so readers know they don't need to install a DB
+- [x] 12. Dev Services TIP: move right after `quarkus test`
   - [Yoan L145](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472735988)
 
 ## Structural changes (apply to current file, then carry into split)
 
-- [ ] 13. Remove "About entity identifiers" section — replace with one-line link to reference docs
+- [x] 13. Remove "About entity identifiers" section — replaced with one-line link in callout <2>
   - [Yoan L467](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472901485)
   - [FroMage L467](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474730433)
 - [ ] 14. Remove the stateless NOTE box (L423-431) — move explanation to managed session section
