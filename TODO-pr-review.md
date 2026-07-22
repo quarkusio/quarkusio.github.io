@@ -49,13 +49,13 @@
   - [Yoan L556](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472927616)
   - [FroMage L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474745276)
   - [FroMage L547](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474763787)
-- [ ] 18. Remove the "lecture" paragraph about why SQL is limited (save for landing page)
+- [x] 18. ~~Remove the "lecture" paragraph about why SQL is limited~~ SKIPPED — will address in the split
   - [Yoan L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472821807)
   - [FroMage L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474578603)
 
 ## Deferred / not actionable in tutorial (track for later)
 
-- [ ] 19. [DEFERRED] Auto-add annotation processor via `quarkus ext add` — needs Quarkus changes
+- [x] 19. ~~[DEFERRED] Auto-add annotation processor via `quarkus ext add`~~ SKIPPED — needs Quarkus changes
   - [Yoan L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472657083)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474452646)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474454085)
