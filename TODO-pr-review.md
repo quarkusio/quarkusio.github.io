@@ -13,7 +13,7 @@
   - [FroMage L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474539795)
 - [x] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
   - [FroMage L175](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474544870)
-- [ ] 6. Add footnote for the intentional `proce` typo so readers know it's deliberate
+- [x] 6. ~~Add footnote for the intentional `proce` typo~~ SKIPPED — typo exercise was for the conference, will be removed in the split tutorials
   - [FroMage L167](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474555076)
 - [ ] 7. Fix @Query callout: "avoids the need to write what you select"
   - [FroMage L302](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474655464)
