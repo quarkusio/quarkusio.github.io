@@ -9,7 +9,7 @@ author: fnigro
 
 _"The first principle is that you must not fool yourself — and you are the easiest person to fool."_ (https://calteches.library.caltech.edu/51/2/CargoCult.htm[Richard Feynman, 1974])
 
-Our https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous article] dug into C2 compiler starvation: Spring's 100 platform threads on 4 cores were hogging all the CPU, leaving the JIT compiler unable to do its job. The measured throughput reflected half-baked code running at C1 tier, not the peak Spring could actually achieve.
+Our https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous article] dug into C2 compiler starvation: Spring's ~100 platform threads on 4 cores were hogging all the CPU, leaving the JIT compiler unable to do its job. The measured throughput reflected half-baked code running at C1 tier, not the peak Spring could actually achieve.
 
 That raised an uncomfortable question. If our benchmark was measuring Spring mid-compilation, were we measuring peak performance... or just punishing slow warmup?
 
@@ -19,29 +19,29 @@ If you're claiming to compare peak throughput, every runtime needs to have finis
 
 Our old warmup was a single 2-minute continuous blast followed by a 30-second cooldown and a 30-second measurement. Quarkus was done compiling in 60 seconds. Spring wasn't done when measurement began.
 
-That's a framework problem: Quarkus doesn't have it despite higher throughput, because its leaner request processing leaves CPU gaps for the compiler. Or as Mytkowicz et al. put it: we were https://dl.acm.org/doi/10.1145/1508244.1508275["producing wrong data without doing anything obviously wrong"]. But it's still our call to make sure the benchmark gives every runtime the best chance to show its peak.
+That's a framework problem: Quarkus doesn't have it despite higher throughput, because its leaner request processing leaves CPU gaps for the compiler. Or as Mytkowicz et al. put it: we were https://dl.acm.org/doi/10.1145/1508244.1508275["producing wrong data without doing anything obviously wrong"]. In production, nobody pauses traffic so the JIT can catch up — continuous load is the realistic scenario. But it's still our call to make sure the benchmark gives every runtime the best chance to show its peak.
 
 == The fix
 
 We can't just make the warmup longer. The whole point of the https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous analysis] was that C2 never gets CPU during continuous load. More time under load just means more time starved.
 
-The trick: **break the warmup into short bursts with cooldown gaps.** During each 15-second cooldown, the compiler gets the CPU all to itself and can drain its compilation queue. 10 cycles of load+cooldown, 5 minutes total, then measure.
+The trick: **break the warmup into short bursts with cooldown gaps.** During each 15-second cooldown, the 2 C2 compiler threads get full access to the 4 available cores and can drain the compilation queue. 10 cycles of load+cooldown, 5 minutes total, then measure.
 
 image::/assets/images/posts/fairness-in-benchmarking/warmup-tps-multicycle.png[Multi-cycle warmup: spring4-jvm and quarkus3-jvm]
 
-Quarkus peaks by cycle 2. Spring ramps through 5 cycles and stabilizes. By the time measurement starts, both are fully compiled.
+Quarkus peaks by cycle 2. Spring ramps through 5 cycles and stabilizes. By the time measurement starts, both are fully compiled. In cloud deployments with fewer cores, the starvation would be worse — reaching peak quickly vs. slowly translates directly to provisioning cost.
 
 The C2 compiler thread activity confirms it. Compare this to the https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous article's charts] where C2 was starved for the entire warmup:
 
 image::/assets/images/posts/fairness-in-benchmarking/c2-wait-multicycle.png[C2 compiler wait/usr with multi-cycle warmup]
 
-Both frameworks show near-zero C2 activity during the load test (rightmost region). The compiler is done. The details are in https://github.com/quarkusio/spring-quarkus-perf-comparison/pull/681[PR #681] (fixing https://github.com/quarkusio/spring-quarkus-perf-comparison/issues/633[issue #633]).
+Both frameworks show near-zero C2 activity during the load test (rightmost region). The compiler is done.
 
 == What changed
 
-Spring went from ~7,850 to ~8,500 TPS. Quarkus didn't move. The ratio narrowed from ~1.9x to ~1.7x.
+Spring went from ~7,850 to ~8,500 TPS — an ~8% improvement just from letting C2 finish its job. Quarkus held steady at ~14,800. The ratio narrowed from ~1.9x to ~1.7x.
 
-**The gap is real.** It just lost its warmup tax.
+**The performance gap is real, and Quarkus's lead remains definitive.** What we removed is the artificial penalty from measuring before Spring finished compiling.
 
 == A number hides a shape
 
@@ -63,11 +63,11 @@ image::/assets/images/posts/fairness-in-benchmarking/throughput-violin.png[Violi
 
 In a https://quarkus.io/blog/quarkus-insights-252-performance-engineering-lessons/[Quarkus Insights session with Holly Cummins], we discussed the value of having a noiseless benchmark: if the measurement is stable enough, you don't need statistics at all. A single number tells the story. When it doesn't, https://en.wikipedia.org/wiki/Violin_plot[violin plots] show what's really happening, but they add cognitive load. The goal is to make statistics unnecessary, not to add more of them.
 
-== Why does spring4-jvm still wobble?
+=== Why does spring4-jvm still wobble?
 
-This isn't a warmup problem anymore. Compilations are done. The wobble comes from how Spring's platform threads interact with the https://en.wikipedia.org/wiki/Completely_Fair_Scheduler[CFS scheduler] on the performance lab (RHEL 9.6, kernel 5.14).
+This isn't a warmup problem anymore. Compilations are done. The wobble comes from how Spring's ~100 platform threads interact with the https://en.wikipedia.org/wiki/Completely_Fair_Scheduler[CFS scheduler] on the performance lab (RHEL 9.6, kernel 5.14).
 
-Spring Boot uses HikariCP as its connection pool. When a thread returns a connection, HikariCP's https://github.com/brettwooldridge/HikariCP/blob/HikariCP-7.0.2/src/main/java/com/zaxxer/hikari/util/ConcurrentBag.java#L199[`ConcurrentBag.requite()`] calls `Thread.yield()` in a spin loop when a waiting borrower hasn't entered `poll()` yet (https://github.com/brettwooldridge/HikariCP/issues/2398[HikariCP #2398]). With 100 platform threads on 4 cores, this creates a storm of context switches that destabilizes throughput. Quarkus uses https://agroal.github.io/[Agroal] as its connection pool, which doesn't have this yield-spin pattern.
+Spring Boot's default connection pool has a yield-spin pattern that creates a storm of involuntary context switches when many platform threads contend on few cores (https://github.com/brettwooldridge/HikariCP/issues/2398[HikariCP #2398]). The effect is OS-scheduler-dependent: severe on CFS, invisible on EEVDF. Quarkus uses https://agroal.github.io/[Agroal], which doesn't have this pattern.
 
 [NOTE]
 ====
@@ -78,7 +78,7 @@ With virtual threads, `Thread.yield()` is handled by the JVM's virtual thread sc
 
 **Virtual threads stabilize Spring.** They collapse ~100 OS threads to a handful of carrier threads, where `Thread.yield()` is no longer the OS scheduler's responsibility. spring4-virtual reaches peak in 2 warmup cycles and delivers stable throughput.
 
-As shown in the https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous article], machines with the https://lwn.net/Articles/925371/[EEVDF scheduler] don't exhibit this problem.
+As discussed in the https://quarkus.io/blog/when-the-jit-cant-keep-up/[previous article], machines with the https://lwn.net/Articles/925371/[EEVDF scheduler] don't exhibit this problem.
 
 == We've done this before
 
@@ -86,10 +86,10 @@ This isn't the first time we've faced this dilemma. In https://github.com/quarku
 
 == Takeaways
 
+* **Even after giving Spring every advantage — multi-cycle warmup, full C2 compilation, peak conditions — Quarkus delivers 1.7x the throughput.** The gap narrowed from 1.9x, but the lead remains definitive.
 * **If the compiler never finishes, you're not measuring peak.** Continuous warmup starves C2 on thread-heavy runtimes. Break it into cycles. Let the compiler breathe.
-* **When your competitor looks slow, check your methodology before you celebrate.** We did. Spring gained ~650 TPS. The gap went from 1.9x to 1.7x. We sleep fine.
+* **When your competitor looks slow, check your methodology before you celebrate.** We did. Spring gained ~650 TPS. We sleep fine.
 * **A throughput number is a lossy compression of reality.** Quarkus draws a flat line. Spring wobbles. Same average, very different stories. Show the trace, not just the score.
-* **`Thread.yield()` is a syscall with opinions.** HikariCP's yield-spin creates involuntary context switch storms on CFS. Virtual threads sidestep it entirely. The scheduler you ship on matters.
 * **Fairness isn't charity, it's credibility.** A benchmark that flatters you by handicapping the other side is a benchmark nobody should trust.
 
 == Tools and data
