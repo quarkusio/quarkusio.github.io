@@ -42,7 +42,7 @@
 - [x] 15. Start entities section with PanacheEntity.Stateless from the beginning
   - [Yoan L367](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472887675)
   - [FroMage L360](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474673920)
-- [ ] 16. Shorten the stateless→managed comparison: replace long code walkthrough with pros/cons list
+- [x] 16. ~~Shorten the stateless→managed comparison~~ SKIPPED
   - [FroMage L602](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474781973)
 - [ ] 17. Fix lazy to-one association: either use to-many with join fetch, or use eager to-one with defaults
   - [Yoan L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472952664)
