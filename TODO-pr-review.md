@@ -17,7 +17,7 @@
   - [FroMage L167](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474555076)
 - [x] 7. Fix @Query callout: "avoids the need to write what you select"
   - [FroMage L302](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474655464)
-- [ ] 8. Fix "more powerful" → "convenient syntactical sugar" for WithId
+- [x] 8. Fix "more powerful" → shorthand for WithId
   - [Yoan L460](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472908527)
 - [ ] 9. Fix dirty-checking explanation: Quarkus uses bytecode enhancement, not comparison
   - [Yoan L674](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475210272)
