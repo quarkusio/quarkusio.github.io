@@ -36,7 +36,7 @@
 - [x] 13. Remove "About entity identifiers" section — replaced with one-line link in callout <2>
   - [Yoan L467](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472901485)
   - [FroMage L467](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474730433)
-- [ ] 14. Remove the stateless NOTE box (L423-431) — move explanation to managed session section
+- [x] 14. Remove "managed entities / detached / persisted" sentence from stateless NOTE box
   - [Yoan L456](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472894888)
   - [FroMage L456](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474718343)
 - [ ] 15. Start entities section with PanacheEntity from the beginning, don't introduce bare entity first then upgrade
