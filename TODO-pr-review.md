@@ -39,7 +39,7 @@
 - [x] 14. Remove "managed entities / detached / persisted" sentence from stateless NOTE box
   - [Yoan L456](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472894888)
   - [FroMage L456](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474718343)
-- [ ] 15. Start entities section with PanacheEntity from the beginning, don't introduce bare entity first then upgrade
+- [x] 15. Start entities section with PanacheEntity.Stateless from the beginning
   - [Yoan L367](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472887675)
   - [FroMage L360](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474673920)
 - [ ] 16. Shorten the stateless→managed comparison: replace long code walkthrough with pros/cons list
