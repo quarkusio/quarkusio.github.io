@@ -23,7 +23,7 @@
   - [Yoan L674](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475210272)
   - [FroMage L674](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474796936)
   - [FroMage L674](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475367735)
-- [ ] 10. Rewrite managed-vs-stateless summary: remove N+1 mention, clarify
+- [x] 10. Rewrite managed-vs-stateless summary: remove N+1 mention, clarify
   - [Yoan L677](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472991574)
   - [FroMage L677](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474806993)
 - [ ] 11. Fix "Notice how the persistence concerns..." sentence
