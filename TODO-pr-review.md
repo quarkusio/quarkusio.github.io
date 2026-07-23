@@ -44,7 +44,7 @@
   - [FroMage L360](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474673920)
 - [ ] 16. Shorten the stateless→managed comparison
   - [FroMage L602](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474781973)
-- [ ] 17. Fix lazy to-one association — will address after the split
+- [x] 17. Fix lazy to-one association — changed to @OneToMany Publisher→Books with findByPublisher
   - [Yoan L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472952664)
   - [Yoan L556](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472927616)
   - [FroMage L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474745276)

@@ -201,10 +201,10 @@ See the xref:quarkus-data-hibernate.adoc#_about_entity_identifiers[reference gui
 [[managed-session]]
 == Managed session
 
-In our bookstore we want to run a promotional sale: apply a discount to all books in a given country, but only if the publisher allows it.
-Some publishers offer discounts, others don't.
+In our bookstore we want to run a promotional sale: apply a discount to all books from a given publisher, but only if the publisher allows it.
+Some publishers offer discounts while others don't.
 
-Let's create a `Publisher` entity.
+Let's create a `Publisher` entity with a one-to-many relationship to `Book`.
 
 [source,java]
 ----
@@ -212,20 +212,29 @@ package org.acme;
 
 import io.quarkus.data.hibernate.RecordEntity;
 import io.quarkus.data.hibernate.RecordRepository;
+import jakarta.data.repository.Find;
 import jakarta.persistence.Entity;
+import jakarta.persistence.OneToMany;
+
+import java.util.List;
 
 @Entity
 public class Publisher extends RecordEntity {
     public String name;
     public String country;
     public boolean allowsDiscounts;
+    @OneToMany(mappedBy = "publisher") // <1>
+    public List<Book> books;
 
     public interface Repo extends RecordRepository<Publisher> {
+        @Find
+        List<Publisher> findByCountry(String country);
     }
 }
 ----
+<1> A publisher has many books. `mappedBy` needs to point to the equivalent `@ManyToOne` association.
 
-And add a `publisher` relationship to `Book`, plus a stateless repository and a query to find books by publisher country:
+And add a `publisher` field to `Book`:
 
 [source,java]
 ----
@@ -234,22 +243,22 @@ public class Book extends RecordEntity {
     public String title;
     public String isbn;
     public BigDecimal price;
-    @ManyToOne(fetch = FetchType.LAZY) // <1>
+    @ManyToOne // <1>
     public Publisher publisher;
 
     public interface Repo extends RecordRepository<Book> {
         @Find
         List<Book> findByTitle(String title);
 
+        @Find
+        List<Book> findByPublisher(Publisher publisher);
+
         @Query("where price < :maxPrice order by title")
         List<Book> cheaperThan(BigDecimal maxPrice);
-
-        @Query("where publisher.country = :country")
-        List<Book> findByPublisherCountry(String country);
     }
 }
 ----
-<1> We use `FetchType.LAZY` so that loading a book doesn't automatically join and fetch its publisher.
+<1> Each book belongs to one publisher. This is the `publisher` string we used in `mappedBy` before.
 
 Now let's implement our discount service:
 
@@ -259,37 +268,39 @@ Now let's implement our discount service:
 public class SalesService {
 
     @Inject
-    Book.Repo bookRepo;
+    Publisher.Repo publisherRepo;
 
     @Inject
-    Publisher.Repo publisherRepo;
+    Book.Repo bookRepo;
 
     @Transactional
     public void applyCountrySale(String country, BigDecimal discountPercent) {
-        List<Book> books = bookRepo.findByPublisherCountry(country);
-        List<Book> modified = new ArrayList<>(); // <1>
+        List<Publisher> publishers = publisherRepo.findByCountry(country);
         BigDecimal factor = BigDecimal.ONE.subtract(discountPercent.divide(BigDecimal.valueOf(100)));
-        for (Book book : books) {
-            Publisher publisher = publisherRepo.findById(book.publisher.id); // <2>
+        List<Book> modified = new ArrayList<>(); // <1>
+        for (Publisher publisher : publishers) {
             if (publisher.allowsDiscounts) {
-                book.price = book.price.multiply(factor).setScale(2, RoundingMode.HALF_UP);
-                modified.add(book); // <3>
+                List<Book> books = bookRepo.findByPublisher(publisher); // <2>
+                for (Book book : books) {
+                    book.price = book.price.multiply(factor).setScale(2, RoundingMode.HALF_UP);
+                    modified.add(book); // <3>
+                }
             }
         }
         // Other business logic that modifies books i.e. applying loyalty points, rounding prices ...
         // Since we want to update them only once, we collect them to avoid multiple updates within the loops
         for (Book book : modified) {
-            bookRepo.update(book); // <4>
+            book.update(); // <4>
         }
     }
 }
 ----
-<1> We collect the books we modify so we can update them all at the end, after all business logic has run. Updating inside the body will result in multiple SQL update statements.
-<2> In a stateless session, lazy associations are not fetched automatically. We must load the publisher explicitly. A join fetch query in the Book repository could be used instead of a separate fetch, but for the scope of the tutorial we're not introducing join fetches.
+<1> We collect the books we modify so we can update them all at the end.
+<2> In a stateless session, to-many associations are not fetched automatically. We load the books explicitly via a repository query. In Hibernate, these are called "lazy associations".
 <3> We add the book to our list of modified objects.
 <4> We update once at the end, after all modifications are done.
 
-Notice how the persistence concerns, tracking which objects changed, fetching lazy associations, explicitly calling `update()`, are mixed in with the business logic. This method is becoming complex.
+Notice how the persistence concerns, tracking which objects changed, loading associations explicitly, calling `update()`, are mixed in with the business logic. This method is becoming complex.
 
 Let's write a test to verify it works:
 
@@ -386,7 +397,24 @@ public class SalesServiceTest {
 This works, but it can be simpler.
 Quarkus Data Hibernate supports a "managed persistence context" that tracks objects for you: Hibernate monitors every entity it loads, detects which fields changed, and generates the minimal SQL needed to keep entities synchronized with the database at commit time. You don't need to track dirty objects, and lazy associations are fetched automatically when you access them.
 
-Switch `Book` to use `ManagedEntity` and a managed repository:
+Switch `Book` and `Publisher` to use `ManagedEntity` and managed repositories:
+
+[source,java]
+----
+@Entity
+public class Publisher extends ManagedEntity { // <1>
+    public String name;
+    public String country;
+    public boolean allowsDiscounts;
+    @OneToMany(mappedBy = "publisher")
+    public List<Book> books;
+
+    public interface Repo extends ManagedRepository<Publisher> { // <2>
+        @Find
+        List<Publisher> findByCountry(String country);
+    }
+}
+----
 
 [source,java]
 ----
@@ -395,7 +423,7 @@ public class Book extends ManagedEntity { // <1>
     public String title;
     public String isbn;
     public BigDecimal price;
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne
     public Publisher publisher;
 
     public interface Repo extends ManagedRepository<Book> { // <2>
@@ -404,16 +432,13 @@ public class Book extends ManagedEntity { // <1>
 
         @Query("where price < :maxPrice order by title")
         List<Book> cheaperThan(BigDecimal maxPrice);
-
-        @Query("where publisher.country = :country")
-        List<Book> findByPublisherCountry(String country);
     }
 }
 ----
 <1> `ManagedEntity` replaces `RecordEntity`. This tells Hibernate to track this entity in its persistence context.
-<2> The repository uses `ManagedRepository<Book>` instead of `RecordRepository`.
+<2> The repository uses `ManagedRepository` instead of `RecordRepository`.
 
-Since `Book` is now a managed entity, `insert()` is no longer available. You'll get some compilation errors because `insert()` is not available anymore. Use `persist()` instead:
+Since the entities are now managed, `insert()` is no longer available. You'll get some compilation errors. Use `persist()` instead:
 
 [source,java]
 ----
@@ -440,21 +465,23 @@ Now the service becomes pure business logic:
 public class SalesService {
 
     @Inject
-    Book.Repo bookRepo;
+    Publisher.Repo publisherRepo;
 
     @Transactional
     public void applyCountrySale(String country, BigDecimal discountPercent) {
         BigDecimal factor = BigDecimal.ONE.subtract(discountPercent.divide(BigDecimal.valueOf(100)));
-        List<Book> books = bookRepo.findByPublisherCountry(country);
-        for (Book book : books) {
-            if (book.publisher.allowsDiscounts) { // <1>
-                book.price = book.price.multiply(factor).setScale(2, RoundingMode.HALF_UP); // <2>
+        List<Publisher> publishers = publisherRepo.findByCountry(country);
+        for (Publisher publisher : publishers) {
+            if (publisher.allowsDiscounts) {
+                for (Book book : publisher.books) { // <1>
+                    book.price = book.price.multiply(factor).setScale(2, RoundingMode.HALF_UP); // <2>
+                }
             }
         }
     } // <3>
 }
 ----
-<1> Accessing `book.publisher` triggers a lazy fetch: Hibernate loads the publisher from the database automatically with a query.
+<1> Accessing `publisher.books` triggers a lazy fetch: Hibernate loads the books from the database automatically.
 <2> We just set the field. No need to call `update()`.
 <3> When the `@Transactional` method returns, Hibernate automatically generates the SQL needed to keep the database in sync with the objects in memory. Only the books that were actually modified get an `UPDATE` statement.
 
@@ -490,7 +517,7 @@ public class Book extends ManagedEntity {
     public String title;
     public String isbn;
     public BigDecimal price;
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne
     public Publisher publisher;
 
     public interface Repo extends ManagedRepository<Book> { // <1>
@@ -499,9 +526,6 @@ public class Book extends ManagedEntity {
 
         @Query("where price < :maxPrice order by title")
         List<Book> cheaperThan(BigDecimal maxPrice);
-
-        @Query("where publisher.country = :country")
-        List<Book> findByPublisherCountry(String country);
     }
 
     public interface ReactiveRepo extends ManagedRepository.Reactive<Book> { // <2>
