@@ -16,7 +16,9 @@ include::{includes}/extension-status.adoc[]
 == Overview
 
 Database access is something almost every application needs, whether it's persisting data or querying tables.
-In this guide we start from scratch and build up a repository for an online bookstore, going from your first SQL query to compile-time validated repositories and reactive database access. By the end you'll have a solid understanding of how data access works in Quarkus.
+In this guide we explain how Quarkus Data provides database access with entity mapping, compile-time validated repositories, and reactive database access.
+
+If you're looking for raw SQL queries without entity mapping, see the xref:quarkus-data-hibernate-sql.adoc[Native SQL Queries with Quarkus Data Hibernate] guide instead.
 
 == Prerequisites
 
@@ -32,7 +34,6 @@ In this tutorial, we won't deal with the frontend and the user interface, we jus
 We'll start this tutorial by creating a new empty Quarkus application:
 
 :create-app-artifact-id: quarkus-data-tutorial
-:create-app-platform-version: 3.37.0.CR1
 include::{includes}/devtools/create-app.adoc[]
 
 Let's start by importing the extensions:
@@ -63,182 +64,9 @@ You don't need to restart Quarkus testing, it will re-run tests continuously aft
 
 TIP: JDBC connections are called "Data Sources" in Quarkus. In dev mode, if you don't configure a datasource, Quarkus will automatically start a PostgreSQL container for you via Dev Services. This means you can run `quarkus dev` and start coding without installing or configuring a database. See the xref:datasource.adoc[Datasource guide] for more details.
 
-Now create an `import.sql` file in `src/main/resources/` to prepopulate your database. This will be useful for this tutorial:
-
-[source,bash]
-----
-CREATE SEQUENCE IF NOT EXISTS Publisher_SEQ START WITH 5 INCREMENT BY 50;
-
-CREATE TABLE IF NOT EXISTS Publisher (
-    id BIGINT PRIMARY KEY DEFAULT nextval('Publisher_SEQ'),
-    name VARCHAR(255),
-    country VARCHAR(10),
-    allowsDiscounts BOOLEAN
-);
-
-CREATE SEQUENCE IF NOT EXISTS Book_SEQ START WITH 9 INCREMENT BY 50;
-
-CREATE TABLE IF NOT EXISTS Book (
-    id BIGINT PRIMARY KEY DEFAULT nextval('Book_SEQ'),
-    title VARCHAR(255),
-    isbn VARCHAR(20),
-    price NUMERIC(10,2),
-    publisher_id BIGINT REFERENCES Publisher(id)
-);
-
-DELETE FROM Book;
-DELETE FROM Publisher;
-
-INSERT INTO Publisher (id, name, country, allowsDiscounts) VALUES (1, 'Addison-Wesley', 'US', true);
-INSERT INTO Publisher (id, name, country, allowsDiscounts) VALUES (2, 'Prentice Hall', 'US', false);
-INSERT INTO Publisher (id, name, country, allowsDiscounts) VALUES (3, 'O''Reilly', 'UK', true);
-INSERT INTO Publisher (id, name, country, allowsDiscounts) VALUES (4, 'Manning', 'UK', false);
-
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (1, 'Effective Java', '978-0134685991', 45.00, 1);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (2, 'Clean Code', '978-0132350884', 40.00, 1);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (3, 'Domain-Driven Design', '978-0321125217', 55.00, 2);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (4, 'Refactoring', '978-0134757599', 50.00, 2);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (5, 'The Pragmatic Programmer', '978-0135957059', 42.00, 3);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (6, 'Head First Design Patterns', '978-0596007126', 38.00, 3);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (7, 'Java Concurrency in Practice', '978-0321349606', 48.00, 4);
-INSERT INTO Book (id, title, isbn, price, publisher_id) VALUES (8, 'Kotlin in Action', '978-1617293290', 44.00, 4);
-----
-
-This SQL script creates sequences for ID generation, the `Publisher` and `Book` tables, and inserts sample data.
-Each book is linked to a publisher.
-The sequences start past the imported data so that new IDs don't collide.
-While developing, Quarkus imports this SQL file automatically at startup, so in this tutorial we have something to start with.
-
-Quarkus Data Hibernate can handle the database schema for you.
-Since our `import.sql` already handles the full schema creation, let's tell Hibernate not to manage it and tell Dev Services to run our script when the database container starts.
-Add this to `src/main/resources/application.properties`:
-
-[source,properties]
-----
-quarkus.hibernate-orm.schema-management.strategy=none
-quarkus.datasource.devservices.init-script-path=import.sql
-----
-
-== Simple SQL query
-
-The simplest thing you can do to access your database is to write native SQL queries directly. Create a file called `BookQueries.java` in the package `org.acme`:
-
-[source,java]
-----
-package org.acme;
-
-import org.hibernate.annotations.processing.SQL;
-
-import java.math.BigDecimal;
-import java.util.List;
-
-public interface BookQueries { // <1>
-
-    record BookRecord(Long id, String title, String isbn, BigDecimal price) {} // <2>
-
-    @SQL("SELECT id, title, isbn, price FROM Book WHERE title = :title") // <3>
-    List<BookRecord> findByTitle(String title); // <4>
-
-    @SQL("SELECT id, title, isbn, price FROM Book WHERE proce < :maxPrice")
-    List<BookRecord> cheaperThan(BigDecimal maxPrice);
-}
-----
-<1> A repository interface that groups all your query methods for books. The annotation processor generates the implementation for you.
-<2> A Java record that maps to the columns returned by the SQL query. Each field name must match a column name in the result set.
-<3> `@SQL` sends raw SQL to the database. The `:title` syntax is a named parameter, it avoids SQL injection attacks.
-// TODO Replace @SQL with Jakarta Persistence 4.0's standard https://github.com/jakartaee/persistence/pull/992[`@NativeQuery`] equivalent.
-<4> The method signature defines the parameters.
-
-If SQL is enough for you, this is a perfectly valid use case of `quarkus-data-hibernate`.
-
-We can now create a test in `src/test/java/org/acme/BookQueriesTest.java` that will check everything is working correctly:
-
-[source,java]
-----
-package org.acme;
-
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-@QuarkusTest // <1>
-public class BookQueriesTest {
-
-    @Inject
-    BookQueries bookQueries; // <2>
-
-    @Test
-    void shouldFindBookByTitle() {
-        List<BookQueries.BookRecord> books = bookQueries.findByTitle("Effective Java"); // <3>
-        assertEquals(1, books.size());
-        assertEquals("Effective Java", books.getFirst().title());
-    }
-
-    @Test
-    void shouldReturnEmptyListForUnknownTitle() {
-        List<BookQueries.BookRecord> books = bookQueries.findByTitle("Unknown Book");
-        assertTrue(books.isEmpty());
-    }
-}
-----
-<1> `@QuarkusTest` starts the full Quarkus application for the test, including the database and Dev Services. The data from `import.sql` is loaded automatically.
-<2> We inject our `BookQueries` just like we would in application code.
-<3> We query for a book we know exists in `import.sql` and verify it's returned.
-
-If you have `quarkus test` running in another terminal, this test will run automatically as soon as you save the file.
-
-Even though raw SQL is a perfectly valid approach, it has a few problems.
-First of all, type safety: nobody is going to validate your queries at compile time.
-
-Let's add a test for `cheaperThan` to our `BookQueriesTest`:
-
-[source,java]
-----
-@Test
-void shouldFindCheaperBooks() {
-    List<BookQueries.BookRecord> books = bookQueries.cheaperThan(BigDecimal.valueOf(45));
-    assertEquals(4, books.size()); // Clean Code (40), Head First Design Patterns (38), The Pragmatic Programmer (42), Kotlin in Action (44)
-}
-----
-
-The console in `quarkus test` will show
-
-[source,shell]
-----
-org.hibernate.exception.SQLGrammarException: JDBC exception executing SQL [ERROR: column "proce" does not exist
-
-Hint: Perhaps you meant to reference the column "book.price".
-
-Position: 26] [
-
-SELECT id, title, isbn, price FROM Book WHERE proce < ?
-----
-
-This test will fail at runtime with a SQL error because the column `proce` doesn't exist.
-Did you initially spot the typo in `cheaperThan`? The column is called `price`, not `proce`, but the compiler won't tell you.
-You're probably going to have integration tests to catch that, but it would be faster if the compiler could validate it earlier.
-
-You can fix the test by modifying the `BookQueries.java` file:
-
-[source,java]
-----
-    @SQL("SELECT id, title, isbn, price FROM Book WHERE price < :maxPrice") // <1>
-    List<BookRecord> cheaperThan(BigDecimal maxPrice);
-----
-<1> Change `proce` to `price` here
-
-and then all the tests will now pass.
-
-Writing SQL by hand makes sense for very simple scenarios, or when you need database-specific features such as window functions, recursive functions and similar advanced patterns.
-
 == Entities and repositories
 
-We can have a faster development model with the help of the compiler and avoid all these problems by mapping our table to a Java class and defining a repository for it.
-We now introduce the concept of an Entity: a Java class that maps to a database table.
+We start by mapping our database table to a Java class and defining a repository for it. A Java class that maps to a database table is called an Entity.
 
 Create a file called `Book.java` in the package `org.acme`:
 
@@ -276,48 +104,7 @@ public class Book extends RecordEntity { // <2>
 <5> `@Find` tells Quarkus Data Hibernate to generate a query based on the method's parameter names. `findByTitle(String title)` becomes a query that matches the `title` field on `Book`. Parameters are inferred from the method signature.
 <6> `@Query` lets you write an HQL fragment when you need more control. It avoids the need to write what you select. The entity type is inferred from the return type `List<Book>`.
 
-Now let's write a test to check that the repository works. Create `src/test/java/org/acme/BookRepositoryTest.java`:
-
-[source,java]
-----
-package org.acme;
-
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.Test;
-
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-@QuarkusTest
-public class BookRepositoryTest {
-
-    @Inject
-    Book.Repo bookRepo;
-
-    @Test
-    void shouldFindBookByTitle() {
-        List<Book> books = bookRepo.findByTitle("Effective Java");
-        assertEquals(1, books.size());
-        assertEquals("Effective Java", books.getFirst().title);
-    }
-
-    @Test
-    void shouldFindCheaperBooks() {
-        List<Book> books = bookRepo.cheaperThan(BigDecimal.valueOf(45));
-        assertEquals(4, books.size()); // Clean Code (40), Head First Design Patterns (38), The Pragmatic Programmer (42), Kotlin in Action (44)
-    }
-
-    @Test
-    void shouldReturnEmptyListForUnknownTitle() {
-        List<Book> books = bookRepo.findByTitle("Unknown Book");
-        assertTrue(books.isEmpty());
-    }
-}
-----
-
-Now if you make the same kind of typo we had earlier, the build fails. Try changing the parameter name to:
+If you make a typo in a parameter name, the build fails. Try changing the parameter name to:
 
 [source,java]
 ----
@@ -336,10 +123,7 @@ Get the parameter back to the correct name so that we can proceed further.
 
 == Creating new entities
 
-So far we've been reading data, but our bookstore is crowdsourced: users can add books they want to share.
-We need to persist new books to the database.
-
-Let's write a service that lets users contribute a new book:
+Let's write a service to create a new book:
 
 [source,java]
 ----
@@ -385,12 +169,13 @@ public class CrowdSourceServiceTest {
 
     @Test
     @TestTransaction // <1>
-    void shouldInsertNewBook() {
-        crowdSourceService.contributeNewBook("New Book", "978-1111111111", BigDecimal.valueOf(29.99));
-        List<Book> books = bookRepo.findByTitle("New Book");
-        assertEquals(1, books.size());
-        assertEquals("978-1111111111", books.getFirst().isbn);
-        assertEquals(BigDecimal.valueOf(29.99), books.getFirst().price);
+    void shouldInsertAndQueryBooks() {
+        crowdSourceService.contributeNewBook("Effective Java", "978-0134685991", BigDecimal.valueOf(45.00));
+        crowdSourceService.contributeNewBook("Clean Code", "978-0132350884", BigDecimal.valueOf(40.00));
+
+        assertEquals(1, bookRepo.findByTitle("Effective Java").size());
+        assertEquals(1, bookRepo.cheaperThan(BigDecimal.valueOf(42)).size());
+        assertTrue(bookRepo.findByTitle("Unknown Book").isEmpty());
     }
 }
 ----
@@ -419,7 +204,7 @@ See the xref:quarkus-data-hibernate.adoc#_about_entity_identifiers[reference gui
 In our bookstore we want to run a promotional sale: apply a discount to all books in a given country, but only if the publisher allows it.
 Some publishers offer discounts, others don't.
 
-Our database already has publishers (we set them up in `import.sql`), but we haven't mapped them as entities yet. Let's do that now. Create `Publisher.java`:
+Let's create a `Publisher` entity.
 
 [source,java]
 ----
@@ -512,10 +297,14 @@ Let's write a test to verify it works:
 ----
 package org.acme;
 
-import io.quarkus.test.TestTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -528,8 +317,58 @@ public class SalesServiceTest {
     @Inject
     Book.Repo bookRepo;
 
+    @BeforeEach
+    @Transactional
+    void setUp() {
+        Publisher addisonWesley = new Publisher();
+        addisonWesley.name = "Addison-Wesley";
+        addisonWesley.country = "US";
+        addisonWesley.allowsDiscounts = true;
+        addisonWesley.insert();
+
+        Publisher prenticeHall = new Publisher();
+        prenticeHall.name = "Prentice Hall";
+        prenticeHall.country = "US";
+        prenticeHall.allowsDiscounts = false;
+        prenticeHall.insert();
+
+        Book effectiveJava = new Book();
+        effectiveJava.title = "Effective Java";
+        effectiveJava.isbn = "978-0134685991";
+        effectiveJava.price = new BigDecimal("45.00");
+        effectiveJava.publisher = addisonWesley;
+        effectiveJava.insert();
+
+        Book cleanCode = new Book();
+        cleanCode.title = "Clean Code";
+        cleanCode.isbn = "978-0132350884";
+        cleanCode.price = new BigDecimal("40.00");
+        cleanCode.publisher = addisonWesley;
+        cleanCode.insert();
+
+        Book ddd = new Book();
+        ddd.title = "Domain-Driven Design";
+        ddd.isbn = "978-0321125217";
+        ddd.price = new BigDecimal("55.00");
+        ddd.publisher = prenticeHall;
+        ddd.insert();
+
+        Book refactoring = new Book();
+        refactoring.title = "Refactoring";
+        refactoring.isbn = "978-0134757599";
+        refactoring.price = new BigDecimal("50.00");
+        refactoring.publisher = prenticeHall;
+        refactoring.insert();
+    }
+
+    @AfterEach
+    @Transactional
+    void tearDown() {
+        bookRepo.deleteAll();
+    }
+
     @Test
-    @TestTransaction // <1>
+    @Transactional
     void shouldApplySaleOnlyToPublishersThatAllowDiscounts() {
         salesService.applyCountrySale("US", BigDecimal.valueOf(10));
 
@@ -543,7 +382,6 @@ public class SalesServiceTest {
     }
 }
 ----
-<1> Rolls back the discounted prices after the test, so other tests and re-runs always see the original data from `import.sql`.
 
 This works, but it can be simpler.
 Quarkus Data Hibernate supports a "managed persistence context" that tracks objects for you: Hibernate monitors every entity it loads, detects which fields changed, and generates the minimal SQL needed to keep entities synchronized with the database at commit time. You don't need to track dirty objects, and lazy associations are fetched automatically when you access them.
@@ -575,7 +413,7 @@ public class Book extends ManagedEntity { // <1>
 <1> `ManagedEntity` replaces `RecordEntity`. This tells Hibernate to track this entity in its persistence context.
 <2> The repository uses `ManagedRepository<Book>` instead of `RecordRepository`.
 
-Since `Book` is now a managed entity, `insert()` is no longer available. Update `CrowdSourceService` to use `persist()` instead:
+Since `Book` is now a managed entity, `insert()` is no longer available. You'll get some compilation errors because `insert()` is not available anymore. Use `persist()` instead:
 
 [source,java]
 ----
@@ -592,7 +430,7 @@ public class CrowdSourceService {
     }
 }
 ----
-<1> `persist()` replaces `insert()`. Unlike `insert()`, it doesn't execute SQL immediately, Hibernate will flush the change when the transaction commits.
+<1> `persist()` replaces `insert()`. Unlike `insert()`, it doesn't execute SQL immediately, Hibernate will flush the changes automatically. You don't need to worry about when SQL is sent to the database.
 
 Now the service becomes pure business logic:
 
@@ -701,6 +539,8 @@ import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
@@ -712,8 +552,14 @@ public class ReactiveBookRepositoryTest {
     @Test
     @RunOnVertxContext // <1>
     @TestReactiveTransaction // <2>
-    void shouldFindBookByTitleReactively(UniAsserter asserter) {
-        asserter.assertThat( // <3>
+    void shouldPersistAndFindReactively(UniAsserter asserter) {
+        Book book = new Book();
+        book.title = "Effective Java";
+        book.isbn = "978-0134685991";
+        book.price = BigDecimal.valueOf(45.00);
+
+        asserter.execute(() -> reactiveBookRepo.persist(book)); // <3>
+        asserter.assertThat( // <4>
             () -> reactiveBookRepo.findByTitle("Effective Java"),
             books -> {
                 assertEquals(1, books.size());
@@ -721,21 +567,12 @@ public class ReactiveBookRepositoryTest {
             }
         );
     }
-
-    @Test
-    @RunOnVertxContext
-    @TestReactiveTransaction
-    void shouldReturnEmptyListForUnknownTitleReactively(UniAsserter asserter) {
-        asserter.assertThat(
-            () -> reactiveBookRepo.findByTitle("Unknown Book"),
-            books -> assertTrue(books.isEmpty())
-        );
-    }
 }
 ----
 <1> `@RunOnVertxContext` ensures the test runs on the Vert.x event loop, which is required for reactive database access.
 <2> `@TestReactiveTransaction` opens a reactive session and transaction for the test, and rolls back at the end.
-<3> `UniAsserter` lets you chain reactive assertions without blocking. The lambda passed to `assertThat` returns a `Uni`, and the second lambda verifies the result.
+<3> `UniAsserter.execute()` is a convenient method to execute and wait for the reactive method to complete.
+<4> `UniAsserter.assertThat()` lets you test reactive code by providing an assertion as the second parameter.
 
 For the full details on reactive sessions, stateless reactive, and combining blocking and reactive code, see the xref:quarkus-data-hibernate.adoc#_let_s_get_reactive[reference guide].
 
@@ -743,7 +580,6 @@ For the full details on reactive sessions, stateless reactive, and combining blo
 
 In this guide you went from an empty project to a working database application:
 
-- You started with raw SQL queries using `@SQL` and saw that typos in SQL are only caught at runtime.
 - You introduced entities and repositories with compile-time validation via the Hibernate annotation processor.
 - You used `RecordEntity` for explicit insert/update/delete operations and saw how persistence logic gets mixed in with business logic.
 - You switched to `ManagedEntity` for automatic dirty tracking and lazy loading, letting you write pure business logic while Hibernate handles the persistence.

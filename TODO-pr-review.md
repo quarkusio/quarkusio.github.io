@@ -2,7 +2,7 @@
 
 ## Simple text fixes (apply to current file first, before split)
 
-- [x] 1. ~~Remove hardcoded version 3.37.0.CR1 from create-app~~ SKIPPED — version will disappear in new split tutorials
+- [x] 1. Remove hardcoded version 3.37.0.CR1 from create-app
   - [FroMage L38](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474324243)
 - [x] 2. Remove `target/generated-sources/annotations/` path — not accurate for Gradle
   - [Yoan L57](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472630195)
@@ -13,7 +13,7 @@
   - [FroMage L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474539795)
 - [x] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
   - [FroMage L175](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474544870)
-- [x] 6. ~~Add footnote for the intentional `proce` typo~~ SKIPPED — typo exercise was for the conference, will be removed in the split tutorials
+- [ ] 6. Add footnote for the intentional `proce` typo — typo exercise was for the conference, will be removed in the split tutorials
   - [FroMage L167](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474555076)
 - [x] 7. Fix @Query callout: "avoids the need to write what you select"
   - [FroMage L302](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474655464)
@@ -42,24 +42,24 @@
 - [x] 15. Start entities section with PanacheEntity.Stateless from the beginning
   - [Yoan L367](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472887675)
   - [FroMage L360](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474673920)
-- [x] 16. ~~Shorten the stateless→managed comparison~~ SKIPPED
+- [ ] 16. Shorten the stateless→managed comparison
   - [FroMage L602](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474781973)
-- [x] 17. ~~Fix lazy to-one association~~ SKIPPED — will address after the split
+- [ ] 17. Fix lazy to-one association — will address after the split
   - [Yoan L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472952664)
   - [Yoan L556](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472927616)
   - [FroMage L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474745276)
   - [FroMage L547](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474763787)
-- [x] 18. ~~Remove the "lecture" paragraph about why SQL is limited~~ SKIPPED — will address in the split
+- [ ] 18. Remove the "lecture" paragraph about why SQL is limited — will address in the split
   - [Yoan L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472821807)
   - [FroMage L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474578603)
 
 ## Deferred / not actionable in tutorial (track for later)
 
-- [x] 19. ~~[DEFERRED] Auto-add annotation processor via `quarkus ext add`~~ SKIPPED — needs Quarkus changes
+- [ ] 19. [DEFERRED] Auto-add annotation processor via `quarkus ext add` — needs Quarkus changes
   - [Yoan L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472657083)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474452646)
   - [FroMage L59](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474454085)
-- [x] 20. ~~[DEFERRED] Infer @RunOnVertxContext from UniAsserter~~ SKIPPED — needs Quarkus changes
+- [ ] 20. [DEFERRED] Infer @RunOnVertxContext from UniAsserter — needs Quarkus changes
   - [Yoan L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3473021174)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474824829)
   - [FroMage L789](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3475376459)
@@ -81,10 +81,10 @@
 
 ## Final: Split into two tutorials
 
-- [ ] 22. Split current tutorial into:
+- [x] 22. Split current tutorial into:
   - **quarkus-data-hibernate-getting-started.adoc** — Entity mapping, repositories, stateless vs managed, reactive
   - **quarkus-data-hibernate-sql.adoc** — Pure SQL queries with @SQL, records, no entities
-- [ ] 23. Add cross-links between the two tutorials
+- [x] 23. Add cross-links between the two tutorials
   - [FroMage L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474578603)
 - [ ] 24. Close PR #2784, open new PR(s) with the split tutorials
 - [ ] 25. Add a section on how to navigate to generated files, for both Maven and Gradle
