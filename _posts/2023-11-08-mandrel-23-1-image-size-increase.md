@@ -274,19 +274,19 @@ To install JMC one may use `sdk install jmc`.
 
 After starting JMC we navigate to `File->Open` and select the heap dumps we just generated.
 
-![JMC File -> Open](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-file-open.png)
+![JMC File -> Open](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-file-open.webp)
 
 Once the heap dumps are loaded we click on the `byte[]` class to filter the results and focus on the objects of this type.
 
-![JMC focus on byte[] for 23.1](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-1.png)
+![JMC focus on byte[] for 23.1](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-1.webp)
 
 At this point on the right side of the window we can see the referrers sorted by the total size of the byte arrays they reference.
 
-![JMC focus on byte[] for 23.1](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-1-2.png)
+![JMC focus on byte[] for 23.1](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-1-2.webp)
 
 We observe that the majority of the byte arrays when using Mandrel 23.1 is referenced by `com.oracle.svm.core.code.ImageCodeInfo.codeInfoEncodings` (12%) and `com.oracle.svm.core.code.ImageCodeInfo.frameInfoEncodings` (11%), while when using Mandrerl 23.0 the corresponding percentages are 12% and 6%.
 
-![JMC focus on byte[] for 23.0](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-0-2.png)
+![JMC focus on byte[] for 23.0](/assets/images/posts/mandrel-23-1-image-size-increase/jmc-focus-byte-23-0-2.webp)
 
 We also observe that when using Mandrel 23.1 the size of `com.oracle.svm.core.code.ImageCodeInfo.frameInfoEncodings` is ~2.5MB larger than the corresponding size when using Mandrel 23.0.
 

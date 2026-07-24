@@ -13,7 +13,7 @@ Usage analytics (telemetry collection) is invaluable for the Quarkus team and co
 
 In order to get this information, beginning in Quarkus 3.2, when you run Quarkus the first time in dev mode (`quarkus dev`, `mvn quarkus:dev`, etc.) you get asked if you agree to contribute anonymous build data to the Quarkus community.
 
-![/assets/images/usage-prompt-arrows.png](/assets/images/usage-prompt-arrows.png)
+![/assets/images/usage-prompt-arrows.png](/assets/images/usage-prompt-arrows.webp)
 
 By answering **"Yes"**, when you perform a quarkus build, anonymized data is sent to gather usage statistics on how Quarkus is being used and adopted.
 
