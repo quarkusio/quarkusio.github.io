@@ -13,7 +13,7 @@
   - [FroMage L174](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474539795)
 - [x] 5. Remove "The annotation processor generates the implementation" from callout <5>, already said in <1>
   - [FroMage L175](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474544870)
-- [ ] 6. Add footnote for the intentional `proce` typo — typo exercise was for the conference, will be removed in the split tutorials
+- [x] 6. Add footnote for the intentional `proce` typo — moved to SQL tutorial in the split
   - [FroMage L167](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474555076)
 - [x] 7. Fix @Query callout: "avoids the need to write what you select"
   - [FroMage L302](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474655464)
@@ -30,6 +30,9 @@
   - [FroMage L560](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474767275)
 - [x] 12. Dev Services TIP: move right after `quarkus test`
   - [Yoan L145](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472735988)
+
+Support gradle in every places of the tutorial by reusing templates 
+Avoid using quarkus add extension
 
 ## Structural changes (apply to current file, then carry into split)
 
@@ -49,7 +52,7 @@
   - [Yoan L556](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472927616)
   - [FroMage L520](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474745276)
   - [FroMage L547](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474763787)
-- [ ] 18. Remove the "lecture" paragraph about why SQL is limited — will address in the split
+- [x] 18. Remove the "lecture" paragraph about why SQL is limited — removed by the split
   - [Yoan L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472821807)
   - [FroMage L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474578603)
 
@@ -86,7 +89,7 @@
   - **quarkus-data-hibernate-sql.adoc** — Pure SQL queries with @SQL, records, no entities
 - [x] 23. Add cross-links between the two tutorials
   - [FroMage L261](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474578603)
-- [ ] 24. Close PR #2784, open new PR(s) with the split tutorials
+- [x] 24. Push updated entity tutorial to PR #2784, push SQL tutorial branch (39-tutorial-nativesql) — new PR to be created later
 - [ ] 25. Add a section on how to navigate to generated files, for both Maven and Gradle
   - [Yoan L57](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3472630195)
   - [FroMage L57](https://github.com/quarkusio/quarkusio.github.io/pull/2784#discussion_r3474434063)
