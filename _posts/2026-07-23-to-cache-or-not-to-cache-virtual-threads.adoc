@@ -1,0 +1,262 @@
+---
+layout: post
+title: "To Cache or Not to Cache Virtual Threads"
+date: 2026-07-23
+tags: virtual-threads performance loom
+synopsis: "The OpenJDK team says don't pool virtual threads. We tested that advice with data, tried to fix the JVM when pooling broke, and discovered why the fix made things worse."
+author: fnigro
+---
+:imagesdir: /assets/images/posts/to-cache-or-not-to-cache-vts
+
+The official guidance on virtual threads is clear:
+
+[quote, 'Ron Pressler & Alan Bateman, https://openjdk.org/jeps/444[JEP 444: Virtual Threads]']
+____
+Virtual threads are cheap and plentiful, and thus should never be pooled: A new virtual thread should be created for every application task.
+____
+
+[quote, 'Ron Pressler, https://cr.openjdk.org/~rpressler/loom/loom/sol1_part1.html[State of Loom]']
+____
+Creating a virtual thread is cheap — have millions, and don't pool them!
+____
+
+image::meme-bell-curve.png[Bell curve meme]
+
+As part of our work on https://youtu.be/Oy005l5vHtE[improving Quarkus performance with virtual threads] and https://youtu.be/oWE_kYB4Wns[investigating Loom's scheduling behavior], we decided to test this advice with data. *Spoiler: we should have listened.* But the _reason_ we should have listened turned out to be far more interesting than "they're cheap enough."
+
+== Why Would You Pool Virtual Threads?
+
+Pooling threads is a well-established pattern. We do it for platform threads in frameworks like Quarkus because they are expensive to create — each one maps to an OS thread with a pre-allocated stack. *Virtual threads are designed to be cheap, so the JDK authors say pooling is unnecessary.* But a brave and careless developer might still consider it: creating a virtual thread allocates a `Thread` object, its thread-local storage (a `HashMap` per thread), and internal scheduling structures. *If you reuse virtual threads, you skip all of that.* At a superficial analysis, this looks beneficial — the same reasoning we apply when pooling platform threads.
+
+=== What could go wrong?
+
+*The workload we care about* is the typical Java enterprise pattern: an HTTP server receives requests, *dispatches each one to a virtual thread that performs blocking I/O* (a database query, an HTTP call to another service), then returns a response. This is how frameworks like Quarkus and Vert.x work — a Netty event loop accepts connections and hands off blocking work to virtual threads.
+
+image::quarkus-architecture.png[Quarkus architecture]
+
+*We've prepared a benchmark* which simplifies this to its essential shape: a Netty HTTP server receives requests, hands off each one to a VT that makes a blocking HTTP call (via Apache HttpClient) to a mock backend with 30ms think time, then returns the response. 10,000 concurrent connections, 8 cores, with a *30-second warmup phase* followed by a *30-second measurement phase*. In pooling mode, we pre-allocate a pool of 10,000 virtual threads — one per connection.
+
+image::benchmark-architecture.png[Benchmark architecture]
+
+On a 4 GB heap with ParallelGC, pooling VTs delivered *143,966 req/s* vs *126,851* without pooling — a *13.5% throughput gain*, zero Full GCs for both. Pooling works! Time to see it deliver its value on a more constrained heap.
+
+We ran with a 1 GB heap. *It failed spectacularly.*
+
+== The 1 GB Heap
+
+Same benchmark, same code, 1 GB heap, ParallelGC:
+
+[cols="1,1,1,1,1", options="header"]
+|===
+| Mode | 4 GB TPS | 4 GB Full GCs | 1 GB TPS | 1 GB Full GCs
+
+| *no pooling*
+| 126,851
+| 0
+| *108,272*
+| *4*
+
+| *pooling VTs*
+| 143,966
+| 0
+| *71,252*
+| *461*
+|===
+
+image::chart-1g-perreq-vs-cached.png[Pooling vs no pooling on 1GB]
+
+Without pooling, the smaller heap barely mattered — 127K down to 108K, 4 Full GCs, 9 seconds total GC pause. Pooling collapsed: 144K down to 71K, *461 Full GCs*, and *30.6 seconds of GC pauses* in a 60-second run — the garbage collector was running half the time. *And it couldn't even recover the heap*: after each Full GC, pooling still had 640-710 MB live on a 910 MB old gen.
+The 13.5% advantage from 4GB turned into a *34% deficit*.
+
+Something about pooling long-lived virtual threads was making the GC miserable. We attached JDK Flight Recorder with allocation profiling to both runs. Here's the twist:
+
+[cols="1,1,1", options="header"]
+|===
+| | StackChunk total bytes allocated | Full GCs
+
+| *no pooling*
+| *~14.4 GB*
+| *4*
+
+| *pooling VTs*
+| *~3.7 GB*
+| *461*
+|===
+
+Both runs show significant allocation of an internal JVM type we didn't expect: `jdk.internal.vm.StackChunk`. Pooling allocates *4x less* of them (~3.7 GB vs ~14.4 GB) — which makes sense, we're reusing virtual threads. Yet pooling has *461 Full GCs* while no pooling has *4*. Less allocation, more Full GCs. That doesn't add up.
+
+== What Is a StackChunk?
+
+When a virtual thread parks — blocks on I/O, waits on a lock, sleeps — the JVM needs to free up the *carrier thread* (the platform thread https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html#GUID-DC4306FC-D6C1-4BCC-AECE-48C32C1A8DAA[currently running] the virtual thread) so it can run other virtual threads. To do this, it needs to save the virtual thread's execution state: which methods are in progress, what their local variables are, and where to resume when the VT is unparked. This state lives on the *call stack* — the runtime data structure that tracks method calls. The JVM *"freezes"* this stack — copies it from the carrier thread into a *StackChunk*, a regular Java heap object. When the virtual thread is later unparked, the JVM *"https://youtu.be/6nRS6UiN7X0[thaws]"* it — copies the stack back from the StackChunk onto a carrier thread, and execution resumes.
+
+.What's inside a StackChunk?
+[%collapsible]
+====
+A StackChunk is a Java heap object with a header and a blob of raw stack memory. The blob contains an integral number of *stack frames* — copied verbatim from the carrier thread's platform stack. Each frame holds the state of one method activation:
+
+* For *compiled frames* (C1 or C2): return address, saved frame pointer, and spill slots (local values that didn't fit in CPU registers). The frame size is fixed per compiled method.
+* For *interpreted frames*: return address, saved frame pointer, plus expression stack, monitors, bytecode pointer, locals, constant pool cache, and method pointer. Significantly larger than compiled frames.
+
+The chunk also carries an oop bitmap so the GC can find object references within the frozen frames.
+
+There is no public design document for the StackChunk layout. The authoritative sources are the source code comments:
+
+* https://github.com/openjdk/jdk/blob/master/src/hotspot/share/oops/instanceStackChunkKlass.hpp[Layout diagram in `InstanceStackChunkKlass.hpp`] (the chunk's internal structure)
+* https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp[Stack diagram in `continuationFreezeThaw.cpp`] (what gets frozen from the carrier stack)
+* https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84[JDK-8284161] — the commit that introduced the freeze/thaw machinery
+====
+
+Two properties of StackChunks matter for our story:
+
+. *A chunk is sized exactly to fit the stack at freeze time.* Whatever stack depth the virtual thread has when it first parks determines the chunk's capacity — and that capacity never changes. *There is no resizing.*
+
+. *On each park, the JVM reuses the existing chunk* — it copies the stack into it via a fast bulk memory copy, no GC bookkeeping overhead. As long as the chunk stays in the *young generation* of the heap, this works perfectly. No new allocation needed.
+
+But the JVM's garbage collector divides the heap into generations: newly created objects go to the _young generation_, and objects that survive several GC cycles get _promoted_ to the _old generation_. When a long-lived virtual thread's StackChunk gets promoted to old gen, the fast copy no longer works — writing into old-gen objects requires extra GC bookkeeping called https://shipilev.net/jvm/anatomy-quarks/13-intergenerational-barriers/[_write barriers_] to track cross-generational references.
+
+So the JVM does the pragmatic thing: *it allocates a _new_ young-gen chunk and sets it as the new tail*. The old promoted chunk stays linked as a parent in the chunk chain, but after the next thaw, *empty chunks are detached from the chain and become garbage* — collected at the next Full GC (the expensive, stop-the-world collection that cleans up old gen).
+
+.JVM internals: the decision point in continuationFreezeThaw.cpp
+[%collapsible]
+====
+[source,cpp]
+----
+// When the existing chunk is in old gen (gc_mode) or requires
+// write barriers, the JVM allocates a fresh young-gen chunk instead.
+if (unextended_sp < _freeze_size
+    || chunk->is_gc_mode()
+    || chunk->requires_barriers()) {
+    // ALLOCATE NEW CHUNK
+    chunk = allocate_chunk_slow(_freeze_size, ...);
+}
+----
+
+This code is in https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp[`continuationFreezeThaw.cpp`], introduced in https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84[JDK-8284161] (co-authored by Ron Pressler, Alan Bateman, Erik Österlund, and others).
+====
+
+This design *prioritizes freeze/thaw speed over memory efficiency* — and for short-lived virtual threads, it works well. But for long-lived VTs, *every GC cycle that promotes a chunk triggers a fresh allocation and an abandonment cycle*. With 10,000 long-lived pooled VTs, every GC cycle:
+
+* Promotes 10,000 StackChunks to old gen
+* Triggers 10,000 fresh chunk allocations (new young-gen chunks)
+* Abandons 10,000 old-gen chunks — dead weight until the next Full GC cleans them up
+
+On a 1 GB heap, this churn was *severe enough to dominate GC behavior*.
+
+== If Pooling Doesn't Help, Pool More.
+
+So we're pooling virtual threads but the JVM keeps throwing away and re-allocating their StackChunks. The obvious question: *can we make the JVM reuse those chunks* instead?
+
+The StackChunk churn problem isn't limited to VT pooling. In containerized environments with small heaps — common in microservices — GC runs more frequently under heap pressure. Objects get promoted to old gen not because they are truly long-lived, but simply because GC ticks faster. This "premature aging" means *even short-lived virtual threads can have their StackChunks promoted and then abandoned*, creating the same allocation churn we observed with pooled VTs.
+
+So we rolled up our sleeves and went into the JVM. The idea: instead of abandoning an empty old-gen chunk and allocating a fresh one, just _reuse_ it — write into it with the proper GC bookkeeping (write barriers). Trade a small overhead per freeze for eliminating the allocation churn entirely.
+
+We targeted Parallel and Serial GC specifically — we're not GC experts, but Parallel and Serial are the collectors where this kind of reuse looks possible (no segmentation faults yet!) — G1 and ZGC's concurrent collectors make it unsafe. Parallel and Serial also happen to be the typical choice for small containers and machines where heap sizes are tight.
+
+We prototyped this on the https://github.com/openjdk/loom/tree/fibers[OpenJDK Loom `fibers` branch] — the branch where Loom experiments and upcoming features are developed before they go to mainline.
+
+After a few iterations, we had eliminated the StackChunk allocation churn. Surely _this_ time we could celebrate?
+
+We ran pooling on 1 GB again, with our fix:
+
+[cols="1,1,1", options="header"]
+|===
+| Pooling on 1 GB | TPS | Full GCs
+
+| *stock JDK*
+| 71,252
+| 461
+
+| *+ reuse fix*
+| 68,290
+| 435
+|===
+
+*It got worse.* Fewer Full GCs (461→435), but throughput _dropped_ another 4%. We fixed the allocation churn, but something else was now wrong. The chunks were being reused — but reusing them was somehow more expensive than throwing them away.
+
+.JVM internals: the reuse condition
+[%collapsible]
+====
+The core reuse condition we added to `continuationFreezeThaw.cpp`:
+
+[source,cpp]
+----
+bool reuse_old_chunk = !UseG1GC && !UseZGC
+    && chunk != nullptr
+    && chunk->is_gc_mode()
+    && chunk->is_empty()
+    && unextended_sp >= _freeze_size;
+----
+
+This only works for Parallel and Serial GC. G1 and ZGC are concurrent collectors — they can relocate objects while the application is running, which makes it unsafe to write into old-gen chunks via post-hoc barriers.
+====
+
+== Instrumenting the JVM
+
+To understand what was going on, we instrumented the JVM's freeze/thaw code to log every StackChunk allocation and reuse — recording the chunk capacity and actual stack size at each event.
+
+During steady state, the chunks being reused were *4x larger than needed*:
+
+[cols="1,1", options="header"]
+|===
+| | Pooled VTs
+
+| Chunk capacity being reused
+| *1,149 words* (~9.2 KB)
+
+| Actual stack size at freeze
+| ~286 words (~2.3 KB)
+
+| Wasted old-gen space
+| *~90 MB* (9% of 1 GB heap)
+|===
+
+The fix was faithfully reusing the chunks — but each one was 4x oversized. 90 MB of old gen wasted on empty space. With the fix, old gen after Full GC sits at ~728 MB vs ~713 MB without it — less headroom on a 910 MB old gen, *causing the throughput regression*.
+
+Interestingly, *the actual stack size used at freeze was ~1,100 words during warmup but dropped to ~286 words during steady state* — even though the application code hadn't changed. The chunks were right-sized _when they were born_, but the demand shrank over time while the capacity stayed frozen.
+
+What happened between warmup and steady state that made the same code need 4x less stack?
+
+== The Root Cause: JIT Compilation Timing
+
+The answer is https://docs.oracle.com/en/java/javase/21/vm/compiler-control1.html[tiered compilation].
+
+The JVM compiles Java methods in tiers. *C1* is the fast first-tier compiler — it produces correct code quickly but doesn't optimize aggressively. *C2* is the optimizing compiler — it kicks in later for hot methods and produces much more compact code. Our data shows that *C2-compiled code produces a significantly smaller frozen stack than C1-compiled code*.
+
+We proved this with a control experiment: `-XX:TieredStopAtLevel=1` forces the JVM to use only C1 (no C2).
+
+[cols="1,1,1", options="header"]
+|===
+| | Normal (C1 + C2) | C1 only
+
+| Chunk capacity
+| *1,149 words*
+| *1,144 words*
+|===
+
+With C1-only, the chunk capacity matches what we see in the pooled run under normal compilation. *The ~1,149-word chunks are C1-sized.* Under normal compilation, C2 shrinks the frozen stack to ~280 words — but the shared VT pool is created during warmup, before C2 kicks in. Its VTs are born with C1-sized chunks, and *StackChunk capacity is set once — there is no resizing.*
+
+The reuse fix keeps those bloated chunks alive in old gen — forever — leaving the garbage collector to fight over the scraps of a heap it can never fully reclaim.
+
+== So... Don't Pool?
+
+It depends. With small heaps, clearly not. In production, you don't control VT lifecycles — and with a shared pool, you can't predict which code path a VT will be used for, whether that code is warm, hot, or never compiled by C2. Too aggressive caching risks bloating the runtime heap forever.
+
+But in Quarkus, we're experimenting with different options to improve our Loom integration — boldly going where no one has gone before. That means running with scissors that everyone told us are too sharp. We do it for the sake of innovation, and because we now know _why_ they cut. As the saying goes, *the journey matters more than the destination.*
+
+== Takeaways
+
+. *Pooling VTs doesn't save what you think it saves.* Under the hood, the JVM can still allocate new StackChunks — the biggest cost you were trying to avoid.
+. *The "don't pool" advice is correct.* The OpenJDK team was right.
+. *Fixing one problem can create a worse one.* Eliminating allocation churn sounds great until you realize you're pinning oversized objects in old gen forever.
+. *Shared pools are unpredictable.* You can't control when VTs are born, what code they'll run, or how the JIT has compiled it. That unpredictability is the real danger.
+
+'''
+
+== References
+
+* https://openjdk.org/jeps/444[JEP 444: Virtual Threads] — Ron Pressler & Alan Bateman
+* https://cr.openjdk.org/~rpressler/loom/loom/sol1_part1.html[State of Loom] — Ron Pressler
+* https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84[JDK-8284161: Implementation of Virtual Threads (Preview)] — the commit introducing StackChunk and continuation freeze/thaw
+* https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp[`continuationFreezeThaw.cpp` (mainline)] — the freeze/thaw implementation
+* https://github.com/openjdk/loom/tree/fibers[OpenJDK Loom `fibers` branch] — the Loom experiment playground
+* https://shipilev.net/jvm/anatomy-quarks/13-intergenerational-barriers/[JVM Anatomy Quark #13: Intergenerational Barriers] — Aleksey Shipilev's explanation of GC write barriers
