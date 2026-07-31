@@ -2,6 +2,6 @@
 layout: spring-migrate
 title: Migrate from Spring to Quarkus
 permalink: /spring/migrate/
-subtitle: Everything You Need to Move to Quarkus
+subtitle: You already know how to build with Quarkus. You just don't realize it.
 
 ---
