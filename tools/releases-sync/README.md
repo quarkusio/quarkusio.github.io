@@ -23,7 +23,7 @@ Keeps `_data/releases.yaml` patch versions current by fetching from the GitHub A
 - `lts` - Whether this is an LTS release
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq_eol`, `ibm_eol` - Commercial EOL dates
+- `rhbq_eol`, `ibm_eol`, `herodevs_eol` - Commercial EOL dates (herodevs_eol can be a date or string like "nes")
 - `upcoming` - For releases not yet published
 
 ## Running locally
