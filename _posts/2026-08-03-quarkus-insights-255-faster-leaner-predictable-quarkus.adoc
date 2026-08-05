@@ -1,0 +1,100 @@
+---
+layout: post
+title: 'Quarkus Insights #255: Faster, Leaner, Predictable — Quarkus in the Real World'
+date: 2026-08-03
+tags: quarkus-insights
+synopsis: 'Alex Dish, CTO at BMW Romania, shares hard numbers from his real-world experiment benchmarking Quarkus against Spring Boot across startup time, memory footprint, Docker image size, and tail latency — then translates every measurement into cloud costs and developer impact.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/BWr3NXgMQds[watch the video] for the full story.
+
+== Quarkus Insights #255: Faster, Leaner, Predictable — Quarkus in the Real World
+
+Alex Dish, currently holding the CTO role at the https://www.bmw.ro/ro/index.html[BMW Romania] IT hub, brings a refreshingly practical perspective to episode 255: instead of abstract benchmarks or hello-world demos, he built the same service twice — once with Spring Boot, once with Quarkus — complete with an embedded ML sentiment classifier, and then measured everything that matters in production. The result is a cheat sheet of real numbers and the cloud cost arithmetic behind them.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/BWr3NXgMQds" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Before the benchmarks, a quick news round-up: Quarkus 3.38 shipped last week. For those living closer to the bleeding edge, the long-awaited migration to https://github.com/FasterXML/jackson[Jackson] 3 has just merged into main.
+
+== Why Hello-World Benchmarks Are Not Enough
+
+Alex opened with a familiar scenario: a 3 a.m. traffic spike triggers a scale-out on https://kubernetes.io/[Kubernetes]. Two new pods are requested. With Spring Boot, each pod takes 5.6 seconds to start. During those five-plus seconds, requests queue up, timeouts fire, users start hitting refresh — and that refresh storm makes everything worse. The root cause is not a bug; it is a consequence of a framework initialisation decision made months or years earlier, silently compounding at scale.
+
+To put real numbers around that compounding, Alex built a non-trivial test application: the same REST endpoints, the same business logic, the same embedded ML model for sentiment classification — deployed in both frameworks, on identical hardware, under up to 5,000 parallel requests. He wrote his own latency measurement tool in plain Java rather than reaching for an off-the-shelf load tester, so he had full visibility into exactly when timers started and stopped with no thread-scheduling surprises.
+
+Six metrics were captured: JVM startup time, native startup time, idle memory, memory under load, https://www.docker.com/[Docker] image size, and the latency percentiles that actually matter in production — P50, P95, and P99.
+
+== Startup Time: JVM
+
+Quarkus on the JVM started in **1.3 seconds**. Spring Boot took **5.6 seconds** — a 4.3-second gap.
+
+That gap sounds modest in isolation. At enterprise scale it is not. Assume 200 scale-out events per day, two pods each: that is 400 pod starts, multiplying the 4.3-second gap into roughly **30 minutes of capacity per day that Kubernetes has provisioned but cannot yet serve traffic**. At 50 requests per second, that represents approximately **100,000 delayed or failed requests daily** — the kind of number that triggers SLA reviews and earns infrastructure teams late-night phone calls.
+
+== Startup Time: Native
+
+The native comparison prompted Alex to run the measurement three times because he assumed his first result was wrong. Quarkus native started in **~200 milliseconds**. Spring Boot native came in around **2 seconds** — a 10× gap.
+
+The ratio is striking enough, but the absolute number matters just as much. At 200 ms you can scale to zero and recover before most users notice. At 2 seconds, scale-to-zero becomes a user-experience liability. Alex observed that this is where the serverless conversation stops being theoretical: with 200 ms cold starts, https://www.graalvm.org/[GraalVM] native images make functions-as-a-service genuinely viable for workloads that previously needed always-on pods.
+
+He also noted that the Quarkus native ecosystem has matured significantly. He tried to introduce reflection-related compilation failures to demonstrate edge-case fragility and could not — the extension ecosystem handles most cases automatically.
+
+== Memory: Idle and Under Load
+
+*Idle memory* is what you pay 24/7 just to keep a pod alive. Quarkus idle: **88 MB**. Spring Boot idle: **204 MB** — roughly 2.5× more.
+
+At 200 pods on standard 8 GB nodes, the math works out to **three nodes needed for Quarkus** versus **seven for Spring Boot**. Running those 200 pods on https://aws.amazon.com/[AWS] T3A Large on-demand instances, the idle memory difference alone costs between **$243 and $280 per month** depending on region — for capacity that handles no traffic and performs no business logic whatsoever.
+
+Under load the ratio held. Quarkus peaked at **412 MB**; Spring Boot climbed toward **827 MB** — approximately 2× across the full lifetime of the workload, not just at a single point. Alex framed the under-load number as evidence of reduced GC pressure: Spring Boot's heap is climbing toward 900 MB, collecting more aggressively and allocating more on every cycle.
+
+Scaling that to the loaded scenario — 200 pods at 412 MB requiring 14–15 nodes versus 29 nodes at 827 MB — the difference is **14 extra nodes**, which is where Alex arrived at the **~$850 per month** figure that gave this talk its working title: _Where Does $850 a Month Go and Nobody Tells You_.
+
+== Docker Image Size
+
+The image-size gap is 13 MB — easy to dismiss. Alex chose not to. Over 100 services deploying five times per day each, that is 500 image pulls per day. Multiply by 13 MB and **6.5 GB less data is transferred per day** with Quarkus images. Across three environments (development, pre-production, production) in a cross-region setup, that translates to roughly **$750 per year** — not transformative, but money that simply does not need to be spent.
+
+More meaningfully, smaller images mean **4 to 13 minutes faster rollouts** per day. Faster rollouts are faster feedback loops, faster incident response, and a lower blast radius during deployments. Those gains are hard to put a number on but compound over time.
+
+== Latency: P50, P95, and P99
+
+Here the story is more nuanced. At P50 (median latency), Spring Boot was fractionally faster. Alex acknowledged this was unexpected and flagged it as an open question — likely connected to how the embedded ML model interacts with each framework's threading model — one he plans to investigate with the Quarkus team.
+
+What mattered far more to him was the P99. Quarkus held **under 2 seconds** (1,963 ms maximum) regardless of how hard he pushed the load. Spring Boot's P99 spiked past **4.5 seconds** — again roughly 2×.
+
+The practical consequence: that 1% of requests represents real users who hit a frozen screen after spending several minutes filling in a form. They hit refresh. That retry adds load. More P99 responses go slow. More retries. The snowball effect can tip a degraded service into a full outage, particularly if the underlying infrastructure scaling or database connection pool configuration is not perfect. Alex described helping another company diagnose exactly this failure mode: a memory issue that only manifested after six or seven months, leaving users able to log in but unable to do anything.
+
+Holly, the episode host, summed it up: "Slow is the new down, but then slow is what causes the actual down."
+
+== Translating Numbers into Decisions
+
+Alex was direct that none of this is an argument to rewrite every Spring Boot service before next sprint. The switching cost is real — developer ramp-up, migration risk, the institutional knowledge embedded in years of an existing codebase. His advice instead was three steps, taking roughly one week:
+
+1. **Be curious — look at your numbers.** Check `docker stats`, pull up the cluster metrics dashboard. Many engineers have never looked at what their service actually consumes at runtime.
+2. **Do the math.** Take your idle memory figure, multiply by your pod count, multiply by your node price. That is your baseline.
+3. **Run a pilot.** Pick one stateless service with variable traffic. Run it on Quarkus alongside the existing Spring Boot version for two weeks. Collect metrics. Compare to the baseline. The decision doesn't have to be all-or-nothing — you might discover that one service is responsible for 90% of your cloud bill and only that one needs to change.
+
+He also flagged the culture dimension: teams under stress and chasing deadlines are hostile to change even when the change is clearly beneficial. The best moment for this kind of experiment is when the team has space to be curious. The https://quarkus.io/guides/spring-di[Quarkus for Spring Developers] guide was specifically helpful for his own ramp-up, and he noted that engineers with no prior Spring experience have successfully adopted Quarkus directly from the documentation.
+
+
+== Key Takeaways
+
+1. **JVM startup: 1.3 s (Quarkus) vs. 5.6 s (Spring Boot)** — a 4.3-second gap that becomes 30 minutes of dead capacity per day at enterprise pod-churn rates.
+2. **Native startup: ~200 ms (Quarkus) vs. ~2 s (Spring Boot)** — a 10× gap that makes scale-to-zero serverless genuinely practical.
+3. **Idle memory: 88 MB vs. 204 MB** — 2.5× difference, translating to three Kubernetes nodes versus seven for a 200-pod fleet.
+4. **Memory under load: 412 MB vs. 827 MB** — the ~2× ratio holds across the full workload lifecycle, not just at idle.
+5. **The $850/month figure** comes from 14 extra AWS T3A Large nodes needed to host 200 loaded Spring Boot pods compared to Quarkus.
+6. **Docker image size savings** compound across deployment frequency — 6.5 GB less transferred per day across a 100-service fleet with 5 deploys each.
+7. **P99 latency: <2 s (Quarkus) vs. >4.5 s (Spring Boot)** — tail latency matters most because it triggers retries, snowball effects, and eventual outages.
+8. **Averages are useless for production diagnosis** — a healthy-looking mean latency can coexist with a P99 that is timing out real users.
+9. **Small numbers multiplied by fleet scale stop being small** — evaluate every metric against your pod count and deployment frequency.
+10. **The advice is not "rewrite everything"** — measure your baseline, run a one-service pilot for two weeks, and make an informed decision.
+
+== Conclusion
+
+Alex's talk is the kind of episode that gets screenshots shared on company Slack channels — because it takes the performance claims that typically live in benchmark blog posts and converts them into the language that gets engineering decisions made: monthly cloud bills, node counts, and the cascade of user-facing failures that follow from a P99 nobody was watching. The numbers are reproducible, the methodology is transparent, and the conclusion is deliberately modest: know what you are choosing and why, run the pilot, and let the math make the case.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. Alex's benchmark summary is also available on https://www.linkedin.com/[LinkedIn].
