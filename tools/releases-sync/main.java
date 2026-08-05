@@ -183,6 +183,20 @@ public class main implements Callable<Integer> {
         release.rhbqEol = parseDate(releaseMap.get("rhbq_eol"));
         release.ibmEol = parseDate(releaseMap.get("ibm_eol"));
 
+        // Parse herodevs_eol - can be a date or string like "nes"
+        Object herodevsEolValue = releaseMap.get("herodevs_eol");
+        if (herodevsEolValue instanceof String) {
+            String strValue = (String) herodevsEolValue;
+            // Try to parse as date first, if it fails keep as string
+            try {
+                release.herodevsEol = LocalDate.parse(strValue);
+            } catch (Exception e) {
+                release.herodevsEol = strValue;  // Keep as string (e.g., "nes")
+            }
+        } else {
+            release.herodevsEol = parseDate(herodevsEolValue);
+        }
+
         return release;
     }
 
@@ -663,6 +677,7 @@ public class main implements Callable<Integer> {
             release.link = existing.link;
             release.rhbqEol = existing.rhbqEol;
             release.ibmEol = existing.ibmEol;
+            release.herodevsEol = existing.herodevsEol;
         } else {
             release.lts = false;
         }
@@ -920,6 +935,14 @@ public class main implements Callable<Integer> {
             map.put("ibm_eol", new DateScalar(toDateStr(release.ibmEol)));
         }
 
+        if (release.herodevsEol != null) {
+            if (release.herodevsEol instanceof LocalDate) {
+                map.put("herodevs_eol", new DateScalar(toDateStr((LocalDate) release.herodevsEol)));
+            } else if (release.herodevsEol instanceof String) {
+                map.put("herodevs_eol", release.herodevsEol);  // Keep as string (e.g., "nes")
+            }
+        }
+
         return map;
     }
 
@@ -942,6 +965,7 @@ public class main implements Callable<Integer> {
         public String link;
         public LocalDate rhbqEol;
         public LocalDate ibmEol;
+        public Object herodevsEol;  // Can be a date or string like "nes"
         public Boolean upcoming;
     }
 
