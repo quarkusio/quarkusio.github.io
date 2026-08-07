@@ -19,7 +19,7 @@ public class GuidesPageTest extends BrowserTest {
     })
     void guidesPageRendersWithSubstantialContent(String path) {
         page.navigate(baseUrl + path);
-        int guideCount = page.locator(".docslist h4 a[href*='/guides/']").count();
+        int guideCount = page.locator("qs-guide a[href*='/guides/']").count();
         assertTrue(guideCount >= 50,
                 path + ": Expected at least 50 guides but found " + guideCount);
     }
@@ -36,12 +36,9 @@ public class GuidesPageTest extends BrowserTest {
                 path + ": Expected a search/filter input on the guides page");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageHasCategorySections(String path) {
+    @Test
+    void guidesPageHasCategorySections() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
         int sectionCount = page.locator(".doclist-header").count();
         assertTrue(sectionCount >= 3,
@@ -60,12 +57,9 @@ public class GuidesPageTest extends BrowserTest {
                 path + ": Expected a version selector on the guides page");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageHasCategoryFilter(String path) {
+    @Test
+    void guidesPageHasCategoryFilter() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
         int categoryCount = page.locator(".pulldown.category, [class*='category']").count();
         assertTrue(categoryCount > 0,
@@ -297,12 +291,9 @@ public class GuidesPageTest extends BrowserTest {
                         + "This typically indicates missing data file entries (e.g., index-docs.texts.all_categories)");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageCategoryDropdownDefaultOptionIsNotNotFound(String path) {
+    @Test
+    void guidesPageCategoryDropdownDefaultOptionIsNotNotFound() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
 
         // Check the default option in the category dropdown under "By Category" label
@@ -327,12 +318,9 @@ public class GuidesPageTest extends BrowserTest {
         return count;
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guideElementsHaveValidStatusAttribute(String path) {
+    @Test
+    void guideElementsHaveValidStatusAttribute() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
 
         Locator guides = page.locator("qs-guide[status]");
@@ -352,12 +340,9 @@ public class GuidesPageTest extends BrowserTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guideElementsHaveValidKeywordsAttribute(String path) {
+    @Test
+    void guideElementsHaveValidKeywordsAttribute() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
 
         Locator guides = page.locator("qs-guide[keywords]");
@@ -377,12 +362,9 @@ public class GuidesPageTest extends BrowserTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guideElementsHaveValidOriginAttribute(String path) {
+    @Test
+    void guideElementsHaveValidOriginAttribute() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
 
         Locator guides = page.locator("qs-guide[origin]");
@@ -402,12 +384,9 @@ public class GuidesPageTest extends BrowserTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void knownGuideHasExpectedAttributes(String path) {
+    @Test
+    void knownGuideHasExpectedAttributes() {
+        String path = "/guides/";
         page.navigate(baseUrl + path);
 
         // Look for "Getting Started" guide - a stable guide that should always exist
@@ -520,5 +499,28 @@ public class GuidesPageTest extends BrowserTest {
                 "Non-versioned guide title should not include '- main', got: " + title);
         assertFalse(title.contains("- latest"),
                 "Non-versioned guide title should not include '- latest', got: " + title);
+    }
+
+    // Tests for the categorized guides layout (used by /version/main/guides/)
+    @Nested
+    class CategorizedGuidesTests {
+
+        private static final String PATH = "/version/main/guides/";
+
+        @Test
+        void categorizedGuidesPageHasCategorySections() {
+            page.navigate(baseUrl + PATH);
+            int sectionCount = page.locator("qs-guide-group:not([subgroup])").count();
+            assertTrue(sectionCount >= 3,
+                    PATH + ": Expected at least 3 guide category sections but found " + sectionCount);
+        }
+
+        @Test
+        void categorizedGuidesPageHasCategoryToc() {
+            page.navigate(baseUrl + PATH);
+            int categoryCount = page.locator("qs-categories-toc").count();
+            assertTrue(categoryCount > 0,
+                    PATH + ": Expected a qs-categories-toc element for category navigation");
+        }
     }
 }
