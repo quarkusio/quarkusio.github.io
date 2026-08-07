@@ -9,23 +9,27 @@ on:
       - '.github/workflows/update-insights.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   build:
     if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
     steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token || github.token }}
 
       - name: Archive current session
         id: archive_session
-        env:
-          YOUTUBE_API_KEY: ${{ secrets.INSIGHTS_YOUTUBE_API_KEY }}
-          YOUTUBE_CHANNEL_ID: ${{ secrets.INSIGHTS_YOUTUBE_CHANNEL_ID }}
         run: |
           today=$(date +"%B %d, %Y")
 
@@ -50,44 +54,26 @@ jobs:
             exit 1
           fi
           echo "Current episode number: $current_episode"
-          
-          youtube_response=$(curl -s --fail \
-              -H "X-goog-api-key: ${YOUTUBE_API_KEY}" \
-              "https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${YOUTUBE_CHANNEL_ID}&q=%23${current_episode}&type=video") || {
-            echo "Error: YouTube API request failed"
-            exit 1
-          }
 
-          # Check if API returned an error
-          if echo "$youtube_response" | jq -e '.error' > /dev/null 2>&1; then
-            echo "Error: YouTube API returned an error:"
-            echo "$youtube_response" | jq '.error'
-            exit 1
-          fi
-
-          video_id=$(echo "$youtube_response" | jq -r '.items[0].id.videoId')
-          video_status=$(echo "$youtube_response" | jq -r '.items[0].snippet.liveBroadcastContent')
-          video_title=$(echo "$youtube_response" | jq -r '.items[0].snippet.title')
-
-          # Check if a video ID was found
-          if [ -z "$video_id" ] || [ "$video_id" == "null" ]; then
-            echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
-            exit 0
-          fi
-          
-          if [[ "$video_title" == *"#$current_episode"* ]]; then
-            echo "The video title contains the required episode number: '#$current_episode'"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "DRY-RUN: Would fetch YouTube video for episode #$current_episode"
+            video_link="https://www.youtube.com/watch?v=DRY_RUN_VIDEO_ID"
           else
-            echo "The video title does NOT contain the required episode number: '#$current_episode'. Exiting..."
-            exit 1
+            youtube_response=$(curl -s --fail \
+                "https://www.youtube.com/feeds/videos.xml?channel_id=${{ secrets.INSIGHTS_YOUTUBE_CHANNEL_ID }}") || {
+              echo "Error: YouTube RSS feed request failed"
+              exit 1
+            }
+
+            video_id=$(echo "$youtube_response" | grep -o "<yt:videoId>[^<]*</yt:videoId>" | sed 's/<[^>]*>//g' | head -1)
+
+            if [ -z "$video_id" ]; then
+              echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
+              exit 0
+            fi
+
+            video_link="https://www.youtube.com/watch?v=${video_id}"
           fi
-          
-          if [ "$video_status" != "none" ]; then
-            echo "Expecting the video status to be 'none' but instead it is: $video_status. Exiting..."
-            exit 0
-          fi
-          
-          video_link="https://www.youtube.com/watch?v=${video_id}"
           nextsessiontitle="$(yq '.nextsessiontitle' _data/insights-videos.yaml)"
           nextsessionguest="$(yq '.nextsessionguest' _data/insights-videos.yaml)"
 
@@ -140,43 +126,14 @@ jobs:
             yq -i '.nextsessiondate = "'"$date"'"' _data/insights-videos.yaml
           fi
 
-      - name: Commit and Create Pull Request
-        if: steps.archive_session.outputs.title != '' && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit and push
+        if: github.event_name != 'pull_request'
         run: |
-          # first see if the PR is already there, but just not merged yet:
-
-          pr_number=$(gh pr list \
-            --repo "github.com/quarkusio/quarkusio.github.io" \
-            --state open \
-            --search "${{ steps.archive_session.outputs.title }}" \
-            --json number \
-            --jq '.[0].number' 2>/dev/null \
-            -L 1)
-
-          if [[ -n "$pr_number" ]]; then
-            echo "Found existing PR: #$pr_number (Title: '${{ steps.archive_session.outputs.title }}')"
-            exit 0
-          fi
-
-          # PR is not there yet so let's create one:
-
-          git config --local user.name "Action user"
-          git config --local user.email "actionuser@foo"
-
-          branch_name="feat/update-sessions-$(date +'%Y%m%d%H%M')"
-          git checkout -b "$branch_name"
-
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add _data/insights-videos.yaml
-          git commit -m "[Insights sessions] move '${{ steps.archive_session.outputs.title }}' to archive"
-
-          # Push the new branch
-          git push -u origin "$branch_name"
-
-          # Create a pull request using the GitHub CLI
-          gh pr create --title "[Insights sessions] move '${{ steps.archive_session.outputs.title }}' to archive" \
-            --body "Automated Quarkus Insights session update." \
-            --base main \
-            --head "$branch_name" \
-            --repo "github.com/quarkusio/quarkusio.github.io"
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Update Insights sessions archive"
+            git pull origin main --rebase
+            git push origin main
+          fi
