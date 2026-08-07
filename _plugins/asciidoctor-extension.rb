@@ -181,6 +181,22 @@ Extensions.register do
 
         label_block = create_pass_block doc, label_html, {}
         doc.blocks.insert(0, label_block)
+
+        # Inject the extension-status note if the guide has not already included it.
+        # This ensures fragment links to #extension-status-note always work.
+        unless doc.find_by(id: 'extension-status-note').any?
+          includes_dir = File.join(doc.base_dir, '_includes')
+          note_file = File.join(includes_dir, 'extension-status.adoc')
+          if File.exist?(note_file)
+            note_source = File.read(note_file)
+            # Prepend the anchor before converting to ensure it's included in the output
+            note_source_with_anchor = "[[extension-status-note]]\n" + note_source
+            # Convert to HTML, then insert as a pass block
+            note_html = Asciidoctor.convert(note_source_with_anchor, safe: :unsafe, attributes: { 'extension-status' => status })
+            note_block = create_pass_block doc, note_html, {}
+            doc.blocks.insert(1, note_block)
+          end
+        end
       end
       doc
     end
