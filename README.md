@@ -157,4 +157,4 @@ Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/t
 
 ## License
 
-This website is licensed under the [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).
+This website is licensed under the [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
