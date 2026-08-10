@@ -252,7 +252,7 @@ plt.show()
 
 
     
-![png](/assets/images/posts/mandrel-23-0-image-size-increase/index_9_0.png)
+![png](/assets/images/posts/mandrel-23-0-image-size-increase/index_9_0.webp)
     
 
 
@@ -280,7 +280,7 @@ plt.show()
 
 
     
-![png](/assets/images/posts/mandrel-23-0-image-size-increase/index_11_0.png)
+![png](/assets/images/posts/mandrel-23-0-image-size-increase/index_11_0.webp)
     
 
 
