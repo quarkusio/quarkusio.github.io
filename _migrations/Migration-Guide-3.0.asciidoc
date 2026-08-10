@@ -1,0 +1,526 @@
+---
+date: 2023-04-26
+---
+:toc:
+
+== Jakarta EE 10
+
+Quarkus 3.0 is based on Jakarta EE 10, which means that:
+
+* Many Jakarta EE packages have been renamed from `+javax.*+` to `+jakarta.*+`.
++
+For example you will have to use `jakarta.inject.Inject` instead of `javax.inject.Inject`,
+`jakarta.persistence.EntityManager` instead of `javax.persistence.EntityManager`,
+`jakarta.validation.Validator` instead of `javax.validation.Validator`,
+etc.
+* Many corresponding implementations have been upgraded to a new major version,
+which implies differences in behavior, most notably for Hibernate ORM (see below).
+
+We recommend you use the automatic update tool (see below) to ease the upgrade to Quarkus 3.0.
+
+== Automatic update tool
+
+Quarkus 3.0 introduces an update tool that can help you update your projects to Quarkus 3.
+
+This upgrade tool will, among other tasks:
+
+- Update the Quarkus version
+- Adjust the packages to use the `jakarta.*` packages
+- Adjust your dependencies in some cases
+- Upgrade your Quarkiverse extensions to versions compatible with Quarkus 3.0
+- Adjust your configuration files when configuration properties have changed
+
+It doesn't handle everything (typically, Hibernate ORM API changes are not covered by the update tool)
+but it should handle most of the tedious work.
+
+This update tool can be used for both Quarkus applications and Quarkus extensions,
+be they Maven or Gradle projects using Java or Kotlin.
+
+If you are using the Quarkus CLI - which is recommended - https://quarkus.io/guides/cli-tooling#installing-the-cli[upgrade it to the latest] and run:
+
+[source,bash]
+----
+quarkus update --stream=3.0
+----
+
+If you are not using the CLI and using Maven, use the Quarkus Maven plugin to update your projects:
+
+[source,bash]
+----
+./mvnw io.quarkus.platform:quarkus-maven-plugin:3.0.1.Final:update -N -Dstream=3.0
+----
+
+If you are not using the CLI and using Gradle, use the Quarkus Gradle plugin to do so:
+
+[source,bash]
+----
+./gradlew -PquarkusPluginVersion=3.0.1.Final quarkusUpdate --stream=3.0
+----
+
+For more information, consult the https://quarkus.io/guides/update-quarkus[dedicated guide].
+
+== CDI
+
+=== Interceptor annotations on private methods
+
+Adding a CDI interceptor annotation such as `@Transactional` to a private method was never supported, and used to result in a warning in logs because the annotation is ignored.
+
+When such an annotation is ignored, Quarkus will now trigger a build failure instead:
+
+```
+jakarta.enterprise.inject.spi.DeploymentException: @Transactional will have no effect on method com.acme.MyBean.myMethod() because the method is private. [...]
+```
+
+Ideally you should remove such annotations since they are ignored, but if that's not possible, set the configuration property `quarkus.arc.fail-on-intercepted-private-method` to `false` to revert to the previous behavior (warnings in logs).
+
+=== Removed `@AlternativePriority`
+
+The `@AlternativePriority` annotation has been deprecated since Quarkus 2.6 and is removed in Quarkus 3.0.
+Replace all usages with the 2 annotations `@Alternative` and `@Priority`.
+
+Before:
+
+```java
+@AlternativePriority(1)
+```
+
+After:
+
+```java
+@Alternative
+@Priority(1)
+```
+
+It is preferable to use `jakarta.annotation.Priority`, but if you need to maintain compatibility with Quarkus 2.x and 3.x through mechanical transformation, you can use `io.quarkus.arc.Priority` as well.
+These 2 annotations are equivalent.
+Note that the `io.quarkus.arc.Priority` annotation is getting deprecated in Quarkus 3.0 and will be removed in the future.
+
+== RESTEasy Reactive
+
+* Class `org.jboss.resteasy.reactive.server.core.multipart.MultipartFormDataOutput` has been moved to `org.jboss.resteasy.reactive.server.multipart.MultipartFormDataOutput`
+* Class `org.jboss.resteasy.reactive.server.core.multipart.PartItem` has been moved to ` org.jboss.resteasy.reactive.server.multipart.PartItem`
+* Class `org.jboss.resteasy.reactive.server.core.multipart.FormData.FormValue` has been moved to `org.jboss.resteasy.reactive.server.multipart.FormValue`
+
+=== REST Client
+
+The REST Client no longer uses the server specific MessageBodyReader and MessageBodyWriter classes associated with Jackson (which used to be the case, but was unintentional). 
+The result is that applications that use both `quarkus-resteasy-reactive-jackson` and `quarkus-rest-client-reactive` now have to include `quarkus-rest-client-reactive-jackson` 
+
+== JPA / Hibernate ORM
+
+=== Moved to Hibernate ORM 6.2
+
+Quarkus now depends on Hibernate ORM 6.2 instead of Hibernate ORM 5.6.
+
+This implies a noticeable amount of backwards-incompatible changes, be it in APIs, behavior, or database schema expectations. In particular, but not only:
+
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#jakarta-persistence[It uses `jakarta.persistence.*` packages instead of `javax.persistence.*`].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#legacy-criteria[The legacy Criteria API was removed].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#type-system-changes[Custom types may require adjustments].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#query[The syntax/behavior of JPQL/HQL/SQL queries changed slightly].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#dialect-configuration-changes[Dialect configuration may require adjustments].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#identifier-generator-structure[Additional sequences/tables may be required].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#sequence-increment-size[Sequences definitions (the increment size in particular) may need to be adjusted].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#property-sql-type[Various datatypes may not be serialized the same way].
+* https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration#unsupported-databases[Some databases and older database versions may not be supported anymore].
+* And more.
+
+Refer to https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration[this dedicated guide] for more information.
+
+=== Using `persistence.xml` files and `quarkus.hibernate-orm.*` configuration properties in the same application will fail
+
+When configuring the Hibernate ORM extension through both a `persistence.xml` file and `quarkus.hibernate-orm.*` properties in `application.properties`, Quarkus used to ignore `quarkus.hibernate-orm.*` properties, even though documentation stated the application would fail to start.
+  
+Quarkus will now fail as expected when it can detect such situations.
+  
+You can still chose between `persistence.xml` and `quarkus.hibernate-orm.*` properties:
+
+* To ignore `persistence.xml` files, set the configuration property `quarkus.hibernate-orm.persistence-xml.ignore` to `true`.
+* To use `persistence.xml` files, remove all `quarkus.hibernate-orm.*` properties from `application.properties`.
+
+=== Configuration property `quarkus.hibernate-orm.globally-quoted-identifiers` is deprecated
+
+Use https://quarkus.io/version/main/guides/hibernate-orm#quarkus-hibernate-orm_quarkus.hibernate-orm.quote-identifiers.strategy[`quarkus.hibernate-orm.quote-identifiers.strategy = all`] instead. 
+
+=== The default ID generation optimizer is now `pooled-lo`
+
+In order to https://github.com/quarkusio/quarkus/issues/31899[mitigate some incompatibilities]
+caused by the migration to Hibernate ORM 6,
+and also to simplify sequence reset requirements in import scripts in general,
+the default ID generation optimizer has changed from `pooled` to `pooled-lo`.
+
+This change is backwards-compatible, but if you need to revert to the `pooled` optimizer,
+just set https://quarkus.io/version/main/guides/hibernate-orm#quarkus-hibernate-orm_quarkus.hibernate-orm.mapping.id.optimizer.default[`quarkus.hibernate-orm.id.optimizer.default = pooled`]. 
+
+== Hibernate Reactive
+
+=== Moved to Hibernate Reactive 2
+
+Quarkus now depends on Hibernate Reactive 2 instead of Hibernate Reactive 1.
+
+This implies a noticeable amount of backwards-incompatible changes, be it in behavior or database schema expectations.
+
+Most of the changes are related to Hibernate Reactive 2 depending on Hibernate ORM 6.2 instead of Hibernate ORM 5.6.
+Refer to https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0-Hibernate-ORM-5-to-6-migration[this dedicated guide] for more information about the migration from Hibernate ORM 5.6 to 6.2 (and thus, from Hibernate Reactive 1 to 2).
+
+=== Session injection
+
+It is no longer possible to inject a `Mutiny.Session` in a CDI bean.
+The main reason for this change is that the lifecycle of a reactive session does not fit the lifecycle of the CDI request context.
+And this mismatch can result in tricky errors.
+Users are encouraged to inject a `Mutiny.SessionFactory` instead and control the session lifecycle through the `SessionFactory#withSession()` and `SessionFactory#withTransaction()` methods.
+
+=== The default ID generation optimizer is now `pooled-lo`
+
+In order to https://github.com/quarkusio/quarkus/issues/31899[mitigate some incompatibilities]
+caused by the migration to Hibernate Reactive 2,
+and also to simplify sequence reset requirements in import scripts in general,
+the default ID generation optimizer has changed from `pooled` to `pooled-lo`.
+
+This change is backwards-compatible, but if you need to revert to the `pooled` optimizer,
+just set https://quarkus.io/version/main/guides/hibernate-orm#quarkus-hibernate-orm_quarkus.hibernate-orm.mapping.id.optimizer.default[`quarkus.hibernate-orm.id.optimizer.default = pooled`]. 
+
+== Hibernate Reactive Panache
+
+This extension has undergone extensive refactoring.
+However, most of the changes do not affect the API.
+
+=== Sessions and Transactions
+
+Two major internal changes include:
+
+* The current reactive `Mutiny.Session` is no longer stored in the CDI request context,
+* A Panache entity method execution is not offloaded on the current Vert.x context anymore.
+
+The consequence of these changes is that a user might need to take care of marking reactive session boundaries.
+For example most of the methods of a Hibernate Reactive Panache entity must be invoked within the scope of a reactive `Mutiny.Session`.
+In some cases, the session is opened automatically on demand. 
+For example, if a Panache entity method is invoked in a JAX-RS resource method in an application that includes the `quarkus-resteasy-reactive` extension.
+For other cases, there are both a declarative and a programmatic way to ensure the session is opened. 
+You can annotate a CDI business method that returns `Uni` with the `@WithSession` annotation. 
+The method will be intercepted and the returned `Uni` will be triggered within a scope of a reactive session.
+Alternatively, you can use the `Panache.withSession()` method to achieve the same effect.
+
+Also make sure to wrap methods that modify the database or involve multiple queries within a transaction.
+You can annotate a CDI business method that returns `Uni` with the `@WithTransaction` annotation. 
+The method will be intercepted and the returned `Uni` is triggered within a transaction boundary.
+Alternatively, you can use the `Panache.withTransaction()` method for the same effect.
+
+The `@ReactiveTransactional` annotation is deprecated and can only be used for methods that return `Uni`; this is validated at build time.
+Users are encouraged to use `@WithTransaction` instead.
+
+NOTE: Sometimes it's necessary to https://quarkus.io/version/main/guides/vertx#executing-asynchronous-code-from-a-blocking-thread[execute an asynchronous code from a blocking thread]. Quarkus provides the `VertxContextSupport#subscribeAndAwait()` util method which subscribes to the supplied `io.smallrye.mutiny.Uni` on a Vert.x duplicated context, then blocks the current thread and waits for the result.
+
+=== Support of `Multi`
+
+Neither Hibernate Reactive nor reactive SQL clients support streaming.
+Furthermore, we are not able to provide a `Panache#withTransaction()` alternative for `io.smallrye.mutiny.Multi` without bypassing the Hibernate Reactive API.
+Therefore, we decided to remove the `stream()` methods from the `PanacheEntityBase`, `PanacheQuery` and `PanacheRepositoryBase`.
+You can replace the code like `MyEntity.<MyEntity> streamAll()` with something similar to `MyEntity.<MyEntity> listAll()).toMulti().chain(list -> Multi.createFrom().iterable(list))` (which is by the way very similar to the original internal implementation).
+
+== Kubernetes/OpenShift
+
+=== Removed deprecated properties
+
+|===
+| Deprecated Property | Property to use
+
+| quarkus.kubernetes.expose
+| quarkus.kubernetes.ingress.expose
+
+| quarkus.openshift.expose
+| quarkus.openshift.route.expose
+
+| quarkus.kubernetes.host
+| quarkus.kubernetes.ingress.host
+
+| quarkus.openshift.host
+| quarkus.openshift.route.host
+
+| quarkus.kubernetes.group
+| quarkus.kubernetes.part-of
+
+| quarkus.openshift.group
+| quarkus.openshift.part-of
+|===
+
+Plus, properties without the `quarkus.` prefix will now be ignored. For example, before this version, we could add the property `kubernetes.name` and this property was mapped to `quarkus.kubernetes.name`. After this version, we're not going to do this any longer to avoid issues like https://github.com/quarkusio/quarkus/issues/30850.
+
+=== The HTTPS container port is added to generated Pod resources
+
+* Before, the generated container and service resources were only mapping the HTTP port of the Quarkus application. Now, the HTTPS port is also being mapped unless SSL is explicitly disabled using the property `quarkus.http.insecure-requests=disabled`. 
+* New property to select the port name to be used by the generated Ingress resource: `quarkus.kubernetes.ingress.target-port=https` (by default, its value is `http`).
+
+== OIDC
+
+=== Session cookie is encrypted by default
+
+OIDC session cookie which is created after an OIDC authorization code flow has completed, will now be encrypted by default starting from `3.0.2.Final`. Users are not expected to notice it in most cases.
+
+However, only if either `mTLS` or `private_key_jwt` (OIDC client private key is used to sign a JWT token) authentication methods are used between Quarkus and OpenId Connect Provider, then an in-memory encryption key will be generated, which might cause some pods in the application dealing with a very large number of requests failing to decrypt the session cookie, because a given pod trying to decrypt it might not be the one which encrypted it.
+
+In such cases one can register an encryption secret which should be 32 characters long, for example:
+```
+quarkus.oidc.token-state-manager.encryption-secret=eUk1p7UB3nFiXZGUXi0uph1Y9p34YhBU
+```
+
+Also note that an encrypted session cookie might exceed a `4096` bytes limit which will cause some browsers ignoring it. Try one of the following in such cases:
+
+* Set `quarkus.oidc.token-state-manager.split-tokens=true` to have the ID, access and refresh tokens stored in separate cookies
+
+* Set `quarkus.oidc.token-state-manager.strategy=id-refresh-tokens` if you do not need to use the access token as a source of roles or to request `UserInfo` or propagate it to the downstream services
+
+* Register a custom `quarkus.oidc.TokenStateManager` CDI bean with the alternative priority set to 1. For example, custom `quarkus.oidc.TokenStateManager` can store all the tokens in a database and return a short DB pointer which Quarkus will use as a session cookie value.
+
+If application users access the Quarkus application from within the trusted network, the session cookie encryption can be disabled:
+ 
+```
+quarkus.oidc.token-state-manager.encryption-required=false
+```
+
+=== `SameSite` is `Lax` by default for OIDC session cookie
+
+In the `2.16.0` and `2.16.1` releases, in OIDC `web-app` applications, OIDC session cookie had a `SameSite` attribute set to `Strict` by default. However `SameSite=Strict` introduced unpredictability in the way the session cookie can be handled by different browsers.
+Therefore starting from `3.0`, the session cookie will again have a `SameSite=Lax` attribute set by default.
+
+If you do have a `2.16.0` or `2.16.1` based application working with the session cookie having `SameSite=Strict` attribute, then please add the following configuration: `quarkus.oidc.authentication.cookie-same-site=strict`
+
+== SmallRye Reactive Messaging
+
+=== `vertx-kafka-client` dependency removed
+
+Since the `2.12.0` release the `vertx-kafka-client` dependency from the smallrye-reactive-messaging-kafka extension is marked for removal.
+While not used for client implementations, this dependency provided default Kafka serdes for `io.vertx.core.buffer.Buffer`, `io.vertx.core.json.JsonObject` and `io.vertx.core.json.JsonArray` types, from the https://vertx.io/docs/apidocs/io/vertx/kafka/client/serialization/package-summary.html[io.vertx.kafka.client.serialization] package.
+
+The `3.0` release removes this dependency. Serdes mentioned above are still provided from the https://github.com/quarkusio/quarkus/tree/main/extensions/kafka-client/runtime/src/main/java/io/quarkus/kafka/client/serialization[io.quarkus.kafka.client.serialization] package.
+
+=== Split package resolution
+
+SmallRye Reactive Messaging proposes an https://smallrye.io/smallrye-reactive-messaging/4.3.0/concepts/testing/[in-memory connector]
+ for testing purposes.
+
+The usage of this connector caused a split-package issue because its classes are provided from the `io.smallrye.reactive.messaging.providers.connectors`. This is resolved by moving these classes to `io.smallrye.reactive.messaging.memory` package.
+
+== JAXB
+
+The JAXB extension automatically detects the classes that are using JAXB annotations and registers these classes into the default `JAXBContext`. This default `JAXBContext` instance is validated at runtime when used, so if there are issues or conflicts with the classes and JAXB, you will get a JAXB exception with a proper description to help you troubleshoot the issue. In this release, you can validate the `JAXBContext` instance at build time to detect and fix the JAXB errors by adding the property `quarkus.jaxb.validate-jaxb-context=true`.
+
+Moreover, we have added the property `quarkus.jaxb.exclude-classes` to exclude classes to be bounded to the `JAXBContext`. This property accepts either a comma-separated list of fully qualified class names, for example:
+
+```
+quarkus.jaxb.exclude-classes=org.acme.one.Model,org.acme.two.Model
+```
+
+Or a list of packages, for example:
+
+```
+quarkus.jaxb.exclude-classes=org.acme.*
+```
+
+In this example, the classes `org.acme.one.Model` and `org.acme.two.Model` won't be automatically bounded to the default `JAXBContext` instance. 
+
+== Testing
+
+=== Removal of `@io.quarkus.test.junit.NativeImageTest` and `@io.quarkus.test.junit.DisabledOnNativeImageTest` annotations
+
+These annotations were marked as deprecated for removal since Quarkus 2.8.0.Final and they were finally removed. 
+
+Use `@io.quarkus.test.junit.QuarkusIntegrationTest` and `@io.quarkus.test.junit.DisabledOnIntegrationTest` respectively instead.
+
+=== Fixation of the Mockito `subclass` mockmaker
+
+Quarkus 3.0 updates Mockito to 5.x and in 5.0.0 Mockito https://github.com/mockito/mockito/releases/tag/v5.0.0[switched to the more flexible `inline` mockmaker by default].
+To preserve the mocking behavior users are used to since Quarkus 1.x and to avoid https://github.com/quarkusio/quarkus/issues/31251[memory leaks for big test suites], Quarkus 3.0 fixates the mockmaker to `subclass` instead of `inline` until the latter is fully supported in later Quarkus 3.x releases.
+
+If you really want to force the `inline` mockmaker:
+
+. add the following exclusion to your `pom.xml`:
+  ```xml
+  <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-junit5-mockito</artifactId>
+      <exclusions>
+          <exclusion>
+              <groupId>org.mockito</groupId>
+              <artifactId>mockito-subclass</artifactId>
+          </exclusion>
+      </exclusions>
+  <dependency>
+  ```
+. add `mockito-core` to your dependencies (note: the `mockito-inline` artifact was removed in Mockito 5.3)
+
+== Keystore default password
+
+Quarkus used "password" as the default password for JWT key and keystores. This default value has been removed. So, if you used "password" you now need to configure that password in the application.properties file:
+
+```
+quarkus.oidc-client.credentials.jwt.key-store-password=password
+quarkus.oidc-client.credentials.jwt.key-password=password
+```
+
+== Management interface
+
+You can now expose the metrics and health endpoint on a separate HTTP server using `quarkus.management.enabled=true`. 
+Note that for the endpoint exposed on that management interface, the paths are resolved differently:
+
+- the root path is configured using `quarkus.management.root-path`; `quarkus.http.root-path` is only used for the main HTTP server
+- the `quarkus.http.non-application-root-path` is not used for endpoints exposed on the management interface.
+
+== OpenTelemetry
+
+=== Extension re-write
+There are some major changes in the OpenTelemetry extension on Quarkus 3.0.
+
+Before 3.0 the OpenTelemetry SDK (OTel SDK) was created at build time and had limited configuration options, most notably, it could not be disabled at runtime. This can now be done by setting: `quarkus.otel.sdk.disabled=true`
+Now, after some build time preparation steps, the OTel SDK itself is wired at runtime using the standard OTel Auto-configuration feature. This enables the usage of all Java OTel properties from upstream.
+
+We tried to maximise backyards compatibility as much as possible.
+
+Old properties are deprecated but, apart from the ones related with sampling, they will work transparently along with the new ones. We are mapping them during a short transition period. 
+
+These are the property changes:
+
+|===
+| Deprecated attribute | Property to use
+
+| quarkus.opentelemetry.enabled
+| quarkus.otel.enabled
+
+| quarkus.opentelemetry.tracer.enabled
+| quarkus.otel.traces.enabled
+
+| quarkus.opentelemetry.propagators
+| quarkus.otel.propagators
+
+| quarkus.opentelemetry.tracer.suppress-non-application-uris
+| quarkus.otel.traces.suppress-non-application-uris
+
+| quarkus.opentelemetry.tracer.include-static-resources
+| quarkus.otel.traces.include-static-resources
+
+| quarkus.opentelemetry.tracer.sampler
+| quarkus.otel.traces.sampler
+
+| quarkus.opentelemetry.tracer.sampler.ratio
+| quarkus.otel.traces.sampler.arg
+
+| quarkus.opentelemetry.tracer.exporter.otlp.enabled
+| quarkus.otel.exporter.otlp.enabled
+
+| quarkus.opentelemetry.tracer.exporter.otlp.headers
+| quarkus.otel.exporter.otlp.traces.headers
+
+| quarkus.opentelemetry.tracer.exporter.otlp.endpoint
+| quarkus.otel.exporter.otlp.traces.legacy-endpoint
+
+|===
+
+For samplers the changes are:  
+
+If the sampler is parent based, there is no need to set, the now dropped property, `quarkus.opentelemetry.tracer.sampler.parent-based`.
+
+The values you need to set on `quarkus.opentelemetry.tracer.sampler` are now:
+
+|===
+|Old Sampler config value | New Sampler config value | New Sampler config value (If Parent based)
+
+|on
+|always_on
+|parentbased_always_on
+
+|off
+|always_off
+|parentbased_always_off
+
+|ratio
+|traceidratio
+|parentbased_traceidratio
+
+|===
+
+Many new properties are now available. Please check the guide.
+
+We allowed the CDI configuration of many classes: IdGenerator, Resource attributes, Sampler and SpanProcessor. This is not available in standard OTel and we continue to provide this handy feature.
+However, we are deprecating the CDI creation of the SpanProcessor through our LateBoundBatchSpanProcessor. If you are overriding or customising it, please let us know.
+Currently we continue to use this processor to make sure backwards compatibility exists but we will soon move to use the standard exportes bundled with the OTel SDK.
+
+This means default backwards compatible exporter is using this configuration:
+`quarkus.otel.traces.exporter=cdi` 
+
+As a preview, the stock OTLP exporter is now availably by setting:
+`quarkus.otel.traces.exporter=otlp` 
+
+We now provide additional configurations of the OTel SDK using their standard SPI hooks for Sampler and SpanExporter. The remaining SPIs are available but require testing to validate compatibility.
+
+The OpenTelemetry Guide was also updated.
+
+=== OpenTelemetry Upgrades
+OpenTelemetry (OTel) 1.23.1 introduced breaking changes. Some of them are:
+- HTTP span names are now `"{http.method} {http.route}"` instead of just `"{http.route}"`.
+- All methods in all `*Getter` classes in instrumentation-api-semconv have been renamed to use the `get*()` naming scheme
+- Semantic conventions changes:
+
+|===
+| Deprecated attribute | Property to use
+
+| messaging.destination_kind
+| messaging.destination.kind
+
+| messaging.destination
+| messaging.destination.name
+
+| messaging.consumer_id
+| messaging.consumer.id
+
+| messaging.kafka.consumer_group
+| messaging.kafka.consumer.group
+|===
+
+The Full sets of changes can be checked https://github.com/open-telemetry/opentelemetry-java/releases/tag/v1.23.0[here] and https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v1.23.0[here].
+
+=== JDBC tracing activation
+
+Before 3.0, to activate JDBC tracing, this configuration was used:
+
+```
+quarkus.datasource.jdbc.url=jdbc:otel:postgresql://localhost:5432/mydatabase
+# use the 'OpenTelemetryDriver' instead of the one for your database
+quarkus.datasource.jdbc.driver=io.opentelemetry.instrumentation.jdbc.OpenTelemetryDriver
+```
+
+Now, a much simpler configuration is required:
+
+```
+quarkus.datasource.jdbc.telemetry=true
+```
+This doesn't require changing the db url or declare a different driver.  
+
+
+== OpenTracing
+
+- OpenTracing support has been deprecated since Quarkus 2.14. We encourage moving to OpenTelemetry as soon as possible. The OpenTracing support will be removed soon.
+
+== OpenAPI
+
+- OpenAPI no longer enables a wildcard `*` `CORS` `Origin` support by default as it can leak OpenAPI documents. If you'd like, you can enable a https://quarkus.io/guides/http-reference#support-all-origins-in-devmode[wildcard `Origin` support in devmode].
+
+== Scheduler/Quartz
+
+The `quarkus.quartz.start-mode` property is deprecated and should be replaced with https://quarkus.io/guides/scheduler-reference#quarkus-scheduler_quarkus.scheduler.start-mode[`quarkus.scheduler.start-mode`]. Note that the new https://quarkus.io/guides/scheduler-reference#programmatic_scheduling[Programmatic Scheduling API] works in both: the `quarkus-scheduler` and the `quarkus-quartz` extensions, i.e. the start mode is a shared feature available in these extensions.
+
+== Dev tools
+
+=== Maven versions
+
+- The lowest supported Maven version has changed from 3.6.2 to 3.8.2 following a refactoring of the Quarkus Maven plugins to support Maven 3.9.
+
+=== Removal of `quarkus-bootstrap-maven-plugin` Maven plugin
+
+- The `io.quarkus:quarkus-bootstrap-maven-plugin` Maven plugin has been deprecated since 2.10.0.Final and no longer exists. If your extension uses it, you must change the artifact ID to `io.quarkus:quarkus-extension-maven-plugin`. The update recipe should also perform this change (see https://github.com/quarkusio/quarkus-updates/commit/b39e47f06811239a3b011ab9e68b403238d3887f[here])  
+
+== MapStruct
+
+If you are using the CDI component model in MapStruct, there are a few things you need to do:
+
+- Update to MapStruct 1.5+
+- Update your `@Mapper(componentModel = "cdi")` annotations to `@Mapper(componentModel = "jakarta")`.
