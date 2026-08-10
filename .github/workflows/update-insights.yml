@@ -45,8 +45,6 @@ jobs:
       - name: Archive current session
         id: archive_session
         run: |
-          today=$(date +"%B %d, %Y")
-
           nextsessiondate=$(yq -r '.nextsessiondate' _data/insights-videos.yaml)
           if [ -z "$nextsessiondate" ] || [ "$nextsessiondate" == "null" ]; then
             echo "Error: Could not read nextsessiondate from YAML"
@@ -66,10 +64,15 @@ jobs:
           esac
           nextsessiondate_formatted=$(date --date="$nextsessiondate" +"%B ${day}${suffix}, %Y")
 
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "DRY-RUN: Would check if today ($today) matches next session date ($nextsessiondate_formatted)"
-          elif [ "$today" != "$nextsessiondate_formatted" ]; then
-            echo "Next session date ($nextsessiondate_formatted) does not match today's date ($today). Skipping workflow run."
+          # Compare dates using ISO format for reliable comparison
+          today_iso=$(date +"%Y-%m-%d")
+          nextsessiondate_iso=$(date --date="$nextsessiondate" +"%Y-%m-%d")
+          is_dry_run=${{ github.event_name == 'pull_request' }}
+
+          if [ "$is_dry_run" = "true" ]; then
+            echo "DRY-RUN: Would check if next session date ($nextsessiondate_formatted) has passed (today is $today_iso, session is $nextsessiondate_iso)"
+          elif [ "$today_iso" \< "$nextsessiondate_iso" ]; then
+            echo "Next session date ($nextsessiondate_formatted / $nextsessiondate_iso) is still in the future (today is $today_iso). Skipping workflow run."
             exit 0
           fi
 
@@ -80,24 +83,23 @@ jobs:
           fi
           echo "Current episode number: $current_episode"
 
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            video_link="https://www.youtube.com/watch?v=DRY_RUN_VIDEO_ID"
-          else
-            youtube_response=$(curl -s --fail \
-                "https://www.youtube.com/feeds/videos.xml?channel_id=${{ secrets.INSIGHTS_YOUTUBE_CHANNEL_ID }}") || {
-              echo "Error: YouTube RSS feed request failed"
-              exit 1
-            }
+          # Quarkus YouTube channel ID (public, from https://www.youtube.com/@Quarkusio)
+          YOUTUBE_CHANNEL_ID="UCaW8QG_QoIk_FnjLgr5eOqg"
 
-            video_id=$(echo "$youtube_response" | grep -o "<yt:videoId>[^<]*</yt:videoId>" | sed 's/<[^>]*>//g' | head -1)
+          youtube_response=$(curl -s --fail \
+              "https://www.youtube.com/feeds/videos.xml?channel_id=${YOUTUBE_CHANNEL_ID}") || {
+            echo "Error: YouTube RSS feed request failed"
+            exit 1
+          }
 
-            if [ -z "$video_id" ]; then
-              echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
-              exit 0
-            fi
+          video_id=$(echo "$youtube_response" | grep -o "<yt:videoId>[^<]*</yt:videoId>" | sed 's/<[^>]*>//g' | head -1)
 
-            video_link="https://www.youtube.com/watch?v=${video_id}"
+          if [ -z "$video_id" ]; then
+            echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
+            exit 0
           fi
+
+          video_link="https://www.youtube.com/watch?v=${video_id}"
           nextsessiontitle="$(yq '.nextsessiontitle' _data/insights-videos.yaml)"
           nextsessionguest="$(yq '.nextsessionguest' _data/insights-videos.yaml)"
 
