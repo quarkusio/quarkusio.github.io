@@ -1,0 +1,105 @@
+---
+layout: post
+title: 'Quarkus Insights #256: What is Floci?'
+date: 2026-08-10
+tags: quarkus-insights
+synopsis: 'Hector Ventura, creator of Floci, joins the show to explain what local multi-cloud emulation really means, how a Quarkus native image gets a suite of AWS, Azure, GCP, and OCI emulators down to 24 ms startup and 13 MB idle memory, and what comes next for the project.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/VFYZUZbjzd4[watch the video] for the full story.
+
+== Quarkus Insights #256: What is Floci?
+
+Hector Ventura, a Lead Software Engineer with nearly 18 years of Java experience and eight years working day-to-day with AWS, is the creator of https://floci.io[Floci] — a free, open-source suite of local cloud emulators built on top of Quarkus native image. In episode 256 he joins the show to walk through what local cloud emulation actually means, give a live tour of the UI, and explain how a part-time side project opened a week before LocalStack archived its community edition became one of the more talked-about tools in the Quarkus ecosystem.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/VFYZUZbjzd4" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Where the Name Comes From
+
+The name Floci is a play on _cirrocumulus floccus_ — the small, popcorn-shaped cloud formation. Hector's first instinct for the name was "Floccus" directly, but it didn't feel right, so "Floci" emerged as the working name and stuck. The pronunciation caused some confusion in the episode preview the week before (the hosts attempted roughly six incorrect versions), but it is now firmly settled.
+
+== What Floci Is — and What It Is Not
+
+Hector draws a clear line between three categories that are often conflated:
+
+* **Mocking** — you define a canned response: "when you receive _this_, reply with _that_." Nothing is actually executed or stored.
+* **Simulation** — behaviour is pre-defined and the responses are realistic, but they are not based on real state.
+* **Emulation** — the system behaves like the real thing. If you store an object and ask for it back, Floci returns the object you stored.
+
+Floci is firmly in the emulation category. It is not intended to replace a real cloud account in production — its purpose is local development, CI/CD pipelines, and AI agent sandboxing, where fast, isolated, and disposable environments matter far more than billing-grade fidelity.
+
+== A Suite, Not Just an AWS Clone
+
+At launch Floci was a single AWS emulator. Today it covers AWS, Azure, https://cloud.google.com[Google Cloud Platform], and https://www.oracle.com/cloud/[Oracle OCI] — each running in its own container on its own port, with a consistent CLI and UI experience across all four. The project opened as open source on 15 March, a week before LocalStack archived its community edition. Five months in, the volume of incoming issues and pull requests already makes it feel much older than it is.
+
+== How It Works Under the Hood
+
+For most services Floci implements the cloud provider APIs directly. For services where a from-scratch implementation would take years — databases like AWS RDS being the primary example — Floci uses the same strategy the clouds themselves use: it spins up a real Docker container running PostgreSQL, MySQL, or MariaDB. Lambda is handled similarly: Floci pulls the official AWS Lambda runtime images from the ECR and executes function code inside them, giving near-identical behaviour to a real Lambda invocation.
+
+The entire emulator is compiled to a https://www.graalvm.org[GraalVM] native image via Quarkus, which is what produces the headline numbers the community keeps sharing: **24 ms startup time and 13 MB idle memory**.
+
+== Quarkus Dev Services Integration
+
+Quarkus Dev Services originally wired local AWS emulation through https://www.localstack.cloud[LocalStack] via https://testcontainers.com[Testcontainers]. The same mechanism — which talks to the Docker socket to start a pre-configured container — now supports multiple providers, and Floci is one of them. Switching is a configuration change; no application code has to change because your code still talks to the original AWS, Azure, or GCP SDK.
+
+== The UI and Storage Modes
+
+A live demo showed Floci's built-in status page at `localhost:4566`, which lists running services and exposes a button to launch the https://github.com/floci-io/floci-ui[Floci UI] as a separate container on port 4500. The UI is deliberately not embedded in the emulator itself — Floci is used heavily in CI/CD and by AI agents, where no UI is needed and keeping the image lean matters.
+
+The UI uses a cloud-agnostic vocabulary (Storage rather than S3, for example) so it can represent all four providers in the same pane. "Coming soon" labels throughout map the intended roadmap in a form far more visible than a GitHub issue list.
+
+For data persistence Floci offers four storage modes:
+
+* **Memory** — fastest; data is lost when the container stops. Good for AI agent sandboxing.
+* **Persisted** — every write goes to disk immediately. Deterministic and source-controllable for test fixture data.
+* **Hybrid** — writes go to memory and are flushed to disk asynchronously, inspired by PostgreSQL's write-ahead log. Faster than persisted, still recoverable after a restart.
+* A fourth mode completes the set.
+
+Hector pointed out that persistence was a first-class design goal from day one, because the LocalStack community edition could not reliably copy or move a persistent dataset — a limitation that drove him to build something different.
+
+== AI Agent Sandboxing
+
+One use case that surfaced briefly on screen stood out: the ability to assign a separate Floci instance to each AI agent running in parallel. A company that reached out to Hector described how spinning up isolated Floci environments per agent had materially accelerated their development process. With no real cloud credentials in play and data that simply disappears at the end of a session, it removes the category of horror stories that arise from giving an LLM access to a live account with real billing.
+
+== AWS SDK Compatibility and Versioning
+
+Hector addressed how Floci tracks SDK evolution: AWS SDKs maintain backwards compatibility, so new service versions add capability without breaking existing calls. AWS is working on an interface definition format called https://github.com/awslabs/smithy[Smithy]; GCP and OCI are cleaner because they publish https://grpc.io[gRPC] Protobuf definitions that Floci uses directly — the same `.proto` files the SDKs themselves are generated from.
+
+== Using AWS CLI with Floci
+
+The demo walked through redirecting the AWS CLI at a local Floci instance. The key points:
+
+1. Export the `AWS_ENDPOINT_URL` environment variable to point at `localhost:4566`.
+2. Use placeholder credentials — Floci does not validate them.
+3. Floci registers `*.floci.io` as a DNS alias for `127.0.0.1`, so SDK path-style and virtual-hosted-style S3 URLs both resolve locally without editing `/etc/hosts`.
+
+Once those three things are in place, `aws s3 ls` and `aws s3 mb` work exactly as they would against a real account.
+
+== What's Next
+
+Hector named three priorities:
+
+1. **More maintainers.** Pull requests are growing faster than the current team can review them carefully by hand. He emphasized that even with AI assistance, every PR needs a human pass.
+2. **CloudFormation expansion.** CloudFormation support exists today but is the single most-requested feature for expansion, pushing Floci further into the infrastructure-as-code and DevOps workflows.
+3. **Floci Pods.** A planned feature that would produce a small, portable artifact — current working title "Snapshot" — encapsulating a complete Floci environment state so that a developer can send a colleague a reproducible bug reproduction with the exact data that triggered it.
+
+The release cadence is settling into two releases per emulator per month (first and third Tuesday), down from the early pace of every three or four days that was burning maintainer time.
+
+== Key Takeaways
+
+1. **Emulation vs mocking** — Floci stores and returns real data; it is not injecting pre-baked responses.
+2. **Multi-cloud from day one** — AWS, Azure, GCP, and OCI are all represented, with coverage expanding on community demand.
+3. **Native image performance** — 24 ms startup and 13 MB idle memory come directly from Quarkus native compilation via GraalVM Mandrel.
+4. **Dev Services plug-in** — existing Quarkus projects can switch to Floci as the Dev Services provider with a configuration change, no SDK code changes required.
+5. **Four storage modes** — from ephemeral in-memory (ideal for AI sandboxes) to hybrid write-ahead persistence (ideal for reproducible test fixtures).
+6. **AI agent isolation** — running one Floci instance per agent eliminates the risk of runaway LLM operations touching a real cloud account.
+7. **Looking for maintainers** — the project is growing faster than its current core team; contributors are genuinely welcome.
+
+== Conclusion
+
+Floci is a young project that arrived at exactly the right moment: a fast, MIT-licensed, Quarkus-native replacement for a tool that tens of thousands of developers depended on. Five months in, the numbers in the issues tracker and pull request queue reflect genuine adoption, and the performance story — anchored in the same native image capabilities that gave this show some of its best benchmark conversations — gives it a strong foundation as it expands from AWS into the full multi-cloud picture. If you are interested in contributing, head to https://github.com/floci-io[github.com/floci-io] to find open issues tagged for new contributors.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel].
