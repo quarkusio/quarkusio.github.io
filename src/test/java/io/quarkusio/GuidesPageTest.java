@@ -470,15 +470,15 @@ public class GuidesPageTest extends BrowserTest {
 
     @Test
     void versionedGuideDropdownHasCorrectVersionSelected() {
-        page.navigate(baseUrl + "/version/main/guides/getting-started");
+        page.navigate(baseUrl + "/guides/getting-started");
 
         Locator selectedOption = page.locator("#guide-version-dropdown option[selected]");
         assertTrue(selectedOption.count() > 0,
                 "Expected a selected option in the version dropdown");
 
         String selectedValue = selectedOption.first().getAttribute("value");
-        assertEquals("main", selectedValue,
-                "Version dropdown should have 'main' selected");
+        assertEquals("latest", selectedValue,
+                "Version dropdown should have 'latest' selected");
     }
 
     @Test
@@ -522,5 +522,25 @@ public class GuidesPageTest extends BrowserTest {
             assertTrue(categoryCount > 0,
                     PATH + ": Expected a qs-categories-toc element for category navigation");
         }
+
+		@Test
+		void versionedGuideDropdownHasCorrectVersionSelected() {
+			page.navigate(baseUrl + "/version/main/guides/getting-started");
+
+			// Categorized guide pages (e.g. main) use the split-button version
+			// selector; the current version is the item marked .is-current.
+			Locator currentItem = page.locator("#guide-version-split .version-split-item.is-current");
+			assertTrue(currentItem.count() > 0,
+					   "Expected a current item in the version selector");
+
+			String label = currentItem.first().textContent().trim();
+			assertTrue(label.equalsIgnoreCase("main"),
+					   "Version selector should mark 'main' as current, got: " + label);
+
+			String href = currentItem.first().getAttribute("href");
+			assertNotNull(href, "Current version item should have an href");
+			assertTrue(href.contains("/version/main/guides/getting-started"),
+					   "Current version item should link to the main guide, got: " + href);
+		}
     }
 }
