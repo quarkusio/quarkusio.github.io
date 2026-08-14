@@ -163,23 +163,33 @@ Extensions.register do
   tree_processor do
     process do |doc|
       status = doc.attr('extension-status')
+      
+      if status.nil? || status.empty?
+        extension_statuses = doc.attr('extensions', '').split(',')
+            .map(&:strip)
+            .reject(&:empty?)
+            .map { |s| s.gsub(/[.:]/, '-') + '-extension-status' }
+            .map { |s| doc.attr(s, '') }
+        status = ['experimental', 'preview', 'deprecated'].find { |s| extension_statuses.include?(s) }
+      end
 
       if status && !status.empty?
-        tooltip = case status
+        explanation_inner_html = case status
           when 'experimental'
-            'This extension requests early feedback to mature the idea'
+            '<p>The extension(s) discussed here request early feedback to mature the idea.</p><p>There is no guarantee of stability nor long term presence in the platform until the solution matures. Feedback is welcome on our <a href="https://groups.google.com/d/forum/quarkus-dev">mailing list</a> or as issues in our <a href="https://github.com/quarkusio/quarkus/issues">GitHub issue tracker</a></p>.'
           when 'preview'
-            'This extension\'s backward compatibility and presence in the ecosystem is not guaranteed'
+            '<p>The backward compatibility and presence in the ecosystem of extension(s) discussed here is not guaranteed.</p><p>Specific improvements might require changing configuration or APIs, and plans to become <em>stable</em> are under way. Feedback is welcome on our <a href="https://groups.google.com/d/forum/quarkus-dev">mailing list</a> or as issues in our <a href="https://github.com/quarkusio/quarkus/issues">GitHub issue tracker</a>.</p>'
           when 'stable'
-            'This extension\'s backward compatibility and presence in the ecosystem are taken very seriously'
+            '<p>The backward compatibility and presence in the ecosystem of the extension(s) discussed here are taken very seriously.</p>'
           when 'deprecated'
-            'This extension is likely to be replaced or removed in a future version'
+            '<p>The extension(s) discussed here is likely to be replaced or removed in a future version.</p>'
           else
             ""
           end
-        label_html = %(<a class="status-label status-#{status}" title="#{tooltip}" href="#extension-status-note">#{status}</a>)
-
-        label_block = create_pass_block doc, label_html, {}
+        label_html = %(<div class="extension-status-icon"><span class="status-label status-#{status}">#{status}</span></div>)
+        explanation_inner_html = %(<div class="extension-status-explanation">#{explanation_inner_html}For a full list of possible statuses, check our <a href="/faq/#what-are-the-extension-statuses">FAQ entry</a>.</div>)
+        staus_block_html = %(<div class="extension-status">#{label_html}#{explanation_inner_html}</div>)
+        label_block = create_pass_block doc, staus_block_html, {}
         doc.blocks.insert(0, label_block)
       end
       doc
