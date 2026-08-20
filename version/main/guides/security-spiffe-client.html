@@ -400,6 +400,15 @@ public Uni&lt;String&gt; getWorkloadIdentity() {
 </div>
 </div>
 <div class="sect1">
+<h2 id="oidc-spiffe-client-authentication"><a class="anchor" href="#oidc-spiffe-client-authentication"></a>OIDC SPIFFE Client Authentication</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>When this extension is combined with either <code>quarkus-oidc</code> or <code>quarkus-oidc-client</code> extensions, JWT-SVIDs can be supplied automatically and used as OIDC client authentication assertions.
+Please see the <a href="security-oidc-code-flow-authentication#oidc-provider-client-authentication">OIDC provider client authentication</a> section of the OIDC code flow authentication guide and the <a href="security-openid-connect-client-reference#oidc-client-authentication">OIDC Client authentication</a> section of the OIDC client guide for more information.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="testing"><a class="anchor" href="#testing"></a>Testing</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -407,23 +416,137 @@ public Uni&lt;String&gt; getWorkloadIdentity() {
 While it does not support custom authorization policies or registration entries, it is sufficient for verifying that your application correctly retrieves and uses JWT-SVIDs without requiring external SPIRE infrastructure.
 You can choose the transport protocol with the <code>quarkus.spiffe-client.devservices.transport</code> property, which accepts <code>unix</code> (default) or <code>tcp</code>.</p>
 </div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="oidc-spiffe-client-authentication"><a class="anchor" href="#oidc-spiffe-client-authentication"></a>OIDC SPIFFE Client Authentication</h2>
-<div class="sectionbody">
+<div class="sect2">
+<h3 id="keycloak-dev-svc-integration"><a class="anchor" href="#keycloak-dev-svc-integration"></a>Testing SPIFFE client authentication with Keycloak</h3>
 <div class="paragraph">
-<p>When combined with <code>quarkus-oidc</code> or <code>quarkus-oidc-client</code>, this extension can supply JWT-SVIDs as client assertions automatically:</p>
+<p>To test OIDC SPIFFE client authentication against Keycloak Dev Services, you need to configure a Keycloak realm with a SPIFFE identity provider and a <code>federated-jwt</code> client.
+You can automate this setup by creating a custom test resource using <code>KeycloakTestClient</code>. This ensures the realm is ready before your tests execute.
+For example, you can create a test realm like this:</p>
 </div>
-<div class="ulist">
-<ul>
-<li>
-<p>To authenticate the OIDC provider client during the authorization code exchange, see the <a href="security-oidc-code-flow-authentication#oidc-provider-client-authentication">OIDC provider client authentication</a> section of the OIDC code flow guide.</p>
-</li>
-<li>
-<p>To authenticate an <code>OidcClient</code> for <code>client_credentials</code> or other grant types, see the <a href="security-openid-connect-client-reference#oidc-client-authentication">OidcClient authentication</a> section of the OIDC client reference.</p>
-</li>
-</ul>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.representations.idm.IdentityProviderRepresentation;
+import org.keycloak.representations.idm.RealmRepresentation;
+
+import io.quarkus.test.common.DevServicesContext;
+import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
+import io.quarkus.test.keycloak.client.KeycloakTestClient;
+
+public class SpiffeKeycloakTestResource implements QuarkusTestResourceLifecycleManager, DevServicesContext.ContextAware {
+
+    private final KeycloakTestClient client = new KeycloakTestClient();
+
+    @Override
+    public void setIntegrationTestContext(DevServicesContext context) {
+        client.setIntegrationTestContext(context);
+    }
+
+    @Override
+    public Map&lt;String, String&gt; start() {
+        RealmRepresentation realm = new RealmRepresentation();
+        realm.setRealm("quarkus-spiffe");
+        realm.setEnabled(true);
+        realm.setUsers(new ArrayList&lt;&gt;());
+        realm.setClients(new ArrayList&lt;&gt;());
+
+        IdentityProviderRepresentation idp = new IdentityProviderRepresentation();
+        idp.setProviderId("spiffe");
+        idp.setAlias("spiffe-idp");
+        idp.setEnabled(true);
+        idp.setConfig(Map.of(
+                "trustDomain", "spiffe://test.quarkus.io",
+                "bundleEndpoint", "http://host.testcontainers.internal:18443/bundle"));
+        realm.addIdentityProvider(idp);
+
+        ClientRepresentation spiffeClient = new ClientRepresentation();
+        spiffeClient.setClientId("my-app");
+        spiffeClient.setPublicClient(false);
+        spiffeClient.setServiceAccountsEnabled(true);
+        spiffeClient.setStandardFlowEnabled(true);
+        spiffeClient.setClientAuthenticatorType("federated-jwt");
+        spiffeClient.setRedirectUris(List.of("*"));
+        spiffeClient.setEnabled(true);
+        spiffeClient.setAttributes(Map.of(
+                "jwt.credential.issuer", "spiffe-idp",
+                "jwt.credential.sub", "spiffe://test.quarkus.io/test-workload"));
+        realm.getClients().add(spiffeClient);
+
+        client.createRealm(realm);
+        return Map.of();
+    }
+
+    @Override
+    public void stop() {
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Next, adjust your application configuration to enable the SPIFFE feature in Keycloak Dev Services.
+The SPIFFE Dev Service bundle endpoint listens on port <code>18443</code> by default, and Keycloak must be able to reach it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.keycloak.devservices.host-accessible-ports=${quarkus.spiffe-client.devservices.http-port}
+quarkus.keycloak.devservices.features=spiffe
+quarkus.keycloak.devservices.realm-name=quarkus-spiffe
+quarkus.keycloak.devservices.create-realm=false</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Alternatively, if you already have an existing realm, export it to a JSON file and set the SPIFFE identity provider&#8217;s <code>trustDomain</code> to <code>spiffe://test.quarkus.io</code> and <code>bundleEndpoint</code> to <code><a href="http://host.testcontainers.internal:18443/bundle" class="bare">http://host.testcontainers.internal:18443/bundle</a></code>.
+In your realm JSON file, add or update the SPIFFE identity provider entry in the <code>identityProviders</code> array:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-json hljs" data-lang="json">"identityProviders": [
+    {
+        "alias": "spiffe-idp",
+        "providerId": "spiffe",
+        "enabled": true,
+        "config": {
+            "trustDomain": "spiffe://test.quarkus.io",
+            "bundleEndpoint": "http://host.testcontainers.internal:18443/bundle"
+        }
+    }
+]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Then load the realm file with:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.keycloak.devservices.host-accessible-ports=${quarkus.spiffe-client.devservices.http-port}
+quarkus.keycloak.devservices.features=spiffe
+quarkus.keycloak.devservices.realm-path=quarkus-spiffe.json</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Finally, apply this setup to your test class using the <code>@QuarkusTestResource</code> annotation:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.test.common.QuarkusTestResource;
+import io.quarkus.test.junit.QuarkusTest;
+import org.junit.jupiter.api.Test;
+
+@QuarkusTest
+@QuarkusTestResource(SpiffeKeycloakTestResource.class)
+class MySpiffeClientTest {
+
+    @Test
+    void testEndpointThatReliesOnSpiffeClientAuthentication() {
+        // Test application endpoint that relies on Keycloak SPIFFE client authentication
+    }
+}</code></pre>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -472,7 +595,7 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <p>If SPIFFE Workload API client is enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-93823">QUARKUS_SPIFFE_CLIENT_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93823" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-93824">QUARKUS_SPIFFE_CLIENT_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93824" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -493,7 +616,7 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <p>Flag to enable (default) or disable Dev Services.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-93824">QUARKUS_SPIFFE_CLIENT_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93824" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-93825">QUARKUS_SPIFFE_CLIENT_DEVSERVICES_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93825" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -514,7 +637,7 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <p>Transport protocol for the SPIFFE Workload API server.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-93825">QUARKUS_SPIFFE_CLIENT_DEVSERVICES_TRANSPORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93825" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-93826">QUARKUS_SPIFFE_CLIENT_DEVSERVICES_TRANSPORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93826" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -528,10 +651,31 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-spiffe-client_quarkus-spiffe-client-devservices-http-port"></a> <span class="property-path"><a href="#quarkus-spiffe-client_quarkus-spiffe-client-devservices-http-port"><code>quarkus.spiffe-client.devservices.http-port</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.spiffe-client.devservices.http-port' title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The port for the bundle HTTP server to listen on.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-93827">QUARKUS_SPIFFE_CLIENT_DEVSERVICES_HTTP_PORT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93827" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>18443</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-spiffe-client_quarkus-spiffe-client-endpoint-socket"></a> <span class="property-path"><a href="#quarkus-spiffe-client_quarkus-spiffe-client-endpoint-socket"><code>quarkus.spiffe-client.endpoint-socket</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.spiffe-client.endpoint-socket' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>SPIFFE Workload Endpoint socket URI. Supports <code>unix://</code> for Unix Domain Socket and <code>tcp://</code> for TCP transport as defined by the <a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Workload_Endpoint.md">SPIFFE Workload Endpoint</a> specification.</p>
@@ -543,7 +687,7 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <p>Example values: <code>unix:///run/spire/sockets/agent.sock</code>, <code>tcp://127.0.0.1:8080</code></p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-93826">QUARKUS_SPIFFE_CLIENT_ENDPOINT_SOCKET</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93826" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-93828">QUARKUS_SPIFFE_CLIENT_ENDPOINT_SOCKET</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93828" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -553,18 +697,18 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/net/URI.html">URI</a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>${SPIFFE_ENDPOINT_SOCKET:}</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-spiffe-client_quarkus-spiffe-client-audiences"></a> <span class="property-path"><a href="#quarkus-spiffe-client_quarkus-spiffe-client-audiences"><code>quarkus.spiffe-client.audiences</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.spiffe-client.audiences' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Default audience values that a SPIFFE JSON Web Token (JWT-SVID) is required to contain in its audience <code>aud</code> claim. These audiences are supplied to the Workload API when no audiences are directly provided to <code>SpiffeClient</code> methods for retrieving workload tokens.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-93827">QUARKUS_SPIFFE_CLIENT_AUDIENCES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93827" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-93829">QUARKUS_SPIFFE_CLIENT_AUDIENCES</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-93829" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -588,8 +732,12 @@ You can choose the transport protocol with the <code>quarkus.spiffe-client.devse
 <li><a href="#default-audiences">Default audiences</a></li>
 </ul>
 </li>
-<li><a href="#testing">Testing</a></li>
 <li><a href="#oidc-spiffe-client-authentication">OIDC SPIFFE Client Authentication</a></li>
+<li><a href="#testing">Testing</a>
+<ul class="sectlevel2">
+<li><a href="#keycloak-dev-svc-integration">Testing SPIFFE client authentication with Keycloak</a></li>
+</ul>
+</li>
 <li><a href="#extension-integration">Extension integration</a></li>
 <li><a href="#configuration-reference">Configuration reference</a></li>
 </ul></div>
