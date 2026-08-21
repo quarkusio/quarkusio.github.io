@@ -1,0 +1,157 @@
+name: Sync Insights Sessions archive/upcoming
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'  # 1pm UK (12:00 UTC during BST)
+    - cron: '0 13 * * 1'  # 2pm UK
+    - cron: '0 14 * * 1'  # 3pm UK
+    - cron: '0 15 * * 1'  # 4pm UK
+    - cron: '0 16 * * 1'  # 5pm UK
+    - cron: '0 21 * * 1'  # 10pm UK
+    - cron: '0 12 * * 2'  # 1pm UK Tuesday
+  push:
+    paths:
+      - '_data/insights-videos.yaml'
+      - '.github/workflows/update-insights.yml'
+  pull_request:
+    paths:
+      - '_data/insights-videos.yaml'
+      - '.github/workflows/update-insights.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token || github.token }}
+
+      - name: Archive current session
+        id: archive_session
+        run: |
+          nextsessiondate=$(yq -r '.nextsessiondate' _data/insights-videos.yaml)
+          if [ -z "$nextsessiondate" ] || [ "$nextsessiondate" == "null" ]; then
+            echo "Error: Could not read nextsessiondate from YAML"
+            exit 1
+          fi
+
+          # Format with ordinal suffix to match futurevideos format
+          day=$(date --date="$nextsessiondate" +"%d")
+          # Remove leading zero
+          day=${day#0}
+          # Add ordinal suffix
+          case $day in
+            1|21|31) suffix="st";;
+            2|22) suffix="nd";;
+            3|23) suffix="rd";;
+            *) suffix="th";;
+          esac
+          nextsessiondate_formatted=$(date --date="$nextsessiondate" +"%B ${day}${suffix}, %Y")
+
+          # Compare dates using ISO format for reliable comparison
+          today_iso=$(date +"%Y-%m-%d")
+          nextsessiondate_iso=$(date --date="$nextsessiondate" +"%Y-%m-%d")
+          is_dry_run=${{ github.event_name == 'pull_request' }}
+
+          if [ "$is_dry_run" = "true" ]; then
+            echo "DRY-RUN: Would check if next session date ($nextsessiondate_formatted) has passed (today is $today_iso, session is $nextsessiondate_iso)"
+          elif [ "$today_iso" \< "$nextsessiondate_iso" ]; then
+            echo "Next session date ($nextsessiondate_formatted / $nextsessiondate_iso) is still in the future (today is $today_iso). Skipping workflow run."
+            exit 0
+          fi
+
+          current_episode=$(yq -r '.nextsessiontitle | sub(".* #([0-9]+):.*"; "${1}")' _data/insights-videos.yaml)
+          if ! [[ "$current_episode" =~ ^[0-9]+$ ]]; then
+            echo "Error: Could not extract episode number from nextsessiontitle. Got: '$current_episode'"
+            exit 1
+          fi
+          echo "Current episode number: $current_episode"
+
+          # Quarkus YouTube channel ID (public, from https://www.youtube.com/@Quarkusio)
+          YOUTUBE_CHANNEL_ID="UCaW8QG_QoIk_FnjLgr5eOqg"
+
+          youtube_response=$(curl -s --fail \
+              "https://www.youtube.com/feeds/videos.xml?channel_id=${YOUTUBE_CHANNEL_ID}") || {
+            echo "Error: YouTube RSS feed request failed"
+            exit 1
+          }
+
+          video_id=$(echo "$youtube_response" | grep -o "<yt:videoId>[^<]*</yt:videoId>" | sed 's/<[^>]*>//g' | head -1)
+
+          if [ -z "$video_id" ]; then
+            echo "Could not find the YouTube video for episode #$current_episode. Assuming it's not there yet. Exiting..."
+            exit 0
+          fi
+
+          video_link="https://www.youtube.com/watch?v=${video_id}"
+          nextsessiontitle="$(yq '.nextsessiontitle' _data/insights-videos.yaml)"
+          nextsessionguest="$(yq '.nextsessionguest' _data/insights-videos.yaml)"
+
+          yq -i --yaml-compact-seq-indent '
+            .pastvideos = [
+            {
+              "title": "'"$nextsessiontitle"'",
+              "date": "'"$nextsessiondate_formatted"'",
+              "authors": "'"$nextsessionguest"'",
+              "link": "'"$video_link"'"
+            }
+          ] + .pastvideos
+          ' _data/insights-videos.yaml
+
+          echo "title=$nextsessiontitle" >> "$GITHUB_OUTPUT"
+      - name: Set next session information
+        if: steps.archive_session.outputs.title != ''
+        run: |
+          # Read the next upcoming session BEFORE deleting the current one
+          title=$(yq '.futurevideos[1].title' _data/insights-videos.yaml)
+          guests=$(yq '.futurevideos[1].authors' _data/insights-videos.yaml)
+          date_raw=$(yq '.futurevideos[1].date' _data/insights-videos.yaml)
+
+          if [ -z "$title" ] || [ "$title" == "null" ]; then
+            echo "Warning: No future videos remaining in the queue"
+            exit 0
+          fi
+
+          # Remove ordinal suffixes (st, nd, rd, th) from date
+          date_clean=$(echo "$date_raw" | sed 's/\([0-9]\+\)\(st\|nd\|rd\|th\)/\1/')
+          date_iso=$(date --date="$date_clean" +"%Y-%m-%d")
+          date=${date_iso}T13:00Z
+
+          yq -i --yaml-compact-seq-indent 'del(.futurevideos[0])' _data/insights-videos.yaml
+          yq -i --yaml-compact-seq-indent '.nextsessiontitle = "'"$title"'"' _data/insights-videos.yaml
+          yq -i --yaml-compact-seq-indent '.nextsessionguest = "'"$guests"'"' _data/insights-videos.yaml
+          yq -i --yaml-compact-seq-indent '.nextsessiondate = "'"$date"'"' _data/insights-videos.yaml
+
+      - name: Show dry-run diff
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "DRY-RUN: Changes that would be committed:"
+          git diff _data/insights-videos.yaml
+
+      - name: Commit and push
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _data/insights-videos.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Insights sessions archive"
+            git pull origin main --rebase
+            git push origin main
+          fi
