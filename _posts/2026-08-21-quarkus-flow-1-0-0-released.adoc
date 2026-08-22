@@ -1,0 +1,181 @@
+---
+layout: post
+title: 'Quarkus Flow 1.0.0 released'
+date: 2026-08-21
+tags: announcement extension workflow ai
+synopsis: 'Quarkus Flow 1.0.0 is the first stable release of the workflow engine for Quarkus based on the Open Workflow Specification.'
+author: ricardozanini
+---
+
+
+Hello! 
+
+This is Ricardo Zanini, software engineer and Quarkus collaborator. Today, I'm happy to announce the release of Quarkus Flow 1.0.0, the first stable version of our workflow engine for Quarkus based on the Open Workflow Specification (a CNCF sandbox project).
+
+== What is Quarkus Flow?
+
+Quarkus Flow is a lightweight workflow engine for Quarkus that allows developers to define, orchestrate, and execute workflows anywhere. It's designed with Quarkus infrastructure in mind to be part of your application, running seamlessly within the Quarkus runtime without any additional service, workers or management tools.
+
+Besides a declarative YAML language, it also provides a Java DSL for workflow definitions. It integrates with agentic AI orchestration through LangChain4j, supports messaging, and offers durable workflow executions. Quarkus Flow is designed to be observability-friendly with OpenTelemetry and Micrometer integration, and it supports security features like OIDC client and OAuth2 token negotiation. The project is open-source and can be found on https://github.com/quarkiverse/quarkus-flow[GitHub], with more information available in the https://open-workflow-specification.org/[Open Workflow Specification documentation].
+
+== What is included in 1.0.0?
+
+=== Java DSL for workflow definitions
+
+Workflows can be defined in YAML following the Open Workflow Specification, or directly in Java using the `FlowDSL` fluent API: whichever fits best in your project.
+
+A YAML workflow looks like this:
+
+[source,yaml]
+----
+document:
+  dsl: "1.0.0"
+  namespace: examples
+  name: greeting
+  version: "1.0.0"
+do:
+  - greet:
+      set:
+        message: "${ \"Hello, \" + .name + \"!\" }"
+----
+
+If you prefer to stay in Java, you can describe the same logic with the DSL:
+
+[source,java]
+----
+@ApplicationScoped
+public class SimpleWorkflow extends Flow {
+
+    @Override
+    public Workflow descriptor() {
+        return workflow("simple-workflow")
+                .tasks(set(Map.of("message", "Hello, ${ .name }!"))) // or you can use a jq string expression like in the YAML example
+                .build();
+    }
+}
+----
+
+The Java DSL supports the full task catalog: HTTP calls, function invocations, event emission and listening, branching, agent tasks, and more.
+
+=== Agentic AI orchestration with LangChain4j
+
+One of the highlights of Quarkus Flow is how naturally it combines workflow control flow with LangChain4j AI services. You can inject any LangChain4j `@RegisterAiService` bean and call it as a step in your workflow. The engine handles threading, state passing, and sequencing for you.
+
+[source,java]
+----
+@ApplicationScoped
+public class InvestmentMemoFlow extends Flow {
+
+    @Inject
+    InvestmentAnalystAgent analyst;
+
+    @Override
+    public Workflow descriptor() {
+        return workflow("investment-memo").tasks(
+                get("fetchMarketData", marketDataUrl),
+                agent("investmentAnalyst", analyst::analyse, InvestmentPrompt.class))
+                .build();
+    }
+}
+----
+
+This means you can build multi-step agentic pipelines: with branching, retries, human-in-the-loop events, and full observability without stitching them together yourself.
+
+=== Messaging and CloudEvents
+
+Quarkus Flow integrates with SmallRye Reactive Messaging out of the box. Workflows can emit and consume CloudEvents through any supported connector (Kafka, AMQP, and others), with no extra configuration beyond what you already have in your Quarkus app.
+
+The `listen` and `consume` tasks give you a clean way to express event-driven coordination directly in your workflow definition:
+
+[source,java]
+----
+return workflow("wait-event").tasks(
+        listen("waitApproval", toOne("org.acme.approval.decision.v1")),
+        consume("processApproval", approval -> {
+            // handle the event payload
+        }, Map.class)).build();
+----
+
+=== State persistence
+
+Workflow state can be persisted across restarts using one of the built-in persistence plugins: JPA (backed by any Hibernate-supported database), MVStore (embedded, zero-config), or Redis. You pick the one that matches your infrastructure, and the engine takes care of checkpointing and recovery.
+
+=== Observability
+
+Quarkus Flow ships with first-class OpenTelemetry tracing: every workflow instance and task execution is automatically traced, so you get end-to-end visibility across your distributed system without any extra instrumentation. Micrometer metrics are also supported — when Micrometer is on the classpath, workflow execution metrics are enabled automatically.
+
+=== Security
+
+The OIDC extension lets workflows acquire OAuth2 tokens to call downstream services on behalf of the current request. It integrates with `quarkus-oidc-client` and handles token negotiation transparently, so you don't have to manage credentials manually in your workflow tasks.
+
+=== Durable Workflows on Kubernetes
+
+For long-running workflows that need to survive pod restarts, the Kubernetes extension uses Kubernetes Leases as a lightweight coordination mechanism.
+
+=== Dev UI and Dev Mode
+
+Quarkus Flow adds a Dev UI panel in Dev Mode where you can inspect your workflow definitions, visualize the workflow graph, and trigger test executions. Combined with Quarkus live reload, the feedback loop for developing and debugging workflows is quick.
+
+=== Native image support
+
+The entire extension stack (core engine, messaging bridge, persistence plugins, and gRPC tasks) compiles to GraalVM native image. We also publish ready-to-use runner Docker images on https://quay.io/repository/quarkiverse/quarkus-flow-runner[Quay.io] for the most common configurations (minimal, standard, and messaging).
+
+== Getting started
+
+If you want to explore Quarkus Flow before adding it to your project, you can run the pre-built Docker runner:
+
+[source,bash]
+----
+curl -fsSL https://raw.githubusercontent.com/quarkiverse/quarkus-flow/main/runner/app/quickstart.sh | bash
+----
+
+To add it to an existing Quarkus application, import the BOM and add the dependency:
+
+[source,xml]
+----
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.quarkiverse.flow</groupId>
+      <artifactId>quarkus-flow-bom</artifactId>
+      <version>1.0.0</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+
+<dependencies>
+  <dependency>
+    <groupId>io.quarkiverse.flow</groupId>
+    <artifactId>quarkus-flow</artifactId>
+  </dependency>
+</dependencies>
+----
+
+Or via the Quarkus CLI:
+
+[source,bash]
+----
+quarkus ext add io.quarkiverse.flow:quarkus-flow
+----
+
+The https://docs.quarkiverse.io/quarkus-flow/dev/getting-started.html[Getting Started guide] walks you through your first workflow in a few minutes. The https://docs.quarkiverse.io/quarkus-flow/dev/[full documentation] covers all extensions, configuration references, and examples.
+
+== What comes next?
+
+The next milestone is https://github.com/quarkiverse/quarkus-flow/milestone/10[2.0.0], which we plan to target alongside the Quarkus 4 migration. Among the things on the roadmap:
+
+* **https://github.com/quarkiverse/quarkus-flow/issues/619[MCP integration]** — Model Context Protocol client tasks so workflows can call MCP servers directly, and an MCP server so your Quarkus Flow application can be exposed as a full LLM tool
+* **A2A client tasks** — Agent-to-Agent protocol support for the Open Workflow Specification 1.1.0
+* **Workflow instances REST endpoint** — Query and manage running workflow instances via REST
+* **https://github.com/quarkiverse/quarkus-flow/issues/469[Testing extension]** — A dedicated testing extension to make writing and debugging workflow tests simpler, improving the overall developer experience
+* **Quartz clustered scheduler** — Multi-node, JDBC-backed scheduling for production deployments
+
+We will also be targeting **Quarkus 3.40.0 LTS** in the upcoming 1.1.0 release, scheduled for end of September.
+
+== Thank you
+
+This release wouldn't have happened without the broader Quarkus ecosystem — the maintainers, contributors, and community that make building extensions like this possible. We are also grateful to the https://www.cncf.io/[CNCF] for hosting the https://open-workflow-specification.org/[Open Workflow Specification] project, which Quarkus Flow is built upon.
+
+If you want to get involved, the project is on https://github.com/quarkiverse/quarkus-flow[GitHub] and we welcome issues, discussions, and pull requests.
