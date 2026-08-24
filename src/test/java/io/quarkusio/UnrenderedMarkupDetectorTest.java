@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import static io.quarkusio.UnrenderedMarkupDetector.findUnresolvedPlaceholders;
 import static io.quarkusio.UnrenderedMarkupDetector.findUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -97,23 +98,21 @@ class UnrenderedMarkupDetectorTest {
     }
 
     @Test
-    void detectsQuteExpressions() {
-        assertDetects("{board.title}", "Qute expression");
-        assertDetects("{board.isCompleted()}", "Qute expression");
-        assertDetects("{item.short-description.raw}", "Qute expression");
-        assertDetects("some text {board.shortDescription.trim()} more text", "Qute expression");
+    void detectsUnresolvedPlaceholders() {
+        assertDetectsPlaceholder("{board.title}");
+        assertDetectsPlaceholder("{board.isCompleted()}");
+        assertDetectsPlaceholder("{item.short-description.raw}");
+        assertDetectsPlaceholder("some text {board.shortDescription.trim()} more text");
     }
 
     @Test
-    void doesNotFlagCssOrSimpleBraces() {
-        List<String> findings = findUnrenderedMarkup("{color: red}");
-        assertTrue(findings.stream().noneMatch(f -> f.contains("Qute expression")),
-                "Should not flag CSS-like content but got: " + findings);
-
-        findings = findUnrenderedMarkup("function() { return 1; }");
-        assertTrue(findings.stream().noneMatch(f -> f.contains("Qute expression")),
-                "Should not flag JS-like content but got: " + findings);
+    void doesNotFlagCssOrSimpleBracesAsPlaceholders() {
+        assertTrue(findUnresolvedPlaceholders("{color: red}").isEmpty(),
+                "Should not flag CSS-like content");
+        assertTrue(findUnresolvedPlaceholders("function() { return 1; }").isEmpty(),
+                "Should not flag JS-like content");
     }
+
 
     @Test
     void doesNotFlagCleanHtml() {
@@ -129,5 +128,10 @@ class UnrenderedMarkupDetectorTest {
         assertFalse(findings.isEmpty(), "Expected to detect markup in: " + input);
         assertTrue(findings.stream().anyMatch(f -> f.contains(expectedFragment)),
                 "Expected finding containing '" + expectedFragment + "' but got: " + findings);
+    }
+
+    private void assertDetectsPlaceholder(String input) {
+        List<String> findings = findUnresolvedPlaceholders(input);
+        assertFalse(findings.isEmpty(), "Expected to detect unresolved placeholder in: " + input);
     }
 }

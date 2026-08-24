@@ -48,12 +48,24 @@ public class UnrenderedMarkupDetector {
             // Template error messages
             new MarkupPattern(Pattern.compile("(?i)(liquid|template) (error|syntax error|warning)"), "Template error message"),
             // YAML front matter: --- at very start of visible text
-            new MarkupPattern(Pattern.compile("\\A---\\s*\\n"), "YAML front matter (---)"),
-
-            // Qute/template expressions: {identifier.property} or {identifier.method()}
-            new MarkupPattern(Pattern.compile("\\{[a-zA-Z][a-zA-Z0-9]*\\.[a-zA-Z][a-zA-Z0-9().'\" ,-]*\\}"),
-                    "Qute expression ({obj.property})")
+            new MarkupPattern(Pattern.compile("\\A---\\s*\\n"), "YAML front matter (---)")
     );
+
+    private static final Pattern UNRESOLVED_PLACEHOLDER = Pattern.compile(
+            "\\{[a-zA-Z][a-zA-Z0-9]*\\.[a-zA-Z][a-zA-Z0-9().'\" ,-]*\\}");
+
+    public static List<String> findUnresolvedPlaceholders(String text) {
+        List<String> findings = new ArrayList<>();
+        var matcher = UNRESOLVED_PLACEHOLDER.matcher(text);
+        while (matcher.find()) {
+            String match = matcher.group();
+            if (match.length() > 60) {
+                match = match.substring(0, 57) + "...";
+            }
+            findings.add("Unresolved placeholder ({obj.property}): \"" + match + "\"");
+        }
+        return findings;
+    }
 
     private static final Pattern HTML_TAG = Pattern.compile("</?[a-zA-Z][a-zA-Z0-9]*[\\s>/]");
 
