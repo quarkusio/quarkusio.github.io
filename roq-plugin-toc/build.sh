@@ -39,6 +39,10 @@ EXTENSION_FILE="$SCRIPT_DIR/runtime/src/main/java/io/quarkiverse/roq/plugin/toc/
 sed 's/getInteger("content-toc-levels", 6)/getInteger("content-toc-levels", page.data().getInteger("toclevels", 3))/' \
   "$EXTENSION_FILE" > "$EXTENSION_FILE.tmp" && mv "$EXTENSION_FILE.tmp" "$EXTENSION_FILE"
 
+echo "Making escapeHtml/escapeAttr private to prevent Qute registering them as template extensions..."
+sed 's/static String escapeHtml/private static String escapeHtml/;s/static String escapeAttr/private static String escapeAttr/' \
+  "$EXTENSION_FILE" > "$EXTENSION_FILE.tmp" && mv "$EXTENSION_FILE.tmp" "$EXTENSION_FILE"
+
 echo "Building and installing TOC plugin..."
 mvn -B install -f "$SCRIPT_DIR/pom.xml"
 
