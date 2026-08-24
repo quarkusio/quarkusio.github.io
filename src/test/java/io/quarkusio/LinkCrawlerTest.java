@@ -182,7 +182,8 @@ public class LinkCrawlerTest extends BrowserTest {
             }
             idlePolls = 0;
 
-            if (!visited.add(currentUrl)) {
+            String normalizedUrl = normalize(currentUrl);
+            if (!visited.add(normalizedUrl)) {
                 continue;
             }
             crawledCount.incrementAndGet();
@@ -198,7 +199,7 @@ public class LinkCrawlerTest extends BrowserTest {
                 if (checkInternal) {
                     BrokenLink probe = probeWithHttp(currentUrl);
                     if (probe != null) {
-                        brokenLinks.put(currentUrl, new BrokenLink(probe.status, probe.statusText, referrers.get(currentUrl)));
+                        brokenLinks.put(currentUrl, new BrokenLink(probe.status, probe.statusText, referrers.get(normalizedUrl)));
                     }
                 }
                 continue;
@@ -207,7 +208,7 @@ public class LinkCrawlerTest extends BrowserTest {
             int status = response.status();
             if (status >= 400) {
                 if (checkInternal) {
-                    brokenLinks.put(currentUrl, new BrokenLink(status, response.statusText(), referrers.get(currentUrl)));
+                    brokenLinks.put(currentUrl, new BrokenLink(status, response.statusText(), referrers.get(normalizedUrl)));
                 }
                 continue;
             }
@@ -215,7 +216,7 @@ public class LinkCrawlerTest extends BrowserTest {
             // In incremental mode, only extract links from seed pages (the
             // changed pages). Non-seed pages are visited only to verify their
             // status — a depth-1 check from each changed page.
-            if (incrementalMode && !seedUrls.contains(currentUrl)) {
+            if (incrementalMode && !seedUrls.contains(normalizedUrl)) {
                 continue;
             }
 
@@ -273,7 +274,7 @@ public class LinkCrawlerTest extends BrowserTest {
                 if (resolved.internal) {
                     String normalized = normalize(resolved.url);
                     if (!visited.contains(normalized) && !isExcluded(normalized, excludePaths)) {
-                        queue.add(normalized);
+                        queue.add(resolved.url);
                         referrers.putIfAbsent(normalized, currentUrl);
                     }
                 } else if (checkExternal && checkedExternal.add(resolved.url)) {
