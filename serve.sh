@@ -1,3 +1,3 @@
 #!/bin/sh
-bundle exec jekyll serve --config _config.yml,_config_dev.yml $*
-
+SCRIPTDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+${SCRIPTDIR}/mvnw quarkus:dev "$@"
