@@ -34,7 +34,7 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
                 if (row.getCells().isEmpty()) {
                     continue;
                 }
-                Cell firstCell = row.getCells().get(0);
+                Cell firstCell = row.getCells().getFirst();
                 Document innerDoc = firstCell.getInnerDocument();
                 if (innerDoc == null) {
                     continue;
@@ -99,7 +99,7 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
 		if ( physical < 0 ) {
 			return -1;
 		}
-		int begin = blocks.indexOf( blocks.get( 0 ) );
+		int begin = blocks.indexOf( blocks.getFirst());
 		return physical - begin;
 	}
 
@@ -109,10 +109,8 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
             return true;
         }
         if (blocks.size() == 1) {
-            Object content = blocks.get(0).getContent();
-            if (content != null && !content.toString().startsWith("Environment variable: ")) {
-                return true;
-            }
+            Object content = blocks.getFirst().getContent();
+            return content!=null && !content.toString().startsWith("Environment variable: ");
         }
         return false;
     }
