@@ -97,6 +97,25 @@ class UnrenderedMarkupDetectorTest {
     }
 
     @Test
+    void detectsQuteExpressions() {
+        assertDetects("{board.title}", "Qute expression");
+        assertDetects("{board.isCompleted()}", "Qute expression");
+        assertDetects("{item.short-description.raw}", "Qute expression");
+        assertDetects("some text {board.shortDescription.trim()} more text", "Qute expression");
+    }
+
+    @Test
+    void doesNotFlagCssOrSimpleBraces() {
+        List<String> findings = findUnrenderedMarkup("{color: red}");
+        assertTrue(findings.stream().noneMatch(f -> f.contains("Qute expression")),
+                "Should not flag CSS-like content but got: " + findings);
+
+        findings = findUnrenderedMarkup("function() { return 1; }");
+        assertTrue(findings.stream().noneMatch(f -> f.contains("Qute expression")),
+                "Should not flag JS-like content but got: " + findings);
+    }
+
+    @Test
     void doesNotFlagCleanHtml() {
         List<String> findings = findUnrenderedMarkup(
                 "This is a normal blog post with headings and paragraphs. "

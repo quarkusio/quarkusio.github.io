@@ -48,7 +48,11 @@ public class UnrenderedMarkupDetector {
             // Template error messages
             new MarkupPattern(Pattern.compile("(?i)(liquid|template) (error|syntax error|warning)"), "Template error message"),
             // YAML front matter: --- at very start of visible text
-            new MarkupPattern(Pattern.compile("\\A---\\s*\\n"), "YAML front matter (---)")
+            new MarkupPattern(Pattern.compile("\\A---\\s*\\n"), "YAML front matter (---)"),
+
+            // Qute/template expressions: {identifier.property} or {identifier.method()}
+            new MarkupPattern(Pattern.compile("\\{[a-zA-Z][a-zA-Z0-9]*\\.[a-zA-Z][a-zA-Z0-9().'\" ,-]*\\}"),
+                    "Qute expression ({obj.property})")
     );
 
     private static final Pattern HTML_TAG = Pattern.compile("</?[a-zA-Z][a-zA-Z0-9]*[\\s>/]");

@@ -1,6 +1,6 @@
 //usr/bin/env jbang "$0" "$@" ; exit $?
 //JAVAC_OPTIONS -parameters
-//RUNTIME_OPTIONS --add-opens java.base/java.lang=ALL-UNNAMED
+//RUNTIME_OPTIONS --add-opens java.base/java.lang=ALL-UNNAMED -Dquarkus.qute.alt-expr-syntax=false
 //DEPS io.quarkus.platform:quarkus-bom:3.36.3@pom
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-smallrye-graphql-client
@@ -30,6 +30,7 @@ import picocli.CommandLine;
 import java.io.File;
 import java.nio.file.Files;
 import java.time.Instant;
+import java.util.regex.Pattern;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -78,7 +79,15 @@ public class main implements Callable<Integer> {
         Log.infof("Found %d working group projects", boards.size());
         boards.sort(Comparator.comparing(Board::updateDate).reversed());
 
-        Files.writeString(out.toPath(), yaml.data("boards", boards).render());
+        String rendered = yaml.data("boards", boards).render();
+
+        Pattern unresolvedExpression = Pattern.compile("\\{[a-zA-Z][a-zA-Z0-9]*\\.[a-zA-Z][a-zA-Z0-9().'\" ,-]*}");
+        if (unresolvedExpression.matcher(rendered).find()) {
+            Log.errorf("Rendered YAML contains unresolved template expressions — aborting write to %s", out);
+            return 1;
+        }
+
+        Files.writeString(out.toPath(), rendered);
 
         return 0;
     }
