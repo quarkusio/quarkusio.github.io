@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import static io.quarkusio.UnrenderedMarkupDetector.findUnresolvedPlaceholders;
 import static io.quarkusio.UnrenderedMarkupDetector.findUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -97,6 +98,23 @@ class UnrenderedMarkupDetectorTest {
     }
 
     @Test
+    void detectsUnresolvedPlaceholders() {
+        assertDetectsPlaceholder("{board.title}");
+        assertDetectsPlaceholder("{board.isCompleted()}");
+        assertDetectsPlaceholder("{item.short-description.raw}");
+        assertDetectsPlaceholder("some text {board.shortDescription.trim()} more text");
+    }
+
+    @Test
+    void doesNotFlagCssOrSimpleBracesAsPlaceholders() {
+        assertTrue(findUnresolvedPlaceholders("{color: red}").isEmpty(),
+                "Should not flag CSS-like content");
+        assertTrue(findUnresolvedPlaceholders("function() { return 1; }").isEmpty(),
+                "Should not flag JS-like content");
+    }
+
+
+    @Test
     void doesNotFlagCleanHtml() {
         List<String> findings = findUnrenderedMarkup(
                 "This is a normal blog post with headings and paragraphs. "
@@ -110,5 +128,10 @@ class UnrenderedMarkupDetectorTest {
         assertFalse(findings.isEmpty(), "Expected to detect markup in: " + input);
         assertTrue(findings.stream().anyMatch(f -> f.contains(expectedFragment)),
                 "Expected finding containing '" + expectedFragment + "' but got: " + findings);
+    }
+
+    private void assertDetectsPlaceholder(String input) {
+        List<String> findings = findUnresolvedPlaceholders(input);
+        assertFalse(findings.isEmpty(), "Expected to detect unresolved placeholder in: " + input);
     }
 }

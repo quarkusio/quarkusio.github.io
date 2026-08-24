@@ -51,6 +51,22 @@ public class UnrenderedMarkupDetector {
             new MarkupPattern(Pattern.compile("\\A---\\s*\\n"), "YAML front matter (---)")
     );
 
+    private static final Pattern UNRESOLVED_PLACEHOLDER = Pattern.compile(
+            "\\{[a-zA-Z][a-zA-Z0-9]*\\.[a-zA-Z][a-zA-Z0-9().'\" ,-]*\\}");
+
+    public static List<String> findUnresolvedPlaceholders(String text) {
+        List<String> findings = new ArrayList<>();
+        var matcher = UNRESOLVED_PLACEHOLDER.matcher(text);
+        while (matcher.find()) {
+            String match = matcher.group();
+            if (match.length() > 60) {
+                match = match.substring(0, 57) + "...";
+            }
+            findings.add("Unresolved placeholder ({obj.property}): \"" + match + "\"");
+        }
+        return findings;
+    }
+
     private static final Pattern HTML_TAG = Pattern.compile("</?[a-zA-Z][a-zA-Z0-9]*[\\s>/]");
 
     public static String findRawHtmlTag(String text) {
