@@ -141,6 +141,24 @@ class ConfigTableTreeprocessorTest {
     }
 
     @Test
+    void searchableTableRendersViaDocConvert() {
+        // Roq uses asciidoctor.load() + doc.convert(), not asciidoctor.convert().
+        // Calling getContent() on a sibling block during tree processing can
+        // trigger premature conversion that causes doc.convert() to silently
+        // drop the table. This test uses the same code path as Roq.
+        var doc = asciidoctor.load(CONFIG_TABLE, Options.builder()
+                .attributes(Attributes.builder()
+                        .attribute("add-copy-button-to-config-props", "true")
+                        .attribute("add-copy-button-to-env-var", "true")
+                        .build())
+                .build());
+        String html = doc.convert();
+        assertTrue(html.contains("<table"), "Table should be present in doc.convert() output");
+        assertTrue(html.contains("FILTER CONFIGURATION"), "Search input should be present");
+        assertTrue(html.contains("quarkus.redis.hosts"), "Config property content should be present");
+    }
+
+    @Test
     void noConfigTableLeavesDocumentUnchanged() {
         String html = convert("== Just a heading\n\nSome text.");
         assertFalse(html.contains("configuration-reference"));

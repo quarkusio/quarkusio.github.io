@@ -59,16 +59,12 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
             if (table.hasRole("searchable") && table.getParent() instanceof StructuralNode parent) {
                 List<StructuralNode> siblings = parent.getBlocks();
                 int tableIndex = siblings.indexOf(table);
-                if (tableIndex > 0) {
-                    StructuralNode caption = siblings.get(tableIndex - 1);
-                    String captionContent = caption.getContent() != null
-                            ? caption.getContent().toString()
-                            : "";
+                if (tableIndex >= 0) {
                     searchFieldId++;
-                    Block newCaption = createBlock(parent, "paragraph",
-                            captionContent + " <input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>".formatted(searchFieldId),
+                    Block searchBlock = createBlock(parent, "paragraph",
+                            " <input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>".formatted(searchFieldId),
                             new HashMap<>());
-                    siblings.set(tableIndex - 1, newCaption);
+                    siblings.add(tableIndex, searchBlock);
                 }
             }
         }
