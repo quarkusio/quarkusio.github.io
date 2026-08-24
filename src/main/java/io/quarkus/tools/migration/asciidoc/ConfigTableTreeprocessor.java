@@ -34,7 +34,7 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
                 if (row.getCells().isEmpty()) {
                     continue;
                 }
-                Cell firstCell = row.getCells().get(0);
+                Cell firstCell = row.getCells().getFirst();
                 Document innerDoc = firstCell.getInnerDocument();
                 if (innerDoc == null) {
                     continue;
@@ -58,7 +58,7 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
 
             if (table.hasRole("searchable") && table.getParent() instanceof StructuralNode parent) {
                 List<StructuralNode> siblings = parent.getBlocks();
-                int tableIndex = siblings.indexOf(table);
+				int tableIndex = logicalIndexOf( siblings, table );
                 if (tableIndex > 0) {
                     StructuralNode caption = siblings.get(tableIndex - 1);
                     String captionContent = caption.getContent() != null
@@ -80,16 +80,37 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
         return document;
     }
 
+	/**
+	 * Returns the <em>logical</em> (0-based) index of {@code node} within {@code blocks}, or -1 if absent.
+	 *
+	 * <p>This works around an AsciidoctorJ/JRuby bridge behaviour. When a document has a header, the parser
+	 * shifts the header off the body block list, leaving the underlying {@code RubyArray} with a non-zero
+	 * internal {@code begin} offset. JRuby's {@code RubyArray.indexOf} returns a {@code begin}-relative
+	 * index, whereas {@code get}/{@code set}/{@code remove}/{@code add} all use (0-based) indices.
+	 *
+	 * <p>The JRuby method causing this (returns the {@code begin}-relative {@code i}) is at:
+	 * <a href="https://github.com/jruby/jruby/blob/9.4.14.0/core/src/main/java/org/jruby/RubyArray.java#L5839-L5852">
+	 */
+	private int logicalIndexOf(List<StructuralNode> blocks, StructuralNode node) {
+		if ( blocks.isEmpty() ) {
+			return -1;
+		}
+		int physical = blocks.indexOf( node );
+		if ( physical < 0 ) {
+			return -1;
+		}
+		int begin = blocks.indexOf( blocks.getFirst());
+		return physical - begin;
+	}
+
     private boolean isCollapsible(StructuralNode desc) {
         List<StructuralNode> blocks = desc.getBlocks();
         if (blocks.size() > 1) {
             return true;
         }
         if (blocks.size() == 1) {
-            Object content = blocks.get(0).getContent();
-            if (content != null && !content.toString().startsWith("Environment variable: ")) {
-                return true;
-            }
+            Object content = blocks.getFirst().getContent();
+            return content!=null && !content.toString().startsWith("Environment variable: ");
         }
         return false;
     }
