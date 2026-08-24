@@ -58,13 +58,17 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
 
             if (table.hasRole("searchable") && table.getParent() instanceof StructuralNode parent) {
                 List<StructuralNode> siblings = parent.getBlocks();
-                int tableIndex = siblings.indexOf(table);
-                if (tableIndex >= 0) {
+				int tableIndex = logicalIndexOf( siblings, table );
+                if (tableIndex > 0) {
+                    StructuralNode caption = siblings.get(tableIndex - 1);
+                    String captionContent = caption.getContent() != null
+                            ? caption.getContent().toString()
+                            : "";
                     searchFieldId++;
-                    Block searchBlock = createBlock(parent, "paragraph",
-                            " <input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>".formatted(searchFieldId),
+                    Block newCaption = createBlock(parent, "paragraph",
+                            captionContent + " <input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>".formatted(searchFieldId),
                             new HashMap<>());
-                    siblings.add(tableIndex, searchBlock);
+                    siblings.set(tableIndex - 1, newCaption);
                 }
             }
         }
@@ -75,6 +79,29 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
 
         return document;
     }
+
+	/**
+	 * Returns the <em>logical</em> (0-based) index of {@code node} within {@code blocks}, or -1 if absent.
+	 *
+	 * <p>This works around an AsciidoctorJ/JRuby bridge behaviour. When a document has a header, the parser
+	 * shifts the header off the body block list, leaving the underlying {@code RubyArray} with a non-zero
+	 * internal {@code begin} offset. JRuby's {@code RubyArray.indexOf} returns a {@code begin}-relative
+	 * index, whereas {@code get}/{@code set}/{@code remove}/{@code add} all use (0-based) indices.
+	 *
+	 * <p>The JRuby method causing this (returns the {@code begin}-relative {@code i}) is at:
+	 * <a href="https://github.com/jruby/jruby/blob/9.4.14.0/core/src/main/java/org/jruby/RubyArray.java#L5839-L5852">
+	 */
+	private int logicalIndexOf(List<StructuralNode> blocks, StructuralNode node) {
+		if ( blocks.isEmpty() ) {
+			return -1;
+		}
+		int physical = blocks.indexOf( node );
+		if ( physical < 0 ) {
+			return -1;
+		}
+		int begin = blocks.indexOf( blocks.get( 0 ) );
+		return physical - begin;
+	}
 
     private boolean isCollapsible(StructuralNode desc) {
         List<StructuralNode> blocks = desc.getBlocks();
