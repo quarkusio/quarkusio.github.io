@@ -91,9 +91,33 @@ jobs:
         if: steps.detect.outputs.roq == 'true'
         run: ./roq-plugin-toc/build.sh
 
+      - name: Detect infra changes
+        id: infra
+        run: |
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..HEAD -- \
+              .github/workflows/build.yml \
+              pom.xml \
+              config/ \
+              src/ \
+              templates/ 2>/dev/null || true)
+          else
+            CHANGED="not-a-pr"
+          fi
+          if [ -n "$CHANGED" ]; then
+            echo "include_versions=true" >> $GITHUB_OUTPUT
+          else
+            echo "include_versions=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build with Maven
         if: steps.detect.outputs.roq == 'true'
-        run: QUARKUS_ROQ_GENERATOR_BATCH=true QUARKUS_PROFILE=only-latest-guides mvn -B package quarkus:run -DskipTests
+        run: |
+          export QUARKUS_ROQ_GENERATOR_BATCH=true
+          if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
+            export QUARKUS_PROFILE=only-latest-guides
+          fi
+          mvn -B package quarkus:run -DskipTests
 
       - name: Compile tests
         run: mvn -B test-compile
@@ -127,17 +151,9 @@ jobs:
       - name: Determine link checker scope
         id: link_scope
         run: |
-          # If build infrastructure or the link checker itself changed, run a full check
-          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-            INFRA_CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..HEAD -- \
-              .github/workflows/build.yml \
-              pom.xml \
-              src/test/java/ 2>/dev/null || true)
-          else
-            INFRA_CHANGED="not-a-pr"
-          fi
-
-          if [ -n "$INFRA_CHANGED" ]; then
+          # Reuse the earlier infra-change detection (covers build.yml, pom.xml,
+          # config/, src/, templates/) instead of a separate git diff.
+          if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
             echo "mode=full" >> $GITHUB_OUTPUT
             echo "Infrastructure files changed, running full link check"
             exit 0
@@ -213,8 +229,9 @@ jobs:
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
 
-      # Versioned guides (2.x-5.x) are excluded from this build by
-      # _only_latest_guides_config.yml, so skip crawling those paths.
+      # Versioned guides (2.x-5.x) are excluded from non-infra builds by
+      # the only-latest-guides profile, so skip crawling those paths unless
+      # infra changes triggered a full build.
       - name: Run link crawler
         if: steps.link_scope.outputs.mode != 'skip'
         run: |
@@ -222,9 +239,13 @@ jobs:
           if [ "${{ steps.link_scope.outputs.mode }}" = "partial" ]; then
             CHANGED_PATHS_ARG="-Dtest.crawl.changed-paths=${{ steps.link_scope.outputs.paths }}"
           fi
+          EXCLUDE_ARG="-Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main"
+          if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
+            EXCLUDE_ARG=""
+          fi
           mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
             -Dtest.crawl.check-external=false \
-            -Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main \
+            $EXCLUDE_ARG \
             $CHANGED_PATHS_ARG
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
