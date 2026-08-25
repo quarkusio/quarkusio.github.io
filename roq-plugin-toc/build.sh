@@ -3,8 +3,15 @@
 # Builds the Roq TOC plugin from rolfedh/quarkus-roq PR #776 at a pinned commit,
 # using standalone POMs that decouple it from the Roq monorepo build.
 #
+# The pinned commit reads each guide's AsciiDoc :toclevels: attribute and registers only
+# its two template extensions, so the sources are built unmodified.
+#
 # Usage:
 #   ./roq-plugin-toc/build.sh          # fetch, build, and install to local Maven repo
+#
+# Set UPSTREAM_REPO and UPSTREAM_COMMIT to build from a local checkout instead, e.g.
+#   UPSTREAM_REPO=file:///path/to/quarkus-roq \
+#   UPSTREAM_COMMIT=$(git -C /path/to/quarkus-roq rev-parse fix-toc) ./roq-plugin-toc/build.sh
 #
 # The plugin is then available as:
 #   io.quarkiverse.roq:quarkus-roq-plugin-toc:1.0.0-SNAPSHOT
@@ -12,8 +19,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-UPSTREAM_REPO="https://github.com/rolfedh/quarkus-roq.git"
-UPSTREAM_COMMIT="c52d3ec79f3d6dcb4ff57c495666b60bcd98bf94"
+UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/rolfedh/quarkus-roq.git}"
+UPSTREAM_COMMIT="${UPSTREAM_COMMIT:-94dc2ccb3825a8e9a716d46298a10811e9d17653}"
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -33,15 +40,6 @@ cp -r "$SRC/runtime/src/test/java/"* "$SCRIPT_DIR/runtime/src/test/java/"
 # Deployment sources
 mkdir -p "$SCRIPT_DIR/deployment/src/main/java"
 cp -r "$SRC/deployment/src/main/java/"* "$SCRIPT_DIR/deployment/src/main/java/"
-
-echo "Patching default TOC depth to match AsciiDoc :toclevels: default..."
-EXTENSION_FILE="$SCRIPT_DIR/runtime/src/main/java/io/quarkiverse/roq/plugin/toc/runtime/RoqPluginTocTemplateExtension.java"
-sed 's/getInteger("content-toc-levels", 6)/getInteger("content-toc-levels", page.data().getInteger("toclevels", 3))/' \
-  "$EXTENSION_FILE" > "$EXTENSION_FILE.tmp" && mv "$EXTENSION_FILE.tmp" "$EXTENSION_FILE"
-
-echo "Making escapeHtml/escapeAttr private to prevent Qute registering them as template extensions..."
-sed 's/static String escapeHtml/private static String escapeHtml/;s/static String escapeAttr/private static String escapeAttr/' \
-  "$EXTENSION_FILE" > "$EXTENSION_FILE.tmp" && mv "$EXTENSION_FILE.tmp" "$EXTENSION_FILE"
 
 echo "Building and installing TOC plugin..."
 mvn -B install -f "$SCRIPT_DIR/pom.xml"
