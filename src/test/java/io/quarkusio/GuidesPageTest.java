@@ -492,6 +492,31 @@ public class GuidesPageTest extends BrowserTest {
     }
 
     @Test
+    void guideVersionDropdownListsOtherVersions() {
+        page.navigate(baseUrl + "/guides/getting-started");
+
+        Locator options = page.locator("#guide-version-dropdown option");
+        assertTrue(options.count() >= 2,
+                "The version dropdown for a guide present in multiple versions should list "
+                        + "more than the current version, but found " + options.count()
+                        + " option(s). Guide-presence detection may be broken.");
+        assertTrue(page.locator("#guide-version-dropdown option[value='main']").count() > 0,
+                "The version dropdown for getting-started should include the 'main' version.");
+    }
+
+    @Test
+    void configReferenceGuideVersionDropdownListsOtherVersions() {
+        page.navigate(baseUrl + "/guides/all-config");
+
+        Locator options = page.locator("#guide-version-dropdown option");
+        assertTrue(options.count() >= 2,
+                "The config-reference version dropdown should list more than the current "
+                        + "version, but found " + options.count() + " option(s).");
+        assertTrue(page.locator("#guide-version-dropdown option[value='main']").count() > 0,
+                "The config-reference version dropdown should include the 'main' version.");
+    }
+
+    @Test
     void versionedGuideDropdownHasCorrectVersionSelected() {
         page.navigate(baseUrl + "/version/main/guides/getting-started");
 

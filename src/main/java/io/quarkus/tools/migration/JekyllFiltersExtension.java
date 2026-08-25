@@ -412,6 +412,45 @@ public class JekyllFiltersExtension {
         return new JsonArray(sorted);
     }
 
+    /**
+     * True if the given data index contains a guide with the given URL, in any source or type.
+     * Usage in Qute: {index.containsGuide('/guides/getting-started')}
+     */
+    static boolean containsGuide(JsonObject index, String url) {
+        if (index == null || url == null || url.isEmpty()) {
+            return false;
+        }
+        for (String key : index.fieldNames()) {
+            Map<String, Object> sourceMap = toMap(index.getValue(key));
+            if (sourceMap == null) {
+                continue;
+            }
+            Map<String, Object> typesMap = toMap(sourceMap.get("types"));
+            if (typesMap == null) {
+                continue;
+            }
+            for (Object items : typesMap.values()) {
+                for (Object item : listAsIterableOrEmpty(items)) {
+                    JsonObject guide = toJsonObject(item);
+                    if (guide != null && url.equals(guide.getString("url"))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+	private static Iterable<?> listAsIterableOrEmpty(Object items) {
+		if ( items instanceof JsonArray array ) {
+			return array;
+		}
+		if ( items instanceof List<?> list ) {
+			return list;
+		}
+		return List.of();
+	}
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> toMap(Object obj) {
         if (obj instanceof JsonObject jo)
