@@ -2,6 +2,8 @@ package io.quarkusio;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -520,5 +522,63 @@ public class GuidesPageTest extends BrowserTest {
                 "Non-versioned guide title should not include '- main', got: " + title);
         assertFalse(title.contains("- latest"),
                 "Non-versioned guide title should not include '- latest', got: " + title);
+    }
+
+    @Nested
+    class NumberedVersionTests {
+
+        private String version;
+
+        @BeforeEach
+        void findVersion() {
+            for (String v : new String[] { "3.34", "3.33", "3.27", "3.20", "3.15" }) {
+                Response response = page.navigate(baseUrl + "/version/" + v + "/guides/");
+                if (response != null && response.status() == 200) {
+                    version = v;
+                    return;
+                }
+            }
+            Assumptions.assumeTrue(false,
+                    "No numbered version guides available (build is using only-latest-guides profile)");
+        }
+
+        @Test
+        void numberedVersionGuideIndexRendersWithContent() {
+            int guideCount = page.locator(".docslist h4 a[href*='/guides/']").count();
+            assertTrue(guideCount >= 50,
+                    "/version/" + version + "/guides/: Expected at least 50 guides but found " + guideCount);
+        }
+
+        @Test
+        void numberedVersionGuideReturns200() {
+            Response response = page.navigate(baseUrl + "/version/" + version + "/guides/getting-started/");
+            assertNotNull(response, "No response for /version/" + version + "/guides/getting-started/");
+            assertEquals(200, response.status(),
+                    "Expected 200 for /version/" + version + "/guides/getting-started/ but got " + response.status());
+        }
+
+        @Test
+        void numberedVersionGuideHasContent() {
+            page.navigate(baseUrl + "/version/" + version + "/guides/getting-started/");
+            String title = page.title();
+            assertFalse(title == null || title.isBlank(),
+                    "/version/" + version + "/guides/getting-started/: Guide page title should not be blank");
+            assertTrue(title.toLowerCase().contains("quarkus"),
+                    "/version/" + version + "/guides/getting-started/: Guide page title should contain 'Quarkus', got: " + title);
+        }
+
+        @Test
+        void numberedVersionGuideIndexLinksResolve() {
+            page.navigate(baseUrl + "/version/" + version + "/guides/");
+            Locator guideLinks = page.locator("qs-guide a[href*='/version/" + version + "/guides/']");
+            assertTrue(guideLinks.count() > 0,
+                    "Expected guide links on the versioned index page");
+
+            String firstHref = guideLinks.first().getAttribute("href");
+            Response response = page.navigate(baseUrl + firstHref);
+            assertNotNull(response, "No response for " + firstHref);
+            assertEquals(200, response.status(),
+                    "Expected 200 for " + firstHref + " but got " + response.status());
+        }
     }
 }
