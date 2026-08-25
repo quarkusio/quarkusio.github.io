@@ -1,6 +1,6 @@
 //usr/bin/env jbang "$0" "$@" ; exit $?
 //JAVAC_OPTIONS -parameters
-//RUNTIME_OPTIONS --add-opens java.base/java.lang=ALL-UNNAMED -Dquarkus.qute.alt-expr-syntax=false
+//RUNTIME_OPTIONS --add-opens java.base/java.lang=ALL-UNNAMED
 //DEPS io.quarkus.platform:quarkus-bom:3.36.3@pom
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-smallrye-graphql-client
