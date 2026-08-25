@@ -19,14 +19,28 @@ M2="$HOME/.m2/repository"
 TARGET_JAR="$M2/io/quarkiverse/roq/quarkus-roq-plugin-asciidoc-common-deployment/$ROQ_VERSION/quarkus-roq-plugin-asciidoc-common-deployment-$ROQ_VERSION.jar"
 MARKER="$TARGET_JAR.patched-header-author"
 
-if [ ! -f "$TARGET_JAR" ]; then
-  echo "Target JAR not found at $TARGET_JAR — run 'mvn dependency:resolve' first"
-  exit 1
-fi
-
 if [ -f "$MARKER" ]; then
   echo "AsciidocHeaderParser already patched, skipping"
   exit 0
+fi
+
+# The target jar and some compile deps are Quarkus deployment artifacts
+# (not regular transitive deps), so download them explicitly if missing.
+for gav in \
+  "io.quarkiverse.roq:quarkus-roq-plugin-asciidoc-common-deployment:$ROQ_VERSION" \
+  "io.quarkiverse.roq:quarkus-roq-frontmatter-deployment:$ROQ_VERSION" \
+  "io.yupiik.maven:asciidoc-java:1.2.16"; do
+  IFS=: read -r g a v <<< "$gav"
+  jar_path="$M2/$(echo "$g" | tr '.' '/')/$a/$v/$a-$v.jar"
+  if [ ! -f "$jar_path" ]; then
+    echo "Downloading $gav..."
+    mvn -B dependency:get -Dartifact="$gav" -q
+  fi
+done
+
+if [ ! -f "$TARGET_JAR" ]; then
+  echo "Target JAR not found at $TARGET_JAR"
+  exit 1
 fi
 
 WORK_DIR=$(mktemp -d)
@@ -41,7 +55,7 @@ JBOSS_LOGGING=$(find "$M2/org/jboss/logging/jboss-logging" -name '*.jar' -not -n
 
 for dep in ASCIIDOC_JAVA FRONTMATTER_DEPLOYMENT FRONTMATTER_RUNTIME VERTX_CORE JBOSS_LOGGING; do
   if [ -z "${!dep}" ]; then
-    echo "Missing dependency: $dep — run 'mvn dependency:resolve' first"
+    echo "Missing dependency: $dep"
     exit 1
   fi
 done
