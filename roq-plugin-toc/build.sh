@@ -20,7 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/rolfedh/quarkus-roq.git}"
-UPSTREAM_COMMIT="${UPSTREAM_COMMIT:-94dc2ccb3825a8e9a716d46298a10811e9d17653}"
+UPSTREAM_COMMIT="${UPSTREAM_COMMIT:-07015acc83022f964563e1b2cb2a8b5704c7cd94}"
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
