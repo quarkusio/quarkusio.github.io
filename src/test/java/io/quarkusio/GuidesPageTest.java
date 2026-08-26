@@ -1,5 +1,8 @@
 package io.quarkusio;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
 import org.junit.jupiter.api.Assumptions;
@@ -236,6 +239,36 @@ public class GuidesPageTest extends BrowserTest {
                 path + ": Expected some guides to match 'hibernate'");
         assertTrue(filteredCount < initialCount,
                 path + ": Expected fewer guides after filtering, but got " + filteredCount + " (was " + initialCount + ")");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/version/main/guides/telemetry-micrometer-tutorial",
+            "/version/main/guides/rest-json",
+            "/guides/getting-started",
+            "/guides/rest"
+    })
+    void guideCodeBlocksAreNotEmpty(String path) {
+        page.navigate(baseUrl + path);
+
+        Locator codeBlocks = page.locator("pre code[class*='language-']");
+        int blockCount = codeBlocks.count();
+        if (blockCount == 0) {
+            return;
+        }
+
+        List<String> emptyBlocks = new ArrayList<>();
+        for (int i = 0; i < blockCount; i++) {
+            String content = codeBlocks.nth(i).textContent();
+            if (content == null || content.isBlank()) {
+                String lang = codeBlocks.nth(i).getAttribute("class");
+                emptyBlocks.add("block " + (i + 1) + " (" + lang + ")");
+            }
+        }
+        assertTrue(emptyBlocks.isEmpty(),
+                path + ": Found " + emptyBlocks.size() + " empty code block(s) out of " + blockCount
+                        + ". Source includes (include:: with tags) may not be resolving: "
+                        + String.join(", ", emptyBlocks));
     }
 
     @ParameterizedTest
