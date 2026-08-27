@@ -441,6 +441,34 @@ public class JekyllFiltersExtension {
         return false;
     }
 
+    /**
+     * The subset of {@code versions} in which the guide at {@code guideUrl} exists, always
+     * including {@code currentVersion}.
+     *
+     * Usage in Qute: {@code {cdi:versioned.presentVersions(cdi:versions.documentation, guide_url, docversion)}}.
+     */
+    static List<String> presentVersions(Object versioned, Object versions, String guideUrl, String currentVersion) {
+        List<String> present = new ArrayList<>();
+        Map<String, Object> versionedMap = toMap(versioned);
+        for (Object versionObj : listAsIterableOrEmpty(versions)) {
+            if (versionObj == null) {
+                continue;
+            }
+            String version = String.valueOf(versionObj);
+            boolean found = version.equals(currentVersion);
+            if (!found && versionedMap != null) {
+                Map<String, Object> versionMap = toMap(versionedMap.get(version.replace('.', '-')));
+                if (versionMap != null) {
+                    found = containsGuide(toJsonObject(versionMap.get("index")), guideUrl);
+                }
+            }
+            if (found) {
+                present.add(version);
+            }
+        }
+        return present;
+    }
+
 	private static Iterable<?> listAsIterableOrEmpty(Object items) {
 		if ( items instanceof JsonArray array ) {
 			return array;
@@ -565,6 +593,83 @@ public class JekyllFiltersExtension {
             }
         }
         return result;
+    }
+
+    /**
+     * Resolve a guide URL for a given documentation version.
+     * External links (http...) are returned as is.
+     * Usage in Qute: {=guide.url.versionedGuideUrl(docversion)}
+     */
+    static String versionedGuideUrl(String url, String docversion) {
+        if (url == null) {
+            return "";
+        }
+        if (url.startsWith("http")) {
+            return url;
+        }
+        String normalized = url.replaceAll("/+$", "") + "/";
+        if (docversion == null || "latest".equals(docversion)) {
+            return normalized;
+        }
+        return "/version/" + docversion + normalized;
+    }
+
+    /**
+     * Build the categories object ({id: {title, description}}) consumed by the
+     * <qs-categories-toc>/<qs-target> web components. Handles escaping.
+     * Usage in Qute: {=cats.categoriesMetaJson.escapeHtml}
+     */
+    static String categoriesMetaJson(Object cats) {
+        JsonObject meta = new JsonObject();
+        for (Object item : listAsIterableOrEmpty(cats)) {
+            JsonObject cat = toJsonObject(item);
+            if (cat == null) {
+                continue;
+            }
+            String id = cat.getString("id");
+            if (id == null) {
+                continue;
+            }
+            JsonObject entry = new JsonObject().put("title", cat.getString("title"));
+            String description = cat.getString("description");
+            if (description != null) {
+                entry.put("description", description);
+            }
+            meta.put(id, entry);
+        }
+        return meta.encode();
+    }
+
+    /**
+     * Build the categories TOC JSON array ([{id, title, subcategories:[{id, title}]}])
+     * consumed by the <qs-categories-toc> web component.
+     * Usage in Qute: {=cats.categoriesTocJson.escapeHtml}
+     */
+    static String categoriesTocJson(Object cats) {
+        JsonArray toc = new JsonArray();
+        for (Object item : listAsIterableOrEmpty(cats)) {
+            JsonObject cat = toJsonObject(item);
+            if (cat == null) {
+                continue;
+            }
+            JsonObject node = new JsonObject()
+                    .put("id", cat.getString("id", ""))
+                    .put("title", cat.getString("title", ""));
+            JsonArray subArr = new JsonArray();
+            for (Object subItem : listAsIterableOrEmpty(cat.getValue("subcategories"))) {
+                JsonObject sub = toJsonObject(subItem);
+                if (sub != null) {
+                    subArr.add(new JsonObject()
+                            .put("id", sub.getString("id", ""))
+                            .put("title", sub.getString("title", "")));
+                }
+            }
+            if (!subArr.isEmpty()) {
+                node.put("subcategories", subArr);
+            }
+            toc.add(node);
+        }
+        return toc.encode();
     }
 
     // Jekyll append filter: string concatenation

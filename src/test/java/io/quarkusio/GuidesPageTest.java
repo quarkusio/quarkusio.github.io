@@ -24,7 +24,7 @@ public class GuidesPageTest extends BrowserTest {
     })
     void guidesPageRendersWithSubstantialContent(String path) {
         page.navigate(baseUrl + path);
-        int guideCount = page.locator(".docslist h4 a[href*='/guides/']").count();
+        int guideCount = page.locator("qs-guide a[href*='/guides/']").count();
         assertTrue(guideCount >= 50,
                 path + ": Expected at least 50 guides but found " + guideCount);
     }
@@ -41,17 +41,87 @@ public class GuidesPageTest extends BrowserTest {
                 path + ": Expected a search/filter input on the guides page");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageHasCategorySections(String path) {
-        page.navigate(baseUrl + path);
-        int sectionCount = page.locator(".doclist-header").count();
-        assertTrue(sectionCount >= 3,
-                path + ": Expected at least 3 guide category sections but found " + sectionCount);
-    }
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexHasGuideGroups(String path) {
+		page.navigate(baseUrl + path);
+		int groupCount = page.locator("qs-guide-group:not([subgroup])").count();
+		assertTrue(groupCount >= 3,
+				   path + ": Expected at least 3 top-level guide category groups but found " + groupCount);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexHasCategoriesToc(String path) {
+		page.navigate(baseUrl + path);
+		int tocCount = page.locator("qs-categories-toc").count();
+		assertTrue(tocCount > 0,
+				   path + ": Expected a qs-categories-toc navigation element");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexHasSubstantialGuideContent(String path) {
+		page.navigate(baseUrl + path);
+		int guideCount = page.locator("qs-guide a[href*='/guides/']").count();
+		assertTrue(guideCount >= 50,
+				   path + ": Expected at least 50 guides but found " + guideCount);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexVersionSplitMarksMainCurrent(String path) {
+		page.navigate(baseUrl + path);
+		Locator current = page.locator("#guidesindex-version .version-split-item.is-current");
+		assertTrue(current.count() > 0,
+				   path + ": Expected a current item in the split version selector");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexHasSearchInput(String path) {
+		page.navigate(baseUrl + path);
+		int searchCount = page.locator("input[type='search'][name='q']").count();
+		assertTrue(searchCount > 0,
+				   path + ": Expected a search input on the categorized guides page");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedIndexDoesNotContainUnrenderedMarkup(String path) {
+		page.navigate(baseUrl + path);
+		assertDoesNotContainUnrenderedMarkup(page, "Categorized guides page");
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {
+			"/guides/",
+			"/version/main/guides/"
+	})
+	void categorizedGuidePageHasNavSidebar(String path) {
+		page.navigate( baseUrl + path + "getting-started" );
+		int navCount = page.locator("nav.guide-nav-sidebar").count();
+		assertTrue(navCount > 0,
+				   "Expected a guide-nav-sidebar on a categorized guide detail page");
+	}
 
     @ParameterizedTest
     @ValueSource(strings = {
@@ -63,18 +133,6 @@ public class GuidesPageTest extends BrowserTest {
         int versionCount = page.locator(".pulldown.version, select:has(option), [class*='version']").count();
         assertTrue(versionCount > 0,
                 path + ": Expected a version selector on the guides page");
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageHasCategoryFilter(String path) {
-        page.navigate(baseUrl + path);
-        int categoryCount = page.locator(".pulldown.category, [class*='category']").count();
-        assertTrue(categoryCount > 0,
-                path + ": Expected a category filter on the guides page");
     }
 
     @Test
@@ -134,9 +192,9 @@ public class GuidesPageTest extends BrowserTest {
         assertDoesNotContainUnrenderedMarkup(page, path);
     }
 
-    // These tests exercise behaviour that depends on the custom Liquid filters in
-    // _plugins/strings.rb (startswith, endswith). If that plugin is not loaded during
-    // the site build, titles and back-links will be wrong and these tests will fail.
+    // These tests exercise title/back-link behaviour that depends on the version prefix
+    // handling in the Qute guide layout. If that logic breaks, titles and back-links
+    // will be wrong and these tests will fail.
     @Nested
     class StringsFilterTests {
 
@@ -214,7 +272,7 @@ public class GuidesPageTest extends BrowserTest {
         Locator searchInput = page.locator("input[type='search']");
         searchInput.waitFor();
 
-        int initialCount = page.locator("qs-guide h4 a").count();
+        int initialCount = page.locator("qs-guide a").count();
         assertTrue(initialCount >= 50,
                 path + ": Expected at least 50 guides before filtering but found " + initialCount);
 
@@ -224,7 +282,7 @@ public class GuidesPageTest extends BrowserTest {
         // or the local fallback hides non-matching guides
         page.waitForCondition(() -> {
             boolean hasSearchHits = page.locator("[aria-label='Search Hits']").count() > 0;
-            boolean guidesFiltered = page.locator("qs-guide h4 a").count() < initialCount;
+            boolean guidesFiltered = page.locator("qs-guide a").count() < initialCount;
             return hasSearchHits || guidesFiltered;
         });
 
@@ -232,7 +290,7 @@ public class GuidesPageTest extends BrowserTest {
         if (page.locator("[aria-label='Search Hits']").count() > 0) {
             filteredCount = page.locator("[aria-label='Search Hits'] .qs-guide").count();
         } else {
-            filteredCount = page.locator("qs-guide h4 a").count();
+            filteredCount = page.locator("qs-guide a").count();
         }
 
         assertTrue(filteredCount > 0,
@@ -330,26 +388,6 @@ public class GuidesPageTest extends BrowserTest {
         assertEquals(0, notFoundCount,
                 path + ": Found " + notFoundCount + " occurrences of 'NOT_FOUND' text. "
                         + "This typically indicates missing data file entries (e.g., index-docs.texts.all_categories)");
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/guides/",
-            "/version/main/guides/"
-    })
-    void guidesPageCategoryDropdownDefaultOptionIsNotNotFound(String path) {
-        page.navigate(baseUrl + path);
-
-        // Check the default option in the category dropdown under "By Category" label
-        Locator categorySelect = page.locator("select[name='categories']");
-        categorySelect.waitFor();
-
-        Locator defaultOption = categorySelect.locator("option[value='']");
-        String optionText = defaultOption.textContent();
-
-        assertFalse(optionText.contains("NOT_FOUND"),
-                path + ": Category dropdown default option contains 'NOT_FOUND' (was: '" + optionText + "'). "
-                        + "This indicates a missing translation in _data/index-docs.yaml (texts.all_categories)");
     }
 
     private int countOccurrences(String text, String substring) {
@@ -496,17 +534,15 @@ public class GuidesPageTest extends BrowserTest {
 
     @Test
     void latestGuideVersionDropdownShowsShortVersionNumber() {
-        page.navigate(baseUrl + "/guides/getting-started");
+		page.navigate(baseUrl + "/guides/getting-started");
 
-        Locator selectedOption = page.locator("#guide-version-dropdown option[selected]");
-        assertTrue(selectedOption.count() > 0,
-                "Expected a selected option in the version dropdown");
-
-        String text = selectedOption.first().textContent().trim();
-        assertFalse(text.contains(".Final"),
-                "Version dropdown should show trimmed version (not '.Final'), got: " + text);
-        assertTrue(text.toLowerCase().contains("latest"),
-                "Version dropdown for default guide should show 'Latest', got: " + text);
+		Locator items = page.locator("#guide-version-split .version-split-item");
+		assertTrue(items.count() >= 2,
+				   "The split version selector for a guide present in multiple versions should list "
+						   + "more than the current version, but found " + items.count()
+						   + " item(s). Guide-presence detection may be broken.");
+		assertTrue(page.locator("#guide-version-split .version-split-item[href*='/version/main/']").count() > 0,
+				   "The split version selector for getting-started should include the 'main' version.");
     }
 
     @Test
@@ -524,18 +560,6 @@ public class GuidesPageTest extends BrowserTest {
                 "Canonical URL should contain the guide path, got: " + href);
     }
 
-    @Test
-    void guideVersionDropdownListsOtherVersions() {
-        page.navigate(baseUrl + "/guides/getting-started");
-
-        Locator options = page.locator("#guide-version-dropdown option");
-        assertTrue(options.count() >= 2,
-                "The version dropdown for a guide present in multiple versions should list "
-                        + "more than the current version, but found " + options.count()
-                        + " option(s). Guide-presence detection may be broken.");
-        assertTrue(page.locator("#guide-version-dropdown option[value='main']").count() > 0,
-                "The version dropdown for getting-started should include the 'main' version.");
-    }
 
     @Test
     void configReferenceGuideVersionDropdownListsOtherVersions() {
@@ -553,13 +577,13 @@ public class GuidesPageTest extends BrowserTest {
     void versionedGuideDropdownHasCorrectVersionSelected() {
         page.navigate(baseUrl + "/version/main/guides/getting-started");
 
-        Locator selectedOption = page.locator("#guide-version-dropdown option[selected]");
-        assertTrue(selectedOption.count() > 0,
-                "Expected a selected option in the version dropdown");
-
-        String selectedValue = selectedOption.first().getAttribute("value");
-        assertEquals("main", selectedValue,
-                "Version dropdown should have 'main' selected");
+        // The "main" version has categorized guides, so guide pages use the split-button
+        // version selector rather than the plain <select> dropdown.
+        Locator current = page.locator("#guide-version-split .version-split-item.is-current");
+        assertTrue(current.count() > 0,
+                "Expected a current item in the split version selector");
+        assertEquals("Main", current.first().textContent().trim(),
+                "Split version selector should mark 'Main' as current");
     }
 
     @Test

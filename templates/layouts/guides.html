@@ -2,51 +2,71 @@
 layout: base
 ---
 {#let _m=mut:map()}
-{#capture guide_content}
+{#let versioned_page=page.url.startsWith('/version/')}
+{#if versioned_page}{=_m.assign('docversion', page.url.path.replaceAll('^/version/([^/]+)/.*', '$1')).raw}{#else}{=_m.assign('docversion', 'latest').raw}{/if}
+{#let docversion=_m.read('docversion')}
 {#let docversion_index=docversion.replace('.', '-')}
-{!
-'page.sourcePath' pattern is different depending on the version
-- "Main - SNAPSHOT" -> _versions/main/guides/*.adoc
-- "x.x.x - Latest" ->  _guides/*.adoc
-=> to extract the page filename you need two different replacement tokens
- !}
-{#let page_filename=page.sourcePath.replace('_guides/', '').replace('_versions/main/guides/', '')}
+{#let page_filename=page.sourceFileName}
 {#let relations=cdi:versioned.get(docversion_index).index.relations}
 {#let guide_url=page.url.path.replaceAll('^/version/[^/]+(/.*)', '$1').replaceAll('/$', '')}
+{! guide-nav-sidebar reassigns guide_url, so keep a stable copy for the version selector. !}
+{#let guide_page_url=guide_url.append('/')}
+{#let has_categories=cdi:versioned.get(docversion_index).index.categories}
+
+{! Versions in which this guide exists (plus the current one), shared by the version selectors. !}
+{#let present_versions=cdi:versioned.presentVersions(cdi:versions.documentation, guide_url, docversion)}
 
 <section class="full-width-version-bg flexfilterbar guides">
   <div class="guideflexcontainer">
     <div class="docslink">
       <a class="returnlink" href="{=''}/{#if versioned_page}version/{=docversion.raw}/guides/{#else}guides/{/if}"> Back to Guides</a>
     </div>
+    {#if has_categories}
+    {#include partials/version-split.html id="guide-version-split" extra_class="guide-version-split" docversion=docversion versions=present_versions path=guide_page_url _unisolated /}
+    {#if docversion == 'latest' || docversion == 'main'}
+    <a class="editlink" href="https://github.com/quarkusio/quarkus/edit/main/docs/src/main/asciidoc/{=page_filename.raw}">{=cdi:guides.texts.edit_this_page.raw}</a>
+    {/if}
+    {#else}
     <div class="flexlabel">
       <label>{=cdi:guides.texts.by_version.raw}</label>
     </div>
     <div class="guidepulldown version">
     <select id="guide-version-dropdown">
-      {#for version in cdi:versions.documentation.orEmpty}
-        {#let legacy_data_source="guides-".append(version.replace('.', '-'))}
-        {=_m.assign('guide_present_in_version', false).raw}
-        {#for item in site.data.get(legacy_data_source).categories.orEmpty}
-          {#for guide in item.guides.orEmpty}
-            {#if guide.url == guide_url}
-              {=_m.assign('guide_present_in_version', true).raw}
-            {/if}
-          {/for}
-        {/for}
-        {#let data_source=version.replace('.', '-')}
-        {#if cdi:versioned.get(data_source).index.containsGuide(guide_url)}
-          {=_m.assign('guide_present_in_version', true).raw}
-        {/if}
-        {#if _m.read('guide_present_in_version') || docversion == version}
+      {#for version in present_versions.orEmpty}
         <option value="{=version.raw}" {#if docversion == version}selected{/if}>{#if version == 'latest'}{=cdi:versions.quarkus.version.replaceAll("\.[0-9+]\.Final", "").raw} - {/if}{=version.capitalize.raw}{#if version == 'main'} - SNAPSHOT{/if}</option>
-        {/if}
-      {/let}{/let}{/for}
+      {/for}
     </select>
     </div>
+    {/if}
   </div>
 </section>
 
+{#if has_categories}
+<div class="guide guide-full-width">
+  <button class="guide-nav-toggle" id="guide-nav-toggle" aria-label="Open guide navigation" aria-controls="guide-nav-wrapper" aria-expanded="false">
+    <span class="guide-nav-toggle-icon"><i class="fa-solid fa-bars"></i></span>
+  </button>
+  <div class="guide-nav-backdrop" id="guide-nav-backdrop"></div>
+  <div class="guide-nav-wrapper" id="guide-nav-wrapper" role="dialog" aria-modal="true" aria-labelledby="guide-nav-heading" aria-hidden="true" tabindex="-1">
+    <div class="guide-nav-title">
+      <h2 id="guide-nav-heading">Guide categories</h2>
+      <button class="guide-nav-close" id="guide-nav-close" aria-label="Close guide navigation">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    {#include partials/guide-nav-sidebar.html docversion=docversion current_filename=page_filename _unisolated /}
+  </div>
+  <div class="guide-layout">
+    <div class="guide-toc-wrapper hide-tablet">
+      <div class="toc">{=page.tocHtml}</div>
+    </div>
+    <div class="guide-main">
+      <h1 class="text-caps">{=page.title.raw} {=page.data.docversion.or('').raw}</h1>
+      {#insert /}
+    </div>
+  </div>
+</div>
+{#else}
 <div class="guide">
   <div class="grid-wrapper">
     <div class="grid__item width-8-12 width-12-12-m">
@@ -60,59 +80,7 @@ layout: base
       <div class="hide-mobile toc">{=page.tocHtml}</div>
     </div>
   </div>
-  {#if relations && relations.get(guide_url)}
-  <h2>{=cdi:guides.texts.related_content.raw}</h2>
-  <div class="grid-wrapper relations">
-    {#if relations.get(guide_url).sameExtensions}
-    <div class="grid__item width-6-12 width-12-12-m">
-      <h3>{=cdi:guides.texts.on_the_same_extensions.raw}</h3>
-      <ul class="related-content">
-      {#for guide in relations.get(guide_url).sameExtensions.orEmpty}
-        {=_m.assign('is_external_guide', guide.url.startsWith('http')).raw}
-        {#if _m.read('is_external_guide')}
-          {=_m.assign('related_guide_url', url).raw}
-        {#else if docversion == 'latest'}
-          {=_m.assign('related_guide_url', ''.append(guide.url)).raw}
-
-        <li class="{=guide.type.raw}"><a href="{=_m.read('related_guide_url').raw}">{=guide.title.raw}</a></li>
-      {#else}
-          {=_m.assign('related_guide_url', ''.append('/version/').append(docversion).append(guide.url)).raw}
-
-        <li class="{=guide.type.raw}"><a href="{=_m.read('related_guide_url').raw}">{=guide.title.raw}</a></li>
-      {/if}{/for}
-      </ul>
-    </div>
-    {/if}
-    {#if relations.get(guide_url).sameTopics}
-    <div class="grid__item width-6-12 width-12-12-m">
-      <h3>{=cdi:guides.texts.on_the_same_topics.raw}</h3>
-      <ul class="related-content">
-      {#for guide in relations.get(guide_url).sameTopics.orEmpty}{#if guide_count <= 20}
-        {=_m.assign('is_external_guide', guide.url.startsWith('http')).raw}
-        {#if _m.read('is_external_guide')}
-          {=_m.assign('related_guide_url', url).raw}
-        {#else if docversion == 'latest'}
-          {=_m.assign('related_guide_url', ''.append(guide.url)).raw}
-
-        <li class="{=guide.type.raw}"><a href="{=_m.read('related_guide_url').raw}">{=guide.title.raw}</a></li>
-      {#else}
-          {=_m.assign('related_guide_url', ''.append('/version/').append(docversion).append(guide.url)).raw}
-
-        <li class="{=guide.type.raw}"><a href="{=_m.read('related_guide_url').raw}">{=guide.title.raw}</a></li>
-      {/if}{/if}{/for}
-      </ul>
-    </div>
-    {/if}
-  </div>
-  {/if}
+  {#include partials/guide-relations.html relations=relations guide_url=guide_url docversion=docversion _unisolated /}
 </div>
-{/let}{/let}{/let}{/let}
-{/capture}
-{#let versioned_page=page.url.startsWith('/version/')}
-{#if versioned_page}
-  {#let docversion=page.url.path.replaceAll('^/version/([^/]+)/.*', '$1')}
-{#include $guide_content /}
-{/let}{#else}
-  {#let docversion='latest'}
-{#include $guide_content /}
-{/let}{/if}{/let}{/let}
+{/if}
+{/let}{/let}{/let}{/let}{/let}{/let}{/let}{/let}{/let}{/let}
