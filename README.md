@@ -1,45 +1,46 @@
-# Quarkus.io Website Based on Jekyll
+# Quarkus.io Website
 
 ## Getting Started
 
 These instructions will get you a copy of the Quarkus.io website up and running on your local machine for development and testing purposes.
 
-### Installation
+### Prerequisites
 
-#### Using Docker or Podman
+- Java 21+
+- Maven (or use the included `./mvnw` wrapper — no separate Maven install required)
 
-1. Install [Docker Desktop](https://docs.docker.com/install/) or [Podman Desktop](https://podman-desktop.io/)
-2. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork:
+### Running locally
+
+1. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork:
     ```sh
     git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
     ```
-3. Change into the project directory:
+2. Change into the project directory:
     ```sh
     cd quarkusio.github.io
     ```
-4. Run Docker Compose or Podman Compose:
+3. Start the dev server:
     ```sh
-    docker compose up
+    ./serve.sh
     ```
-    or
+    This runs `mvn quarkus:dev` and serves the full site (including guides) at [http://localhost:8080](http://localhost:8080).
 
+    For a faster startup without guides:
     ```sh
-    podman compose up
+    ./serve-noguides.sh
     ```
 
-By default, this does not include guides. To include guides, use: 
-```sh
-docker compose --file docker-compose_with_guides.yml up
-```
-If the guides build terminates abruptly before completion, make sure your [container engine has enough memory allocated](https://podman-desktop.io/docs/podman/creating-a-podman-machine#procedure) (it will need at least 5GB).  
+    Or with only the latest guides (latest and main branches):
+    ```sh
+    ./serve-only-latest-guides.sh
+    ```
 
 > [!NOTE]
-> The startup process may take several minutes, depending on your system. During this time, you might see logs with warnings or configuration messages (e.g., AutoPages and asciidoctor warnings). This is normal behavior as Jekyll builds the site. Once the server is running, you will see output like this:
+> The startup process may take a minute or two on the first run while Maven downloads dependencies and Roq generates the site. Subsequent starts are faster. Once ready, you will see output like:
 >
->    ```
->    jekyll-1  |   Server address: http://0.0.0.0:4000/
->    jekyll-1  |   Server running... press ctrl-c to stop.
->    ```
+> ```
+> Listening on: http://0.0.0.0:8080
+> ```
 
  If an error occurs mentioning a name conflict, try:
 ```sh
@@ -96,34 +97,34 @@ If for some reason you need to deploy from your local machine, follow these inst
 ## Writing a blog
 
 > [!WARNING]
-> Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts. 
+> Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts.
 > Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content.
 
 To write a blog:
 
 - create an author entry in [_data/authors.yaml](https://github.com/quarkusio/quarkusio.github.io/blob/main/_data/authors.yaml)
   - `emailhash` you can get by running `echo -n your@email.org | md5sum` on Linux or `echo -n your@email.org | md5` on macOS using an email you have registered from the [Gravatar service](https://gravatar.com),
-     
-- create an blog entry under [_posts](https://github.com/quarkusio/quarkusio.github.io/tree/main/_posts)
-  - the file name is `yyyy-mm-dd-slug.adoc` Set the date to the same value in the asciidoc preamble.
-- `tags` should be used with some care as an archive page is created for of them. Below are some basic rules to try follow:
+
+- create a blog entry under [content/posts](https://github.com/quarkusio/quarkusio.github.io/tree/main/content/posts)
+  - the file name is `yyyy-mm-dd-slug.adoc`. Set the `date` to the same value in the front matter.
+- `tags` should be used with some care as an archive page is created for each of them. Below are some basic rules to try to follow:
   - `quarkus-release` used for Quarkus release blogs
-  - `announcement` used for general announcement with some impact.
+  - `announcement` used for general announcements with some impact.
   - `extension` used for blogs related to a specific extension.
   - `user-story` used for stories from users/companies adopting Quarkus.
-  - `development-tips` used for blogs with tips to develop using Quarkus or Quarkus itself. 
-  - add a tech specific, like `kafka`, if your post has a significant mention/relevance to that technology.
-  - tags is space separated list `tags:extension grpc`
+  - `development-tips` used for blogs with tips to develop using Quarkus or Quarkus itself.
+  - add a tech specific tag like `kafka` if your post has a significant mention/relevance to that technology.
+  - tags is a space-separated list: `tags: extension grpc`
   - tags must be in lowercase
-- it's in asciidoc format, there is an example as shown with [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/_posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
-  - Be aware that the `date` attribute in the asciidoc preamble defines when the article will be published. Add a `--future` flag when testing locally to ensure the article is included in the generated site. 
+- it's in asciidoc format, there is an example at [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/content/posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
+  - Be aware that the `date` attribute in the front matter defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use `./serve.sh` locally to preview them regardless of date.
 - send a pull request against the main branch and voilà
 
 
 
 ## Translations/Localization (l10n)
 
-The primary site (quarkus.io) is written in English. 
+The primary site (quarkus.io) is written in English.
 
 There are separate repositories for community driven localized versions of quarkus.io:
 
@@ -141,7 +142,7 @@ Once a localized site has enough of its content translated, DNS needs to be enab
 a ticket to IT asking for XX domain:
 
 ```
-We need a CNAME record set up for XX.quarkus.io to have it serve out GitHub pages. 
+We need a CNAME record set up for XX.quarkus.io to have it serve out GitHub pages.
 
 The CNAME record for XX.quarkus.io should point to "quarkusio.github.io.".
 ```
