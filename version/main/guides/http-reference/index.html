@@ -2206,7 +2206,11 @@
 <li data-level="1"><a href="#configuring-http-access-logs">13. Configuring HTTP Access Logs</a></li>
 <li data-level="1"><a href="#arbitrary-customizations">14. Arbitrary customizations</a></li>
 <li data-level="1"><a href="#how-to-execute-logic-when-http-server-started">15. How to execute logic when HTTP server started</a></li>
-<li data-level="1"><a href="#reverse-proxy">16. Running behind a reverse proxy</a></li>
+<li data-level="1"><a href="#reverse-proxy">16. Running behind a reverse proxy</a>
+<ul>
+<li data-level="2"><a href="#x-forwarded-for-selection">16.1. Selecting the X-Forwarded-For client address</a></li>
+</ul>
+</li>
 <li data-level="1"><a href="#same-site-cookie">17. SameSite cookies</a></li>
 <li data-level="1"><a href="#servlet-config">18. Servlet Config</a>
 <ul>
@@ -4960,6 +4964,95 @@ To disable this validation, set the <code>quarkus.http.proxy.forwarded-proto-val
 <p><code>X-Forwarded-Prefix</code></p>
 </li>
 </ul>
+</div>
+<div class="sect2">
+<h3 id="x-forwarded-for-selection"><a class="anchor" href="#x-forwarded-for-selection"></a>16.1. Selecting the X-Forwarded-For client address</h3>
+<div class="paragraph">
+<p>By default, Quarkus takes the client address from the leftmost <code>X-Forwarded-For</code> value.
+When a proxy appends the client address rather than overwriting the header, the leftmost value is supplied by the client and cannot be trusted.
+Set <code>quarkus.http.proxy.x-forwarded-for-index</code> to select the value by its position from the right, where <code>1</code> is the rightmost value:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.http.proxy.proxy-address-forwarding=true
+quarkus.http.proxy.allow-x-forwarded=true
+quarkus.http.proxy.trusted-proxies=127.0.0.1
+quarkus.http.proxy.x-forwarded-for-index=1 <i class="conum" data-value="1"></i><b>(1)</b></code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Set the index to the number of values your proxies append to <code>X-Forwarded-For</code>. One appended value places the client at index <code>1</code>, two appended values at index <code>2</code>.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The index counts non-empty values only and merges repeated <code>X-Forwarded-For</code> header lines in the order received.
+When the header holds at least one value but fewer than the index, the request is rejected with a <code>400 Bad Request</code> response.
+When the header is absent or contains only empty values, the connection peer address is used.
+Selection applies to <code>X-Forwarded-For</code> only and cannot be combined with <code>quarkus.http.proxy.allow-forwarded</code>.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+Select a value only when Quarkus is reachable exclusively through trusted proxies, because a client that connects directly can forge any value. The index must equal the number of values the proxies append; a lower index selects a client-supplied value.
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>When a fixed index is not enough, for example to read a vendor header or to walk a chain of trusted addresses, provide a CDI bean that implements the <code>io.quarkus.vertx.http.XForwardedForSelector</code> interface:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.vertx.http.XForwardedForSelector;
+
+import jakarta.inject.Singleton;
+
+@Singleton
+public class ClientIpSelector implements XForwardedForSelector {
+
+    @Override
+    public String select(Context context) {
+        String clientIp = context.headers().get("X-Real-Client-IP");
+        if (clientIp != null) {
+            return clientIp;
+        }
+        return context.connectionPeer().host(); <i class="conum" data-value="1"></i><b>(1)</b>
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Falls back to the direct connection address. Returning <code>null</code> or a blank value instead rejects the request with a <code>400 Bad Request</code> response.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The selector runs only when the request carries at least one non-empty <code>X-Forwarded-For</code> value.
+When the header is absent or contains only empty values, the selector is not invoked and the connection peer address is used.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+At most one such bean may exist, and it cannot be combined with <code>quarkus.http.proxy.x-forwarded-for-index</code> or <code>quarkus.http.proxy.allow-forwarded</code>.
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 </div>
