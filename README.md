@@ -106,7 +106,7 @@ To write a blog:
   - `emailhash` you can get by running `echo -n your@email.org | md5sum` on Linux or `echo -n your@email.org | md5` on macOS using an email you have registered from the [Gravatar service](https://gravatar.com),
 
 - create a blog entry under [content/posts](https://github.com/quarkusio/quarkusio.github.io/tree/main/content/posts)
-  - the file name is `yyyy-mm-dd-slug.adoc`. Set the `date` to the same value in the front matter.
+  - the file name is `yyyy-mm-dd-slug.adoc` (the publication date of the blog).
 - `tags` should be used with some care as an archive page is created for each of them. Below are some basic rules to try to follow:
   - `quarkus-release` used for Quarkus release blogs
   - `announcement` used for general announcements with some impact.
@@ -117,7 +117,7 @@ To write a blog:
   - tags is a space-separated list: `tags: extension grpc`
   - tags must be in lowercase
 - it's in asciidoc format, there is an example at [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/content/posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
-  - Be aware that the `date` attribute in the front matter defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use `./serve.sh` locally to preview them regardless of date.
+  - Be aware that the `date` attribute in the file name defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use dev mode or `./serve.sh` locally to preview them regardless of date.
 - send a pull request against the main branch and voilà
 
 

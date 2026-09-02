@@ -74,7 +74,7 @@ For blog-only work, `serve-noguides.sh` is the fastest option.
 ## Blog Post File Conventions
 
 - Location: `content/posts/YYYY-MM-DD-slug.adoc` (or `.asciidoc`, `.md`)
-- Front matter fields: `layout: post`, `title`, `date`, `tags`, `synopsis`, `author`
+- Front matter fields: `layout: post`, `title`, `tags`, `synopsis`, `author`
 - `author` must match a key in `_data/authors.yaml`
 - Tags: lowercase, space-separated — e.g. `tags: extension kafka`
 - Images: store in `public/assets/images/posts/<slug>/`, reference with `:imagesdir: /assets/images/posts/<slug>`
