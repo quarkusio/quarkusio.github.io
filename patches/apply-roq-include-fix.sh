@@ -14,7 +14,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Extract the Roq version from pom.xml
 ROQ_VERSION=$(grep -m1 -oP '(?<=quarkus-roq-plugin-asciidoc-jruby</artifactId>\s{0,99}<version>)[^<]+' "$PROJECT_DIR/pom.xml" \
   || grep -oP '(?<=quarkus-roq</artifactId>\s{0,99}<version>)[^<]+' "$PROJECT_DIR/pom.xml" \
-  || echo "2.1.8")
+  || echo "2.1.9")
 
 ROQ_JAR="$HOME/.m2/repository/io/quarkiverse/roq/quarkus-roq-plugin-asciidoc-jruby/$ROQ_VERSION/quarkus-roq-plugin-asciidoc-jruby-$ROQ_VERSION.jar"
 MARKER="$ROQ_JAR.patched-issue-2939"
