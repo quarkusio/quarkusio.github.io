@@ -98,7 +98,7 @@ If for some reason you need to deploy from your local machine, follow these inst
 
 > [!WARNING]
 > Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts.
-> Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content.
+> Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content. We want _your_ voice!
 
 To write a blog:
 
