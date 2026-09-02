@@ -23,7 +23,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
     ```sh
     ./serve.sh
     ```
-    This runs `mvn quarkus:dev` and serves the full site (including guides) at [http://localhost:8080](http://localhost:8080).
+    This runs `mvn quarkus:dev` and serves the full site (including guides) at [http://localhost:8042](http://localhost:8042).
 
     For a faster startup without guides:
     ```sh
@@ -39,7 +39,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 > The startup process may take a minute or two on the first run while Maven downloads dependencies and Roq generates the site. Subsequent starts are faster. Once ready, you will see output like:
 >
 > ```
-> Listening on: http://0.0.0.0:8080
+> Listening on: http://0.0.0.0:8042
 > ```
 
  If an error occurs mentioning a name conflict, try:
