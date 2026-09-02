@@ -33,7 +33,7 @@ guidance before starting work:
 ./serve-only-latest-guides.sh  # only latest + main guides
 ```
 
-Requires Java 21+. Site is served at http://localhost:8080.
+Requires Java 21+. Site is served at http://localhost:8042.
 
 ## Running Tests
 

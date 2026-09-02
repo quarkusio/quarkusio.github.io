@@ -33,7 +33,7 @@ To just start the dev server without the auto-open behaviour:
 ./serve-noguides.sh
 ```
 
-Then browse to [http://localhost:8080/blog/](http://localhost:8080/blog/).
+Then browse to [http://localhost:8042/blog/](http://localhost:8042/blog/).
 
 ## How It Works
 
@@ -94,7 +94,7 @@ Quarkus dev mode watches for file changes and triggers an incremental rebuild au
 
 ## Troubleshooting
 
-**Port 8080 already in use** — Another process is occupying the default port.
+**Port 8042 already in use** — Another process is occupying the default port.
 Pass a different port: `./serve-noguides.sh -Dquarkus.http.port=8081`.
 
 **Changes not appearing** — Quarkus dev mode watches source files. If a change is not picked
