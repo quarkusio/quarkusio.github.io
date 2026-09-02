@@ -250,8 +250,7 @@ the user specifically asks.
 
 After creating the post and updating versions, suggest the user preview
 locally. The blog preview skill (`.agents/skills/building-blog/SKILL.md`)
-has full instructions — but note that the preview infrastructure may
-still be Jekyll-based. If `just blog-preview` or `blog-preview.sh` are
+has full instructions. If `just blog-preview` or `blog-preview.sh` are
 available, use them. Otherwise, the Roq dev mode can be started with:
 
 ```bash
