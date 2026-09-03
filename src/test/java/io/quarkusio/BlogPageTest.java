@@ -166,8 +166,10 @@ public class BlogPageTest extends BrowserTest {
 
             String bodyText = page.locator(".doc-content").first().textContent();
             List<String> findings = findUnrenderedMarkup(bodyText);
+            String fullUrl = href.startsWith("http") ? href : baseUrl + href;
             assertTrue(findings.isEmpty(),
-                    () -> "\"" + title + "\" (" + href + ") contains unrendered markup: " + String.join("; ", findings));
+                    () -> "\"" + title + "\" (" + href + ") contains unrendered markup: "
+                            + String.join("; ", findings) + " -- view in browser: " + fullUrl);
 
             page.navigate(baseUrl + BLOG_PATH);
         }
