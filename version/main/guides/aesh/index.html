@@ -3665,7 +3665,7 @@ public class CliTest {
 <h3 id="testing-console-mode-commands-repl"><a class="anchor" href="#testing-console-mode-commands-repl"></a>Testing console mode commands (REPL)</h3>
 <div class="paragraph">
 <p>Console mode commands run in an interactive shell.
-Use <code>AeshLauncher</code> to start a REPL session, send commands, and assert on their output:</p>
+Use <code>AeshLauncher</code> to send commands and assert on their output:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3683,38 +3683,169 @@ public class ReplTest {
 
     @Test
     void testInteractiveSession(AeshLauncher launcher) {
-        launcher.launch();
+        launcher.execute("greet --name=Alice");
+        assertThat(launcher.getCommandOutput()).isEqualTo("Hello Alice!\n");
 
-        String output = launcher.executeCommand("greet --name=Alice");
-        assertThat(output).contains("Hello Alice!");
-
-        output = launcher.executeCommand("calc -a 5 -b 3");
-        assertThat(output).contains("Result: 8");
-
-        launcher.exit();
+        launcher.execute("calc -a 5 -b 3");
+        assertThat(launcher.getCommandOutput()).isEqualTo("Result: 8\n");
     }
 }</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>AeshLauncher</code> provides:</p>
+<p>The REPL is auto-launched on the first <code>execute()</code> call and auto-closed after each
+test method. No explicit <code>launch()</code> or <code>exit()</code> calls are needed for typical tests.</p>
 </div>
+<div class="sect3">
+<h4 id="clean-command-output"><a class="anchor" href="#clean-command-output"></a>Clean command output</h4>
+<div class="paragraph">
+<p><code>getCommandOutput()</code> returns only what the command wrote via <code>invocation.println()</code>&#8201;&#8212;&#8201;no prompt, no command echo, no ANSI sequences. This enables exact assertions with <code>isEqualTo()</code>
+instead of fuzzy <code>contains()</code> matching.</p>
+</div>
+<div class="paragraph">
+<p><code>getOutput()</code> accumulates command output across multiple <code>execute()</code> calls within a test.
+Use <code>resetOutput()</code> to clear the accumulator between test phases:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Test
+void testAccumulatedOutput(AeshLauncher launcher) {
+    launcher.execute("add-item apple");
+    launcher.execute("add-item banana");
+
+    assertThat(launcher.getOutput()).isEqualTo("Added: apple\nAdded: banana\n");
+
+    launcher.resetOutput();
+    launcher.execute("list-items");
+    assertThat(launcher.getCommandOutput()).contains("apple", "banana");
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="exit-code-assertions"><a class="anchor" href="#exit-code-assertions"></a>Exit code assertions</h4>
+<div class="paragraph">
+<p><code>execute()</code> asserts that the command returns <code>CommandResult.SUCCESS</code> (exit code 0) by default.
+If a command is expected to fail, pass the expected <code>CommandResult</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Test
+void testFailingCommand(AeshLauncher launcher) {
+    // Passes — expected to fail
+    launcher.execute("invalid-command --bad", CommandResult.FAILURE);
+    assertThat(launcher.getLastExitCode()).isEqualTo(1);
+    assertThat(launcher.getLastError()).isNotNull();
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For more control (custom timeout, pre-canned input), use <code>ExecuteOptions</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">// Custom timeout
+launcher.execute("slow-command", ExecuteOptions.defaults().timeout(Duration.ofMinutes(2)));
+
+// Expected failure with custom timeout
+launcher.execute("risky-command",
+        ExecuteOptions.expecting(CommandResult.FAILURE).timeout(Duration.ofSeconds(5)));</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="error-capture"><a class="anchor" href="#error-capture"></a>Error capture</h4>
+<div class="paragraph">
+<p>When a command throws an exception, it is captured and available via <code>getLastError()</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Test
+void testErrorCapture(AeshLauncher launcher) {
+    launcher.execute("fail --message=boom", CommandResult.FAILURE);
+    assertThat(launcher.getLastError().getMessage()).contains("boom");
+    assertThat(launcher.getErrorOutput()).contains("boom");
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Errors are cleared between commands&#8201;&#8212;&#8201;a successful command after a failing one
+resets <code>getLastError()</code> to <code>null</code>.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="quoting-arguments"><a class="anchor" href="#quoting-arguments"></a>Quoting arguments</h4>
+<div class="paragraph">
+<p>Arguments containing spaces or special characters should be quoted the same way
+as in a terminal:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">launcher.execute("echo --text 'hello world'");
+assertThat(launcher.getCommandOutput()).isEqualTo("hello world\n");</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="interactive-input"><a class="anchor" href="#interactive-input"></a>Interactive input</h4>
+<div class="paragraph">
+<p>For commands that prompt for input during execution (e.g., confirmation prompts),
+use <code>ExecuteOptions.input()</code> to provide pre-canned responses:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">// Command calls invocation.inputLine() — response is provided automatically
+launcher.execute("confirm --action=deploy", ExecuteOptions.defaults().input("y"));
+assertThat(launcher.getCommandOutput()).contains("Confirmed: deploy");
+
+// Multiple prompts
+launcher.execute("setup", ExecuteOptions.defaults().input("admin", "password123", "y"));</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For more complex interactive scenarios, <code>sendInput()</code> provides low-level
+access to the REPL&#8217;s stdin:</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="aeshlauncher-api-summary"><a class="anchor" href="#aeshlauncher-api-summary"></a>AeshLauncher API summary</h4>
 <div class="ulist">
 <ul>
 <li>
-<p><code>launch(String&#8230;&#8203; args)</code>&#8201;&#8212;&#8201;starts the REPL on a background thread</p>
+<p><code>execute(String command)</code>&#8201;&#8212;&#8201;executes and asserts <code>SUCCESS</code></p>
 </li>
 <li>
-<p><code>executeCommand(String command)</code>&#8201;&#8212;&#8201;sends a command and blocks until it completes (10 second default timeout)</p>
+<p><code>execute(String command, CommandResult expected)</code>&#8201;&#8212;&#8201;executes and asserts the given result</p>
 </li>
 <li>
-<p><code>executeCommand(String command, Duration timeout)</code>&#8201;&#8212;&#8201;same with a custom timeout</p>
+<p><code>execute(String command, ExecuteOptions options)</code>&#8201;&#8212;&#8201;full control (timeout, expected result, input)</p>
 </li>
 <li>
-<p><code>getErrorOutput()</code>&#8201;&#8212;&#8201;returns any error output from the session</p>
+<p><code>sendInput(String input)</code>&#8201;&#8212;&#8201;send raw input for interactive commands</p>
 </li>
 <li>
-<p><code>exit()</code>&#8201;&#8212;&#8201;sends the exit command and waits for clean shutdown</p>
+<p><code>getCommandOutput()</code>&#8201;&#8212;&#8201;clean output from the last command</p>
+</li>
+<li>
+<p><code>getOutput()</code> / <code>resetOutput()</code>&#8201;&#8212;&#8201;accumulated command output</p>
+</li>
+<li>
+<p><code>getLastExitCode()</code>&#8201;&#8212;&#8201;exit code from the last command</p>
+</li>
+<li>
+<p><code>getLastError()</code> / <code>getErrorOutput()</code>&#8201;&#8212;&#8201;exception from the last failed command</p>
+</li>
+<li>
+<p><code>isRunning()</code> / <code>waitForExit(Duration)</code>&#8201;&#8212;&#8201;REPL lifecycle state</p>
+</li>
+<li>
+<p><code>getLaunchResult()</code>&#8201;&#8212;&#8201;launch result after REPL exits</p>
+</li>
+<li>
+<p><code>launch(String&#8230;&#8203; args)</code>&#8201;&#8212;&#8201;explicit launch with initial arguments (optional)</p>
+</li>
+<li>
+<p><code>exit()</code>&#8201;&#8212;&#8201;explicit shutdown (optional, auto-closed after each test)</p>
 </li>
 </ul>
 </div>
@@ -3730,6 +3861,7 @@ Set <code>quarkus.aesh.add-exit-command=true</code> in <code>application.propert
 </td>
 </tr>
 </table>
+</div>
 </div>
 </div>
 </div>
