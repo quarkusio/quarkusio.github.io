@@ -686,6 +686,7 @@
           
           
           
+          
 
     <details class="guide-nav-cat" >
       <summary>Data</summary>
@@ -719,6 +720,7 @@
             
             
             
+            
 
           <details class="guide-nav-subcat" >
             <summary>ORM and Hibernate</summary>
@@ -728,6 +730,9 @@
                     </li>
                     <li >
                       <a href="/version/main/guides/quarkus-data-hibernate/">Simplified Hibernate with Quarkus Data Hibernate</a>
+                    </li>
+                    <li >
+                      <a href="/version/main/guides/quarkus-data-hibernate-getting-started/">Getting Started with Quarkus Data Hibernate</a>
                     </li>
                     <li >
                       <a href="/version/main/guides/hibernate-orm-panache/">Simplified Hibernate ORM with Panache</a>
@@ -3437,6 +3442,7 @@ For full enforcement, OpenSSL 3.5+ via the native SSL engine is required.</p>
 <div class="paragraph">
 <p>Post-quantum enforcement (<code>client-negotiated</code> and <code>strict</code>) relies on a native OpenSSL 3.5+ library.
 Quarkus bundles this library only for <strong>Linux x86_64</strong> and <strong>Linux aarch64</strong>.
+In addition, <code>libapr-1</code> must be installed on the host OS (see <a href="https://netty.io/wiki/forked-tomcat-native.html">netty-tcnative prerequisites</a>).
 Other operating systems and architectures (macOS, Windows, Alpine Linux, Linux on RISC-V, etc.) are <strong>not supported</strong>: attempting to use <code>client-negotiated</code> or <code>strict</code> on an unsupported platform will fail at runtime because the native OpenSSL engine is unavailable.
 On those platforms, use <code>relaxed</code> with JDK 27+ for post-quantum key exchange.</p>
 </div>
@@ -3471,6 +3477,117 @@ On those platforms, use <code>relaxed</code> with JDK 27+ for post-quantum key e
 <div class="paragraph">
 <p>The supported values are <code>openssl</code> (requires netty-tcnative on the classpath) and <code>jdkssl</code> (the standard JDK SSL engine).
 This property is useful for testing or when you need explicit control over the engine — for example, forcing <code>jdkssl</code> on JDK 27+ where the JDK natively supports post-quantum groups.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="pqc-and-native-mode"><a class="anchor" href="#pqc-and-native-mode"></a>3.3.5.4. PQC and native mode</h5>
+<div class="paragraph">
+<p>In native mode, quantum-safe TLS is not available using OpenSSL. Thus, the only way to leverage PQC-compliant key exchange groups is to use a JDK SSL engine that supports them. This are not yet available in GraalVM/Mandrel, but should be available in the near future.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="pqc-in-containerized-environments"><a class="anchor" href="#pqc-in-containerized-environments"></a>3.3.5.5. PQC in containerized environments</h5>
+<div class="paragraph">
+<p>When running in a container with a UBI image as the base, <code>libapr-1</code> isn&#8217;t installed by default.
+So you need to install it explicitly.
+Without it, netty-tcnative cannot load the native OpenSSL engine at runtime, and PQC enforcement will fail even if OpenSSL 3.5+ is present.</p>
+</div>
+<div class="paragraph">
+<p>Install <code>apr</code> explicitly in your <code>Containerfile</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi9/openjdk-21-runtime
+# Explicitly add the `apr` package. Refer to your base image documentation to install the apr package
+RUN microdnf install -y apr &amp;&amp; microdnf clean all</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Below is an example of a complete <code>Containerfile</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi10/openjdk-25-runtime:latest
+
+ENV LANGUAGE='en_US:en'
+
+USER root
+RUN microdnf install -y apr &amp;&amp; microdnf clean all
+USER 185
+
+# We make four distinct layers so if there are application changes the library layers can be re-used
+COPY --chown=185 target/quarkus-app/lib/ /deployments/lib/
+COPY --chown=185 target/quarkus-app/*.jar /deployments/
+COPY --chown=185 target/quarkus-app/app/ /deployments/app/
+COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
+
+EXPOSE 8080 8443
+USER 185
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
+ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
+
+ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="pqc-availability-summary"><a class="anchor" href="#pqc-availability-summary"></a>3.3.5.6. PQC availability summary</h5>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 14.2857%;">
+<col style="width: 14.2857%;">
+<col style="width: 14.2857%;">
+<col style="width: 14.2857%;">
+<col style="width: 14.2857%;">
+<col style="width: 28.5715%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Mode</th>
+<th class="tableblock halign-left valign-top">Java Runtime</th>
+<th class="tableblock halign-left valign-top">SSL Engine</th>
+<th class="tableblock halign-left valign-top">PQC support</th>
+<th class="tableblock halign-left valign-top">PQC enforcement available</th>
+<th class="tableblock halign-left valign-top">Prerequisites</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JVM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Any</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OpenSSL (netty-tcnative)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OpenSSL 3.5+; <code>libapr-1</code> (<code>microdnf install apr</code> on UBI)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JVM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">&lt; 27 (25*)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JDK SSL</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JVM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">27+ (25+*)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JDK SSL</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JDK 27+ (or 25+ after backport)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Native</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Any</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OpenSSL (netty-tcnative)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Engine unavailable in native mode</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p><em>* JDK 25 support pending backport (expected October 2026).</em></p>
 </div>
 </div>
 </div>
