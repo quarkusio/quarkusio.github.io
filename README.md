@@ -42,49 +42,8 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 > Listening on: http://0.0.0.0:8042
 > ```
 
- If an error occurs mentioning a name conflict, try:
-```sh
-docker compose up --force-recreate
-```
+5. Now browse to [http://localhost:8042](http://localhost:8042).
 
-5. Now browse to [http://localhost:4000](http://localhost:4000).
-#### Using a local Ruby environment
-[Jekyll static site generator docs](https://jekyllrb.com/docs/).
-
-1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 3.2.3`.
-2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems)
-   ```sh
-   gem install bundler
-   ```
-3. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
-   ```sh
-   git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
-   ```
-4. Change into the project directory:
-   ```sh
-   cd quarkusio.github.io
-   ```
-5. Use bundler to fetch all required gems in their respective versions
-   ```sh
-   bundle install
-   ```
-6. Build the site and make it available on a local server
-   ```sh
-   ./serve.sh
-   ```
-   Or if you want it faster and okay to not have guides included use the following:
-
-   ```sh
-   ./serve-noguides.sh
-   ```
-
-
-7. Now browse to http://localhost:4000
-
->[!NOTE]
->If you encounter any unexpected errors during the above, please refer to the [troubleshooting](https://jekyllrb.com/docs/troubleshooting/#configuration-problems) page or the [requirements](https://jekyllrb.com/docs/installation/#requirements) page, as you might be missing development headers or other prerequisites.
-
-**For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
 
 ### Deploying to GitHub Pages
 

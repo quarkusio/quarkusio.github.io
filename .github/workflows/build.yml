@@ -21,42 +21,12 @@ jobs:
           fetch-depth: 5000
           fetch-tags: false
 
-      - name: Detect site generator
-        id: detect
-        run: |
-          if [ -f "Gemfile" ]; then
-            echo "jekyll=true" >> $GITHUB_OUTPUT
-            echo "site_dir=_site" >> $GITHUB_OUTPUT
-          else
-            echo "jekyll=false" >> $GITHUB_OUTPUT
-          fi
-          if [ -f "config/application.properties" ]; then
-            echo "roq=true" >> $GITHUB_OUTPUT
-            echo "site_dir=target/roq" >> $GITHUB_OUTPUT
-          else
-            echo "roq=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set up ruby
-        if: steps.detect.outputs.jekyll == 'true'
-        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
-        with:
-          ruby-version: 3.2.3
-
       - name: Set up JDK
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
-
-      - name: Cache Ruby gems
-        if: steps.detect.outputs.jekyll == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: vendor/bundle
-          key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
-          restore-keys: ${{ runner.os }}-gems-
 
       - name: Cache npm packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -77,18 +47,7 @@ jobs:
       - name: Restore mtime
         run: ./tools/git-restore-mtime
 
-      - name: Install Ruby dependencies
-        if: steps.detect.outputs.jekyll == 'true'
-        run: |
-          bundle config path vendor/bundle
-          bundle install --jobs 4 --retry 3
-
-      - name: Build Jekyll site
-        if: steps.detect.outputs.jekyll == 'true'
-        run: bundle exec jekyll build --future --config _config.yml,_only_latest_guides_config.yml
-
       - name: Build TOC plugin
-        if: steps.detect.outputs.roq == 'true'
         run: ./roq-plugin-toc/build.sh
 
       - name: Detect infra changes
@@ -111,7 +70,6 @@ jobs:
           fi
 
       - name: Build with Maven
-        if: steps.detect.outputs.roq == 'true'
         run: |
           export QUARKUS_ROQ_GENERATOR_BATCH=true
           if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
@@ -126,19 +84,9 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
 
-      # Jekyll serve handles extensionless URLs (e.g. /guides/getting-started)
-      # the same way GitHub Pages does; a plain HTTP server would 404 on them.
-      - name: Start Jekyll test server
-        if: steps.detect.outputs.jekyll == 'true'
-        run: |
-          bundle exec jekyll serve --port 8090 --no-watch --skip-initial-build &
-          timeout 30 bash -c 'until curl -s http://localhost:8090 > /dev/null 2>&1; do sleep 0.5; done'
-
       - uses: jbangdev/setup-jbang@main
-        if: steps.detect.outputs.roq == 'true'
 
       - name: Start Java test server
-        if: steps.detect.outputs.roq == 'true'
         run: |
           jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
           jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 &
@@ -178,7 +126,7 @@ jobs:
 
           RSYNC_OUT=$(rsync -rcn --out-format='%n' \
             --include='*/' --include='*.html' --exclude='*' \
-            ${{ steps.detect.outputs.site_dir }}/ /tmp/gh-pages/ 2>/dev/null) || {
+            target/roq/ /tmp/gh-pages/ 2>/dev/null) || {
             echo "mode=full" >> $GITHUB_OUTPUT
             echo "Site comparison failed, running full link check"
             git worktree remove /tmp/gh-pages 2>/dev/null || true
@@ -325,11 +273,11 @@ jobs:
           fi
 
       - name: Store PR id
-        run: echo ${{ github.event.number }} > ./${{ steps.detect.outputs.site_dir }}/pr-id.txt
+        run: echo ${{ github.event.number }} > ./target/roq/pr-id.txt
 
       - name: Reduce the size of the website to be compatible with surge
         run: |
-          SITE_DIR="${{ steps.detect.outputs.site_dir }}"
+          SITE_DIR="target/roq"
           # Keep only the 10 most recent newsletter editions (by number)
           if [ -d "$SITE_DIR/newsletter" ]; then
             ls -1 "$SITE_DIR/newsletter" | sort -n | head -n -10 | while read -r dir; do
@@ -375,7 +323,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: site
-          path: ./${{ steps.detect.outputs.site_dir }}
+          path: ./target/roq
           retention-days: 3
 
   build-report:
