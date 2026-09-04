@@ -119,4 +119,73 @@ public class SitemapTest extends BrowserTest {
         }
         assertTrue(foundHome, "Sitemap should include the home page URL (ending with /)");
     }
+
+    @Test
+    void sitemapHtmlReturns200() throws IOException, InterruptedException {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/sitemap.html"))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(),
+                    "Expected 200 for /sitemap.html but got " + response.statusCode());
+        }
+    }
+
+    @Test
+    void sitemapHtmlContainsLinks() throws IOException, InterruptedException {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/sitemap.html"))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String body = response.body();
+            assertFalse(body.isEmpty(), "sitemap.html should not be empty");
+            assertTrue(body.contains("<a href="), "sitemap.html should contain anchor links");
+            assertTrue(body.contains("quarkus.io"), "sitemap.html should contain quarkus.io URLs");
+        }
+    }
+
+    @Test
+    void llmsTxtReturns200() throws IOException, InterruptedException {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/llms.txt"))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(),
+                    "Expected 200 for /llms.txt but got " + response.statusCode());
+        }
+    }
+
+    @Test
+    void llmsTxtIsPlainText() throws IOException, InterruptedException {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/llms.txt"))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            assertTrue(contentType.contains("text/plain"),
+                    "llms.txt should have text/plain content type, but got: " + contentType);
+        }
+    }
+
+    @Test
+    void llmsTxtContainsContent() throws IOException, InterruptedException {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/llms.txt"))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String body = response.body();
+            assertFalse(body.isEmpty(), "llms.txt should not be empty");
+            assertTrue(body.contains("Quarkus"), "llms.txt should contain Quarkus information");
+        }
+    }
 }
