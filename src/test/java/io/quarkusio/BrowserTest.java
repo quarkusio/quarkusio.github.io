@@ -12,7 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 
 public abstract class BrowserTest {
 
-    static final String DEFAULT_BASE_URL = "http://localhost:8080";
+    static final String DEFAULT_BASE_URL = "http://localhost:8042";
 
     static Playwright playwright;
     static Browser browser;
