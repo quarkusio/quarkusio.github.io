@@ -42,7 +42,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 > Listening on: http://0.0.0.0:8042
 > ```
 
-5. Now browse to [http://localhost:4000](http://localhost:4000).
+5. Now browse to [http://localhost:8042](http://localhost:8042).
 
 
 ### Deploying to GitHub Pages
