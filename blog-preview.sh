@@ -19,7 +19,7 @@ if [ ! -x "$MVN" ]; then
 fi
 
 PREVIEW_REF="$SCRIPTDIR/.blog-preview-last-run"
-PORT="${QUARKUS_HTTP_PORT:-8080}"
+PORT="${QUARKUS_HTTP_PORT:-8042}"
 BASE_URL="http://127.0.0.1:${PORT}"
 
 # --- Environment detection ---
