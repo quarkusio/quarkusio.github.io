@@ -6,3 +6,4 @@ paginate:
   size: 10
   link: blog/page/:page
 ---
+
