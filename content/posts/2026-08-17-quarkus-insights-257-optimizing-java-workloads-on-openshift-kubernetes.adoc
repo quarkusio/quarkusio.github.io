@@ -1,0 +1,114 @@
+---
+layout: post
+title: 'Quarkus Insights #257: Optimizing Java Workloads on OpenShift & Kubernetes'
+date: 2026-08-17
+tags: quarkus-insights
+synopsis: 'Rob Sedor, Architect at Red Hat, joins the show to share essential strategies for optimizing Java workloads in containerized environments. From container-aware JVM settings and GC selection to Project Leyden, gRPC performance, and using Project Panama with ONNX for local AI, this episode is a blueprint for cloud efficiency.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/UQWcXTB6Cfg[watch the video] for the full story.
+
+== Quarkus Insights #257: Optimizing Java Workloads on OpenShift & Kubernetes
+
+Rob Sedor, an Architect at https://www.redhat.com/[Red Hat] with a storied background in https://camel.apache.org/[Apache Camel] integration and low-latency systems, joins host Eric Deandrea for episode 257 to tackle one of the most common friction points in enterprise modernization: running https://openjdk.org/[Java] workloads on https://kubernetes.io/[Kubernetes] and https://www.redhat.com/en/technologies/cloud-computing/openshift[OpenShift].
+
+Instead of theoretical advice, Rob brings a suite of practical calculations, live diagnostics, and architectural insights showing how to tune JVM deployments beyond default limits, select the best garbage collector, accelerate cold starts, optimize service-to-service communication, and even eliminate https://www.python.org/[Python] sidecars for local AI inferencing.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/UQWcXTB6Cfg" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== The Container Sizing Trap: Why Legacy Java 8 Fails
+
+Rob opened the discussion by highlighting a common pitfall for organizations moving older legacy workloads into containers. Many enterprise applications are still running on various flavors of Java 8. Unless you are on a specific backported micro-version (such as `8u191` or `8u257` or later), older JVM runtimes are completely container-unaware.
+
+When a non-container-aware JVM starts inside a container, it does not look at the cgroup limits configured for that container. Instead, it reads `/proc/meminfo` on the underlying Linux host. If your host has 64 GB of RAM, the JVM sees 64 GB. By default, the JVM initializes with a maximum heap size (`-XX:MaxRAMPercentage`) of 25% of visible memory, which on a 64 GB host equates to a 16 GB heap limit.
+
+If you deploy this legacy pod in a container limited to 512 MB of RAM, the mismatch is immediate: the JVM will happily attempt to allocate memory beyond 512 MB, resulting in the container being instantly terminated by the kernel with an `OOMKilled` status.
+
+=== Remediation: Modern JDKs and Heap Tuning
+Upgrading to modern LTS runtimes like JDK 21 or JDK 25 resolves container awareness out of the box, but proper heap sizing remains crucial. 
+
+* **Set MaxRAMPercentage to 75.0**: Configured via `-XX:MaxRAMPercentage=75.0`, this allocates 75% of the container memory to the heap. 
+* **Leave 25% Headroom**: The remaining 25% is essential headroom for native memory allocations, metaspace, JIT compiler cache, garbage collection metadata, and OS thread stacks. Over-allocating the heap to 90% or 100% of the container memory is a recipe for sporadic kernel OOM kills.
+
+== The Heisenbug: Kubernetes HPA and GC Thrashing
+
+One of the most striking parts of Rob's presentation was the demonstration of an autoscale "Heisenbug" that frequently catches Kubernetes administrators off guard. 
+
+By default, the Kubernetes Horizontal Pod Autoscaler (HPA) monitors the CPU and memory utilization of the container process. This process-driven approach creates a dangerous feedback loop when paired with heavy garbage collection pauses:
+
+1. **The GC Spike**: Under load, a garbage collector performing a "stop-the-world" sweep (like the default https://openjdk.org/jeps/248[G1GC]) experiences a transient CPU utilization spike.
+2. **The HPA Reaction**: The HPA detects this CPU spike, assumes the service is overwhelmed by client traffic, and triggers a scale-out, spawning three new pods.
+3. **The Warmup Penalty**: As these new pods initialize, they experience minor garbage collections and compilation overhead (C1/C2 JIT warmup), causing their own initial CPU spikes.
+4. **The Thrashing Loop**: The HPA sees these new startup spikes, assumes *even more* capacity is needed, and scales up again. Rob has observed clusters thrashing and scaling up to 20 pods in a desperate attempt to damp down CPU spikes that were actually caused by initialization and GC overhead, only to scale back down once the cluster stabilized.
+
+=== Remediation: Requests-per-Second Scaling
+To prevent autoscale thrashing, engineers should decouple Kubernetes scaling from raw CPU utilization. Rob recommends configuring https://keda.sh/[KEDA] or https://prometheus.io/[Prometheus] metrics adapters to scale pods based on HTTP requests-per-second rather than CPU, ensuring that scaling only triggers in response to actual incoming workload volume.
+
+== Choosing the Right Garbage Collector
+
+While the default G1GC is suitable for the vast majority of standard enterprise applications, Rob contrasted it with alternative garbage collectors tailored for specific deployment scenarios:
+
+* **ZGC**: The https://openjdk.org/jeps/377[ZGC] is a concurrent, ultra-low-latency collector designed to keep pause times under 1 millisecond, even on multi-gigabyte heaps. However, because it runs concurrently alongside application threads, it demands a higher CPU throughput price.
+* **Shenandoah GC**: Developed by Red Hat, https://openjdk.org/jeps/189[Shenandoah GC] is an excellent middle ground, offering concurrent compaction to minimize pause times without requiring the massive heap sizes traditionally associated with ZGC. It can be enabled via `-XX:+UseShenandoahGC` with adaptive heuristics.
+
+=== Crucial GC Settings for Containers
+When tuning GC inside containers, you must manually align the JVM's thread count with the container limits. By default, the JVM may spawn parallel GC threads based on the host's total CPU cores, rather than the container's CPU quota. 
+
+Use `-XX:ParallelGCThreads` and `-XX:ConcGCThreads` to restrict GC threads to match your allocated container CPU limits. Failing to do so causes severe thread-switching overhead and CPU thrashing.
+
+== AppCDS vs. Project Leyden AOT Caching
+
+Rob shared comparative data between the startup optimizations of https://docs.oracle.com/en/java/javase/11/vm/class-data-sharing.html[AppCDS] (Application Class Data Sharing) and the upcoming https://openjdk.org/projects/leyden[Project Leyden] (AOT cache).
+
+For standard Spring Boot applications, AppCDS offers a substantial 30% to 35% startup improvement on non-trivial applications (especially those with 100+ classes, https://hibernate.org/[Hibernate], and heavy runtime reflection).
+
+However, because Quarkus is already optimized at build-time—pre-booting, resolving reflection, and eliminating dynamic class-loading overhead during compilation—running AppCDS on Quarkus yields negligible differences. 
+
+=== Project Leyden Training Runs
+Where Quarkus truly shines is with Project Leyden. Unlike other frameworks where training runs simply capture a basic startup-and-shutdown sequence, Quarkus leverages your existing integration test suite via `maven-verify` to build its AOT cache file. This ensures that the generated cache is highly optimized and incredibly compact, resulting in blazing-fast cold starts that make scale-to-zero serverless highly practical.
+
+== gRPC vs. REST for Internal Microservices
+
+When designing microservice architectures, Rob offers a simple rule of thumb: use REST APIs for public, external-facing boundaries, but default to https://grpc.io/[gRPC] for internal, container-to-container service communication.
+
+Testing gRPC on your local machine (`localhost` loopback) is often misleading, as REST can occasionally outperform it due to the absence of network latency. However, on a real Kubernetes cluster network, gRPC consistently outperforms REST by 2× to 4×. 
+
+gRPC achieves this through:
+* **HTTP/2 Multiplexing**: Multiple requests and responses can be multiplexed over a single TCP connection, eliminating connection-negotiation bottlenecks.
+* **Binary Protobuf Serialization**: Payload sizes are dramatically smaller compared to verbose JSON.
+* **Strict Schema Versioning**: Built-in contract enforcement ensures stable, backwards-compatible API evolution.
+
+=== Scaling WebSockets with Kafka
+For real-time browser communication, Rob warned against naive https://html.spec.whatwg.org/multipage/web-sockets.html[WebSocket] pinning, which attaches connections to a specific pod and prevents horizontal scaling. Instead, he recommends backing WebSockets with https://kafka.apache.org/[Apache Kafka] to handle horizontal message distribution, and using binary Protobuf payloads over WebSockets to dramatically improve web performance.
+
+== Project Panama: Native C++ and Local AI Inferencing
+
+Historically, integrating Java with high-performance native code required the notoriously complex and error-prone https://docs.oracle.com/javase/8/docs/technotes/guides/jni/[JNI] (Java Native Interface), which suffers from high execution overhead and is difficult to compile.
+
+With https://openjdk.org/projects/panama[Project Panama] (the Foreign Function & Memory API), Java developers can now directly link and execute native https://isocpp.org/[C++] or https://www.rust-lang.org/[Rust] library functions with native-like speed and zero JNI boilerplate.
+
+Rob demonstrated the power of Panama by integrating it with https://onnx.ai/[ONNX Runtime] and https://github.com/langchain4j/langchain4j[LangChain4j]. Instead of spinning up a separate, resource-intensive Python sidecar container to serve an AI model, Rob ran a local C++ model (`all-miniLM-L6-v2`) in-process.
+
+This Panama-based architecture allows LangChain4j to invoke local AI model inferences directly inside the Java process, bypassing JNI and network serialization overhead, delivering a lightweight, ultra-low-latency local AI pipeline.
+
+== Key Takeaways
+
+1. **Avoid the Legacy Trap**: Non-container-aware JVMs (legacy Java 8) read host RAM instead of cgroup limits, triggering immediate kernel `OOMKilled` crashes inside restricted containers.
+2. **Optimize Memory Limits**: Configure `-XX:MaxRAMPercentage=75.0` to allocate 75% of your container RAM to the heap, keeping 25% free for metaspace, thread stacks, and JIT compilation.
+3. **Decouple HPA from CPU**: Stop-the-world GC pauses and pod warmup spikes can trigger an autoscale feedback loop. Configure KEDA to scale pods based on HTTP requests-per-second instead.
+4. **Constrain GC Threads**: Limit GC thread allocations with `-XX:ParallelGCThreads` and `-XX:ConcGCThreads` to match your container's CPU quota, avoiding severe host context-switching.
+5. **Shenandoah GC for Middle Ground**: Shenandoah GC offers a highly concurrent compaction model, keeping pause times low on standard container shapes without ZGC’s resource requirements.
+6. **AppCDS is Framework-Dependent**: AppCDS yields a 30%+ startup boost for Spring Boot but has almost no effect on Quarkus, which is already fully optimized at build-time.
+7. **Leverage Project Leyden**: Quarkus reuses integration test suites to produce highly compact, optimized Project Leyden AOT cache files, enabling scale-to-zero serverless.
+8. **gRPC for Internal Traffic**: gRPC outperforms REST by 2× to 4× on real cluster networks due to HTTP/2 multiplexing and smaller binary Protobuf payloads.
+9. **Horizontal WebSockets**: Avoid naively pinning WebSockets to single hosts. Scale them horizontally by backing them with Apache Kafka.
+10. **Ditch JNI and Sidecars**: Use Project Panama to link native C++ ONNX runtimes directly inside the Java process, enabling fast, local AI inference without Python overhead.
+
+== Conclusion
+
+Rob Sedor’s presentation demystifies the black box of running Java inside containerized environments. By combining modern JVM configuration, smart GC alignment, and cutting-edge OpenJDK APIs like Project Leyden and Project Panama, developers can run highly optimized, cost-efficient, and low-latency microservices on OpenShift and Kubernetes. As Rob emphasizes: don't guess—measure on your cluster, run a pilot, and let the real-world metrics guide your architecture decisions.
+
+###### Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. You can find Rob's demo code and presentation slides on the https://github.com/patterncatalyst/quarkus-optimization[Pattern Catalyst GitHub repository].
