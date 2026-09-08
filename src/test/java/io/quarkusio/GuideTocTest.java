@@ -7,15 +7,8 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 public class GuideTocTest extends BrowserTest {
-
-    private void assumeTocPluginInstalled() {
-        page.navigate(baseUrl + "/guides/getting-started");
-        assumeTrue(page.locator("nav.roq-toc").count() > 0,
-                "TOC plugin not installed — skipping TOC tests");
-    }
 
     @ParameterizedTest
     @ValueSource(strings = {
@@ -25,7 +18,6 @@ public class GuideTocTest extends BrowserTest {
             "/version/main/guides/getting-started"
     })
     void guideHasTocWithMultipleEntries(String path) {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + path);
         Locator tocItems = page.locator("nav.roq-toc li");
         assertTrue(tocItems.count() >= 3,
@@ -34,7 +26,6 @@ public class GuideTocTest extends BrowserTest {
 
     @Test
     void tocLinksPointToAnchorsOnPage() {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + "/guides/getting-started");
         Locator tocLinks = page.locator("nav.roq-toc a[href^='#']");
         assertTrue(tocLinks.count() > 0, "Expected TOC links with anchor hrefs");
@@ -50,7 +41,6 @@ public class GuideTocTest extends BrowserTest {
 
     @Test
     void tocHasNestedStructure() {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + "/guides/cdi");
         Locator nestedLists = page.locator("nav.roq-toc ul ul");
         assertTrue(nestedLists.count() > 0,
@@ -59,7 +49,6 @@ public class GuideTocTest extends BrowserTest {
 
     @Test
     void tocIsInsideStickyWrapper() {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + "/guides/getting-started");
         Locator toc = page.locator(".toc nav.roq-toc");
         assertTrue(toc.count() > 0,
@@ -81,7 +70,6 @@ public class GuideTocTest extends BrowserTest {
             "/version/main/guides/logging, 4"                    // the versioned copy resolves levels too
     })
     void tocDepthFollowsAsciidocTocLevels(String path, int expectedMaxLevel) {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + path);
         assertTrue(page.locator("nav.roq-toc li[data-level='" + expectedMaxLevel + "']").count() > 0,
                 path + ": expected TOC entries at data-level " + expectedMaxLevel);
@@ -101,20 +89,9 @@ public class GuideTocTest extends BrowserTest {
             "/guides/security-oidc-code-flow-authentication, false"  // neither
     })
     void tocEntriesAreNumberedOnlyWhenTheGuideAsksForIt(String path, boolean numbered) {
-        assumeTocPluginInstalled();
         page.navigate(baseUrl + path);
         String firstEntry = page.locator("nav.roq-toc > ul > li > a").first().textContent().trim();
         assertEquals(numbered, firstEntry.matches("^\\d+\\. .*"),
                 path + ": first TOC entry was '" + firstEntry + "'");
-    }
-
-    @Test
-    void tocIsHiddenWhenEmpty() {
-        page.navigate(baseUrl + "/guides/getting-started");
-        Locator tocWrapper = page.locator(".toc");
-        if (tocWrapper.count() > 0 && page.locator("nav.roq-toc").count() == 0) {
-            assertFalse(tocWrapper.first().isVisible(),
-                    "Empty .toc wrapper should be hidden by CSS");
-        }
     }
 }

@@ -23,7 +23,7 @@ These instructions will get you a copy of the Quarkus.io website up and running 
     ```sh
     ./serve.sh
     ```
-    This runs `mvn quarkus:dev` and serves the full site (including guides) at [http://localhost:8080](http://localhost:8080).
+    This runs `mvn quarkus:dev` and serves the full site (including guides) at [http://localhost:8042](http://localhost:8042).
 
     For a faster startup without guides:
     ```sh
@@ -39,52 +39,11 @@ These instructions will get you a copy of the Quarkus.io website up and running 
 > The startup process may take a minute or two on the first run while Maven downloads dependencies and Roq generates the site. Subsequent starts are faster. Once ready, you will see output like:
 >
 > ```
-> Listening on: http://0.0.0.0:8080
+> Listening on: http://0.0.0.0:8042
 > ```
 
- If an error occurs mentioning a name conflict, try:
-```sh
-docker compose up --force-recreate
-```
+5. Now browse to [http://localhost:8042](http://localhost:8042).
 
-5. Now browse to [http://localhost:4000](http://localhost:4000).
-#### Using a local Ruby environment
-[Jekyll static site generator docs](https://jekyllrb.com/docs/).
-
-1. Install a full [Ruby development environment](https://jekyllrb.com/docs/installation/). If you use `rvm`, run: `rvm use 3.2.3`.
-2. Install [bundler](https://jekyllrb.com/docs/ruby-101/#bundler)  [gems](https://jekyllrb.com/docs/ruby-101/#gems)
-   ```sh
-   gem install bundler
-   ```
-3. Fork the [project repository](https://github.com/quarkusio/quarkusio.github.io), then clone your fork.
-   ```sh
-   git clone git@github.com:YOUR_USER_NAME/quarkusio.github.io.git
-   ```
-4. Change into the project directory:
-   ```sh
-   cd quarkusio.github.io
-   ```
-5. Use bundler to fetch all required gems in their respective versions
-   ```sh
-   bundle install
-   ```
-6. Build the site and make it available on a local server
-   ```sh
-   ./serve.sh
-   ```
-   Or if you want it faster and okay to not have guides included use the following:
-
-   ```sh
-   ./serve-noguides.sh
-   ```
-
-
-7. Now browse to http://localhost:4000
-
->[!NOTE]
->If you encounter any unexpected errors during the above, please refer to the [troubleshooting](https://jekyllrb.com/docs/troubleshooting/#configuration-problems) page or the [requirements](https://jekyllrb.com/docs/installation/#requirements) page, as you might be missing development headers or other prerequisites.
-
-**For more regarding the use of Jekyll, please refer to the [Jekyll Step by Step Tutorial](https://jekyllrb.com/docs/step-by-step/01-setup/).**
 
 ### Deploying to GitHub Pages
 
@@ -98,7 +57,7 @@ If for some reason you need to deploy from your local machine, follow these inst
 
 > [!WARNING]
 > Using generative AI in *assisting* writing is fine, but please don't use it to write entire posts.
-> Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content.
+> Used badly, generative AI has a tendency to use complex words and phrasing. This makes the content hard to read and understand. Always review your blog with a human reader in mind, make sure it's factually correct and especially keep the human touch and opinions in the content. We want _your_ voice!
 
 To write a blog:
 
@@ -106,7 +65,7 @@ To write a blog:
   - `emailhash` you can get by running `echo -n your@email.org | md5sum` on Linux or `echo -n your@email.org | md5` on macOS using an email you have registered from the [Gravatar service](https://gravatar.com),
 
 - create a blog entry under [content/posts](https://github.com/quarkusio/quarkusio.github.io/tree/main/content/posts)
-  - the file name is `yyyy-mm-dd-slug.adoc`. Set the `date` to the same value in the front matter.
+  - the file name is `yyyy-mm-dd-slug.adoc` (the publication date of the blog).
 - `tags` should be used with some care as an archive page is created for each of them. Below are some basic rules to try to follow:
   - `quarkus-release` used for Quarkus release blogs
   - `announcement` used for general announcements with some impact.
@@ -117,7 +76,7 @@ To write a blog:
   - tags is a space-separated list: `tags: extension grpc`
   - tags must be in lowercase
 - it's in asciidoc format, there is an example at [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/content/posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
-  - Be aware that the `date` attribute in the front matter defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use `./serve.sh` locally to preview them regardless of date.
+  - Be aware that the `date` attribute in the file name defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use dev mode or `./serve.sh` locally to preview them regardless of date.
 - send a pull request against the main branch and voilà
 
 

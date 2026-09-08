@@ -33,7 +33,7 @@ guidance before starting work:
 ./serve-only-latest-guides.sh  # only latest + main guides
 ```
 
-Requires Java 21+. Site is served at http://localhost:8080.
+Requires Java 21+. Site is served at http://localhost:8042.
 
 ## Running Tests
 
@@ -43,8 +43,8 @@ Requires Java 21+. Site is served at http://localhost:8080.
 
 ## Blog Post Conventions
 
-- Location: `content/posts/YYYY-MM-DD-slug.adoc` (date must match front matter `date`)
-- Front matter: `layout: post`, `title`, `date`, `tags`, `synopsis`, `author`
+- Location: `content/posts/YYYY-MM-DD-slug.adoc`
+- Front matter: `layout: post`, `title`, `tags`, `synopsis`, `author`
 - Author must be defined in `_data/authors.yaml`
 - Tags: lowercase, space-separated
 - Permalink pattern: `/blog/:Name/` (configured in `config/application.properties`)

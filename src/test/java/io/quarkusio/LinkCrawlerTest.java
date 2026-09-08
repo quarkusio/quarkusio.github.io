@@ -25,6 +25,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -112,6 +114,107 @@ public class LinkCrawlerTest extends BrowserTest {
                     + "|https:/quarkus\\.io/guides/dev-services"
                     + ")$")
     );
+
+    // --- Known-broken fragment anchors (temporary, Roq regressions) ---
+    // Some guides set :extension-status: but forget to include the
+    // extension-status.adoc note block, so the generated status badge links to a
+    // #extension-status-note anchor that is never rendered. The referring link is
+    // emitted unconditionally by the extension-status treeprocessor, producing a
+    // dead fragment on every affected guide (and each of its versioned snapshots,
+    // including /version/main/), so it is excused everywhere.
+    //
+    // TODO: remove once https://github.com/quarkusio/quarkusio.github.io/pull/2892
+    //       merges — it auto-injects the missing note block so the anchor exists.
+    private static final Set<String> KNOWN_BROKEN_FRAGMENTS = Set.of(
+            "extension-status-note");
+
+    // --- Will-not-backport: fragment anchors fixed upstream on Quarkus main ---
+    // The doc-reference cross-references were corrected on Quarkus main by
+    // quarkusio/quarkus#55413 (merged 2026-07-13): doc-contribute-docs-howto.adoc
+    // now links to the anchors that actually exist (#titles-headings, #categories,
+    // #doc-structure), and those render fine. The old links below survive only in
+    // the frozen numbered versioned snapshots and will not be backported, so they
+    // are excused under /version/<number>/ only; the current guides stay strict.
+    private static final Set<String> WILL_NOT_BACKPORT_FRAGMENTS = Set.of(
+            "titles-and-headings",
+            "document-attributes-and-variables",
+            "document-structure");
+
+    // --- Anchors that render fine today but are stale in frozen snapshots ---
+    // These render correctly on the current guides (confirmed on both quarkus.io
+    // and es.quarkus.io); only the frozen numbered versioned snapshots reference
+    // the old ids. Excused under /version/<number>/ only, current guides stay
+    // strict.
+    private static final Set<String> STALE_IN_FROZEN_SNAPSHOTS = Set.of(
+            "logging-adapters",
+            "quarkus-vertx-http_quarkus-http-non-application-root-path");
+
+    // --- #55413 anchors that Asciidoctor never emits (dead on all engines) ---
+    // These anchors exist in the current guide source (added by
+    // quarkusio/quarkus#55413) but were placed where Asciidoctor drops them, so
+    // the fragments are dead everywhere — confirmed on both Roq (quarkus.io) and
+    // Jekyll (es.quarkus.io), and across latest /guides/, /version/main/ and
+    // snapshots:
+    //   * [[s2i]] is stacked with [[openshift]] before the OpenShift section and
+    //     only the last of two stacked block anchors survives, so #s2i is lost
+    //     (both sites render id="openshift" but no id="s2i");
+    //   * [[duration-note-anchor-...]] sits between a block title and a
+    //     :no-duration-note: attribute entry + include::, and is not emitted at all
+    //     (both sites: href= to it present, 0 matching id=).
+    // TODO: needs an upstream quarkusio/quarkus fix (re-place the anchors); file an
+    //       issue and reference it here, then remove once the anchors render.
+    private static final Set<String> UNRENDERED_UPSTREAM_ANCHORS = Set.of(
+            "s2i",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-kubernetes",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-knative",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-openshift",
+            "duration-note-anchor-quarkus-kubernetes-client_quarkus-kubernetes-client");
+
+    // --- Dead upstream anchors: broken on BOTH engines, everywhere ---
+    // Each of these #fragment links points at an anchor id that Asciidoctor never
+    // emits, on either the Roq (quarkus.io) or the jRuby/Jekyll (es.quarkus.io)
+    // path, and on latest /guides/, /version/main/ and the numbered snapshots
+    // alike. They are upstream content bugs in the guide sources
+    // (quarkusio/quarkus, docs/src/main/asciidoc/) — a missing/renamed section
+    // anchor or a stale referring link — not a site-generator issue, so they are
+    // excused everywhere until fixed upstream. The full per-guide list is in
+    // dead-upstream-anchors.md (to be filed as a quarkusio/quarkus issue).
+    // TODO: file the upstream issue, reference it here, and drop each entry as the
+    //       corresponding anchor starts rendering.
+    private static final Set<String> DEAD_UPSTREAM_ANCHORS = Set.of(
+            "analysis-configurer",
+            "back-channel-logout",
+            "basic-auth",
+            "bean-reference-note-anchor",
+            "build-analytics.quarkus-analytics-uri-base",
+            "configuring-json-support",
+            "coordination",
+            "dev-mode",
+            "devservices-configuration-free-databases",
+            "duration-note-anchor-quarkus-knative-knative-config",
+            "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
+            "duration-note-anchor-quarkus-mongodb-config-group-dev-services-build-time-config",
+            "duration-note-anchor-quarkus-openshift-openshift-config",
+            "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
+            "embedded-roles",
+            "embedded-users",
+            "infinispan-annotations-api",
+            "integration-with-github-and-other-oauth2-providers",
+            "multi-module-maven",
+            "multipart-support",
+            "mutual-TLS-authentication",
+            "proof-of-key-for-code-exchange-pkce",
+            "quarkus-datasource_quarkus.datasource.db-version",
+            "quarkus-vertx-http_quarkus.http.auth.session.encryption-key",
+            "roles-properties",
+            "security-identity-customization",
+            "service-binding",
+            "standard-security-annotations",
+            "synthetic_beans",
+            "syslog-configuration",
+            "token-propagation",
+            "users-properties",
+            "webjar-locator-support");
 
     private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
 
@@ -240,6 +343,17 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
+    @Test
+    void crawlAndCheckFragmentAnchors() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenFragments.isEmpty()) {
+            List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(results.brokenFragments.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenFragments.size() + " broken fragment anchor(s):\n" + buildFragmentReport(sorted));
+        }
+    }
+
     private CrawlResults runCrawl() throws InterruptedException {
         int maxPages = Integer.getInteger("test.crawl.max-pages", DEFAULT_MAX_PAGES);
         int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
@@ -255,6 +369,11 @@ public class LinkCrawlerTest extends BrowserTest {
         Map<String, String> referrers = new ConcurrentHashMap<>();
         Set<String> checkedExternal = ConcurrentHashMap.newKeySet();
         Set<String> checkedImages = ConcurrentHashMap.newKeySet();
+        Map<String, FragmentLink> fragmentLinks = new ConcurrentHashMap<>();
+        // Element ids present on each crawled page, keyed by normalized URL.
+        // Collected during the crawl so fragment anchors can be verified in
+        // memory afterwards instead of re-navigating to every page.
+        Map<String, Set<String>> pageIds = new ConcurrentHashMap<>();
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
@@ -286,7 +405,7 @@ public class LinkCrawlerTest extends BrowserTest {
                     p.setDefaultNavigationTimeout(60_000);
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
-                            checkedExternal, checkedImages, crawledCount, maxPages,
+                            checkedExternal, checkedImages, fragmentLinks, pageIds, crawledCount, maxPages,
                             checkInternal, checkExternal, excludePaths, seedUrls,
                             pendingWork, done);
 
@@ -316,6 +435,8 @@ public class LinkCrawlerTest extends BrowserTest {
                 .sorted(Map.Entry.comparingByKey())
                 .toList();
 
+        Map<String, FragmentLink> brokenFragments = verifyFragments(fragmentLinks, pageIds);
+
         long knownBroken = brokenLinks.size() - unknownBroken.size() - deliberateErrors.size();
         String summary = "Crawled " + crawledCount.get() + " internal pages"
                 + (checkExternal ? ", checked " + checkedExternal.size() + " external links" : "")
@@ -323,6 +444,7 @@ public class LinkCrawlerTest extends BrowserTest {
                 + ", found " + unknownBroken.size() + " broken links"
                 + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : "")
                 + ", found " + brokenImages.size() + " broken images"
+                + ", found " + brokenFragments.size() + " broken fragment anchors"
                 + " (" + threads + " threads)";
         System.out.println(summary);
 
@@ -366,11 +488,29 @@ public class LinkCrawlerTest extends BrowserTest {
                 }
             }
 
+            if (!brokenFragments.isEmpty()) {
+                List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(brokenFragments.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken fragment anchors");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    FragmentLink frag = entry.getValue();
+                    sb.append("- `#").append(frag.fragment).append("` ").append(frag.url);
+                    if (frag.referrer != null) {
+                        sb.append(" ← ").append(frag.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
             Files.writeString(summaryFile, sb.toString());
         } catch (IOException ignored) {
         }
 
-        return new CrawlResults(brokenLinks, brokenImages);
+        return new CrawlResults(brokenLinks, brokenImages, brokenFragments);
     }
 
     private void crawLoop(Page p,
@@ -381,6 +521,8 @@ public class LinkCrawlerTest extends BrowserTest {
                            Map<String, String> referrers,
                            Set<String> checkedExternal,
                            Set<String> checkedImages,
+                           Map<String, FragmentLink> fragmentLinks,
+                           Map<String, Set<String>> pageIds,
                            AtomicInteger crawledCount,
                            int maxPages,
                            boolean checkInternal,
@@ -441,6 +583,13 @@ public class LinkCrawlerTest extends BrowserTest {
                     continue;
                 }
 
+            // In incremental mode, only extract links from seed pages (the
+            // changed pages). Non-seed pages are visited only to verify their
+            // status — a depth-1 check from each changed page.
+            if (incrementalMode && !seedUrls.contains(currentUrl)) {
+                continue;
+            }
+
                 // Use the browser's actual URL (after redirects) as the base for
                 // resolving relative URLs — e.g. /newsletter/18 redirects to
                 // /newsletter/18/ and relative src="index_files/img.png" must
@@ -476,6 +625,14 @@ public class LinkCrawlerTest extends BrowserTest {
                               return [...srcs];
                             }""");
                     imageSrcs = imageResult;
+
+                    // Capture every element id on the page while it is loaded, so
+                    // fragment anchors can be verified in memory later without a
+                    // second navigation pass.
+                    @SuppressWarnings("unchecked")
+                    var idResult = (List<String>) p.evaluate(
+                            "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
+                    pageIds.put(normalizedUrl, new HashSet<>(idResult));
                 } catch (PlaywrightException e) {
                     hrefs = extractLinksViaHttp(currentUrl);
                     if (hrefs == null) {
@@ -503,6 +660,11 @@ public class LinkCrawlerTest extends BrowserTest {
                             pendingWork.incrementAndGet();
                             queue.add(resolved.url);
                             referrers.putIfAbsent(normalized, currentUrl);
+                        }
+                        if (resolved.fragment != null) {
+                            String key = normalized + "#" + resolved.fragment;
+                            fragmentLinks.putIfAbsent(key,
+                                    new FragmentLink(normalized, resolved.fragment, currentUrl));
                         }
                     } else if (checkExternal && checkedExternal.add(resolved.url)) {
                         BrokenLink result = checkExternalLink(resolved.url);
@@ -552,9 +714,21 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private ResolvedLink resolveLink(String currentPageUrl, String href) {
         if (href.startsWith("mailto:") || href.startsWith("javascript:")
-                || href.startsWith("tel:") || href.startsWith("#")
+                || href.startsWith("tel:")
                 || DO_NOT_VISIT.contains(href)) {
             return null;
+        }
+
+        if (href.equals("#")) {
+            return null;
+        }
+
+        if (href.startsWith("#")) {
+            String fragment = href.substring(1);
+            if (fragment.isEmpty()) {
+                return null;
+            }
+            return new ResolvedLink(currentPageUrl, true, fragment);
         }
 
         String resolved;
@@ -577,12 +751,17 @@ public class LinkCrawlerTest extends BrowserTest {
             internal = resolved.startsWith(baseUrl);
         }
 
+        String fragment = null;
         int fragmentIndex = resolved.indexOf('#');
         if (fragmentIndex >= 0) {
+            fragment = resolved.substring(fragmentIndex + 1);
+            if (fragment.isEmpty()) {
+                fragment = null;
+            }
             resolved = resolved.substring(0, fragmentIndex);
         }
 
-        return new ResolvedLink(resolved, internal);
+        return new ResolvedLink(resolved, internal, fragment);
     }
 
     private static String resolveImageUrl(String currentPageUrl, String src) {
@@ -778,6 +957,186 @@ public class LinkCrawlerTest extends BrowserTest {
         return target;
     }
 
+    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenLink link = entry.getValue();
+            sb.append("  ").append(link.status).append(" ").append(entry.getKey());
+            if (link.referrer != null) {
+                sb.append("\n       linked from: ").append(link.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenImage img = entry.getValue();
+            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
+            if (img.referrer != null) {
+                sb.append("\n       found on: ").append(img.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildFragmentReport(List<Map.Entry<String, FragmentLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            FragmentLink frag = entry.getValue();
+            sb.append("  ").append(frag.url).append("#").append(frag.fragment);
+            sb.append("\n       linked from: ").append(frag.referrer);
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private Map<String, FragmentLink> verifyFragments(Map<String, FragmentLink> fragmentLinks,
+            Map<String, Set<String>> pageIds) {
+        if (fragmentLinks.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, FragmentLink> broken = new ConcurrentHashMap<>();
+        int knownBroken = 0;
+
+        List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(fragmentLinks.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        // Pages whose ids we did not capture during the crawl (e.g. incremental
+        // mode, off-site redirects). These are verified on demand by navigating,
+        // preserving the original coverage.
+        Map<String, Set<String>> fallbackIds = new HashMap<>();
+        Page p = null;
+        BrowserContext ctx = null;
+
+        for (var entry : sorted) {
+            FragmentLink link = entry.getValue();
+
+            // Skip query-style fragments (e.g. #q=spring) used by search.quarkus.io
+            // See https://github.com/quarkusio/search.quarkus.io/pull/597
+            if (link.fragment.contains("=")) {
+                continue;
+            }
+
+            Set<String> ids = pageIds.get(link.url);
+            if (ids == null) {
+                // Not seen during the crawl — fetch it once and cache the ids.
+                ids = fallbackIds.get(link.url);
+                if (ids == null) {
+                    if (p == null) {
+                        ctx = browser.newContext();
+                        ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+                        p = ctx.newPage();
+                        p.setDefaultNavigationTimeout(30_000);
+                    }
+                    ids = fetchPageIds(p, link.url);
+                    fallbackIds.put(link.url, ids);
+                }
+            }
+
+            // A null id set means the page could not be loaded (4xx, redirect
+            // off-site, etc.); match the previous behaviour and skip it.
+            if (ids == FetchFailed.INSTANCE) {
+                continue;
+            }
+
+            if (!ids.contains(link.fragment)) {
+                if (isKnownBrokenFragment(link.url, link.fragment)) {
+                    knownBroken++;
+                    continue;
+                }
+                broken.put(entry.getKey(), link);
+            }
+        }
+
+        if (ctx != null) {
+            ctx.close();
+        }
+
+        System.out.println("Checked " + fragmentLinks.size() + " fragment anchors, found "
+                + broken.size() + " broken"
+                + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : ""));
+
+        return broken;
+    }
+
+    /**
+     * A fragment link is a known-broken anchor we tolerate so the check can gate
+     * real regressions. Covers three cases:
+     * <ul>
+     *   <li>{@link #KNOWN_BROKEN_FRAGMENTS} (#2892) — the #extension-status-note
+     *       anchor guides forget to include; excused everywhere;</li>
+     *   <li>the {@code {summaryTableId}} Roq regression (#2962) — the config
+     *       duration/memory note anchors are emitted with the literal attribute
+     *       name instead of the resolved id;</li>
+     *   <li>the {@link #UNRENDERED_UPSTREAM_ANCHORS} block anchors — present in
+     *       source but never emitted by Asciidoctor (both engines), so dead
+     *       everywhere;</li>
+     *   <li>the {@link #DEAD_UPSTREAM_ANCHORS} — upstream guide content bugs
+     *       (missing/renamed anchor or stale link) dead on both engines and
+     *       everywhere, listed in dead-upstream-anchors.md;</li>
+     *   <li>{@link #WILL_NOT_BACKPORT_FRAGMENTS} (quarkus#55413) — fixed on main but
+     *       not backported, so only excused under a frozen {@code /version/<number>/}
+     *       snapshot;</li>
+     *   <li>{@link #STALE_IN_FROZEN_SNAPSHOTS} — render fine today, stale only in a
+     *       frozen {@code /version/<number>/} snapshot.</li>
+     * </ul>
+     */
+    private static boolean isKnownBrokenFragment(String url, String fragment) {
+        if (KNOWN_BROKEN_FRAGMENTS.contains(fragment)) {
+            return true;
+        }
+        // TODO: remove once https://github.com/quarkusio/quarkusio.github.io/issues/2962
+        //       is fixed — Roq must expand {summaryTableId} in generated anchors.
+        if (fragment.contains("{summaryTableId}")) {
+            return true;
+        }
+        if (UNRENDERED_UPSTREAM_ANCHORS.contains(fragment)) {
+            return true;
+        }
+        if (DEAD_UPSTREAM_ANCHORS.contains(fragment)) {
+            return true;
+        }
+        if (WILL_NOT_BACKPORT_FRAGMENTS.contains(fragment)
+                || STALE_IN_FROZEN_SNAPSHOTS.contains(fragment)) {
+            return isFrozenVersionSnapshot(url);
+        }
+        return false;
+    }
+
+    /** True for a frozen numbered versioned snapshot ({@code /version/<number>/}), not main. */
+    private static boolean isFrozenVersionSnapshot(String url) {
+        return VERSION_SNAPSHOT_PATTERN.matcher(url).find();
+    }
+
+    private static final Pattern VERSION_SNAPSHOT_PATTERN =
+            Pattern.compile("/version/[\\d.]+/");
+
+    /** Sentinel id set used to remember pages that failed to load. */
+    private static final class FetchFailed {
+        static final Set<String> INSTANCE = Set.of();
+    }
+
+    private Set<String> fetchPageIds(Page p, String url) {
+        try {
+            Response response = p.navigate(url,
+                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+            if (response == null || response.status() >= 400) {
+                return FetchFailed.INSTANCE;
+            }
+            @SuppressWarnings("unchecked")
+            var idResult = (List<String>) p.evaluate(
+                    "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
+            return new HashSet<>(idResult);
+        } catch (Exception e) {
+            return FetchFailed.INSTANCE;
+        }
+    }
+
     private static List<String> parseExcludePaths(String property) {
         if (property == null || property.isBlank()) {
             return List.of();
@@ -809,33 +1168,10 @@ public class LinkCrawlerTest extends BrowserTest {
         return url;
     }
 
-    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
-        StringBuilder sb = new StringBuilder();
-        for (var entry : entries) {
-            BrokenLink link = entry.getValue();
-            sb.append("  ").append(link.status).append(" ").append(entry.getKey());
-            if (link.referrer != null) {
-                sb.append("\n       linked from: ").append(link.referrer);
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
+    record ResolvedLink(String url, boolean internal, String fragment) {
     }
 
-    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
-        StringBuilder sb = new StringBuilder();
-        for (var entry : entries) {
-            BrokenImage img = entry.getValue();
-            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
-            if (img.referrer != null) {
-                sb.append("\n       found on: ").append(img.referrer);
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
-    }
-
-    record ResolvedLink(String url, boolean internal) {
+    record FragmentLink(String url, String fragment, String referrer) {
     }
 
     record BrokenLink(int status, String statusText, String referrer) {
@@ -844,6 +1180,7 @@ public class LinkCrawlerTest extends BrowserTest {
     record BrokenImage(int status, String statusText, String referrer) {
     }
 
-    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages) {
+    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages,
+                         Map<String, FragmentLink> brokenFragments) {
     }
 }
