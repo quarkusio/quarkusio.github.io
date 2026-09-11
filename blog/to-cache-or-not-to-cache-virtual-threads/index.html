@@ -185,6 +185,48 @@
             </p>
           </div>
           <div class="width-12-12">
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="title">This article was substantially revised on 11 September 2026</div>
+<div class="paragraph">
+<p>The version published on 28 July 2026 explained what we measured with a cause that turned out to be wrong: the benchmark it rested on had a bug. <a href="https://github.com/pchilano">Patricio Chilano Mateo</a> questioned the explanation in a <a href="https://github.com/openjdk/loom/pull/228#issuecomment-5529741290">review of the original findings</a>, and following that question is what turned the bug up. Everything below has been re-measured. The advice — don&#8217;t pool virtual threads — is unchanged; the reason for it is not.</p>
+</div>
+<details>
+<summary class="title">What exactly changed</summary>
+<div class="content">
+<div class="ulist">
+<ul>
+<li>
+<p><strong>The bug.</strong> The benchmark serialised JSON with Jackson on its default <code>ThreadLocal</code>-based buffer recycling. Because each request ran on its own virtual thread, that pinned a buffer set per thread — around 200 MB of live heap in the pooled arm against essentially none in the unpooled one — inflating heap occupancy and garbage collector work in precisely the configuration under test. Every figure in this article was re-measured with a non-<code>ThreadLocal</code> recycler.</p>
+</li>
+<li>
+<p><strong>What the original blamed, and this version does not.</strong> It attributed the throughput collapse on a 1 GB heap to <code>StackChunk</code> churn: oversized chunks abandoned in the old generation, forcing the collector into Full GCs. With the confound removed that attribution does not hold. The collapse is still there on a smaller heap, and this version reports it as something we observed and cannot explain.</p>
+</li>
+<li>
+<p><strong>What was dropped.</strong> The experimental JVM patch the original built toward (<a href="https://github.com/openjdk/loom/pull/228">openjdk/loom#228</a>) is no longer part of the story. Once the benchmark was fixed it showed no benefit worth reporting.</p>
+</li>
+<li>
+<p><strong>What survived, and is now better supported.</strong> Pooling really does retain around 60 MB of <code>StackChunk</code> for the life of the pool. The original called those chunks "C1-sized"; logging every frame as it is frozen shows they are interpreted first and C1 after. New in this version: <strong>why</strong> they are never released — a pooled thread never returns out of its worker loop, so the frames the JVM pushed to start it never leave the chunk, and a chunk is only unlinked once it is empty.</p>
+</li>
+<li>
+<p><strong>What did not change.</strong> The conclusion, and the 3% win at 4 GB.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The superseded version remains readable in the site&#8217;s history: <a href="https://github.com/quarkusio/quarkusio.github.io/blob/96231ef2117ed1501e38d9e46d55feb739d84081/content/posts/2026-07-23-to-cache-or-not-to-cache-virtual-threads.adoc">the article as published on 28 July 2026</a>.</p>
+</div>
+</div>
+</details>
+</td>
+</tr>
+</table>
+</div>
 <div class="paragraph">
 <p>The official guidance on virtual threads is clear:</p>
 </div>
@@ -198,34 +240,27 @@
 &#8212; Ron Pressler &amp; Alan Bateman, <a href="https://openjdk.org/jeps/444">JEP 444: Virtual Threads</a>
 </div>
 </div>
-<div class="quoteblock">
-<blockquote>
-<div class="paragraph">
-<p>Creating a virtual thread is cheap — have millions, and don&#8217;t pool them!</p>
-</div>
-</blockquote>
-<div class="attribution">
-&#8212; Ron Pressler, <a href="https://cr.openjdk.org/~rpressler/loom/loom/sol1_part1.html">State of Loom</a>
-</div>
-</div>
-<div class="imageblock">
+<div class="imageblock text-center">
 <div class="content">
-<img src="/assets/images/posts/to-cache-or-not-to-cache-vts/meme-bell-curve.png" alt="Bell curve meme">
+<img src="/assets/images/posts/to-cache-or-not-to-cache-vts/meme-bell-curve.png" alt="Bell curve meme" width="520">
 </div>
 </div>
 <div class="paragraph">
-<p>As part of our work on <a href="https://youtu.be/Oy005l5vHtE">improving Quarkus performance with virtual threads</a> and <a href="https://youtu.be/oWE_kYB4Wns">investigating Loom&#8217;s scheduling behavior</a>, we decided to test this advice with data. <strong>Spoiler: we should have listened.</strong> But the <em>reason</em> we should have listened turned out to be far more interesting than "they&#8217;re cheap enough."</p>
+<p>As part of our work on <a href="https://youtu.be/Oy005l5vHtE">improving Quarkus performance with virtual threads</a> and <a href="https://youtu.be/oWE_kYB4Wns">investigating Loom&#8217;s scheduling behavior</a>, we wanted to know whether ignoring that advice is worth it — not in principle, but in bytes: what does pooling buy, what does it cost, and does either show up in throughput?</p>
+</div>
+<div class="paragraph">
+<p>The short answer: pooling allocates about 8% less per request, exactly as advertised, and that changes nothing we can measure. It also keeps about 60 MB of heap alive for as long as the pool lives, and on a slightly smaller heap that is enough to change how the garbage collector behaves. It saves the cheap thing and keeps the expensive one.</p>
 </div>
 <div class="sect1">
 <h2 id="_why_would_you_pool_virtual_threads">Why Would You Pool Virtual Threads?</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Pooling threads is a well-established pattern. We do it for platform threads in frameworks like Quarkus because they are expensive to create — each one maps to an OS thread with a pre-allocated stack. <strong>Virtual threads are designed to be cheap, so the architects of Project Loom say pooling is unnecessary.</strong> But a brave and careless developer might still consider it: creating a virtual thread allocates a <code>Thread</code> object, its thread-local storage (a <code>HashMap</code> per thread), and internal scheduling structures. If you reuse virtual threads, you skip all of that. At a superficial analysis, this looks beneficial — the same reasoning we apply when pooling platform threads.</p>
+<p>Pooling threads is a well-established pattern. We do it for platform threads in frameworks like Quarkus because they are expensive to create — each one maps to an OS thread with a pre-allocated stack. <strong>Virtual threads are designed to be cheap, so the architects of Project Loom say pooling is unnecessary.</strong> But a brave and careless developer might still consider it: creating a virtual thread allocates a <code>Thread</code> object, its thread-local storage, and internal scheduling structures. If you reuse virtual threads, you skip all of that.</p>
 </div>
 <div class="sect2">
-<h3 id="_what_could_go_wrong">What could go wrong?</h3>
+<h3 id="_the_benchmark">The benchmark</h3>
 <div class="paragraph">
-<p><strong>The workload we care about</strong> is the typical Java enterprise pattern: an HTTP server receives requests, <strong>dispatches each one to a virtual thread that performs blocking I/O</strong> (a database query, an HTTP call to another service), then returns a response. This is how frameworks like Quarkus and Vert.x work — an event loop accepts connections and hands off blocking work to virtual threads.</p>
+<p><strong>The workload we care about</strong> is the typical Java enterprise pattern: an HTTP server receives requests, <strong>dispatches each one to a virtual thread that performs blocking I/O</strong>, then returns a response.</p>
 </div>
 <div class="imageblock">
 <div class="content">
@@ -233,7 +268,7 @@
 </div>
 </div>
 <div class="paragraph">
-<p><strong>We&#8217;ve prepared a benchmark</strong> which simplifies this to its essential shape: a Netty HTTP server receives requests, hands off each one to a VT that makes a blocking HTTP call (via Apache HttpClient) to a mock backend with 30ms think time, then returns the response. 10,000 concurrent connections, 8 cores, with a <strong>30-second warmup phase</strong> followed by a <strong>30-second measurement phase</strong>. In pooling mode, we pre-allocate a pool of 10,000 virtual threads — one per connection.</p>
+<p>Ours simplifies that to its essential shape: a Netty HTTP server receives requests, hands each one to a VT that makes a blocking HTTP call (via Apache HttpClient) to a mock backend with 30ms think time, parses the JSON it gets back, then returns the response. 10,000 concurrent connections, 8 carriers, a <strong>30-second warmup</strong> followed by a <strong>30-second measurement phase</strong>. Two modes, which we will call <strong>unpooled</strong> — a fresh virtual thread created for every request, as JEP 444 prescribes — and <strong>pooled</strong>, an executor that parks finished virtual threads and reuses them, growing on demand up to 10,000 threads. With 10,000 connections all sending at once, it reaches that ceiling in the first seconds of every run. Every run uses ParallelGC; the cost we end up measuring is promotion behaviour, which is collector-specific, and we did not test G1.</p>
 </div>
 <div class="imageblock">
 <div class="content">
@@ -241,393 +276,276 @@
 </div>
 </div>
 <div class="paragraph">
-<p>On a 4 GB heap with ParallelGC, pooling VTs delivered <strong>143,966 req/s</strong> vs <strong>126,851</strong> without pooling — a <strong>13.5% throughput gain</strong>, zero Full GCs for both. Pooling works! Time to see it deliver its value on a more constrained heap.</p>
-</div>
-<div class="paragraph">
-<p>We ran with a 1 GB heap. <strong>It failed spectacularly.</strong></p>
+<p>Every figure below is a mean over repeated runs, with the range wherever the spread matters — <a href="https://quarkus.io/blog/fairness-in-benchmarking/">averages hide outliers</a>, and here the outliers turned out to be the most interesting thing we found.</p>
 </div>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_the_1_gb_heap">The 1 GB Heap</h2>
+<h2 id="_what_pooling_buys">What Pooling Buys</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Same benchmark, same code, 1 GB heap, ParallelGC:</p>
+<p>Start where the case for pooling is strongest — a 4 GB heap, room to spare:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
-<col style="width: 20%;">
-<col style="width: 20%;">
+<col style="width: 66.6666%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">4 GB heap</th>
+<th class="tableblock halign-left valign-top">TPS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unpooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">165,344</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pooled, 10,000 VTs</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">170,182</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Pooling wins, by just under 3%. The slowest pooled run still beat the fastest unpooled one.</p>
+</div>
+<div class="paragraph">
+<p>One caveat: waking a pooled VT with <code>LockSupport.unpark()</code> queues it on the carrier&#8217;s <strong>local</strong> queue, while <code>Thread.start()</code> uses the <strong>external</strong> one (<code>VirtualThread.java</code>), so the 3% may be the queue rather than the allocation; nothing here separates them.</p>
+</div>
+<div class="paragraph">
+<p>Now take the room away. Same benchmark, 1 GB heap, and this time we counted what was allocated — the sum of eden occupancy at every collection, from the GC log:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 40%;">
 <col style="width: 20%;">
 <col style="width: 20%;">
 <col style="width: 20%;">
 </colgroup>
 <thead>
 <tr>
-<th class="tableblock halign-left valign-top">Mode</th>
-<th class="tableblock halign-left valign-top">4 GB TPS</th>
-<th class="tableblock halign-left valign-top">4 GB Full GCs</th>
-<th class="tableblock halign-left valign-top">1 GB TPS</th>
-<th class="tableblock halign-left valign-top">1 GB Full GCs</th>
+<th class="tableblock halign-left valign-top">1 GB heap</th>
+<th class="tableblock halign-left valign-top">TPS</th>
+<th class="tableblock halign-left valign-top">allocation rate, measurement window</th>
+<th class="tableblock halign-left valign-top">GC pause</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>no pooling</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">126,851</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>108,272</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>4</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unpooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">155,302</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2,174–2,323 MB/s</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4.9 s</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>pooling VTs</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">143,966</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>71,252</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>461</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">156,854</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>1,981–2,133 MB/s</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5.0 s</p></td>
 </tr>
 </tbody>
 </table>
+<div class="paragraph">
+<p>The saving is real: 8.6% less allocation over the run, with both arms serving the same throughput to within 1%. Per request that is 14.8 KB against 13.6 KB — about 1.3 KB saved.</p>
+</div>
+<div class="paragraph">
+<p>We did not identify what pooling allocates in exchange — and it does allocate something, because an unpooled thread&#8217;s frozen stack alone is a 2.2 KB object per request, so avoiding it should have saved more than 1.3 KB.</p>
+</div>
+<div class="paragraph">
+<p>And the saving changes nothing downstream. Young collections, Full GCs (two in every run, both arms), pause time and throughput are all inside the run-to-run spread. Allocation that dies young is reclaimed by moving a pointer; 8% less of it is 8% less of something that was already nearly free.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_what_pooling_costs">What Pooling Costs</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>jcmd GC.class_histogram</code> forces a Full GC and counts what is still reachable — the heap you cannot get rid of. Run mid-load, at the same point in every run:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">1 GB heap</th>
+<th class="tableblock halign-left valign-top">live heap</th>
+<th class="tableblock halign-left valign-top">of which StackChunk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unpooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">389–422 MB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>5–13 MB</strong> (2.3–6.1K chunks)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">453–505 MB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>69–93 MB</strong> (16.5–20.8K chunks)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Pooling costs about 60 MB of live heap — about 6 KB per pooled thread — and <code>StackChunk</code> is the only class that grows: comparing one run of each kind, nothing else moves by more than a megabyte.</p>
+</div>
+<div class="paragraph">
+<p>Where that 60 MB comes from. A blocked virtual thread&#8217;s stack is copied into a heap object that is sized once, for the stack it holds, and never resized. In the first seconds of a run the code is not yet C2-compiled, and code C2 has not reached needs about four times more stack words, so early freezes mint chunks of roughly a thousand words where a warm one needs 270.</p>
+</div>
+<div class="paragraph">
+<p>A young collection then promotes that chunk, and a promoted chunk cannot take the next freeze: <strong>a fresh small one goes in front of it and the fat one stays behind</strong>. It stays for good, because the JVM unlinks it only once it is empty, and what it still holds is the thread&#8217;s entry frames — the ones that return only when the thread terminates, which a pooled thread never does.</p>
+</div>
+<div class="paragraph">
+<p>Every pooled thread ends up carrying one, ten thousand of them is the 60 MB. An unpooled thread terminates with its request; its entry frames return, the chunk empties, and it dies with the thread. <strong>Pooling does not only retain threads. It retains the JVM&#8217;s warm-up state.</strong></p>
+</div>
 <div class="imageblock">
 <div class="content">
-<img src="/assets/images/posts/to-cache-or-not-to-cache-vts/chart-1g-perreq-vs-cached.png" alt="Pooling vs no pooling on 1GB">
+<img src="/assets/images/posts/to-cache-or-not-to-cache-vts/stackchunk-warmup.svg" alt="What a pooled virtual thread carries: a warm-up-sized chunk" width="promoted" height="then kept behind a small reusable tail">
 </div>
+</div>
+<details>
+<summary class="title">What a StackChunk is</summary>
+<div class="content">
+<div class="paragraph">
+<p>When a virtual thread parks — blocks on I/O, waits on a lock, sleeps — the JVM frees the <strong>carrier thread</strong> by <strong>freezing</strong> the VT&#8217;s call stack: copying it into a <code>StackChunk</code>, a regular Java heap object holding an integral number of frames plus an oop bitmap so the GC can find references inside them. On unpark it <strong>thaws</strong> the stack back onto a carrier.</p>
 </div>
 <div class="paragraph">
-<p>Without pooling, the smaller heap barely mattered — 127K down to 108K, 4 Full GCs, 9 seconds total GC pause. Pooling collapsed: 144K down to 71K, <strong>461 Full GCs</strong>, and <strong>30.6 seconds of GC pauses</strong> in a 60-second run — the garbage collector was running half the time. <strong>And it couldn&#8217;t even recover the heap</strong>: after each Full GC, pooling still had 640-710 MB live on a 910 MB old gen.
-The 13.5% advantage from 4GB turned into a <strong>34% deficit</strong>.</p>
+<p>Sources: <a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/oops/instanceStackChunkKlass.hpp"><code>InstanceStackChunkKlass.hpp</code></a> and <a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp"><code>continuationFreezeThaw.cpp</code></a>, from <a href="https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84">JDK-8284161</a>.</p>
 </div>
+</div>
+</details>
 <div class="paragraph">
-<p>Something about pooling long-lived virtual threads was making the GC miserable. We attached JDK Flight Recorder with allocation profiling to both runs. Here&#8217;s the twist:</p>
+<p>A heap dump of one run of each kind shows exactly that picture:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
-<col style="width: 33.3333%;">
-<col style="width: 33.3333%;">
-<col style="width: 33.3334%;">
+<col style="width: 60%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
 </colgroup>
 <thead>
 <tr>
-<th class="tableblock halign-left valign-top"></th>
-<th class="tableblock halign-left valign-top">StackChunk total bytes allocated</th>
-<th class="tableblock halign-left valign-top">Full GCs</th>
+<th class="tableblock halign-left valign-top">heap dump, 1 GB</th>
+<th class="tableblock halign-left valign-top">unpooled</th>
+<th class="tableblock halign-left valign-top">pooled</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>no pooling</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>~14.4 GB</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>4</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">live virtual threads</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4,473</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">10,017</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>pooling VTs</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>~3.7 GB</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>461</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">parent + tail pairs</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">24</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>10,024</strong></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">tail capacity</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">268 words, same as an unpooled chunk</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">parent capacity</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">27% at ~270 words; <strong>69% at 750–1,300</strong></p></td>
 </tr>
 </tbody>
 </table>
 <div class="paragraph">
-<p>Both runs show significant allocation of an internal JVM type we didn&#8217;t expect: <code>jdk.internal.vm.StackChunk</code>. Pooling allocates <strong>4x less</strong> of them (~3.7 GB vs ~14.4 GB) — which makes sense, we&#8217;re reusing virtual threads. Yet pooling has <strong>461 Full GCs</strong> while no pooling has <strong>4</strong>. Less allocation, more Full GCs. That doesn&#8217;t add up.</p>
+<p>Every one of the 10,024 parents still holds 8 to 95 words — the entry frames, read out of the JVM by name — and seven in ten were born three to five times bigger than a tail. That size is warm-up code: with C2 disabled (<code>-XX:TieredStopAtLevel=1</code>) the same park freezes 1,184 words instead of 298; in a normal run, frames logged at freeze time are mostly interpreted at 3.8 s, all C1 by 4.2 s, and C2 by 4.4 s, by which point the chunks have stopped being fat. The pool&#8217;s threads are all promoted in those first seconds, and <strong>whatever they were holding then is what they keep</strong>.</p>
+</div>
+<div class="paragraph">
+<p>And it is held whatever the pool is doing: at the instant of the 1 GB dump, half the pooled threads were sitting idle in the pool, and their chunks are the same size as the busy ones'. It is the cost of the pool existing, not working.</p>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_what_is_a_stackchunk">What Is a StackChunk?</h2>
+<h2 id="_where_the_60_mb_lives">Where the 60 MB Lives</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>When a virtual thread parks — blocks on I/O, waits on a lock, sleeps — the JVM needs to free up the <strong>carrier thread</strong> (the platform thread <a href="https://dev.java/learn/new-features/virtual-threads/">currently running</a> the virtual thread) so it can run other virtual threads. To do this, it needs to save the virtual thread&#8217;s execution state: which methods are in progress, what their local variables are, and where to resume when the VT is unparked. This state lives on the <strong>call stack</strong> — the runtime data structure that tracks method calls. The JVM <strong>"freezes"</strong> this stack — copies it from the carrier thread into a <strong>StackChunk</strong>, a regular Java heap object. When the virtual thread is later unparked, the JVM <strong>"<a href="https://youtu.be/6nRS6UiN7X0">thaws</a>"</strong> it — copies the stack back from the StackChunk onto a carrier thread, and execution resumes.</p>
-</div>
-<details>
-<summary class="title">What&#8217;s inside a StackChunk?</summary>
-<div class="content">
-<div class="paragraph">
-<p>A StackChunk is a Java heap object with a header and a blob of raw stack memory. The blob contains an integral number of <strong>stack frames</strong> — copied verbatim from the carrier thread&#8217;s platform stack. Each frame holds the state of one method activation:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>For <strong>compiled frames</strong> (C1 or C2): return address, saved frame pointer, and spill slots (local values that didn&#8217;t fit in CPU registers). The frame size is fixed per compiled method.</p>
-</li>
-<li>
-<p>For <strong>interpreted frames</strong>: return address, saved frame pointer, plus expression stack, monitors, bytecode pointer, locals, constant pool cache, and method pointer. Significantly larger than compiled frames.</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>The chunk also carries an oop bitmap so the GC can find object references within the frozen frames.</p>
-</div>
-<div class="paragraph">
-<p>There is no public design document for the StackChunk layout. The authoritative sources are the source code comments:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p><a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/oops/instanceStackChunkKlass.hpp">Layout diagram in <code>InstanceStackChunkKlass.hpp</code></a> (the chunk&#8217;s internal structure)</p>
-</li>
-<li>
-<p><a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp">Stack diagram in <code>continuationFreezeThaw.cpp</code></a> (what gets frozen from the carrier stack)</p>
-</li>
-<li>
-<p><a href="https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84">JDK-8284161</a> — the commit that introduced the freeze/thaw machinery</p>
-</li>
-</ul>
-</div>
-</div>
-</details>
-<div class="paragraph">
-<p>Two properties of StackChunks matter for our story:</p>
-</div>
-<div class="olist arabic">
-<ol class="arabic">
-<li>
-<p><strong>A chunk&#8217;s capacity is fixed at allocation time.</strong> It never grows or shrinks. If the frozen stack fits, the chunk is reused as-is — fast bulk memory copy, no GC overhead, no new allocation. If the stack is deeper than the chunk can hold, the JVM allocates a new chunk to replace it — but this is replacement, not resizing.</p>
-</li>
-<li>
-<p><strong>This fast reuse only works while the chunk is in the young generation of the heap.</strong></p>
-</li>
-</ol>
-</div>
-<div class="paragraph">
-<p>But the JVM&#8217;s garbage collector divides the heap into generations: newly created objects go to the <em>young generation</em>, and objects that survive several GC cycles get <em>promoted</em> to the <em>old generation</em>. When a long-lived virtual thread&#8217;s StackChunk gets promoted to old gen, the fast copy no longer works — writing into old-gen objects requires extra GC bookkeeping called <a href="https://shipilev.net/jvm/anatomy-quarks/13-intergenerational-barriers/"><em>write barriers</em></a> to track cross-generational references.</p>
-</div>
-<div class="paragraph">
-<p>So the JVM does the pragmatic thing: <strong>it allocates a <em>new</em> young-gen chunk and sets it as the new tail</strong>. The old promoted chunk stays linked as a parent in the chunk chain, but after the next thaw, <strong>empty chunks are detached from the chain and become garbage</strong> — collected at the next Full GC (the expensive, stop-the-world collection that cleans up old gen).</p>
-</div>
-<details>
-<summary class="title">JVM internals: the decision point in continuationFreezeThaw.cpp</summary>
-<div class="content">
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-cpp hljs" data-lang="cpp">// When the existing chunk is in old gen (gc_mode) or requires
-// write barriers, the JVM allocates a fresh young-gen chunk instead.
-if (unextended_sp &lt; _freeze_size
-    || chunk-&gt;is_gc_mode()
-    || chunk-&gt;requires_barriers()) {
-    // ALLOCATE NEW CHUNK
-    chunk = allocate_chunk_slow(_freeze_size, ...);
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>This code is in <a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp"><code>continuationFreezeThaw.cpp</code></a>, introduced in <a href="https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84">JDK-8284161</a> (co-authored by Ron Pressler, Alan Bateman, Erik Österlund, and others).</p>
-</div>
-</div>
-</details>
-<div class="paragraph">
-<p>This design <strong>prioritizes freeze/thaw speed over memory efficiency</strong> — and for short-lived virtual threads, it works well. But for long-lived VTs, <strong>every GC cycle that promotes a chunk triggers a fresh allocation and an abandonment cycle</strong>. With 10,000 long-lived pooled VTs, every GC cycle:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Promotes 10,000 StackChunks to old gen</p>
-</li>
-<li>
-<p>Triggers 10,000 fresh chunk allocations (new young-gen chunks)</p>
-</li>
-<li>
-<p>Abandons 10,000 old-gen chunks — dead weight until the next Full GC cleans them up</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>On a 1 GB heap, this churn was <strong>severe enough to dominate GC behavior</strong>.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_when_pooling_doesnt_help_pool_more">When Pooling Doesn&#8217;t Help, Pool More.</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>So we&#8217;re pooling virtual threads but the JVM keeps throwing away and re-allocating their StackChunks. The obvious question: <strong>can we make the JVM reuse those chunks</strong> instead?</p>
-</div>
-<div class="paragraph">
-<p>The StackChunk churn problem isn&#8217;t limited to VT pooling. In containerized environments with small heaps — common in microservices — GC runs more frequently under heap pressure. Objects get promoted to old gen not because they are truly long-lived, but simply because GC ticks faster. This "premature aging" means <strong>even short-lived virtual threads can have their StackChunks promoted and then abandoned</strong>, creating the same allocation churn we observed with pooled VTs.</p>
-</div>
-<div class="paragraph">
-<p>So we rolled up our sleeves and went into the JVM. The idea: instead of abandoning an empty old-gen chunk and allocating a fresh one, just <em>reuse</em> it — write into it with the proper GC bookkeeping (write barriers). Trade a small overhead per freeze for eliminating the allocation churn entirely.</p>
-</div>
-<div class="paragraph">
-<p>We targeted Parallel and Serial GC specifically — we&#8217;re not GC experts, but Parallel and Serial are the collectors where this kind of reuse looks possible (no segmentation faults yet!) — G1 and ZGC&#8217;s concurrent collectors make it unsafe. Parallel and Serial also happen to be the typical choice for small containers and machines where heap sizes are tight.</p>
-</div>
-<div class="paragraph">
-<p>We prototyped this on the <a href="https://github.com/openjdk/loom/tree/fibers">OpenJDK Loom <code>fibers</code> branch</a> — the branch where Loom experiments and upcoming features are developed before they go to mainline.</p>
-</div>
-<div class="paragraph">
-<p>After a few iterations, we had eliminated the StackChunk allocation churn. Surely <em>this</em> time we could celebrate?</p>
-</div>
-<div class="paragraph">
-<p>We ran pooling on 1 GB again, with our fix:</p>
-</div>
-<table class="tableblock frame-all grid-all stretch">
-<colgroup>
-<col style="width: 33.3333%;">
-<col style="width: 33.3333%;">
-<col style="width: 33.3334%;">
-</colgroup>
-<thead>
-<tr>
-<th class="tableblock halign-left valign-top">Pooling on 1 GB</th>
-<th class="tableblock halign-left valign-top">TPS</th>
-<th class="tableblock halign-left valign-top">Full GCs</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>stock JDK</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">71,252</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">461</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>+ reuse fix</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">68,290</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">435</p></td>
-</tr>
-</tbody>
-</table>
-<div class="paragraph">
-<p><strong>It got worse.</strong> Fewer Full GCs (461→435), but throughput <em>dropped</em> another 4%. We fixed the allocation churn, but something else was now wrong. The chunks were being reused — but reusing them was somehow more expensive than throwing them away.</p>
-</div>
-<details>
-<summary class="title">JVM internals: the reuse condition</summary>
-<div class="content">
-<div class="paragraph">
-<p>The core reuse condition we added to <code>continuationFreezeThaw.cpp</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-cpp hljs" data-lang="cpp">bool reuse_old_chunk = !UseG1GC &amp;&amp; !UseZGC
-    &amp;&amp; chunk != nullptr
-    &amp;&amp; chunk-&gt;is_gc_mode()
-    &amp;&amp; chunk-&gt;is_empty()
-    &amp;&amp; unextended_sp &gt;= _freeze_size;</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>This only works for Parallel and Serial GC. G1 and ZGC are concurrent collectors — they can relocate objects while the application is running, which makes it unsafe to write into old-gen chunks via post-hoc barriers.</p>
-</div>
-</div>
-</details>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_instrumenting_the_jvm">Instrumenting the JVM</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>To understand what was going on, we instrumented the JVM&#8217;s freeze/thaw code to log every StackChunk allocation and reuse — recording the chunk capacity and actual stack size at each event.</p>
-</div>
-<div class="paragraph">
-<p>During steady state, the chunks being reused were <strong>4x larger than needed</strong>:</p>
+<p>Sixty megabytes that never die is old-generation occupancy, and the old generation records where the start-up burst — 10,000 connections opening and sending at once — leaves each arm:</p>
 </div>
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
 <col style="width: 50%;">
-<col style="width: 50%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
 </colgroup>
 <thead>
 <tr>
-<th class="tableblock halign-left valign-top"></th>
-<th class="tableblock halign-left valign-top">Pooled VTs</th>
+<th class="tableblock halign-left valign-top">after the start-up burst, 1 GB heap</th>
+<th class="tableblock halign-left valign-top">old gen occupied, of 683 MB</th>
+<th class="tableblock halign-left valign-top">old gen free</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Chunk capacity being reused</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>1,149 words</strong> (~9.2 KB)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unpooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">367–417 MB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">266–316 MB</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Actual stack size at freeze</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">~286 words (~2.3 KB)</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Wasted old-gen space</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>~90 MB</strong> (9% of 1 GB heap)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pooled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">436–521 MB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>162–247 MB</strong></p></td>
 </tr>
 </tbody>
 </table>
 <div class="paragraph">
-<p>The fix was faithfully reusing the chunks — but each one was 4x oversized. 90 MB of old gen wasted on empty space. With the fix, old gen after Full GC sits at ~728 MB vs ~713 MB without it — less headroom on a 910 MB old gen, <strong>causing the throughput regression</strong>.</p>
+<p>No overlap: pooled ends the burst with 60–100 MB less free old generation, in every run, and holds it for the life of the pool. At 1 GB that cost nothing we could measure.</p>
 </div>
-<div class="paragraph">
-<p>Interestingly, <strong>the actual stack size used at freeze was ~1,100 words during warmup but dropped to ~286 words during steady state</strong> — even though the application code hadn&#8217;t changed. The chunks were right-sized <em>when they were born</em>, but the demand shrank over time while the capacity stayed frozen.</p>
-</div>
-<div class="paragraph">
-<p>What happened between warmup and steady state that made the same code need 4x less stack?</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_the_root_cause_jit_compilation_timing">The Root Cause: JIT Compilation Timing</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>The answer is <a href="https://dev.java/learn/jvm/tool/compiler/">tiered compilation</a>.</p>
-</div>
-<div class="paragraph">
-<p>The JVM compiles Java methods in tiers. <strong>C1</strong> is the fast first-tier compiler — it produces correct code quickly but doesn&#8217;t optimize aggressively. <strong>C2</strong> is the optimizing compiler — it kicks in later for hot methods and produces much more compact code. Our data shows that <strong>C2-compiled code produces a significantly smaller frozen stack than C1-compiled code</strong>.</p>
-</div>
-<div class="paragraph">
-<p>We proved this with a control experiment: <code>-XX:TieredStopAtLevel=1</code> forces the JVM to use only C1 (no C2).</p>
-</div>
-<table class="tableblock frame-all grid-all stretch">
-<colgroup>
-<col style="width: 33.3333%;">
-<col style="width: 33.3333%;">
-<col style="width: 33.3334%;">
-</colgroup>
-<thead>
+<div class="admonitionblock note">
+<table>
 <tr>
-<th class="tableblock halign-left valign-top"></th>
-<th class="tableblock halign-left valign-top">Normal (C1 + C2)</th>
-<th class="tableblock halign-left valign-top">C1 only</th>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="title">What we observed on a smaller heap</div>
+<div class="paragraph">
+<p>On a 900 MB heap — 100 MB smaller, everything else identical, GC ergonomics logging on — four of twelve pooled runs went into hundreds of Full GCs (288, 595, 768 and 771), and three of them lost 39–48% of their throughput. None of eight unpooled runs did. In every one of those runs the collector logged, before each Full GC, that it had skipped the young collection because its predicted promotion exceeded the free space in the old generation (<code>-Xlog:gc+ergo=debug</code>, <code>Run full-gc; predicted promotion size &gt;= max free space in old-gen</code>).</p>
+</div>
+<div class="paragraph">
+<p>We saw the same at 1 GB, twice in twelve runs. We can say what the collector did, not why these runs and not their siblings.</p>
+</div>
+</td>
 </tr>
-</thead>
-<tbody>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Chunk capacity</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>1,149 words</strong></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>1,144 words</strong></p></td>
-</tr>
-</tbody>
 </table>
-<div class="paragraph">
-<p>With C1-only, the chunk capacity matches what we see in the pooled run under normal compilation. <strong>The ~1,149-word chunks are C1-sized.</strong> Under normal compilation, C2 shrinks the frozen stack to ~280 words — but the shared VT pool is created during warmup, before C2 kicks in. Its VTs are born with C1-sized chunks, and <strong>that capacity is locked in forever.</strong></p>
-</div>
-<div class="paragraph">
-<p>The reuse fix keeps those bloated chunks alive in old gen — forever — leaving the garbage collector to fight over the scraps of a heap it can never fully reclaim.</p>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_so_dont_pool">So&#8230;&#8203; Don&#8217;t Pool?</h2>
+<h2 id="_verdict">Verdict</h2>
 <div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Pooling buys about 8% less allocation.</strong> Measured in every run, and it moves nothing — young collections, Full GCs, pause and throughput are all inside the spread. What it saves is the cheap thing.</p>
+</li>
+<li>
+<p><strong>It costs about 60 MB of live heap</strong>: one warm-up-sized chunk per pooled thread, 94% empty, held for the life of the pool whether the thread is working or idle. Budget about 6 KB of permanent old-generation heap per pooled thread.</p>
+</li>
+<li>
+<p><strong>That heap is old-generation occupancy</strong>: 60–100 MB less free old gen after start-up, every run. At 1 GB it cost nothing we could measure; at 900 MB a third of pooled runs and no unpooled run fell into hundreds of Full GCs — reported, not explained.</p>
+</li>
+</ul>
+</div>
 <div class="paragraph">
-<p>It depends. With small heaps, clearly not. In production, you don&#8217;t control VT lifecycles — and with a shared pool, you can&#8217;t predict which code path a VT will be used for, whether that code is warm, hot, or never compiled by C2. Too aggressive caching risks bloating the runtime heap forever.</p>
+<p>We tested one pool size, 10,000. The mechanism is per thread, so we would expect the cost to scale with the pool, but we did not measure that.</p>
 </div>
 <div class="paragraph">
-<p>But in Quarkus, we&#8217;re experimenting with different options to improve our Loom integration — boldly going where no one has gone before. That means running with scissors that everyone told us are too sharp. We do it for the sake of innovation, and because we now know <em>why</em> they cut. As the saying goes, <strong>the journey matters more than the destination.</strong></p>
+<p>The advice was right. The reason is less dramatic than we expected: pooling saves the thing the collector was already handling for free, and keeps the thing it is not.</p>
 </div>
+<div class="paragraph">
+<p>Thanks to <a href="https://github.com/pchilano">Patricio Chilano Mateo</a>, whose review of the original findings started all of this. The story it turned up is a better one than it replaced.</p>
 </div>
-</div>
-<div class="sect1">
-<h2 id="_takeaways">Takeaways</h2>
-<div class="sectionbody">
-<div class="olist arabic">
-<ol class="arabic">
-<li>
-<p><strong>Pooling VTs doesn&#8217;t save what you think it saves.</strong> Under the hood, the JVM can still allocate new StackChunks — the biggest cost you were trying to avoid.</p>
-</li>
-<li>
-<p><strong>The "don&#8217;t pool" advice is broadly sensible.</strong></p>
-</li>
-<li>
-<p><strong>Fixing one problem can create a worse one.</strong> Eliminating allocation churn sounds great until you realize you&#8217;re pinning oversized objects in old gen forever.</p>
-</li>
-<li>
-<p><strong>Shared pools are unpredictable.</strong> You can&#8217;t control when VTs are born, what code they&#8217;ll run, or how the JIT has compiled it. That unpredictability is the real danger.</p>
-</li>
-</ol>
-</div>
-<hr>
 </div>
 </div>
 <div class="sect1">
@@ -639,19 +557,13 @@ if (unextended_sp &lt; _freeze_size
 <p><a href="https://openjdk.org/jeps/444">JEP 444: Virtual Threads</a> — Ron Pressler &amp; Alan Bateman</p>
 </li>
 <li>
-<p><a href="https://cr.openjdk.org/~rpressler/loom/loom/sol1_part1.html">State of Loom</a> — Ron Pressler</p>
+<p><a href="https://github.com/openjdk/loom/pull/228#issuecomment-5529741290">openjdk/loom#228, review comment</a> — Patricio Chilano Mateo&#8217;s questions on the original article</p>
 </li>
 <li>
-<p><a href="https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84">JDK-8284161: Implementation of Virtual Threads (Preview)</a> — the commit introducing StackChunk and continuation freeze/thaw</p>
+<p><a href="https://github.com/openjdk/jdk/commit/9583e3657e43cc1c6f2101a64534564db2a9bd84">JDK-8284161</a> — the commit introducing StackChunk and continuation freeze/thaw</p>
 </li>
 <li>
-<p><a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp"><code>continuationFreezeThaw.cpp</code> (mainline)</a> — the freeze/thaw implementation</p>
-</li>
-<li>
-<p><a href="https://github.com/openjdk/loom/tree/fibers">OpenJDK Loom <code>fibers</code> branch</a> — the Loom experiment playground</p>
-</li>
-<li>
-<p><a href="https://shipilev.net/jvm/anatomy-quarks/13-intergenerational-barriers/">JVM Anatomy Quark #13: Intergenerational Barriers</a> — Aleksey Shipilev&#8217;s explanation of GC write barriers</p>
+<p><a href="https://github.com/openjdk/jdk/blob/master/src/hotspot/share/runtime/continuationFreezeThaw.cpp"><code>continuationFreezeThaw.cpp</code></a> — the freeze/thaw implementation</p>
 </li>
 </ul>
 </div>
