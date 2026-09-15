@@ -1,0 +1,106 @@
+---
+layout: post
+title: 'Quarkus Insights #259: MCP Servers Without the Boilerplate — Introducing Reshapr'
+date: 2026-09-14
+tags: quarkus-insights
+synopsis: 'Laurent Broudoux, co-founder of Microcks and member of the Open Innovation and AI team at Postman, introduces Reshapr: a declarative, Quarkus-powered platform for instantly exposing existing APIs as right-sized MCP servers, complete with reshaping, orchestration, multi-tenancy, and built-in security.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://www.youtube.com/watch?v=Hr6wondTnXU&t=9s[watch the video] for the full story.
+
+== Quarkus Insights #259: MCP Servers Without the Boilerplate — Introducing Reshapr
+
+As the MCP ecosystem matures, a new pain point has emerged: teams are building a sprawling, inconsistent collection of hand-crafted MCP servers — one per use case, each with its own security model, its own stack, and its own operational burden. Laurent Broudoux, co-founder of the https://microcks.io/[Microcks] CNCF incubating project and member of the Open Innovation and AI team at https://www.postman.com/[Postman], joins hosts Eric Deandrea and Holly Cummins in episode 259 to introduce https://github.com/reshaprio/reshapr[Reshapr]: a declarative, platform-level approach to turning existing APIs into production-grade MCP servers — without rewriting them.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/Hr6wondTnXU" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Eric opened with a brief news round: work on Quarkus 4 is actively progressing — the working group board is the best place to follow along. A candidate release for Quarkus 3.40 is expected this week, which is intended to be the last LTS on the 3.x stream. Eric will also be at https://www.wearedevelopers.com/world-congress-north-america[Developers North America] in San Jose, California the following week, demoing testing of non-deterministic things with https://langfuse.com/[Langfuse] and the Quarkus integration.
+
+== The MCP Server Problem at Scale
+
+Laurent framed the talk with a recurring observation from large enterprise Microcks adopters: MCP servers are proliferating rapidly, but not in a healthy way. Every new use case spawns a new hand-built MCP server, each one consuming engineering time, requiring deep knowledge of a fast-moving protocol (major versions every six months), and inevitably implementing security in a subtly different way from the one built the sprint before.
+
+The protocol itself is broad and does not enforce consistent usage, so even experienced engineers can produce servers that flood an LLM with far too many tools and far too much context — the exact condition that causes hallucinations and failed orchestration. Laurent showed a concrete example: importing the full https://docs.github.com/en/graphql[GitHub GraphQL] schema into an MCP server exposes 283 operations. In practice, an LLM cannot reliably pick the right one.
+
+== What Reshapr Does
+
+Reshapr is built around the observation that most MCP servers are just translations of existing APIs. Rather than generating code for each translation, Reshapr executes translations on the fly from a declarative description. The workflow is:
+
+1. **Import** an API artifact — an OpenAPI spec, a GraphQL schema, or a gRPC protobuf.
+2. **Configure** a configuration plan that maps the API to the exact tools, inputs, and outputs the agentic workflow needs.
+3. **Expose** the resulting MCP server instantly through Reshapr's gateway.
+
+No compilation step, no deployment pipeline. The configuration plan is the server.
+
+== Live Demo: From Open API to MCP in Clicks
+
+Laurent walked through the Reshapr dashboard live. Starting from a remote https://open-meteo.com/[Open-Meteo] OpenAPI URL, he imported the spec, skipped authentication for simplicity, created a configuration plan, and had a running MCP server in under two minutes. Connecting the server URL to Postman's built-in MCP inspector confirmed that the full OpenAPI description had been translated into a browsable, callable MCP server — including a working forecast endpoint returning real results.
+
+== Reshaping: The Real Value
+
+Exposing an API directly is the trivial case. Reshapr's core value is _reshaping_: fine-tuning what the MCP server exposes so that the context passed to the LLM is exactly what the workflow needs, no more.
+
+For the GitHub GraphQL example, Laurent defined a custom MCP server that surfaces only two operations: _get user with latest followers_ and _compare two users_. Both are higher-level than anything in the raw schema — they are domain-shaped tools for a specific agentic workflow.
+
+Reshaping capabilities include:
+
+* **Rename and cherry-pick** — select only the operations relevant to the use case and give them names that guide the LLM's reasoning.
+* **Redesign interfaces** — redefine input arguments and map them explicitly to the underlying API's parameters.
+* **Enrich with capabilities** — add custom prompts, MCP resources, and MCP apps (small display widgets that attach to tools) using declarative YAML artifacts.
+* **Orchestrate** — compose multi-step, multi-API workflows using small JavaScript snippets executed in a https://webassembly.org/[WebAssembly] engine (GraalVM's Espresso/Endivedive runtime, the same one used in Quarkus WASM support). Asynchronous calls within a script map to `CompletableFuture` on the JVM, with virtual threads inheriting the enclosing MCP call context — something Laurent built in collaboration with the Quarkus team.
+
+Looking ahead, the DSL for orchestration is designed to be pluggable: https://camel.apache.org/[Apache Camel] routes and https://github.com/OAI/Arazzo-Specification[Arazzo] specifications are both on the roadmap as declarative alternatives to the current JavaScript snippets.
+
+== Versioning and Protocol Evolution
+
+Reshapr has first-class versioning support: multiple API versions can coexist, configuration plans can be versioned independently, and changes pushed through the UI or CLI are streamed to proxies in real time. Rolling deployments are supported via gateway groups, so updates can be staged rather than applied globally.
+
+Critically, MCP protocol versioning is also handled automatically. The July 2025 version of the MCP spec introduced a sessionless model and a new multi-trip request pattern. Reshapr negotiates protocol versions with clients, so when a new protocol version ships and Reshapr adds support, all servers built on it upgrade automatically.
+
+== Security
+
+The security layer was demoed briefly. Each configuration plan includes a step for configuring MCP endpoint authentication — API key, OAuth (with support for SPIFFE, PKCE, and the new enterprise-managed authorization extension from recent MCP protocol versions), or no authentication for local development. The backend authentication to the underlying API is configured independently, allowing any combination of client-facing and backend auth schemes.
+
+Laurent's positioning relative to AI gateways: Reshapr operates at the application protocol level (translation and policy), not the infrastructure level (routing, rate limiting, LLM proxy). In practice it sits _behind_ an AI gateway that handles discovery and LLM routing, with Reshapr performing the protocol adaptation before touching the business API.
+
+== Architecture: Quarkus All the Way Down
+
+Laurent closed with a deep dive into the stack, opening with "reshaper is — I would say — many totally built on Quarkus."
+
+The architecture has two major components:
+
+* **Control plane** — manages configuration, policies, and declarations. Uses https://hibernate.org/orm/[Hibernate ORM] and https://quarkus.io/guides/hibernate-orm-panache[Panache] for full multi-tenancy with organizational isolation. Configuration changes are streamed to proxies in real time over https://grpc.io/[gRPC] streaming. https://smallrye.io/smallrye-mutiny/[Mutiny] provides the reactive resilience layer: if the control plane goes down, proxies continue serving and resync on reconnect.
+
+* **Proxies** — the runtime translation engine. Runs the Endivedive (WebAssembly) engine for script execution, a multi-tenant in-memory registry backed by https://github.com/ben-manes/caffeine[Caffeine], and an https://infinispan.org/[Infinispan] cluster for sharing conversational state across proxy replicas (required by the multi-trip request pattern). Both https://docs.oracle.com/en/java/javase/21/[JVM] and https://www.graalvm.org/[GraalVM] native compilation are supported. The native proxy is lean enough to be injected as a https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/[sidecar container] via a Kubernetes admission controller — also built with the https://javaoperatorsdk.io/[Quarkus Java Operator SDK].
+
+https://opentelemetry.io/[OpenTelemetry] is woven throughout the proxy: per-call traces show the protocol negotiation overhead (measured in single-digit milliseconds), the parallel backend calls from orchestrated tools, and full audit logs when enabled on a configuration plan.
+
+== Performance
+
+Benchmarks from the upcoming 1.0 release baseline show a 2.5 ms overhead per request at a nominal load of 150 req/s, and throughput approaching 4,000 req/s on small payloads — numbers Laurent attributed directly to not having optimized much yet. "That's the Quarkus dream, isn't it? You don't even need to optimize your performance because you just get it in the platform," as Holly put it.
+
+The business-perceived performance benchmark was the headline result: using the official GitHub MCP server versus Reshapr-shaped custom tools for a quality-metrics workflow that fetches project info, PRs, reviews, and CI results, Reshapr delivered **97% fewer tokens consumed**, with dramatically fewer round trips and lower latency. For teams watching LLM usage costs, that single number is the talk's most shareable line.
+
+== Key Takeaways
+
+1. **The MCP sprawl problem is real** — enterprise teams are accumulating inconsistent, hard-to-govern MCP servers because the tooling incentivises writing a new server per use case.
+2. **Translation, not generation** — Reshapr models MCP servers as declarative translations of existing API contracts, executing them on the fly rather than compiling and deploying new code.
+3. **Context size is the LLM's enemy** — a 283-operation GraphQL schema used as an MCP server will hallucinate; two well-named, purpose-built tools will not.
+4. **Declarative YAML + small scripts = surprisingly expressive** — rename, cherry-pick, enrich, and orchestrate multi-API workflows without leaving Reshapr's config model.
+5. **WebAssembly powers safe script execution** — JavaScript orchestration snippets compile to WASM and run in an isolated engine with virtual thread integration via Quarkus.
+6. **Quarkus native enables sidecar deployment** — the proxy binary is small enough to live next to the application it serves, injected automatically by an admission controller.
+7. **97% token reduction** — measured on a real GitHub workflow benchmark, shaped tools consume dramatically fewer context tokens than a raw API translation.
+8. **Protocol versioning is handled for you** — when Reshapr ships support for a new MCP spec version, every server it manages upgrades automatically.
+9. **Security is first-class and composable** — client-facing and backend authentication are configured independently, supporting any combination of API key and OAuth profiles.
+10. **Apache-2.0, community-driven** — the project is free to use, open to contributions, and planned for foundation donation, following the same path as Microcks in https://www.cncf.io/[CNCF].
+
+== Conclusion
+
+Reshapr tackles one of the most practical friction points in the current AI tooling landscape: the gap between the APIs that enterprises already have and the precisely-scoped, agent-friendly tools that LLMs actually need. By making the translation declarative and the execution platform-managed, it removes the expertise burden — MCP protocol depth, proxy engineering, security implementation — from every individual team and centralises it once. The Quarkus foundation means the runtime is fast and the operational profile is lean; the 97% token reduction benchmark suggests the architecture-level bet is sound. Next up — at least according to the closing exchange — a Quarkus extension for Reshapr itself.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. Find Reshapr at https://reshaprio.github.io/reshapr/[reshaprio.github.io/reshapr] and join the community on https://github.com/reshaprio[GitHub] and https://discord.gg/[Discord].
