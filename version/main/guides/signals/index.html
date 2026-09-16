@@ -2172,12 +2172,17 @@
 </li>
 <li data-level="1"><a href="#opentelemetry-tracing">9. OpenTelemetry Tracing</a></li>
 <li data-level="1"><a href="#micrometer-metrics">10. Micrometer Metrics</a></li>
-<li data-level="1"><a href="#spi">11. SPI</a>
+<li data-level="1"><a href="#security">11. Security</a>
 <ul>
-<li data-level="2"><a href="#signal-metadata-enricher">11.1. Signal Metadata Enricher</a></li>
-<li data-level="2"><a href="#receiver-interceptor">11.2. Receiver Interceptor</a></li>
-<li data-level="2"><a href="#component-ordering">11.3. Component Ordering</a></li>
-<li data-level="2"><a href="#configuration-reference">11.4. Configuration Reference</a></li>
+<li data-level="2"><a href="#when-is-the-identity-available">11.1. When is the identity available?</a></li>
+</ul>
+</li>
+<li data-level="1"><a href="#spi">12. SPI</a>
+<ul>
+<li data-level="2"><a href="#signal-metadata-enricher">12.1. Signal Metadata Enricher</a></li>
+<li data-level="2"><a href="#receiver-interceptor">12.2. Receiver Interceptor</a></li>
+<li data-level="2"><a href="#component-ordering">12.3. Component Ordering</a></li>
+<li data-level="2"><a href="#configuration-reference">12.4. Configuration Reference</a></li>
 </ul>
 </li>
 </ul>
@@ -2192,6 +2197,28 @@
 <div class="paragraph">
 <p>Signals allow application components to interact in a loosely coupled fashion, by emitting and receiving <em>signals</em>.
 A signal is an object&#8201;&#8212;&#8201;optionally augmented with qualifiers and metadata&#8201;&#8212;&#8201;that is emitted by one component and delivered to one or more <em>receivers</em>.</p>
+</div>
+<div id="extension-status-note" class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>This technology is considered experimental.</p>
+</div>
+<div class="paragraph">
+<p>In <em>experimental</em> mode, early feedback is requested to mature the idea.
+There is no guarantee of stability nor long term presence in the platform until the solution matures.
+Feedback is welcome on our <a href="https://groups.google.com/d/forum/quarkus-dev">mailing list</a> or as issues in our <a href="https://github.com/quarkusio/quarkus/issues">GitHub issue tracker</a>.</p>
+</div>
+<div class="paragraph">
+<p>For a full list of possible statuses, check our <a href="https://quarkus.io/faq/#what-are-the-extension-statuses">FAQ entry</a>.</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 <div class="dlist">
 <dl>
@@ -3076,14 +3103,144 @@ If the signal metadata already contains a <code>quarkus.tracing</code> entry it 
 </div>
 </div>
 <div class="sect1">
-<h2 id="spi"><a class="anchor" href="#spi"></a>11. SPI</h2>
+<h2 id="security"><a class="anchor" href="#security"></a>11. Security</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>If the <a href="/version/main/guides/security-overview/">Quarkus Security extension</a> is present and CDI request context is active, the <code>SecurityIdentity</code> of the emitting thread is automatically propagated to each receiver invocation.</p>
+</div>
+<div class="paragraph">
+<p>The identity is captured at emission time and restored in the receiver&#8217;s request context.
+Receiver methods can therefore inject <code>SecurityIdentity</code> and use standard security annotations such as <code>@RolesAllowed</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.signals.security;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import io.quarkus.logging.Log;
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.signals.Receives;
+
+@ApplicationScoped
+public class OrderHandlers {
+
+    record OrderPlaced(String orderId) {
+    }
+
+    @Inject
+    SecurityIdentity identity;
+
+    @RolesAllowed("admin")
+    void onOrder(@Receives OrderPlaced order) { <i class="conum" data-value="1"></i><b>(1)</b>
+        Log.infof("Order %s processed by %s", order.orderId(), identity.getPrincipal().getName());
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>Only invoked if the <code>SecurityIdentity</code> propagated from the emitter has the <code>admin</code> role. An <code>UnauthorizedException</code> or <code>ForbiddenException</code> is thrown otherwise.</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="when-is-the-identity-available"><a class="anchor" href="#when-is-the-identity-available"></a>11.1. When is the identity available?</h3>
+<div class="paragraph">
+<p>The identity is only propagated when it has already been resolved at the moment the signal is emitted.
+This happens automatically when <a href="/version/main/guides/security-proactive-authentication/">proactive authentication</a> is enabled (the default).</p>
+</div>
+<div class="paragraph">
+<p>If proactive authentication is disabled (<code>quarkus.http.auth.proactive=false</code>), the identity is still propagated provided it was resolved before the emission.
+For example, when an authorization check (like <code>@RolesAllowed</code>) was performed or the <code>SecurityIdentity</code> was accessed earlier in the request:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.http.auth.proactive=false</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme.signals.security;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import io.quarkus.security.identity.SecurityIdentity;
+import io.quarkus.signals.Signal;
+
+@Path("/orders")
+public class OrdersResource {
+
+    record OrderPlaced(String orderId, String username) {
+    }
+
+    @Inject
+    Signal&lt;OrderPlaced&gt; orderPlaced;
+
+    @Inject
+    SecurityIdentity securityIdentity;
+
+    @RolesAllowed("user") <i class="conum" data-value="1"></i><b>(1)</b>
+    @GET
+    @Path("/user")
+    public String placeOrderIfUser() {
+        orderPlaced.publish(new OrderPlaced("ORD-1", null));
+        return "ok";
+    }
+
+    @GET
+    @Path("/public")
+    public String placePublicOrder() {
+        String username = securityIdentity.getPrincipal().getName(); <i class="conum" data-value="2"></i><b>(2)</b>
+        orderPlaced.publish(new OrderPlaced("ORD-1", username));
+        return "ok";
+    }
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The <code>@RolesAllowed</code> check forces authentication, so the identity is resolved before the signal is emitted.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>Accessing the <code>SecurityIdentity</code> principal triggers authentication, so the identity is available for propagation.</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+When the OpenID Connect extension is used, the propagated identity is not set once the token expires and receivers will see an anonymous identity.
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="spi"><a class="anchor" href="#spi"></a>12. SPI</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The <code>io.quarkus.signals.spi</code> package provides extension points for integrators.
 Both <code>SignalMetadataEnricher</code> and <code>ReceiverInterceptor</code> implementations must be CDI beans annotated with <code>@io.smallrye.common.annotation.Identifier</code> to define a unique identifier.</p>
 </div>
 <div class="sect2">
-<h3 id="signal-metadata-enricher"><a class="anchor" href="#signal-metadata-enricher"></a>11.1. Signal Metadata Enricher</h3>
+<h3 id="signal-metadata-enricher"><a class="anchor" href="#signal-metadata-enricher"></a>12.1. Signal Metadata Enricher</h3>
 <div class="paragraph">
 <p>A <code>SignalMetadataEnricher</code> enriches the metadata of a signal emission <em>before</em> any receiver is invoked.
 It is called once per emission (i.e., per call to <code>publish()</code>, <code>send()</code>, or <code>request()</code>), not per receiver, and is executed synchronously on the thread that emits the signal.</p>
@@ -3107,7 +3264,7 @@ An <code>IllegalArgumentException</code> is thrown if a metadata entry with the 
 </div>
 </div>
 <div class="sect2">
-<h3 id="receiver-interceptor"><a class="anchor" href="#receiver-interceptor"></a>11.2. Receiver Interceptor</h3>
+<h3 id="receiver-interceptor"><a class="anchor" href="#receiver-interceptor"></a>12.2. Receiver Interceptor</h3>
 <div class="paragraph">
 <p>A <code>ReceiverInterceptor</code> intercepts each receiver invocation.
 For multicast emissions (<code>publish</code>), it is called once per matching receiver.
@@ -3130,7 +3287,7 @@ public class LoggingInterceptor implements ReceiverInterceptor {
 </div>
 </div>
 <div class="sect2">
-<h3 id="component-ordering"><a class="anchor" href="#component-ordering"></a>11.3. Component Ordering</h3>
+<h3 id="component-ordering"><a class="anchor" href="#component-ordering"></a>12.3. Component Ordering</h3>
 <div class="paragraph">
 <p>The ordering of enrichers and interceptors relative to each other can be defined with the <code>@RelativeOrder</code> annotation.
 Components are referenced by their <code>@Identifier</code> value.</p>
@@ -3164,7 +3321,7 @@ public class TimestampEnricher implements SignalMetadataEnricher {
 </div>
 </div>
 <div class="sect2">
-<h3 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>11.4. Configuration Reference</h3>
+<h3 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>12.4. Configuration Reference</h3>
 <div class="paragraph">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime <input type="search" id="config-search-1" placeholder="FILTER CONFIGURATION" disabled></p>
 </div>
