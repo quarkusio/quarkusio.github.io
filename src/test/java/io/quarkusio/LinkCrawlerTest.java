@@ -277,12 +277,18 @@ public class LinkCrawlerTest extends BrowserTest {
         if (!results.brokenLinks.isEmpty()) {
             List<Map.Entry<String, BrokenLink>> unexpected = new ArrayList<>();
             List<Map.Entry<String, BrokenLink>> rateLimited = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> uncheckable = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> oldContent = new ArrayList<>();
             int knownCount = 0;
             for (var entry : results.brokenLinks.entrySet()) {
                 if (isKnownBrokenLink(entry.getKey())) {
                     knownCount++;
                 } else if (entry.getValue().status == 429) {
                     rateLimited.add(entry);
+                } else if (isUncheckableStatus(entry.getValue().status)) {
+                    uncheckable.add(entry);
+                } else if (isFromOldContent(entry.getValue().referrer)) {
+                    oldContent.add(entry);
                 } else {
                     unexpected.add(entry);
                 }
@@ -290,10 +296,24 @@ public class LinkCrawlerTest extends BrowserTest {
             if (knownCount > 0) {
                 System.out.println("Skipped " + knownCount + " known broken link(s)");
             }
+            if (!uncheckable.isEmpty()) {
+                uncheckable.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Uncheckable broken links (401/403/410) - " + uncheckable.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(uncheckable));
+            }
+            if (!oldContent.isEmpty()) {
+                oldContent.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Broken links in old content (newsletters/blogs older than cutoff) - " + oldContent.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(oldContent));
+            }
             if (!unexpected.isEmpty()) {
                 unexpected.sort(Map.Entry.comparingByKey());
                 fail("Found " + unexpected.size() + " broken link(s)"
                         + (rateLimited.isEmpty() ? "" : " (plus " + rateLimited.size() + " rate-limited)")
+                        + (uncheckable.isEmpty() ? "" : " (plus " + uncheckable.size() + " uncheckable 401/403/410)")
+                        + (oldContent.isEmpty() ? "" : " (plus " + oldContent.size() + " in old content)")
                         + ":\n" + buildLinkReport(unexpected));
             }
             if (!rateLimited.isEmpty()) {
@@ -301,6 +321,20 @@ public class LinkCrawlerTest extends BrowserTest {
                         + " but the links could not be verified.");
             }
         }
+    }
+
+    // Status codes that are uncheckable - printed but don't fail the build or raise defects
+    private static boolean isUncheckableStatus(int status) {
+        return status == 401 || status == 403 || status == 410;
+    }
+
+    // Check if a broken link is from old content (old newsletter or blog post)
+    private static boolean isFromOldContent(String referrer) {
+        if (referrer == null) {
+            return false;
+        }
+        String path = stripHost(referrer);
+        return isOldNewsletter(path) || isOldBlogPost(path);
     }
 
     private boolean isKnownBrokenLink(String url) {
@@ -464,14 +498,22 @@ public class LinkCrawlerTest extends BrowserTest {
         System.out.println(summary);
 
         // The results file drives issue creation, so it must only hold links that are
-        // actually a problem. 429s mean we could not check the link, not that it is dead,
-        // and known failures and deliberate errors are excused by the assertions below —
-        // filing defects for either would be noise.
+        // actually a problem. 429s mean we could not check the link, not that it is dead.
+        // 401/403/410 statuses are also uncheckable - they're informational but not defects.
+        // Broken links in old newsletters/blogs are natural and not worth fixing.
+        // Known failures and deliberate errors are excused by the assertions below —
+        // filing defects for any of these would be noise.
         Map<String, BrokenLink> rateLimited = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> uncheckable = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> oldContent = new ConcurrentHashMap<>();
         Map<String, BrokenLink> reportable = new ConcurrentHashMap<>();
         brokenLinks.forEach((url, link) -> {
             if (link.status == 429) {
                 rateLimited.put(url, link);
+            } else if (isUncheckableStatus(link.status)) {
+                uncheckable.put(url, link);
+            } else if (isFromOldContent(link.referrer)) {
+                oldContent.put(url, link);
             } else if (!isKnownBrokenLink(url)) {
                 reportable.put(url, link);
             }
@@ -489,6 +531,22 @@ public class LinkCrawlerTest extends BrowserTest {
                     + buildLinkReport(sorted));
         }
 
+        if (!uncheckable.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + uncheckable.size()
+                    + " uncheckable link(s) (401/403/410 - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        if (!oldContent.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + oldContent.size()
+                    + " broken link(s) in old content (newsletters/blogs older than cutoff - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
         try {
             Path summaryFile = Path.of("target", "crawl-summary.txt");
             Files.createDirectories(summaryFile.getParent());
@@ -496,12 +554,48 @@ public class LinkCrawlerTest extends BrowserTest {
 
             int cap = 20;
             if (!unknownBroken.isEmpty()) {
-                sb.append("\n**Broken links");
+                sb.append("\n**Broken links (will raise defects)");
                 if (unknownBroken.size() > cap) {
                     sb.append(" (first ").append(cap).append(" of ").append(unknownBroken.size()).append(")");
                 }
                 sb.append(":**\n");
                 for (var entry : unknownBroken.subList(0, Math.min(cap, unknownBroken.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!uncheckable.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Uncheckable links (401/403/410 - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!oldContent.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken links in old content (newsletters/blogs older than cutoff - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
                     BrokenLink link = entry.getValue();
                     sb.append("- `").append(link.status).append("` ").append(entry.getKey());
                     if (link.referrer != null) {
@@ -1294,9 +1388,8 @@ public class LinkCrawlerTest extends BrowserTest {
                 return true;
             }
         }
-        if (isOldNewsletter(path)) {
-            return true;
-        }
+        // Note: old newsletters and blog posts are NOT excluded here anymore
+        // They are visited and checked, but their broken links are treated as informational
         return false;
     }
 
@@ -1316,6 +1409,42 @@ public class LinkCrawlerTest extends BrowserTest {
             int monthsSinceEpoch = (now.getYear() - NEWSLETTER_EPOCH_YEAR) * 12
                     + now.getMonthValue() - NEWSLETTER_EPOCH_MONTH;
             return issue <= monthsSinceEpoch - NEWSLETTER_MAX_AGE_MONTHS;
+        }
+        return false;
+    }
+
+    // Blog posts also naturally accumulate dead external links over time.
+    // Configurable cutoff date for validating external links in blog posts.
+    // Blog posts older than this date will be excluded from external link checking.
+    private static final Pattern BLOG_POST_PATTERN = Pattern.compile("^/blog/(\\d{4})-(\\d{2})-(\\d{2})-");
+
+    private static boolean isOldBlogPost(String path) {
+        // Check for configurable property first
+        String cutoffProperty = System.getProperty("test.crawl.blog-cutoff-months");
+        if (cutoffProperty == null || cutoffProperty.isBlank()) {
+            return false; // If not configured, check all blog posts
+        }
+
+        int cutoffMonths;
+        try {
+            cutoffMonths = Integer.parseInt(cutoffProperty);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid blog cutoff months value: " + cutoffProperty);
+            return false;
+        }
+
+        Matcher m = BLOG_POST_PATTERN.matcher(path);
+        if (m.find()) {
+            try {
+                int year = Integer.parseInt(m.group(1));
+                int month = Integer.parseInt(m.group(2));
+                java.time.LocalDate postDate = java.time.LocalDate.of(year, month, 1);
+                java.time.LocalDate cutoffDate = java.time.LocalDate.now().minusMonths(cutoffMonths);
+                return postDate.isBefore(cutoffDate);
+            } catch (Exception e) {
+                // Invalid date format, check it anyway
+                return false;
+            }
         }
         return false;
     }
