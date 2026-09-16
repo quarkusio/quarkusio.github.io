@@ -1393,44 +1393,50 @@ public class LinkCrawlerTest extends BrowserTest {
         return false;
     }
 
-    // Newsletters are monthly link roundups that naturally accumulate dead external
-    // links over time. Checking old issues generates noise without actionable fixes,
-    // since no one wants to invest time editing historical newsletter archives.
+    // Newsletters and blog posts naturally accumulate dead external links over time.
+    // Configurable cutoff for validating external links in dated content.
+    // Content older than the cutoff will have broken links reported but not raise defects.
     private static final Pattern NEWSLETTER_PATTERN = Pattern.compile("^/newsletter/(\\d+)");
     private static final int NEWSLETTER_EPOCH_YEAR = 2020;
     private static final int NEWSLETTER_EPOCH_MONTH = 10; // October 2020 = issue #1
-    private static final int NEWSLETTER_MAX_AGE_MONTHS = 6;
+
+    private static Integer getDatedContentCutoffMonths() {
+        String cutoffProperty = System.getProperty("test.crawl.dated-cutoff-months");
+        if (cutoffProperty == null || cutoffProperty.isBlank()) {
+            return null; // If not configured, check all dated content
+        }
+
+        try {
+            return Integer.parseInt(cutoffProperty);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid dated cutoff months value: " + cutoffProperty);
+            return null;
+        }
+    }
 
     private static boolean isOldNewsletter(String path) {
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all newsletters
+        }
+
         Matcher m = NEWSLETTER_PATTERN.matcher(path);
         if (m.find()) {
             int issue = Integer.parseInt(m.group(1));
             java.time.LocalDate now = java.time.LocalDate.now();
             int monthsSinceEpoch = (now.getYear() - NEWSLETTER_EPOCH_YEAR) * 12
                     + now.getMonthValue() - NEWSLETTER_EPOCH_MONTH;
-            return issue <= monthsSinceEpoch - NEWSLETTER_MAX_AGE_MONTHS;
+            return issue <= monthsSinceEpoch - cutoffMonths;
         }
         return false;
     }
 
-    // Blog posts also naturally accumulate dead external links over time.
-    // Configurable cutoff date for validating external links in blog posts.
-    // Blog posts older than this date will be excluded from external link checking.
     private static final Pattern BLOG_POST_PATTERN = Pattern.compile("^/blog/(\\d{4})-(\\d{2})-(\\d{2})-");
 
     private static boolean isOldBlogPost(String path) {
-        // Check for configurable property first
-        String cutoffProperty = System.getProperty("test.crawl.blog-cutoff-months");
-        if (cutoffProperty == null || cutoffProperty.isBlank()) {
-            return false; // If not configured, check all blog posts
-        }
-
-        int cutoffMonths;
-        try {
-            cutoffMonths = Integer.parseInt(cutoffProperty);
-        } catch (NumberFormatException e) {
-            System.err.println("Invalid blog cutoff months value: " + cutoffProperty);
-            return false;
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all blog posts
         }
 
         Matcher m = BLOG_POST_PATTERN.matcher(path);
