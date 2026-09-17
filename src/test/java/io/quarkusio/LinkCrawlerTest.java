@@ -64,7 +64,7 @@ public class LinkCrawlerTest extends BrowserTest {
             "/guides/building-native-image/getting-started-testing",
             "/guides/security-webauthn/all-config",
             "/guides/security-webauthn/security-authentication-mechanisms",
-            // TODO: Roq migration issue — these redirects work on theJekyll site but not with Roq
+            // TODO: Roq migration issue — these redirects work on the Jekyll site but not with Roq
             "/guides/hibernate-search-elasticsearch",
             "/guides/rest-client-multipart",
             "/guides/rest-client-reactive",
@@ -126,8 +126,7 @@ public class LinkCrawlerTest extends BrowserTest {
     // dead fragment on every affected guide (and each of its versioned snapshots,
     // including /version/main/), so it is excused everywhere.
     //
-    // TODO: remove once https://github.com/quarkusio/quarkusio.github.io/pull/2892
-    //       merges — it auto-injects the missing note block so the anchor exists.
+    // TODO: remove at some point
     private static final Set<String> KNOWN_BROKEN_FRAGMENTS = Set.of(
             "extension-status-note");
 
@@ -233,6 +232,7 @@ public class LinkCrawlerTest extends BrowserTest {
     // prose (e.g. "https://quarkus.io/issuer" in the security-jwt guide) even
     // though they're not navigation links.
     private static final Set<String> DO_NOT_VISIT = Set.of(
+            "http://host.testcontainers.internal",
             "https://quarkus.io/issuer",
             "/issuer"
     );
