@@ -234,6 +234,7 @@ public class LinkCrawlerTest extends BrowserTest {
     private static final Set<String> DO_NOT_VISIT = Set.of(
             "http://host.testcontainers.internal",
             "https://registry.quarkus.io/maven", // registry maven endpoint is not browsable
+            "https://auth.streamnative.cloud",
             "https://quarkus.io/issuer",
             "/issuer"
     );
