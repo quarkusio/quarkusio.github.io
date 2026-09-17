@@ -1,6 +1,7 @@
 package io.quarkusio;
 
 import com.microsoft.playwright.Locator;
+import com.microsoft.playwright.Response;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -14,11 +15,12 @@ public class AsciidocExtensionTest extends BrowserTest {
 
     @ParameterizedTest
     @CsvSource({
-            "/guides/redis-reference, stable",
-            "/guides/cache-redis-reference, preview"
+            "/version/main/guides/security-spiffe-client, experimental",
+            "/version/main/guides/cache-redis-reference, preview"
     })
+
     void guideWithExtensionStatusShowsLabel(String path, String status) {
-        page.navigate(baseUrl + path);
+        Response res = page.navigate(baseUrl + path);
 
         Locator label = page.locator("a.status-label.status-" + status);
         assertTrue(label.count() > 0,
