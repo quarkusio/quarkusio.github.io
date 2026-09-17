@@ -136,6 +136,7 @@ public class LinkCrawlerTest extends BrowserTest {
     // the frozen numbered versioned snapshots and will not be backported, so they
     // are excused under /version/<number>/ only; the current guides stay strict.
     private static final Set<String> WILL_NOT_BACKPORT_FRAGMENTS = Set.of(
+            "s2i",
             "titles-and-headings",
             "document-attributes-and-variables",
             "document-structure",
@@ -157,18 +158,7 @@ public class LinkCrawlerTest extends BrowserTest {
             "logging-adapters",
             "quarkus-vertx-http_quarkus-http-non-application-root-path");
 
-    // --- #55413 anchors that Asciidoctor never emits (dead on all engines) ---
-    // This anchor exists in the current guide source (added by
-    // quarkusio/quarkus#55413) but was placed where Asciidoctor drops it, so the
-    // fragment is dead everywhere — confirmed on both Roq (quarkus.io) and Jekyll
-    // (es.quarkus.io), and across latest /guides/, /version/main/ and snapshots:
-    // [[s2i]] is stacked with [[openshift]] before the OpenShift section and only
-    // the last of two stacked block anchors survives, so #s2i is lost (both sites
-    // render id="openshift" but no id="s2i").
-    // TODO: needs an upstream quarkusio/quarkus fix (re-place the anchor); file an
-    //       issue and reference it here, then remove once the anchor renders.
-    private static final Set<String> UNRENDERED_UPSTREAM_ANCHORS = Set.of(
-            "s2i");
+      private static final Set<String> UNRENDERED_UPSTREAM_ANCHORS = Set.of();
 
     // --- Dead upstream anchors: broken on BOTH engines, everywhere ---
     // Each of these #fragment links points at an anchor id that Asciidoctor never
