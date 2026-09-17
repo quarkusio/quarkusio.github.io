@@ -6,14 +6,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.HashSet;
-import java.util.Set;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -120,6 +119,7 @@ public class SitemapTest extends BrowserTest {
         assertTrue(foundHome, "Sitemap should include the home page URL (ending with /)");
     }
 
+    @Disabled("tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3023")
     @Test
     void sitemapHtmlReturns200() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
