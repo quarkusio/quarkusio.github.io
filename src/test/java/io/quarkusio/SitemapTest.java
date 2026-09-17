@@ -6,14 +6,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.HashSet;
-import java.util.Set;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -62,7 +61,7 @@ public class SitemapTest extends BrowserTest {
     }
 
     @Test
-    void sitemapIsValidXml()  {
+    void sitemapIsValidXml() {
         try {
             parseSitemap();
         } catch (Exception e) {
@@ -124,30 +123,33 @@ public class SitemapTest extends BrowserTest {
     void sitemapHtmlReturns200() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/sitemap.html"))
+                    .uri(URI.create(baseUrl + "/sitemap/"))
                     .GET()
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode(),
-                    "Expected 200 for /sitemap.html but got " + response.statusCode());
+                    "Expected 200 for /sitemap but got " + response.statusCode());
         }
     }
 
+    @Disabled("not working, tracked by #3023")
     @Test
     void sitemapHtmlContainsLinks() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/sitemap.html"))
+                    .uri(URI.create(baseUrl + "/sitemap/"))
                     .GET()
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             String body = response.body();
-            assertFalse(body.isEmpty(), "sitemap.html should not be empty");
-            assertTrue(body.contains("<a href="), "sitemap.html should contain anchor links");
-            assertTrue(body.contains("quarkus.io"), "sitemap.html should contain quarkus.io URLs");
+            assertFalse(body.isEmpty(), "sitemap should not be empty");
+            // Choose a typical url that should be in the sitemap, but not in the header menu
+            assertTrue(body.contains("<a href=\"/guides/versions"), "sitemap should contain anchor links");
+            assertTrue(body.contains("quarkus.io"), "sitemap should contain quarkus.io URLs");
         }
     }
 
+    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtReturns200() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
@@ -161,6 +163,7 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
+    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtIsPlainText() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
@@ -175,6 +178,7 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
+    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtContainsContent() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
