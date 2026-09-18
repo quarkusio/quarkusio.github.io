@@ -18,8 +18,6 @@ class ExtensionStatusTreeprocessorTest {
     @BeforeAll
     static void setup() {
         asciidoctor = Asciidoctor.Factory.create();
-        asciidoctor.javaExtensionRegistry()
-                .treeprocessor(new ExtensionStatusTreeprocessor());
     }
 
     @AfterAll

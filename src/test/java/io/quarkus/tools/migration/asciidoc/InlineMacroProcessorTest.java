@@ -17,10 +17,6 @@ class InlineMacroProcessorTest {
     @BeforeAll
     static void setup() {
         asciidoctor = Asciidoctor.Factory.create();
-        asciidoctor.javaExtensionRegistry()
-                .inlineMacro(new TooltipInlineMacroProcessor())
-                .inlineMacro(new EnvVarCopyButtonInlineMacroProcessor())
-                .inlineMacro(new ConfigPropertyCopyButtonInlineMacroProcessor());
     }
 
     @AfterAll
