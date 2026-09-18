@@ -17,11 +17,6 @@ class ConfigTableTreeprocessorTest {
     @BeforeAll
     static void setup() {
         asciidoctor = Asciidoctor.Factory.create();
-        asciidoctor.javaExtensionRegistry()
-                .treeprocessor(new ConfigTableTreeprocessor())
-                .postprocessor(new ConfigTablePostprocessor())
-                .inlineMacro(new ConfigPropertyCopyButtonInlineMacroProcessor())
-                .inlineMacro(new EnvVarCopyButtonInlineMacroProcessor());
     }
 
     @AfterAll
