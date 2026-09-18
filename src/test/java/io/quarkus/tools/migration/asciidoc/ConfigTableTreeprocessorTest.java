@@ -66,7 +66,7 @@ class ConfigTableTreeprocessorTest {
             --
             Environment variable: env_var_with_copy_button:QUARKUS_REDIS_TIMEOUT[]
             --
-            |int
+            |Duration link:#duration-note-anchor-{summaryTableId}[icon:question-circle[], title=More information about the Duration format]
             |`10`
 
             |===
@@ -156,6 +156,62 @@ class ConfigTableTreeprocessorTest {
         assertTrue(html.contains("<table"), "Table should be present in doc.convert() output");
         assertTrue(html.contains("FILTER CONFIGURATION"), "Search input should be present");
         assertTrue(html.contains("quarkus.redis.hosts"), "Config property content should be present");
+    }
+
+    @Test
+    void legendKeepsItsRole() {
+        String html = convert(CONFIG_TABLE);
+        assertTrue(html.contains("configuration-legend"),
+                "The [.configuration-legend] role must survive the search input injection");
+    }
+
+    @Test
+    void attributeDefinedAboveTheLegendIsExpandedInCells() {
+         String adoc = """
+                = A guide
+
+                Some prose, so the attribute entry below lands in the document body.
+
+                :summaryTableId: quarkus-redis
+                """ + CONFIG_TABLE;
+        String html = convert(adoc);
+        assertFalse(html.contains("{summaryTableId}"),
+                "{summaryTableId} should be expanded in table cells");
+        assertTrue(html.contains("duration-note-anchor-quarkus-redis"));
+    }
+
+    @Test
+    void attributeDefinedAboveANonSearchableTableIsExpandedInCells() {
+        // The other shape the generated config docs come in: no legend, so the
+        // attribute entry is attached to the table itself. See #2962.
+        String adoc = """
+                = A guide
+
+                Some prose, so the attribute entry below lands in the document body.
+
+                :summaryTableId: quarkus-redis
+                [.configuration-reference, cols="80,.^10,.^10"]
+                |===
+
+                h|Configuration property
+                h|Type
+                h|Default
+
+                a|`quarkus.redis.timeout`
+
+                [.description]
+                --
+                A timeout.
+                --
+                |Duration link:#duration-note-anchor-{summaryTableId}[icon:question-circle[]]
+                |`10`
+
+                |===
+                """;
+        String html = convert(adoc);
+        assertFalse(html.contains("{summaryTableId}"),
+                "{summaryTableId} should be expanded in table cells");
+        assertTrue(html.contains("duration-note-anchor-quarkus-redis"));
     }
 
     @Test

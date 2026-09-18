@@ -138,7 +138,15 @@ public class LinkCrawlerTest extends BrowserTest {
     private static final Set<String> WILL_NOT_BACKPORT_FRAGMENTS = Set.of(
             "titles-and-headings",
             "document-attributes-and-variables",
-            "document-structure");
+            "document-structure",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-kubernetes",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-knative",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-openshift",
+            "duration-note-anchor-quarkus-kubernetes-client_quarkus-kubernetes-client", // Fixed in quarkus#55413
+            "duration-note-anchor-quarkus-knative-knative-config",
+            "duration-note-anchor-quarkus-kubernetes-client",
+            "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
+            "duration-note-anchor-quarkus-openshift-openshift-config");
 
     // --- Anchors that render fine today but are stale in frozen snapshots ---
     // These render correctly on the current guides (confirmed on both quarkus.io
@@ -150,25 +158,17 @@ public class LinkCrawlerTest extends BrowserTest {
             "quarkus-vertx-http_quarkus-http-non-application-root-path");
 
     // --- #55413 anchors that Asciidoctor never emits (dead on all engines) ---
-    // These anchors exist in the current guide source (added by
-    // quarkusio/quarkus#55413) but were placed where Asciidoctor drops them, so
-    // the fragments are dead everywhere — confirmed on both Roq (quarkus.io) and
-    // Jekyll (es.quarkus.io), and across latest /guides/, /version/main/ and
-    // snapshots:
-    //   * [[s2i]] is stacked with [[openshift]] before the OpenShift section and
-    //     only the last of two stacked block anchors survives, so #s2i is lost
-    //     (both sites render id="openshift" but no id="s2i");
-    //   * [[duration-note-anchor-...]] sits between a block title and a
-    //     :no-duration-note: attribute entry + include::, and is not emitted at all
-    //     (both sites: href= to it present, 0 matching id=).
-    // TODO: needs an upstream quarkusio/quarkus fix (re-place the anchors); file an
-    //       issue and reference it here, then remove once the anchors render.
+    // This anchor exists in the current guide source (added by
+    // quarkusio/quarkus#55413) but was placed where Asciidoctor drops it, so the
+    // fragment is dead everywhere — confirmed on both Roq (quarkus.io) and Jekyll
+    // (es.quarkus.io), and across latest /guides/, /version/main/ and snapshots:
+    // [[s2i]] is stacked with [[openshift]] before the OpenShift section and only
+    // the last of two stacked block anchors survives, so #s2i is lost (both sites
+    // render id="openshift" but no id="s2i").
+    // TODO: needs an upstream quarkusio/quarkus fix (re-place the anchor); file an
+    //       issue and reference it here, then remove once the anchor renders.
     private static final Set<String> UNRENDERED_UPSTREAM_ANCHORS = Set.of(
-            "s2i",
-            "duration-note-anchor-quarkus-kubernetes_quarkus-kubernetes",
-            "duration-note-anchor-quarkus-kubernetes_quarkus-knative",
-            "duration-note-anchor-quarkus-kubernetes_quarkus-openshift",
-            "duration-note-anchor-quarkus-kubernetes-client_quarkus-kubernetes-client");
+            "s2i");
 
     // --- Dead upstream anchors: broken on BOTH engines, everywhere ---
     // Each of these #fragment links points at an anchor id that Asciidoctor never
@@ -191,10 +191,7 @@ public class LinkCrawlerTest extends BrowserTest {
             "coordination",
             "dev-mode",
             "devservices-configuration-free-databases",
-            "duration-note-anchor-quarkus-knative-knative-config",
-            "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
             "duration-note-anchor-quarkus-mongodb-config-group-dev-services-build-time-config",
-            "duration-note-anchor-quarkus-openshift-openshift-config",
             "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
             "embedded-roles",
             "embedded-users",
@@ -1066,14 +1063,11 @@ public class LinkCrawlerTest extends BrowserTest {
 
     /**
      * A fragment link is a known-broken anchor we tolerate so the check can gate
-     * real regressions. Covers three cases:
+     * real regressions. Covers these cases:
      * <ul>
      *   <li>{@link #KNOWN_BROKEN_FRAGMENTS} (#2892) — the #extension-status-note
      *       anchor guides forget to include; excused everywhere;</li>
-     *   <li>the {@code {summaryTableId}} Roq regression (#2962) — the config
-     *       duration/memory note anchors are emitted with the literal attribute
-     *       name instead of the resolved id;</li>
-     *   <li>the {@link #UNRENDERED_UPSTREAM_ANCHORS} block anchors — present in
+     *   <li>the {@link #UNRENDERED_UPSTREAM_ANCHORS} block anchor — present in
      *       source but never emitted by Asciidoctor (both engines), so dead
      *       everywhere;</li>
      *   <li>the {@link #DEAD_UPSTREAM_ANCHORS} — upstream guide content bugs
@@ -1088,11 +1082,6 @@ public class LinkCrawlerTest extends BrowserTest {
      */
     private static boolean isKnownBrokenFragment(String url, String fragment) {
         if (KNOWN_BROKEN_FRAGMENTS.contains(fragment)) {
-            return true;
-        }
-        // TODO: remove once https://github.com/quarkusio/quarkusio.github.io/issues/2962
-        //       is fixed — Roq must expand {summaryTableId} in generated anchors.
-        if (fragment.contains("{summaryTableId}")) {
             return true;
         }
         if (UNRENDERED_UPSTREAM_ANCHORS.contains(fragment)) {

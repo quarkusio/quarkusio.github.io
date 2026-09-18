@@ -59,16 +59,14 @@ public class ConfigTableTreeprocessor extends Treeprocessor {
             if (table.hasRole("searchable") && table.getParent() instanceof StructuralNode parent) {
                 List<StructuralNode> siblings = parent.getBlocks();
 				int tableIndex = logicalIndexOf( siblings, table );
-                if (tableIndex > 0) {
-                    StructuralNode caption = siblings.get(tableIndex - 1);
-                    String captionContent = caption.getContent() != null
-                            ? caption.getContent().toString()
-                            : "";
+                if (tableIndex > 0 && siblings.get(tableIndex - 1) instanceof Block caption) {
                     searchFieldId++;
-                    Block newCaption = createBlock(parent, "paragraph",
-                            captionContent + " <input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>".formatted(searchFieldId),
-                            new HashMap<>());
-                    siblings.set(tableIndex - 1, newCaption);
+                    // Append to the legend block rather than swapping in a fresh one. A
+                    // replacement block loses the caption's roles, and it loses the attribute
+                    // entries Asciidoctor replays when converting it
+                    caption.setSource(caption.getSource()
+                            + " +++<input type=\"search\" id=\"config-search-%d\" placeholder=\"FILTER CONFIGURATION\" disabled>+++"
+                                    .formatted(searchFieldId));
                 }
             }
         }
