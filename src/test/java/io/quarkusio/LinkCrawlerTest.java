@@ -60,14 +60,7 @@ public class LinkCrawlerTest extends BrowserTest {
             // sub-paths that don't exist as standalone pages,relative path issue related to Roq
             "/guides/building-native-image/getting-started-testing",
             "/guides/security-webauthn/all-config",
-            "/guides/security-webauthn/security-authentication-mechanisms",
-            // TODO: Roq migration issue — these redirects work on theJekyll site but not with Roq
-            "/guides/hibernate-search-elasticsearch",
-            "/guides/rest-client-multipart",
-            "/guides/rest-client-reactive",
-            "/guides/resteasy-reactive",
-            "/guides/resteasy-reactive-migration",
-            "/guides/security-openid-connect"
+            "/guides/security-webauthn/security-authentication-mechanisms"
     );
 
     // --- Waiting for release ---
