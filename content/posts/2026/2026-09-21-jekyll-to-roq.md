@@ -77,6 +77,6 @@ Here's what had to change:
 - **Templating language.** Jekyll uses Liquid, and Roq uses Qute. There's a fairly straightforward syntactic mapping, but the semantics for variable scope are very different. Handling scoping, mutability, cross-file-merging, and other variable misalignments ended up being the most complex part of the conversion.
 - **Plugins.** We had a set of Jekyll plugins that needed manual conversion.
 
-Want to know how Qute compares to Liquid? This shows the before and after for part of our site. 
+Want to know how Qute compares to Liquid? This shows the before and after templates for part of our site. 
 
 ![a section of Liquid template, animated into a section of Qute template](/assets/images/posts/jekyll-to-roq/liquid-to-qute.gif)
