@@ -56,11 +56,12 @@ Running it against the site created 40,000 changed files.
 I’d like to apologise to the GitHub tooling, which found this volume of changes … challenging.
 
 But of course the goal of the exercise wasn’t to annoy reviewers and make my GitHub statistics look good. 
-What was _really_ achieved? Our tests now execute 42% faster than they did against the old site. 
-Our Lighthouse performance scores had a small but noticeable improvement. 
-Subjectively, live reload feels way faster. 
-Doing local authoring is now just a `./mvnw quarkus:dev` call instead of a multi-hour journey debugging Ruby configuration.
-We've unlocked our wishlist of site features that we can code up in Java.
+What was _really_ achieved? 
+
+- **If you read quarkus.io:** pages load a little faster. Our Lighthouse performance scores had a small but noticeable improvement.
+- **If you contribute to quarkus.io:** local authoring is now a single `./mvnw quarkus:dev` call instead of a multi-hour journey debugging Ruby configuration. Live reload feels way faster, and the site’s tests run 42% faster than they did against the old site, so PR feedback arrives sooner.
+- **If you want the site to do more:** we’ve unlocked our wishlist of site features, because we can now code them up in Java.
+
 
 As a bonus of scripting the conversion process, we now have a converter everyone can use on their own sites. 
 It’s still being refined, and isn’t fully documented in the Roq docs yet, but you can have a play with the [`roq-it-jekyll`](https://github.com/quarkiverse/quarkus-roq/blob/main/migration/roq-it-jekyll) script.
