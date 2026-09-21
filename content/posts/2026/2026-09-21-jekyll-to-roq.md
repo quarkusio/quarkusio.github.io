@@ -1,6 +1,6 @@
 ---
 layout: post
-title: 'The quarkus.io site is now built with Roq'
+title: 'The quarkus.io site is now built with Quarkus Roq'
 tags: 
   - announcement
   - website
