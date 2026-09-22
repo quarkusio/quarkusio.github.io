@@ -4,6 +4,8 @@ title: Sitemap
 subtitle: Complete navigation guide to all Quarkus content
 ---
 
+{=cdi:siteConfig.description.raw}
+
 **Note:** This sitemap was generated using AI and reviewed by humans. If you notice any missing or incorrect links, please [open an issue](https://github.com/quarkusio/quarkusio.github.io/issues) on GitHub.
 
 This sitemap provides a comprehensive overview of all content available on the Quarkus website, organized by category for easy navigation by both humans and search engines.
