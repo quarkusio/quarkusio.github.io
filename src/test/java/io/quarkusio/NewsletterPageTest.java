@@ -18,7 +18,7 @@ public class NewsletterPageTest extends BrowserTest {
     @Test
     void newsletterEditionsLinkToValidPaths() {
         page.navigate(baseUrl + "/newsletter/");
-        int linkCount = page.locator(".card a[href*='/newsletter/']").count();
+        int linkCount = page.locator(".card a[href^='/newsletter/']").count();
         assertTrue(linkCount >= 10,
                 "Expected at least 10 newsletter links but found " + linkCount);
     }

@@ -178,6 +178,38 @@ public class JekyllFiltersExtension {
         return sorted;
     }
 
+    /**
+     * A simple key/value pair whose properties are named exactly as the templates
+     * expect: {@code data.first} for the key and {@code data.last} for the value.
+     * Mirrors the shape of the entries produced by Roq's built-in JsonObject iteration.
+     */
+    public record JsonEntry(String first, Object last) {
+    }
+
+    /**
+     * Jekyll's "sort" filter for JsonObject (map-of-maps, e.g. data/authors.yaml).
+     * Returns a list of {@link JsonEntry} sorted by the named property on each value,
+     * so templates can use {data.first} (key) and {data.last} (value).
+     * Usage in Qute: {cdi:authors.sort('name')}
+     */
+    static List<JsonEntry> sort(JsonObject obj, String property) {
+        if (obj == null || obj.isEmpty()) {
+            return List.of();
+        }
+        List<JsonEntry> entries = new ArrayList<>();
+        for (String key : obj.fieldNames()) {
+            entries.add(new JsonEntry(key, obj.getValue(key)));
+        }
+        entries.sort((a, b) -> {
+            String va = extractProperty(a.last(), property);
+            String vb = extractProperty(b.last(), property);
+            if (va == null) return vb == null ? 0 : 1;
+            if (vb == null) return -1;
+            return va.compareToIgnoreCase(vb);
+        });
+        return entries;
+    }
+
     /** Jekyll's "sort" filter for JsonArray. */
     static JsonArray sort(JsonArray array, String property) {
         if (array == null || array.isEmpty()) {

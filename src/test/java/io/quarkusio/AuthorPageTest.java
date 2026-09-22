@@ -11,9 +11,9 @@ public class AuthorPageTest extends BrowserTest {
     @Test
     void authorIndexPageListsAuthors() {
         page.navigate(baseUrl + "/author/");
-        int authorCount = page.locator(".authors a[href*='/author/']").count();
-        assertTrue(authorCount >= 5,
-                "Expected at least 5 authors but found " + authorCount);
+        int authorCount = page.locator(".authors a[href^='/author/']").count();
+        assertTrue(authorCount >= 6,
+                "Expected at least 6 authors but found " + authorCount);
     }
 
     @Test
@@ -32,7 +32,7 @@ public class AuthorPageTest extends BrowserTest {
     @Test
     void authorPageListsPosts() {
         page.navigate(baseUrl + "/blog/");
-        var authorLink = page.locator(".byline a[href*='/author/']").first();
+        var authorLink = page.locator(".byline a[href^='/author/']").first();
         authorLink.click();
 
         page.waitForURL("**/author/**");
