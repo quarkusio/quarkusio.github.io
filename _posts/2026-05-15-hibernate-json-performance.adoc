@@ -1,0 +1,303 @@
+---
+layout: post
+title: 'Two Hibernate Annotations That Cut Our JSON Processing Time in Half'
+date: 2026-05-15
+tags: hibernate performance json
+synopsis: 'When we profiled our Quarkus application, we found Hibernate''s internal JSON handling consumed over 50% of CPU. Two annotation changes — @Mutability(Immutability.class) and removing CascadeType.MERGE — eliminated the overhead entirely. These patterns apply to any Hibernate-managed field with expensive dirty-checking, not just JSON.'
+author: stalep
+---
+
+When we profiled our Quarkus application's data import pipeline, we expected the bottleneck to be in our business logic -- JQ filters, JavaScript evaluation, recursive SQL queries. Instead, *Hibernate's internal JSON handling consumed over 50% of CPU time* and allocated 20 GB of unnecessary objects during a routine import of 5 records.
+
+Two small annotation changes fixed it. No code changes, no architectural redesign -- just telling Hibernate what it needs to know about how our application uses its data.
+
+== The Application
+
+https://github.com/Hyperfoil/h5m[h5m] is a lightweight rewrite of https://github.com/Hyperfoil/Horreum[Horreum], the performance regression detection system used by Red Hat and the Hyperfoil team. It accepts JSON benchmark results, transforms them through a DAG (directed acyclic graph -- a pipeline of dependent computation steps where each node's output feeds into downstream nodes) and detects regressions using statistical methods. The core entity stores computed results as JSONB:
+
+[source,java]
+----
+@Entity
+public class ValueEntity extends PanacheEntity {
+
+    @Column(columnDefinition = "JSONB")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Basic(fetch = FetchType.LAZY)
+    public JsonNode data;
+
+    // ... other fields
+}
+----
+
+Each upload creates dozens of `ValueEntity` instances through a work queue -- JQ filter results, fingerprints, change detection outputs. A typical import processes thousands of these entities per minute.
+
+== Profiling: Where Is the Time Going?
+
+We profiled a 5-record import from a production dataset using https://github.com/async-profiler/async-profiler[async-profiler] with CPU sampling:
+
+[source,bash]
+----
+java -agentpath:libasyncProfiler.so=start,event=cpu,file=profile.jfr,jfr \
+     -jar app.jar import-data ...
+----
+
+The results were surprising:
+
+[cols="3,1,1"]
+|===
+| Category | CPU Samples | %
+
+| *Hibernate dirty-checking*
+| 6,087
+| *34%*
+
+| GC
+| 4,397
+| 25%
+
+| *Hibernate deepCopy*
+| 2,361
+| *13%*
+
+| JIT compilation
+| 2,084
+| 12%
+
+| Actual computation
+| 1,187
+| 7%
+
+| Hibernate JSON serialize
+| 507
+| 3%
+|===
+
+*47% of CPU was spent on Hibernate's internal JSON dirty-checking and snapshot management* -- not on our application logic, not on database queries, but on Hibernate comparing JSON columns to decide whether they changed.
+
+== The Problem: FormatMapperBasedJavaType.deepCopy
+
+When Hibernate manages an entity with a JSON column (`@JdbcTypeCode(SqlTypes.JSON)` with a `JsonNode` field), it needs to detect changes for dirty-checking. On every `em.flush()`, Hibernate:
+
+1. *Deep-copies* the JSON value by serializing it to a string and deserializing it back (`FormatMapperBasedJavaType.deepCopy`) -- this is the snapshot
+2. *Compares* the current value against the snapshot using `ObjectNode.equals()` -- a recursive tree comparison
+
+For large JSON documents, this means every flush triggers a full serialize-deserialize-compare cycle for every managed entity with a JSON column. In our case, with hundreds of `ValueEntity` instances in the persistence context, each `flush()` was doing hundreds of these cycles.
+
+The allocation profile confirmed this:
+
+[source,bash]
+----
+# async-profiler allocation profiling
+java -agentpath:libasyncProfiler.so=start,event=alloc,file=alloc.jfr,jfr ...
+----
+
+[cols="3,1"]
+|===
+| Allocator | Bytes
+
+| `JacksonJsonFormatMapper.toString` (serialize for snapshot)
+| *10.7 GB*
+
+| `JacksonJsonFormatMapper.fromString` (deserialize for snapshot)
+| *7.6 GB*
+|===
+
+*18.3 GB* of allocation just for dirty-checking JSON columns -- in a 1-minute import.
+
+== Fix 1: @Mutability(Immutability.class)
+
+The key insight: our application never mutates `JsonNode` objects in-place. When a value changes, we always replace the reference:
+
+[source,java]
+----
+// We always do this (reference replacement):
+entity.data = newJsonNode;
+
+// We never do this (in-place mutation):
+entity.data.put("key", "value");
+----
+
+This means Hibernate doesn't need to deep-copy the JSON for snapshot comparison -- it can use reference equality (`==`) instead. The `@Mutability` annotation tells Hibernate exactly this:
+
+[source,java]
+----
+@Column(columnDefinition = "JSONB")
+@JdbcTypeCode(SqlTypes.JSON)
+@Basic(fetch = FetchType.LAZY)
+@Mutability(Immutability.class)  // <-- this one annotation
+public JsonNode data;
+----
+
+`org.hibernate.type.descriptor.java.Immutability` tells Hibernate: "this value is never mutated in-place; use the original reference as the snapshot." Dirty-checking becomes a reference comparison (`==`) instead of a full tree serialization and comparison.
+
+=== Results
+
+[cols="2,1,1,1"]
+|===
+| Metric | Before | After | Improvement
+
+| dirty-checking CPU samples
+| 3,946
+| 2
+| *1,973x fewer (-99.97%)*
+
+| deepCopy CPU samples
+| 2,169
+| 0
+| *eliminated (-100%)*
+
+| Wall-clock time
+| 1m36s
+| 1m20s
+| *1.2x faster (-17%)*
+
+| CPU user time
+| 2m02s
+| 0m59s
+| *2x faster (-51%)*
+|===
+
+One annotation eliminated both `deepCopy` and dirty-checking entirely. All existing tests passed without modification.
+
+=== When Can You Use This?
+
+`@Mutability(Immutability.class)` is safe when:
+
+* You *never mutate* the field value in-place (no `jsonNode.put()`, `arrayNode.add()`, etc.)
+* All changes are *reference replacements* (`entity.data = newValue`)
+* The field type is naturally immutable or you treat it as immutable by convention
+
+This applies to `JsonNode`, `String`, and any custom type where you follow a replace-not-mutate pattern. If you're unsure, search your codebase for in-place mutations: `grep -r "\.data\.put\|\.data\.add\|\.data\.remove"`.
+
+This pattern isn't limited to JSON columns. `@Mutability(Immutability.class)` works on any `@Basic` field where Hibernate uses `deepCopy` for snapshot comparison -- custom `@Type` mappings, large `byte[]` fields, or any `JavaType` with an expensive copy implementation. JSON columns are the most common and painful case because `deepCopy` involves a full Jackson serialize-deserialize roundtrip, but the annotation eliminates snapshot overhead for any immutable-by-convention field.
+
+== Fix 2: Remove CascadeType.MERGE from Join Tables
+
+The allocation profile also revealed an unexpected hotspot:
+
+[source]
+----
+10,689 MB  JacksonJsonFormatMapper.toString  (JSON serialize)
+  +-- 9,442 MB from EntityUpdateAction (UPDATE statements)
+  +-- 1,247 MB from EntityInsertAction (INSERT statements)
+----
+
+*9.4 GB of JSON serialization was from UPDATEs, not INSERTs.* We were only creating new entities -- where were the updates coming from?
+
+The answer: `CascadeType.MERGE` on a join table relationship.
+
+[source,java]
+----
+@Entity
+public class Work extends PanacheEntity {
+
+    @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    @JoinTable(name = "work_values", ...)
+    public List<ValueEntity> sourceValues;
+}
+----
+
+When we called `em.merge(work)` to persist a new `Work` entity, Hibernate cascaded the merge to every `ValueEntity` in `sourceValues`. Each of these was an *already-managed, unmodified* entity in the persistence context -- but the cascade merge caused Hibernate to re-attach them as if they were detached instances, triggering a *second* dirty-check cycle on top of the normal session flush. For each re-attached entity, Hibernate serialized the JSONB `data` column to create a new snapshot for comparison.
+
+This is where the two optimizations compound: `CascadeType.MERGE` was causing redundant dirty-checking, and the JSON `deepCopy` made each of those checks expensive. Removing the cascade eliminates the redundant cycles; `@Mutability(Immutability.class)` makes the remaining necessary dirty-checks cheap.
+
+The fix: remove `CascadeType.MERGE`, keep only `CascadeType.PERSIST`:
+
+[source,java]
+----
+@ManyToMany(cascade = {CascadeType.PERSIST}, fetch = FetchType.LAZY)
+@JoinTable(name = "work_values", ...)
+public List<ValueEntity> sourceValues;
+----
+
+This is safe because all entities in the relationship are already managed in the persistence context when `em.merge()` is called. The cascade merge was a no-op that triggered expensive side effects.
+
+=== Results
+
+[cols="2,1,1,1"]
+|===
+| Metric | Before | After | Improvement
+
+| JSON serialize (toString)
+| 10,689 MB
+| 1,237 MB
+| *8.6x less (-88%)*
+
+| UPDATE serialization
+| 9,442 MB
+| 0 MB
+| *eliminated (-100%)*
+
+| Total allocation
+| 31.6 GB
+| 20.8 GB
+| *1.5x less (-34%)*
+
+| Wall-clock time
+| 1m24s
+| 1m14s
+| *1.1x faster (-12%)*
+|===
+
+=== When Can You Remove CascadeType.MERGE?
+
+`CascadeType.MERGE` is safe to remove when:
+
+* The related entities are *always managed* (loaded from DB or created in the same transaction) when the parent is merged
+* You never pass *detached, modified* entities through the relationship expecting cascade to persist their changes
+* The relationship is a *reference* (like "this Work uses these Values") rather than an *ownership* (like "this Order owns these LineItems")
+
+Check your `em.merge()` call sites: if the related entities are loaded via queries or `em.find()` in the same transaction, the cascade merge is redundant.
+
+Note that this optimization has nothing to do with JSON specifically. `CascadeType.MERGE` causes Hibernate to re-merge and therefore re-dirty-check every related entity on `em.merge()`, regardless of their column types. In our case, the JSON `data` column made the cost highly visible because each dirty-check involved expensive JSON serialization. But even with simple scalar columns, unnecessary cascade merges add flush overhead proportional to the number of related entities -- each one gets a full dirty-check cycle.
+
+== Combined Impact
+
+Both fixes together, measured on our production import pipeline (5 rhivos-perf-comprehensive records, 4 worker threads, PostgreSQL):
+
+[cols="2,1,1,1,1"]
+|===
+| Metric | Original | + @Mutability | + No MERGE | Total Improvement
+
+| Total allocation
+| 31.8 GB
+| 31.6 GB
+| *20.6 GB*
+| *1.5x less (-35%)*
+
+| JSON serialize
+| 10,717 MB
+| 10,689 MB
+| *1,237 MB*
+| *8.7x less (-88%)*
+
+| dirty-checking CPU
+| 6,087 samples
+| 2 samples
+| 2 samples
+| *3,044x fewer (-99.97%)*
+
+| Wall-clock
+| 5m38s
+| 1m20s
+| *1m12s*
+| *4.7x faster (-79%)*
+|===
+
+The wall-clock improvement from 5m38s to 1m12s includes other optimizations (worker parallelism, query improvements), but the Hibernate annotation changes alone account for a *1.4x wall-clock speedup (-29%)* and *1.5x allocation reduction (-35%)*.
+
+== How to Find This in Your Application
+
+1. *Profile with async-profiler* -- look for `deepCopy`, `isDirty`, `findDirty`, and `performDirtyCheck` in CPU flamegraphs. For JSON columns specifically, `FormatMapperBasedJavaType.deepCopy` and `JacksonJsonFormatMapper.toString/fromString` are the hotspots, but any expensive `deepCopy` implementation will show up here.
+2. *Check fields with expensive snapshot comparison* -- any `@JdbcTypeCode(SqlTypes.JSON)`, custom `@Type`, or large binary field is a candidate for `@Mutability(Immutability.class)` if you never mutate the value in-place. JSON columns are the most common case, but the annotation works on any `@Basic` field.
+3. *Check your `CascadeType.MERGE` relationships* -- if related entities are always managed when the parent is merged, the cascade is pure overhead regardless of what columns those entities have.
+4. *Use `--alloc --total` with async-profiler* -- allocation profiling reveals the true cost. Look for `EntityUpdateAction` dominating over `EntityInsertAction` in the serialization stack -- that's a strong signal that cascade merges are generating unnecessary UPDATE dirty-checks, independent of column types.
+
+== Key Takeaways
+
+* Hibernate's dirty-checking uses `deepCopy` to snapshot field values for comparison -- for JSON columns this means a full serialize-deserialize roundtrip, but any field with an expensive copy implementation pays this cost on every flush.
+* `@Mutability(Immutability.class)` eliminates snapshot overhead for any field you treat as replace-not-mutate -- JSON columns are the highest-impact case, but the annotation works on any `@Basic` field.
+* `CascadeType.MERGE` on relationships causes cascade re-merging and dirty-checking of all related entities, regardless of their column types -- remove it when related entities are always already managed.
+* These are one-line annotation changes with no behavioral impact -- but they can cut processing time in half.
+
+The fixes are available in https://github.com/Hyperfoil/h5m/pull/87[PR #87] and https://github.com/Hyperfoil/h5m/pull/88[PR #88] on the h5m repository.
