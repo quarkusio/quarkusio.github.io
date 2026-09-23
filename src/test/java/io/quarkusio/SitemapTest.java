@@ -20,7 +20,11 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
 
 public class SitemapTest extends BrowserTest {
 
@@ -145,7 +149,7 @@ public class SitemapTest extends BrowserTest {
             assertFalse(body.isEmpty(), "sitemap should not be empty");
             // Choose a typical url that should be in the sitemap, but not in the header menu
             assertTrue(body.contains("<a href=\"/guides/versions"), "sitemap should contain anchor links");
-            assertTrue(body.contains("quarkus.io"), "sitemap should contain quarkus.io URLs");
+            assertTrue(body.contains("https://quarkus.io"), "sitemap should contain quarkus.io URLs");
         }
     }
 
