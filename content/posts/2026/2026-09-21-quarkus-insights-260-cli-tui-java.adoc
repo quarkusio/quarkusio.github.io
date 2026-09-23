@@ -1,0 +1,129 @@
+---
+layout: post
+title: 'Quarkus Insights #260: CLI and TUI Applications — A Terminal Renaissance in Java'
+date: 2026-09-21
+tags: quarkus-insights
+synopsis: 'Max Andersen and Ståle Pedersen join hosts Eric Deandrea and Holly Cummins to explore the CLI and TUI revival happening inside the Java and Quarkus ecosystem — from Aesh''s zero-reflection annotation processor to TamboUI''s CSS-driven text UI framework — and why AI agents are driving it all.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://www.youtube.com/live/EXIFCPFB3kQ[watch the video] for the full story.
+
+== Quarkus Insights #260: CLI and TUI Applications — A Terminal Renaissance in Java
+
+The terminal is old — older than most living software — yet it is experiencing one of its most significant periods of investment and interest in decades. In episode 260, Max Andersen and Ståle Pedersen join hosts Eric Deandrea and Holly Cummins to make the case that Java, powered by Quarkus, is now one of the best platforms for building command-line and text-user-interface applications. The reason is not nostalgia; it is AI.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/EXIFCPFB3kQ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Max opened with a brief news flash before the main topic: Quarkus 3.40 has been branched and is working its way through the release stages. He also delivered a pointed PSA to any AI agents who may be listening to the transcript: someone submitted 100 pull requests in a single day. The community appreciates the enthusiasm, but unreviewed code cannot ship — not into a codebase running in banks, nuclear power plants, or wherever Quarkus ends up. Small PRs, paced contributions, and human review remain essential. "Use AI to fight AI," Max offered as one possible mitigation, before the team settled on a simpler summary: slow down, make them smaller, and let the humans keep up.
+
+== Why Now? The Terminal's Second Act
+
+Max's opening framing cuts through the nostalgia: the terminal is not back because people are sentimental about green-screen displays. It is back because it is the lowest-cost, highest-availability UI that has ever existed. Every cloud VM has one. SSH reaches it from anywhere. It has no pixel budget to render, no browser engine to load, and no networking stack beyond a TCP connection.
+
+For AI agents specifically, the economics are compelling. Text in, text out. No button coordinates to guess, no DOM to parse. Keyboard and output streams are precisely the interface contract that agents can consume reliably. Agents can also call `help` and read the output directly. CLIs written with good tab-completion and structured output become first-class agent tools with minimal adaptation.
+
+Beyond agents, the terminal is scriptable, composable, remote-friendly, and — increasingly — genuinely fast. Modern terminal emulators like https://ghostty.org/[Ghostty], https://sw.kovidgoyal.net/kitty/[Kitty], and https://github.com/microsoft/terminal[Windows Terminal] are investing heavily in GPU rendering and pixel-perfect image support, closing the visual gap with web UIs faster than most expect.
+
+== The Landscape: Terminal, Shell, REPL, CLI, TUI
+
+One of the most useful parts of Max's opening was a clear taxonomy of terms that engineers who live in web and backend services often conflate:
+
+* **Terminal** — the window that draws characters. iTerm2, Ghostty, Windows Terminal, Kitty, Warp are all terminals.
+* **Shell** — the first program the terminal launches. Bash, Fish, https://www.nushell.sh/[Nushell], and Zsh are shells. A shell is a specific kind of REPL.
+* **REPL** (Read-Evaluate-Print Loop) — any interactive prompt: Python's `>>>`, Node's interactive mode, and shells themselves.
+* **CLI** (Command Line Interface) — a program that takes arguments and exits. `git`, `kubectl`, `curl`, https://www.jbang.dev/[JBang], and `quarkus` are CLIs.
+* **TUI** (Text User Interface) — a full-screen, interactive application rendered in the terminal. `vim`, `htop`, https://k9scli.io/[k9s], and Lazygit are TUIs.
+
+Quarkus Dev Mode itself qualifies: it starts a TUI console powered by Aesh, with a persistent command line at the bottom of the screen. Many Quarkus developers have been using TUI technology without knowing it.
+
+== The Players: Aesh, PicoCLI, and TamboUI
+
+Max laid out the three libraries central to this episode and how they relate:
+
+* https://github.com/aeshell/aesh[**Aesh**] — split into two sub-projects: `aesh-readline` (the low-level terminal I/O layer, key handling, line editing) and `aesh` proper (the REPL and CLI command parsing layer). Aesh started as a fork of https://github.com/jline/jline3[JLine] but has diverged significantly. It is already in use inside Quarkus Dev Mode.
+* https://picocli.info/[**PicoCLI**] — the long-standing champion of Java CLI argument parsing. Best-in-class documentation, broad ecosystem adoption, simpler API surface. Still the right choice for CLI-only use cases where startup speed is not the primary concern.
+* **TamboUI** — Max's newer project. A full TUI framework for Java: reactive layout, CSS-like styling, image rendering, and an Aesh backend for terminal I/O and command wiring.
+
+The key shift this year: Aesh has crossed over into PicoCLI's territory on argument parsing quality, while adding capabilities PicoCLI was never designed to provide (interactive REPL, tab completion dynamic enough to round-trip to the application, WebSocket connections, and now TamboUI integration).
+
+== Aesh 3.18: The Annotation Processor and Lazy Runtime
+
+The headline performance story for Aesh this year is an annotation processor that eliminates reflection from command startup.
+
+Before 3.18, Aesh (and PicoCLI before it) scanned command class structures at startup using reflection — building internal models of every registered command, even those that would never be called in a given invocation. On the JVM this added measurable latency; with https://www.graalvm.org/[GraalVM] native images it was manageable but still visible.
+
+Ståle built an annotation processor: add it to your `pom.xml`, and at build time Aesh generates class files that pre-compute the command model without any reflection. Package-private or public fields eliminate reflection entirely; only private fields incur a single reflective access. The result: **125× faster** command parsing on the raw measurement, which translated to JBang's startup dropping from roughly half a second to around 200 milliseconds on the JVM, and to near-instant on native.
+
+"The JVM gets to be as fast as native, and native gets to be like super super fast," was Holly's one-line summary.
+
+The companion improvement is lazy runtime loading: prior to 3.18, all subcommands were eagerly instantiated at startup even if only one would execute. In CLI (runtime) mode, Aesh now constructs subcommands only on the path that executes — so a JBang-scale CLI with dozens of subcommands no longer pays to initialize Hibernate or CDI beans that belong to commands the user never called.
+
+== Aesh on Quarkus: CDI, Invocation Context, and Testing
+
+On Quarkus, the Aesh extension adds CDI support directly to command classes. Injection works as expected — commands are beans, and all the usual Quarkus CDI patterns apply.
+
+More interesting is the invocation context: a CDI-backed object that persists across command invocations inside a REPL session, allowing state to accumulate as the user types successive commands. This is the mechanism that makes a Quarkus-hosted REPL feel like a real application rather than a stateless CLI wrapper.
+
+For testing, the `AeshLauncher` provides a clean API: `launcher.execute(...)` runs a command and asserts the exit code; piped commands can be expressed as a chain with per-stage output assertions. It integrates with Quarkus Test, so the full CDI and service infrastructure is available in tests without special configuration.
+
+== Demo: JVM and Native, WebSocket Terminal, TamboUI Dashboard
+
+Ståle's live demo covered three aspects:
+
+1. **CLI mode startup** — a small Quarkus Aesh app compiled to native started in **17 milliseconds**. The same app on the JVM started in approximately 500 milliseconds (with WebSocket support active; without it, faster still). Help output, CDI injection, and subcommand dispatch all worked identically in both modes.
+
+2. **WebSocket terminal** — the same application exposed its REPL over WebSocket and rendered it in a browser using https://xtermjs.org/[Xterm.js]. Multiple browser tabs became independent terminal sessions against the same running Quarkus application. Max's commentary: treat each WebSocket connection the same way you would treat any other REST request, with the same concurrency, virtual threads, and CDI session scope that Quarkus provides. Security caveat noted: "Make sure you put a password on it."
+
+3. **TamboUI dashboard** — a simple TUI panel rendered inside the same application via the `ash-tui` module, which uses Aesh as its backend. The integration requires no additional wiring on Quarkus; because the module depends on Aesh and Aesh is already the default, adding the TamboUI module is enough.
+
+== TamboUI: Swing for the Command Line — But Fast
+
+Max's second demo covered TamboUI directly. The pitch: Go has https://github.com/charmbracelet/bubbletea[Bubble Tea], Rust has https://github.com/ratatui/ratatui[Ratatui] (which inspired much of TamboUI's design), Python has https://textual.textualize.io/[Textual]. Java had nothing comparable — so Max built it.
+
+The design pillars:
+
+* **Reactive layout** — a flexbox model inspired by Android and web CSS. TamboUI computes layouts dynamically; resizing the terminal window causes the layout to reflow. Because a terminal coordinate space is small (measured in character cells rather than pixels), layout calculations are extremely fast.
+* **CSS styling** — components are styled with CSS-like declarations. The live demo showed an editor where changing `height: 50` to `height: 3` on a progress bar component took effect immediately, and adding `text-style: italic` to a number-rendering token turned numbers red and italic in real time. The demo editor itself used Aesh-backed syntax highlighting.
+* **Unicode and image rendering** — TamboUI supports full Unicode and inline image rendering using modern terminal protocols (Kitty graphics, Sixel). The demo showed a file manager with source code syntax highlighting and image previews.
+* **Pilot** — TamboUI's test harness, analogous to https://playwright.dev/[Playwright] for web UIs. Ståle flagged it as the natural counterpart to the Aesh launcher for TUI testing.
+* **Performance** — the stress demo generated **350 frames per second** with every pixel changing on every frame. Max added a light-sensitivity warning after the fact.
+
+Max noted that AI agents helped significantly in building TamboUI. Terminal UI patterns are decades old and extensively documented; LLMs reason about them well. The first version of the file manager was generated in a single Claude prompt, using documented terminal escape sequences and ASCII concepts that agents have clearly absorbed from decades of documentation.
+
+== CLI as Agent Interface
+
+The thread running through the second half of the episode is the fit between CLIs and AI agents. Max and Ståle returned to it several times:
+
+* **MCP vs. CLI** — REST endpoints and MCP tools require careful modeling. A CLI built with Ash can expose higher-level, purpose-built operations that incorporate business logic not easily expressed as item-potent REST calls. Agents can call `help` and receive a complete, readable description of every command.
+* **Token efficiency** — text-in, text-out is the cheapest interaction model for an agent. A well-designed CLI tool consumes far fewer tokens than a browser automation or GUI-scraping approach.
+* **Structured skill generation** — Aesh has a built-in capability to print all registered commands and their descriptions in a format that can be used to generate MCP skills or agent tool definitions automatically.
+
+Ståle's performance team at IBM is already using this pattern. Their new change-detection service for performance regression testing (a system called https://github.com/Hyperfoil/Horreum[Horreum]) grew a CLI layer used by developers to inject test data, trigger analysis, and query results — all while running the same Quarkus service that handles the REST API. CLI and REST share the same service layer, so correctness guarantees on one path cover both.
+
+== Security and Multi-User CLI
+
+Security for WebSocket-exposed terminals was the one area Max flagged as incomplete. Commands are CDI beans, so standard Quarkus role-based security applies once commands are annotated. SSH connections supported by Aesh-readline enforce key-based authentication. But a first-class story for per-command authorization annotations, equivalent to `@RolesAllowed` on JAX-RS endpoints, is still on the roadmap. For now the advice is to implement access control at the service layer that commands call — which works, and ensures that CLI and REST paths enforce the same policy.
+
+== Key Takeaways
+
+1. **The terminal revival is AI-driven** — agents prefer text I/O, SSH reachability, and low token cost over web UIs and graphical interfaces.
+2. **Aesh 3.18's annotation processor eliminates reflection** — JBang startup dropped from ~500 ms to ~200 ms on the JVM and to 17 ms native; Quarkus handles registration automatically on the build side.
+3. **Lazy subcommand loading** — in CLI mode, Aesh only instantiates the subcommand being executed, not the full command tree, reducing startup further for large CLIs.
+4. **REPL and CLI from one code model** — define commands once; Aesh runs them as a one-shot CLI or an interactive session depending on whether arguments are provided.
+5. **CDI and invocation context** — Quarkus commands are full CDI beans; state can be preserved across REPL commands via the invocation context object.
+6. **WebSocket terminal = multi-user CLI** — Aesh connections are an abstraction over local stdio, SSH, or WebSocket; Quarkus provides the concurrency and virtual threads to serve multiple sessions.
+7. **TamboUI brings Textual-grade TUIs to Java** — flexbox layout, CSS styling, image rendering, and a 350 fps rendering benchmark, all backed by Aesh and runnable in Quarkus.
+8. **CLI as MCP alternative** — a Quarkus app can simultaneously expose REST, WebSocket, and CLI surfaces from a single codebase, with CLI offering a more token-efficient interface for agent workflows.
+9. **PicoCLI is still a great choice** — if you have a working PicoCLI app and speed is not a concern, there is no imperative to migrate. Aesh is the upgrade path when startup, completion, or REPL capabilities become requirements.
+10. **Next up: Quarkus Signals** — episode 261 will cover Quarkus Signals, a new event system.
+
+== Conclusion
+
+Episode 260 makes a persuasive case that the CLI is not a legacy concern that Java developers can safely ignore. Between Aesh's annotation processor eliminating the reflection tax, TamboUI making full TUIs achievable in a few hundred lines of Java, and the Quarkus extension wiring everything to CDI and native image automatically, the Java terminal story in 2026 is better than it has been at any point since `System.in`. That it took AI agents to bring the audience back to the terminal is a historical irony Max and Ståle were clearly happy to accept.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel].
