@@ -1,0 +1,185 @@
+---
+layout: post
+title: 'MCP goes stateless, and Quarkus already implements it'
+date: 2026-09-21
+synopsis: The 2026-07-28 revision of the Model Context Protocol dropped the initialize handshake in favor of stateless, self-contained requests. The 2.0.x line of quarkus-mcp-server supports it out of the box, alongside older protocol versions on the same endpoint.
+tags: extension quarkus-mcp-server
+author: kdubois
+---
+
+If you've been running Model Context Protocol (MCP) servers, you might have bumped into the limitations of stateful sessions.
+Until recently, a client had to perform an `initialize` handshake, get a session ID, and stick to that specific server instance for the duration of the connection.
+
+For a single-instance setup, this is fine.
+But the moment you move to a distributed environment, you're forced into using sticky sessions or a shared session store just to keep the connection alive.
+It's an unnecessary hurdle for what should essentially be a set of HTTP calls.
+
+The https://modelcontextprotocol.io/specification/2026-07-28/[2026-07-28 revision] of the MCP specification finally solves this by going stateless, 
+and the 2.0.x line of the https://github.com/quarkiverse/quarkus-mcp-server[Quarkus MCP Server] already supports these changes out of the box.
+Here is a look at how the protocol has evolved in this latest version and how to use it in Quarkus.
+
+== Moving from sessions to self-contained requests
+
+The core shift in the July 28 revision is the removal of the stateful session handshake.
+Instead of negotiating a session once, every request is now a self-contained JSON-RPC message.
+
+Everything the server needs — protocol version, client identity, and capabilities — is now packed into a `_meta` field within the request.
+If you're using Streamable HTTP, this metadata is mirrored in headers (`MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`) so the server can route or reject the request before it even parses the body.
+
+Since there is no session state to track, any server instance can handle any request.
+An MCP server is now as easy to scale horizontally as any other stateless REST API.
+
+== What about versioning?
+
+Negotiation has also moved to the request level.
+If a server doesn't recognize the version requested in a specific call, it responds with an `UnsupportedProtocolVersionError` and lists its supported versions.
+For clients that want to be proactive, there is now a `server/discover` RPC to check capabilities upfront.
+
+== Multi Round-Trip Requests
+
+Going stateless creates one obvious problem though: how does the server ask the client for something?
+Sampling, elicitation, and roots all require the server to reach back out to the client during a request, e.g. to ask the client's LLM a question, collect extra input from the user, or discover what file roots the client exposes.
+Without a persistent session, there is no channel for any of that.
+
+The spec solves this with Multi Round-Trip Requests.
+Instead of pushing a request to the client, the server returns an `input_required` result.
+The client then collects the necessary data and retries the original call with the answers attached.
+Subscriptions follow a similar path: `resources/subscribe` has been replaced by `subscriptions/listen`, where clients receive notifications on a stream based on a specified filter.
+
+== Implementation in Quarkus MCP Server
+
+Stateless support was added in quarkus-mcp-server 2.0.0 while the spec was still in release candidate.
+
+The implementation is designed to be transparent.
+When a request hits the server, it checks the `MCP-Protocol-Version` header and the `_meta` field.
+If it detects a stateless version (i.e. version `2026-07-28` and up), the request is handled via a transient connection that exists only for the life of that call.
+
+If the request uses an older version, it simply falls back to the traditional session-based path.
+Because both modes live on the same endpoint, you can migrate your clients one by one without breaking existing integrations.
+
+Getting started is exactly as it was before:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.mcp</groupId>
+    <artifactId>quarkus-mcp-server-http</artifactId>
+    <version>${quarkus-mcp-server.version}</version>
+</dependency>
+----
+
+And your tools remain simple annotated methods:
+
+[source,java]
+----
+public class MyTools {
+
+    @Tool(description = "Converts the string value to lower case")
+    String toLowerCase(String value) {
+        return value.toLowerCase();
+    }
+}
+----
+
+If you are connecting from a https://github.com/quarkiverse/quarkus-langchain4j[quarkus-langchain4j] application, configure the MCP client with the `streamable-http` transport and point it at your server:
+
+[source,properties]
+----
+quarkus.langchain4j.mcp.my-server.transport-type=streamable-http
+quarkus.langchain4j.mcp.my-server.url=https://mcp-server.example.com/mcp
+----
+
+The client auto-detects the protocol version by calling `server/discover` and prefers `2026-07-28` when the server supports it.
+If you want to pin it explicitly — for example to guarantee stateless mode or to force the legacy stateful protocol during a migration — set the `protocol-version` property:
+
+[source,properties]
+----
+# Force stateless (2026-07-28)
+quarkus.langchain4j.mcp.my-server.protocol-version=2026-07-28
+
+# Or force legacy stateful
+quarkus.langchain4j.mcp.my-server.protocol-version=2025-11-25
+----
+
+From there, your AI service picks up the tools from that client the same way as before:
+
+[source,java]
+----
+@RegisterAiService
+public interface MyAssistant {
+
+    @McpToolBox("my-server")
+    String chat(@UserMessage String message);
+}
+----
+
+No other changes are needed on the client side.
+
+== Programming for both eras
+
+For the majority of your tools, you won't even notice the protocol version.
+However, if your tool needs to interact with the client through sampling, elicitation, or roots, you'll need to handle both stateful and stateless flows.
+
+The `Sampling`, `Elicitation`, and `Roots` interfaces now provide an `isServerInitiatedRequestSupported()` method, which lets you branch your logic at runtime.
+Here is an example of a tool that asks the client's LLM a question:
+
+[source,java]
+----
+@Tool(description = "Ask the AI a question")
+String askAI(String question, Sampling sampling) {
+    if (!sampling.isSupported()) {
+        return "Sampling not supported";
+    }
+
+    // Stateful path: send request and wait for response
+    if (sampling.isServerInitiatedRequestSupported()) {
+        return sampling.requestBuilder()
+            .setMaxTokens(100)
+            .addMessage(SamplingMessage.withUserRole(question))
+            .build()
+            .sendAndAwait()
+            .content().asText().text();
+    }
+
+    // Stateless path: Multi Round-Trip Requests
+    if (sampling.inputResponses().isEmpty()) {
+        throw sampling.inputRequired()
+            .addSamplingRequest("answer",
+                sampling.requestBuilder()
+                    .setMaxTokens(100)
+                    .addMessage(SamplingMessage.withUserRole(question))
+                    .build())
+            .build();
+    }
+
+    return sampling.inputResponses()
+        .getSamplingResponse("answer")
+        .content().asText().text();
+}
+----
+
+In the stateful flow, the request is sent across the session and the method blocks until the answer comes back.
+In the stateless flow, the tool throws an `InputRequiredException`, which the extension converts into a `resultType: "input_required"` response.
+That way the client knows it needs to send another call once it has the answer.
+For complex multi-step interactions, there is also a `requestState()` which gives you an opaque string the client echoes back on each call so you can track where you left off.
+
+Notifications follow the same pattern: Stateful clients keep using `resources/subscribe`, while stateless clients call `subscriptions/listen` with a filter and receive matching notifications on that stream, 
+each tagged with the subscription identifier in `_meta`. List endpoints and `server/discover` responses also now carry `ttlMs` and `cacheScope` fields you can tune through configuration, 
+and every JSON-RPC result on the new protocol version includes the server identity in `_meta`, as the spec now requires.
+
+== MCP Tasks & Extensions
+
+The new MCP version also includes a way to add capabilities beyond the core MCP protocol, e.g. specific authentication functionality, industry specific logic or experimental features. 
+This capability is planned for Quarkus MCP Server 2.1.0, so keep your eyes peeled for that. 
+
+
+One final note: we run the official https://github.com/modelcontextprotocol/conformance[MCP conformance test suite] in CI.
+This ensures the extension isn't just working by its own internal standards, but is strictly adhering to the specification.
+
+== Getting started
+
+The 2.0.* release is already available.
+If you're already using quarkus-mcp-server, simply bump your version.
+You can immediately start accepting stateless requests from newer clients without changing a single line of server code.
+
+For more details on the Quarkus MCP Server, check out the https://docs.quarkiverse.io/quarkus-mcp-server/dev/[extension documentation].
