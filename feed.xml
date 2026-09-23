@@ -5,7 +5,7 @@
         <title>Quarkus - Supersonic Subatomic Java</title>
         <link>https://quarkus.io</link>
         <description>Quarkus is a Java framework for building fast, efficient, cloud-native applications. It is Kubernetes-native, supports JVM and native executable deployments, provides live reload and delightful developer tooling, integrates with Jakarta and MicroProfile standards, and offers extensions for databases, messaging, security, observability and AI.</description>
-        <lastBuildDate>Wed, 23 Sep 2026 08:31:55 +0000</lastBuildDate>
+        <lastBuildDate>Wed, 23 Sep 2026 09:16:01 +0000</lastBuildDate>
         <item>
             <title>Quarkus 3.27.5.3 released - LTS emergency release</title>
             <link>
@@ -409,6 +409,242 @@ Here&#39;s what had to change:&lt;/p&gt;
                 https://quarkus.io/blog/jekyll-to-roq/
             </guid>
             <author>Holly Cummins (https://twitter.com/holly_cummins)</author>
+        </item>
+        <item>
+            <title>MCP goes stateless, and Quarkus already implements it</title>
+            <link>
+                https://quarkus.io/blog/mcp-stateless/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you&amp;#8217;ve been running Model Context Protocol (MCP) servers, you might have bumped into the limitations of stateful sessions.
+Until recently, a client had to perform an &lt;code&gt;initialize&lt;/code&gt; handshake, get a session ID, and stick to that specific server instance for the duration of the connection.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For a single-instance setup, this is fine.
+But the moment you move to a distributed environment, you&amp;#8217;re forced into using sticky sessions or a shared session store just to keep the connection alive.
+It&amp;#8217;s an unnecessary hurdle for what should essentially be a set of HTTP calls.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://modelcontextprotocol.io/specification/2026-07-28/&quot;&gt;2026-07-28 revision&lt;/a&gt; of the MCP specification finally solves this by going stateless,
+and the 2.0.x line of the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-mcp-server&quot;&gt;Quarkus MCP Server&lt;/a&gt; already supports these changes out of the box.
+Here is a look at how the protocol has evolved in this latest version and how to use it in Quarkus.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_moving_from_sessions_to_self_contained_requests&quot;&gt;Moving from sessions to self-contained requests&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The core shift in the July 28 revision is the removal of the stateful session handshake.
+Instead of negotiating a session once, every request is now a self-contained JSON-RPC message.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Everything the server needs — protocol version, client identity, and capabilities — is now packed into a &lt;code&gt;_meta&lt;/code&gt; field within the request.
+If you&amp;#8217;re using Streamable HTTP, this metadata is mirrored in headers (&lt;code&gt;MCP-Protocol-Version&lt;/code&gt;, &lt;code&gt;Mcp-Method&lt;/code&gt;, and &lt;code&gt;Mcp-Name&lt;/code&gt;) so the server can route or reject the request before it even parses the body.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Since there is no session state to track, any server instance can handle any request.
+An MCP server is now as easy to scale horizontally as any other stateless REST API.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_what_about_versioning&quot;&gt;What about versioning?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Negotiation has also moved to the request level.
+If a server doesn&amp;#8217;t recognize the version requested in a specific call, it responds with an &lt;code&gt;UnsupportedProtocolVersionError&lt;/code&gt; and lists its supported versions.
+For clients that want to be proactive, there is now a &lt;code&gt;server/discover&lt;/code&gt; RPC to check capabilities upfront.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_multi_round_trip_requests&quot;&gt;Multi Round-Trip Requests&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Going stateless creates one obvious problem though: how does the server ask the client for something?
+Sampling, elicitation, and roots all require the server to reach back out to the client during a request, e.g. to ask the client&amp;#8217;s LLM a question, collect extra input from the user, or discover what file roots the client exposes.
+Without a persistent session, there is no channel for any of that.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The spec solves this with Multi Round-Trip Requests.
+Instead of pushing a request to the client, the server returns an &lt;code&gt;input_required&lt;/code&gt; result.
+The client then collects the necessary data and retries the original call with the answers attached.
+Subscriptions follow a similar path: &lt;code&gt;resources/subscribe&lt;/code&gt; has been replaced by &lt;code&gt;subscriptions/listen&lt;/code&gt;, where clients receive notifications on a stream based on a specified filter.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_implementation_in_quarkus_mcp_server&quot;&gt;Implementation in Quarkus MCP Server&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Stateless support was added in quarkus-mcp-server 2.0.0 while the spec was still in release candidate.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The implementation is designed to be transparent.
+When a request hits the server, it checks the &lt;code&gt;MCP-Protocol-Version&lt;/code&gt; header and the &lt;code&gt;_meta&lt;/code&gt; field.
+If it detects a stateless version (i.e. version &lt;code&gt;2026-07-28&lt;/code&gt; and up), the request is handled via a transient connection that exists only for the life of that call.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If the request uses an older version, it simply falls back to the traditional session-based path.
+Because both modes live on the same endpoint, you can migrate your clients one by one without breaking existing integrations.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Getting started is exactly as it was before:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;&amp;lt;dependency&amp;gt;
+    &amp;lt;groupId&amp;gt;io.quarkiverse.mcp&amp;lt;/groupId&amp;gt;
+    &amp;lt;artifactId&amp;gt;quarkus-mcp-server-http&amp;lt;/artifactId&amp;gt;
+    &amp;lt;version&amp;gt;${quarkus-mcp-server.version}&amp;lt;/version&amp;gt;
+&amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And your tools remain simple annotated methods:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;public class MyTools {
+
+    @Tool(description = &quot;Converts the string value to lower case&quot;)
+    String toLowerCase(String value) {
+        return value.toLowerCase();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you are connecting from a &lt;a href=&quot;https://github.com/quarkiverse/quarkus-langchain4j&quot;&gt;quarkus-langchain4j&lt;/a&gt; application, configure the MCP client with the &lt;code&gt;streamable-http&lt;/code&gt; transport and point it at your server:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;quarkus.langchain4j.mcp.my-server.transport-type=streamable-http
+quarkus.langchain4j.mcp.my-server.url=https://mcp-server.example.com/mcp&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The client auto-detects the protocol version by calling &lt;code&gt;server/discover&lt;/code&gt; and prefers &lt;code&gt;2026-07-28&lt;/code&gt; when the server supports it.
+If you want to pin it explicitly — for example to guarantee stateless mode or to force the legacy stateful protocol during a migration — set the &lt;code&gt;protocol-version&lt;/code&gt; property:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Force stateless (2026-07-28)
+quarkus.langchain4j.mcp.my-server.protocol-version=2026-07-28
+
+# Or force legacy stateful
+quarkus.langchain4j.mcp.my-server.protocol-version=2025-11-25&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;From there, your AI service picks up the tools from that client the same way as before:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@RegisterAiService
+public interface MyAssistant {
+
+    @McpToolBox(&quot;my-server&quot;)
+    String chat(@UserMessage String message);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;No other changes are needed on the client side.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_programming_for_both_eras&quot;&gt;Programming for both eras&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For the majority of your tools, you won&amp;#8217;t even notice the protocol version.
+However, if your tool needs to interact with the client through sampling, elicitation, or roots, you&amp;#8217;ll need to handle both stateful and stateless flows.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;Sampling&lt;/code&gt;, &lt;code&gt;Elicitation&lt;/code&gt;, and &lt;code&gt;Roots&lt;/code&gt; interfaces now provide an &lt;code&gt;isServerInitiatedRequestSupported()&lt;/code&gt; method, which lets you branch your logic at runtime.
+Here is an example of a tool that asks the client&amp;#8217;s LLM a question:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Tool(description = &quot;Ask the AI a question&quot;)
+String askAI(String question, Sampling sampling) {
+    if (!sampling.isSupported()) {
+        return &quot;Sampling not supported&quot;;
+    }
+
+    // Stateful path: send request and wait for response
+    if (sampling.isServerInitiatedRequestSupported()) {
+        return sampling.requestBuilder()
+            .setMaxTokens(100)
+            .addMessage(SamplingMessage.withUserRole(question))
+            .build()
+            .sendAndAwait()
+            .content().asText().text();
+    }
+
+    // Stateless path: Multi Round-Trip Requests
+    if (sampling.inputResponses().isEmpty()) {
+        throw sampling.inputRequired()
+            .addSamplingRequest(&quot;answer&quot;,
+                sampling.requestBuilder()
+                    .setMaxTokens(100)
+                    .addMessage(SamplingMessage.withUserRole(question))
+                    .build())
+            .build();
+    }
+
+    return sampling.inputResponses()
+        .getSamplingResponse(&quot;answer&quot;)
+        .content().asText().text();
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the stateful flow, the request is sent across the session and the method blocks until the answer comes back.
+In the stateless flow, the tool throws an &lt;code&gt;InputRequiredException&lt;/code&gt;, which the extension converts into a &lt;code&gt;resultType: &quot;input_required&quot;&lt;/code&gt; response.
+That way the client knows it needs to send another call once it has the answer.
+For complex multi-step interactions, there is also a &lt;code&gt;requestState()&lt;/code&gt; which gives you an opaque string the client echoes back on each call so you can track where you left off.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Notifications follow the same pattern: Stateful clients keep using &lt;code&gt;resources/subscribe&lt;/code&gt;, while stateless clients call &lt;code&gt;subscriptions/listen&lt;/code&gt; with a filter and receive matching notifications on that stream,
+each tagged with the subscription identifier in &lt;code&gt;_meta&lt;/code&gt;. List endpoints and &lt;code&gt;server/discover&lt;/code&gt; responses also now carry &lt;code&gt;ttlMs&lt;/code&gt; and &lt;code&gt;cacheScope&lt;/code&gt; fields you can tune through configuration,
+and every JSON-RPC result on the new protocol version includes the server identity in &lt;code&gt;_meta&lt;/code&gt;, as the spec now requires.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_mcp_tasks_extensions&quot;&gt;MCP Tasks &amp;amp; Extensions&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The new MCP version also includes a way to add capabilities beyond the core MCP protocol, e.g. specific authentication functionality, industry specific logic or experimental features.
+This capability is planned for Quarkus MCP Server 2.1.0, so keep your eyes peeled for that.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;One final note: we run the official &lt;a href=&quot;https://github.com/modelcontextprotocol/conformance&quot;&gt;MCP conformance test suite&lt;/a&gt; in CI.
+This ensures the extension isn&amp;#8217;t just working by its own internal standards, but is strictly adhering to the specification.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_getting_started&quot;&gt;Getting started&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The 2.0.* release is already available.
+If you&amp;#8217;re already using quarkus-mcp-server, simply bump your version.
+You can immediately start accepting stateless requests from newer clients without changing a single line of server code.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For more details on the Quarkus MCP Server, check out the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-mcp-server/dev/&quot;&gt;extension documentation&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Mon, 21 Sep 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/mcp-stateless/
+            </guid>
+            <author>Kevin Dubois (https://twitter.com/kevindubois)</author>
         </item>
         <item>
             <title>Quarkus Insights #260: CLI and TUI Applications — A Terminal Renaissance in Java</title>
@@ -72155,31 +72391,6 @@ and improvements to our upgrade process.&lt;/p&gt;
                 https://quarkus.io/blog/quarkus-3-0-0-alpha6-released/
             </guid>
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-        </item>
-        <item>
-            <title>Quarkus Newsletter #30 - March</title>
-            <link>
-                https://quarkus.io/blog/quarkus-newsletter-30/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It&amp;#8217;s time for the March newletter so you can read the latest articles, blogs and insights on Quarkus. Get a deeper understanding of what developers can expect in the final version 3.0 with this InfoQ article &quot;Road to Quarkus 3: Bets on the Flow API for Mutiny 2.0, Updates to Jakarta Namespace and More&quot; by Olimpiu Pop. Explore the capabilities of Quarkus and find out how Quarkus helps Java to meet evolving needs with &quot;Supersonic Subatomic Java with Quarkus&quot; by Akila Weeratunga. Learn what Eclipse JKube Remote Development is and how it can help developers build Kubernetes-native applications with Quarkus in Eric Deandrea&amp;#8217;s article, &quot;Kubernetes-Native Development With Quarkus and Eclipse JKube&quot;. Delve into the Funqy extension of the Quarkus framework with baudlung. Explore the significance of the terms &quot;native&quot; and &quot;reactive&quot; and why they have become so essential int Ashok Gudise&amp;#8217;s blog &quot;Think Reactive and Native With Quarkus, Kotlin, and GraphQL&quot;. Learn how the open source library JPAStreamer makes the process of writing Hibernate queries more intuitive and less time-consuming, while leaving your existing codebase intact in Julia Gustafsson&amp;#8217;s article &quot;Express Hibernate Queries as Type-Safe Java Streams&quot;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Check out &lt;a href=&quot;https://quarkus.io/newsletter/30/&quot;&gt;Newsletter #30&lt;/a&gt;!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Want to get newsletters in your inbox? &lt;a href=&quot;https://quarkus.io/newsletter&quot;&gt;Sign up for the newsletter&lt;/a&gt; using the on page form.&lt;/p&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Tue, 14 Mar 2023 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-newsletter-30/
-            </guid>
-            <author>James Cobb (https://twitter.com/insectengine)</author>
         </item>
     </channel>
 </rss>
