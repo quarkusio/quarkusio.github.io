@@ -136,7 +136,6 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
-    @Disabled("not working, tracked by #3023")
     @Test
     void sitemapHtmlContainsLinks() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
@@ -148,7 +147,7 @@ public class SitemapTest extends BrowserTest {
             String body = response.body();
             assertFalse(body.isEmpty(), "sitemap should not be empty");
             // Choose a typical url that should be in the sitemap, but not in the header menu
-            assertTrue(body.contains("<a href=\"/guides/versions"), "sitemap should contain anchor links");
+            assertTrue(body.contains("<a href=\"/insights\""), "sitemap should contain anchor links");
             assertTrue(body.contains("https://quarkus.io"), "sitemap should contain quarkus.io URLs");
         }
     }
