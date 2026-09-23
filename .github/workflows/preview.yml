@@ -27,21 +27,33 @@ jobs:
         run-id: ${{ github.event.workflow_run.id }}
         name: site
         github-token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Store PR id as variable
+    - name: Validate and expose PR number
       id: pr
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RAW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+        HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       run: |
-        pr=$(<pr-id.txt)
-        if ! [[ $pr =~ ^[0-9]+$ ]] ; then
-          echo "PR id extracted from pr-id.txt is not a number: $pr"
+        # workflow_run.pull_requests is empty for pull requests opened from forks:
+        # look the pull request up from the head of the documentation build instead
+        if [[ -z "$RAW_PR_NUMBER" ]]; then
+          RAW_PR_NUMBER=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f state=open -f head="${HEAD_OWNER}:${HEAD_BRANCH}" -f per_page=100 \
+            --jq 'map(select(.head.sha == env.HEAD_SHA)) | .[0].number // empty')
+        fi
+        if ! [[ "$RAW_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+          echo "Invalid PR number: $RAW_PR_NUMBER" >&2
           exit 1
         fi
-        echo "id=${pr}" >> $GITHUB_OUTPUT
-        rm -f pr-id.txt
+        echo "id=$RAW_PR_NUMBER" >> $GITHUB_OUTPUT
     - name: Publishing to surge for preview
       id: deploy
-      run: npx surge@0.23.1 ./ --domain https://quarkus-website-pr-${PR_ID}-preview.surge.sh --token ${{ secrets.SURGE_TOKEN }}
       env:
-        PR_ID: ${{  steps.pr.outputs.id }}
+        PR_ID: ${{ steps.pr.outputs.id }}
+        SURGE_TOKEN: ${{ secrets.SURGE_TOKEN }}
+      run: npx surge@0.23.1 ./ --domain "https://quarkus-website-pr-${PR_ID}-preview.surge.sh" --token "$SURGE_TOKEN"
 
     - name: Update PR status comment on success
       uses: quarkusio/action-helpers@main
