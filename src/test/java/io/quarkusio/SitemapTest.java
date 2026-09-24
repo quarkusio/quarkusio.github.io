@@ -152,7 +152,6 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
-    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtReturns200() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
@@ -166,7 +165,6 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
-    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtIsPlainText() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
@@ -181,7 +179,6 @@ public class SitemapTest extends BrowserTest {
         }
     }
 
-    @Disabled("regressed, tracked by https://github.com/quarkusio/quarkusio.github.io/issues/3046")
     @Test
     void llmsTxtContainsContent() throws IOException, InterruptedException {
         try (HttpClient client = HttpClient.newHttpClient()) {
