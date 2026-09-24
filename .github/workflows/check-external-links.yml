@@ -1,0 +1,189 @@
+# This workflow crawls the live quarkus.io site to find broken external links,
+# then raises GitHub issues for any it finds and auto-closes issues for links
+# that have been fixed.
+#
+# Unlike the PR build workflow, this does NOT build the site locally — it
+# crawls the live production site directly. This is simpler and also means
+# we're checking what users actually see. The trade-off is that we won't catch
+# broken links in unmerged PRs, but the PR build's internal link crawler
+# covers that case (with external checking disabled for speed).
+#
+# Guides are still checked, but via /version/main/guides/ (the main snapshot)
+# rather than /guides/ (the release). This catches broken links before release.
+#
+# Broken links on guide pages (/guides/*, /version/*) are filed in
+# quarkusio/quarkus; all others are filed in quarkusio/quarkusio.github.io.
+#
+# Informational-only reporting (printed but no defects raised):
+# - Newsletters and blog posts older than the configured cutoff
+#   (test.crawl.dated-cutoff-months) - old dated content naturally accumulates
+#   dead links that aren't worth fixing
+# - Links with status codes 401/403/410 - these are often uncheckable rather
+#   than genuinely broken
+
+name: Check external links
+
+on:
+  schedule:
+    - cron: '0 15 * * 1,4' # Monday and Thursday 3pm UTC
+  pull_request:
+    paths:
+      - '.github/workflows/check-external-links.yml'
+      - 'pom.xml'
+      - 'src/test/java/io/quarkusio/LinkCrawlerTest.java'
+      - 'src/test/java/io/quarkusio/BrowserTest.java'
+      - 'tools/dead-link-issue.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: check-external-links
+  cancel-in-progress: false
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    if: github.repository == 'quarkusio/quarkusio.github.io'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Maven repository
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pom.xml') }}
+
+      - name: Compile tests
+        run: mvn -B test-compile
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+
+      - name: Run link crawler with external checks
+        continue-on-error: true
+        timeout-minutes: 200
+        run: >-
+          mvn -B test -Pe2e -Dtest.url=https://quarkus.io
+          -Dtest.crawl.check-external=true
+          -Dtest.crawl.results-file=target/broken-links.json
+          -Dtest.crawl.dated-cutoff-months=12
+          -Dtest.crawl.exclude-paths=/guides/,/version/2,/version/3,/version/4,/version/main/guides/doc-reference,/extensions,/quarkus-workshop-langchain4j
+          -Dtest.crawl.exclude-urls=linkedin.com/shareArticle,x.com/intent,twitter.com/intent
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
+
+      - name: Print findings summary
+        if: always()
+        run: |
+          if [ -f target/broken-links.json ]; then
+            REPORTABLE=$(jq '.summary.reportableCount' target/broken-links.json)
+            UNCHECKABLE=$(jq '.summary.uncheckableCount' target/broken-links.json)
+            OLD_CONTENT=$(jq '.summary.oldContentCount' target/broken-links.json)
+            TOTAL=$(jq '.summary.totalBrokenLinks' target/broken-links.json)
+
+            echo "## $TOTAL Broken Links Found" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **$REPORTABLE** reportable (will raise defects)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **$UNCHECKABLE** uncheckable (401/403/410 - informational only)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **$OLD_CONTENT** in old content (blogs/newsletters older than cutoff - informational only)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$REPORTABLE" -gt 0 ]; then
+              echo "### Reportable Broken Links (will raise defects)" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "| URL | Status | Found On |" >> "$GITHUB_STEP_SUMMARY"
+              echo "|-----|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.reportable[] | "| \(.url) | \(.status) \(.statusText) | \(.referrer) |"' target/broken-links.json >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if [ "$UNCHECKABLE" -gt 0 ]; then
+              echo "### Uncheckable Links (informational only)" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "These links return 401/403/410 status codes - often due to bot blocking or paywalls." >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "| URL | Status | Found On |" >> "$GITHUB_STEP_SUMMARY"
+              echo "|-----|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.uncheckable[] | "| \(.url) | \(.status) \(.statusText) | \(.referrer) |"' target/broken-links.json >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if [ "$OLD_CONTENT" -gt 0 ]; then
+              echo "### Links in Old Content (informational only)" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "These broken links are from blogs and newsletters older than the configured cutoff." >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "| URL | Status | Found On |" >> "$GITHUB_STEP_SUMMARY"
+              echo "|-----|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.oldContent[] | "| \(.url) | \(.status) \(.statusText) | \(.referrer) |"' target/broken-links.json >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            echo ""
+            echo "=== Broken Links Report ==="
+            if [ "$REPORTABLE" -gt 0 ]; then
+              echo ""
+              echo "REPORTABLE ($REPORTABLE links - will raise defects):"
+              jq -r '.reportable[] | "\(.status) \(.url)\n       linked from: \(.referrer)\n"' target/broken-links.json
+            fi
+            if [ "$UNCHECKABLE" -gt 0 ]; then
+              echo ""
+              echo "UNCHECKABLE ($UNCHECKABLE links - informational only):"
+              jq -r '.uncheckable[] | "\(.status) \(.url)\n       linked from: \(.referrer)\n"' target/broken-links.json
+            fi
+            if [ "$OLD_CONTENT" -gt 0 ]; then
+              echo ""
+              echo "OLD CONTENT ($OLD_CONTENT links - informational only):"
+              jq -r '.oldContent[] | "\(.status) \(.url)\n       linked from: \(.referrer)\n"' target/broken-links.json
+            fi
+            echo "=== End of Report ==="
+            echo ""
+            echo "Total: $TOTAL broken link(s) ($REPORTABLE reportable, $UNCHECKABLE uncheckable, $OLD_CONTENT in old content)"
+          else
+            echo "No results file found — crawler may not have completed."
+          fi
+
+      - name: Raise defects if needed
+        if: github.event_name != 'pull_request'
+        uses: jbangdev/jbang-action@v0.137.0
+        with:
+          script: tools/dead-link-issue.java
+          scriptargs: >-
+            --token=${{ secrets.GITHUB_TOKEN }}
+            --guideIssueRepo=quarkusio/quarkus
+            --siteIssueRepo=${{ github.repository }}
+            --runId=${{ github.run_id }}
+            --siteUrl=https://quarkus.io
+            --resultsFile=target/broken-links.json
+
+      - name: Dry-run defect report
+        if: github.event_name == 'pull_request'
+        uses: jbangdev/jbang-action@v0.137.0
+        with:
+          script: tools/dead-link-issue.java
+          scriptargs: >-
+            --token=${{ secrets.GITHUB_TOKEN }}
+            --guideIssueRepo=quarkusio/quarkus
+            --siteIssueRepo=${{ github.repository }}
+            --runId=${{ github.run_id }}
+            --siteUrl=https://quarkus.io
+            --resultsFile=target/broken-links.json
+            --dryRun
