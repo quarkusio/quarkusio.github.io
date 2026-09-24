@@ -29,7 +29,7 @@ import java.util.List;
 class Report implements Runnable {
 
     private static final String EYECATCHER = "QuarkusWebsiteDeadLinkHelper";
-    private static final int MAX_LINKS = 50;
+    private static final int MAX_LINKS = 75;
 
     // Matched as substrings, so these also cover the triage/ prefixed variants
     private static final List<String> DO_NOT_REOPEN_LABELS = List.of("wontfix", "invalid");
