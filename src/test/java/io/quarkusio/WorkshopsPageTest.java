@@ -1,42 +1,43 @@
 package io.quarkusio;
 
+import java.util.List;
+
 import com.microsoft.playwright.Locator;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
 import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static io.quarkusio.UnrenderedMarkupDetector.findUnresolvedPlaceholders;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-public class WorkingGroupsPageTest extends BrowserTest {
+public class WorkshopsPageTest extends BrowserTest {
 
-    public static final String WORKING_GROUPS_PATH = "/working-groups/";
+    public static final String WORKSHOPS_PATH = "/workshops/";
 
     @Test
-    void workingGroupsPageListsAtLeastFive() {
-        page.navigate(baseUrl + WORKING_GROUPS_PATH);
+    void workingGroupsPageListsAGoodNumber() {
+        page.navigate(baseUrl + WORKSHOPS_PATH);
         int count = page.locator(".card .card-title").count();
-        assertTrue(count >= 5,
-                "Expected at least 5 working groups but found " + count);
+        assertTrue(count >= 2,
+                "Expected several workshops but found " + count);
     }
 
     @Test
     void workingGroupsPageDoesNotContainUnrenderedMarkup() {
-        page.navigate(baseUrl + WORKING_GROUPS_PATH);
-        assertDoesNotContainUnrenderedMarkup(page, "Working groups page");
+        page.navigate(baseUrl + WORKSHOPS_PATH);
+        assertDoesNotContainUnrenderedMarkup(page, "Workshops page");
     }
 
     @Test
     void workingGroupsPageDoesNotContainRawHtmlTags() {
-        page.navigate(baseUrl + WORKING_GROUPS_PATH);
-        assertDoesNotContainRawHtml(page, "Working groups page");
+        page.navigate(baseUrl + WORKSHOPS_PATH);
+        assertDoesNotContainRawHtml(page, "Workshops page");
     }
 
     @Test
     void workingGroupsCardsDoNotContainUnresolvedPlaceholders() {
-        page.navigate(baseUrl + WORKING_GROUPS_PATH);
+        page.navigate(baseUrl + WORKSHOPS_PATH);
         Locator cards = page.locator(".card");
         int count = cards.count();
         assertTrue(count >= 1, "Expected at least 1 card");
@@ -50,16 +51,16 @@ public class WorkingGroupsPageTest extends BrowserTest {
 
     @Test
     void workingGroupsCardsHaveDistinctTitles() {
-        page.navigate(baseUrl + WORKING_GROUPS_PATH);
+        page.navigate(baseUrl + WORKSHOPS_PATH);
         Locator titles = page.locator(".card .card-title");
         int count = titles.count();
-        assertTrue(count >= 5, "Expected at least 5 card titles");
+        assertTrue(count >= 2, "Expected several card titles");
         long distinctCount = java.util.stream.IntStream.range(0, count)
                 .mapToObj(i -> titles.nth(i).innerText().trim())
                 .distinct()
                 .count();
-        assertTrue(distinctCount >= 5,
-                "Expected at least 5 distinct card titles but found " + distinctCount
+        assertEquals(count, distinctCount,
+                "Expected several distinct card titles but found " + distinctCount
                         + " (all cards having the same title suggests unresolved template data)");
     }
 }
