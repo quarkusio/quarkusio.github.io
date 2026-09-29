@@ -1,0 +1,169 @@
+---
+layout: post
+title: 'Build AWT and Swing desktop applications with Quarkus Desktop'
+date: 2026-09-30
+tags: extension
+synopsis: 'Quarkus Desktop brings AWT and Swing applications to Quarkus, in JVM mode and as native executables on Windows, Linux, and macOS.'
+author: eng-fouad
+---
+
+Java has shipped AWT and Swing for decades, and many teams still build and maintain desktop applications with them.
+A GraalVM native executable is attractive for these applications: it starts fast, needs no JVM on the user's machine, and ships as one executable with a few libraries.
+But AWT and Swing are hard to compile natively.
+The JDK looks up classes, resources, and JNI callbacks by name, and each platform uses its own set.
+
+https://github.com/quarkiverse/quarkus-desktop[Quarkus Desktop] is a Quarkus extension for these applications.
+It registers what AWT, Java2D, fonts, images, printing, the clipboard, drag and drop, input methods, sound, accessibility, and Swing need in a native executable.
+It also copies the JDK libraries that the executable loads next to it.
+The same application runs in JVM mode, in dev mode, and as a native executable on Windows, Linux, and macOS.
+
+== Add the extension
+
+Add Quarkus Desktop Swing to your application:
+
+[source,xml]
+....
+<dependency>
+    <groupId>io.quarkiverse.desktop</groupId>
+    <artifactId>quarkus-desktop-swing</artifactId>
+    <version>0.1.0</version>
+</dependency>
+....
+
+For an application that only uses AWT, add `quarkus-desktop-awt` instead.
+You can find the latest version on https://central.sonatype.com/artifact/io.quarkiverse.desktop/quarkus-desktop-swing[Maven Central].
+
+== Open a window
+
+With Quarkus Desktop, a window is a CDI bean.
+It observes `DesktopStartupEvent`, which is fired on the event dispatch thread once the application has started:
+
+[source,java]
+....
+import io.quarkiverse.desktop.awt.DesktopStartupEvent;
+
+@Singleton
+public class MainWindow extends JFrame {
+
+    @Inject
+    Library library;
+
+    @ConfigProperty(name = "app.title", defaultValue = "Library")
+    String title;
+
+    void open(@Observes DesktopStartupEvent event) {
+        setTitle(title);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        add(new JScrollPane(new JList<>(library.titles())));
+        pack();
+        setVisible(true);
+    }
+}
+....
+
+The window gets `@Inject` and `@ConfigProperty` like any other bean.
+There is no `main` method and no `@QuarkusMain`.
+When the last window is closed, the application exits through Quarkus, so `ShutdownEvent` observers and `@PreDestroy` methods run.
+
+Windows are `@Singleton` or `@Dependent` beans.
+A normal scope such as `@ApplicationScoped` does not work for Swing components: the client proxy would be a second component, created outside the event dispatch thread.
+Quarkus Desktop reports this mistake when the application is built.
+
+== Stay on the event dispatch thread
+
+Swing components must only be used on the event dispatch thread.
+Slow work, such as reading a file or calling a service, must run somewhere else.
+Run it on a Quarkus executor and come back with `EdtExecutor`:
+
+[source,java]
+....
+@Inject
+ManagedExecutor workers;
+
+@Inject
+EdtExecutor edt;
+
+void refresh() {
+    status.setText("Loading...");
+    CompletableFuture.supplyAsync(repository::titles, workers)
+            .thenAcceptAsync(this::show, edt);
+}
+....
+
+`EdtExecutor` also works with Mutiny, through `emitOn(edt)`, and with asynchronous CDI events.
+
+When a method is called from another thread, such as a `@Scheduled` method or a REST resource, annotate it with `@RunOnEdt`:
+
+[source,java]
+....
+@ApplicationScoped
+public class StatusPresenter {
+
+    @Inject
+    Instance<StatusBar> statusBar;
+
+    @RunOnEdt
+    public void show(String text) {
+        statusBar.get().setText(text);
+    }
+}
+....
+
+The method runs on the event dispatch thread, whatever thread calls it.
+A method can also return a `CompletionStage`, which completes with the result or the exception.
+
+== Handle the macOS application menu
+
+On macOS, the application menu and the Dock send events to the application: About, Preferences, files opened from the Finder, and quit requests.
+Quarkus Desktop fires them as CDI events:
+
+[source,java]
+....
+void about(@Observes AboutEvent event) {
+    WindowBeans.get(aboutDialog).setVisible(true);
+}
+
+void quit(@Observes QuitRequest request) {
+    if (documents.hasUnsavedChanges()) {
+        request.cancel();
+    }
+}
+....
+
+`aboutDialog` is an injected `Instance<AboutDialog>`: `WindowBeans` creates the dialog and destroys the bean when the dialog is closed.
+`Cmd-Q` fires `QuitRequest`, and the application exits through Quarkus unless an observer cancels it.
+
+== Build a native executable
+
+Build the native executable as for any Quarkus application:
+
+[source,shell]
+....
+./mvnw package -Dnative
+....
+
+The build runs on the platform of the executable.
+
+* On Windows, the executable is DPI aware and has the visual styles of the `java` launcher. With `quarkus.desktop.awt.windows.subsystem=windows`, it starts without a console window.
+* On Linux, the executable uses the X11 libraries of the system, or XWayland on Wayland. The build can also run in a container.
+* On macOS, native executables need Quarkus 4.0, whose `quarkus-awt` extension supports macOS, and GraalVM 25.1 or later.
+
+On Windows arm64, GraalVM has no native image builder, so applications run in JVM mode there.
+
+== When is this useful
+
+Quarkus Desktop can help when you write or maintain a Java desktop application and want what Quarkus offers: CDI, configuration, dev mode, and native executables.
+It is also useful for tools and utilities that need a small user interface, such as a tray icon or a settings window next to a service.
+
+AWT and Swing work in native executables as they do in JVM mode, with a few documented limitations.
+For example, a native executable cannot load classes that were not known at build time.
+The https://docs.quarkiverse.io/quarkus-desktop/dev/[documentation] lists them.
+
+== How it is tested
+
+The https://github.com/Eng-Fouad/quarkus-desktop-showcase[Quarkus Desktop showcase] is an application of 75 pages, with about 3800 checks.
+It covers AWT, Java2D, text, images, Swing, the look and feels, data transfer, printing, accessibility, and sound.
+Its continuous integration runs every page in JVM mode and as a native executable on Linux, Windows, and macOS, then compares the two runs pixel by pixel and check by check.
+
+https://github.com/quarkiverse/quarkus-desktop[Quarkus Desktop] brings Java desktop applications to Quarkus, from dev mode to native executables.
+Explore the project, try it with your application, and share your experience with us.
