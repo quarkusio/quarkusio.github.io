@@ -2195,6 +2195,7 @@
 <li data-level="2"><a href="#adding-pages-to-the-dev-ui">Adding Pages to the Dev UI</a></li>
 <li data-level="2"><a href="#communicating-to-the-backend">Communicating to the backend</a></li>
 <li data-level="2"><a href="#workspace">Workspace</a></li>
+<li data-level="2"><a href="#observability-dashboard">Observability dashboard</a></li>
 <li data-level="2"><a href="#advanced-custom-cards">Advanced: Custom cards</a></li>
 <li data-level="2"><a href="#dev-ui-log">Dev UI Log</a></li>
 <li data-level="2"><a href="#advanced-headless-components">Advanced: Headless Components</a></li>
@@ -2314,6 +2315,10 @@ It serves as a powerful portal for exploring, debugging, and interacting with yo
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Dev Services</strong></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Displays information about automatically started services (e.g., databases, Kafka brokers).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Observability</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A dashboard of telemetry cards you compose yourself: application metrics, plus a card per signal (such as OpenTelemetry traces) contributed by the telemetry extensions in use. Only present when at least one such extension is present.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Build Metrics</strong></p></td>
@@ -5131,6 +5136,128 @@ this._observer.cancel(); <i class="conum" data-value="2"></i><b>(2)</b></code></
 <p>image: This will display an image</p>
 </li>
 </ul>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="observability-dashboard"><a class="anchor" href="#observability-dashboard"></a>Observability dashboard</h3>
+<div class="paragraph">
+<p>As soon as one extension contributes a telemetry signal, Dev UI adds a single <strong>Observability</strong>
+entry to the left menu, and that entry is a dashboard the user composes: they pick the cards they
+want the first time they open it, change their mind later with <strong>Edit dashboard</strong>, and drag the
+cards into the order that suits them. The choice is kept in the browser&#8217;s local storage rather
+than per application, so it follows the developer from one application to the next.</p>
+</div>
+<div class="paragraph">
+<p>Extensions contribute to that dashboard in two ways.</p>
+</div>
+<div class="sect3">
+<h4 id="contributing-a-signal-card"><a class="anchor" href="#contributing-a-signal-card"></a>Contributing a signal card</h4>
+<div class="paragraph">
+<p>If your extension captures a telemetry signal (traces, logs, events, profiles, &#8230;&#8203;), produce an
+<code>ObservabilitySignalBuildItem</code> from <code>quarkus-devui-deployment-spi</code> alongside the page that shows
+it. The dashboard then offers that page as a card, so there is no second component to write:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@BuildStep(onlyIf = IsLocalDevelopment.class)
+void tracesPage(BuildProducer&lt;UnlistedPageBuildItem&gt; unlistedPages,
+        BuildProducer&lt;ObservabilitySignalBuildItem&gt; signals) {
+
+    UnlistedPageBuildItem page = new UnlistedPageBuildItem(); <i class="conum" data-value="1"></i><b>(1)</b>
+    page.addPage(Page.webComponentPageBuilder()
+            .icon("font-awesome-solid:diagram-project")
+            .title("Traces")
+            .componentLink("qwc-otel-traces.js"));
+    unlistedPages.produce(page);
+
+    signals.produce(new ObservabilitySignalBuildItem(
+            "traces", <i class="conum" data-value="2"></i><b>(2)</b>
+            "OpenTelemetry Traces", <i class="conum" data-value="3"></i><b>(3)</b>
+            "font-awesome-solid:diagram-project", <i class="conum" data-value="4"></i><b>(4)</b>
+            "quarkus-opentelemetry/traces", <i class="conum" data-value="5"></i><b>(5)</b>
+            "spanCount")); <i class="conum" data-value="6"></i><b>(6)</b>
+}</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>The page that backs the card. It has to be an unlisted page: the dashboard resolves the page
+id against the unlisted pages only, and a signal pointing at a card, menu or footer page is
+dropped without an error, leaving you with a signal that never shows up as a card.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="2"></i><b>2</b></td>
+<td>A key unique among all signals. It identifies the card in the stored dashboard, so changing
+it drops the card from dashboards that already have it.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="3"></i><b>3</b></td>
+<td>The title shown on the card and in the picker. Name the backend here, not just the signal:
+the picker lists every extension&#8217;s signals together, so a bare "Traces" is ambiguous.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="4"></i><b>4</b></td>
+<td>The icon, from the Dev UI icon set.</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="5"></i><b>5</b></td>
+<td>The id of the page above. Dev UI derives it as <code>&lt;namespace&gt;/&lt;title-in-lowercase-with-dashes&gt;</code>,
+where the namespace defaults to your extension&#8217;s name. Pass <code>null</code> if the signal has no page of
+its own: the dashboard then knows the feature is present but contributes no card for it (this is
+what metrics does, since it expands into one card per meter instead).</td>
+</tr>
+<tr>
+<td><i class="conum" data-value="6"></i><b>6</b></td>
+<td>Optional name of a JSON-RPC method returning a live count. Reserved for a future count on the
+card; pass <code>null</code> if you have none.</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>The card renders your component inline, in a box 320 pixels tall (420 for a card spanning the
+full width), with an <strong>Open</strong> link through to the full page. Size the component against its host
+(<code>height: 100%</code>, or a flex column) rather than against the viewport - the card body scrolls what
+does not fit, and the user can always maximize the card to give it the whole dashboard area.
+Nothing else changes: the component is imported only when the card is actually on the dashboard,
+and its JSON-RPC calls, subscriptions and hot reload behave exactly as they do on the full page.</p>
+</div>
+<div class="paragraph">
+<p>Extend <code>ObservabilityCardBase</code> rather than <code>QwcHotReloadElement</code> in that component. Core Dev UI
+puts it in the import map under the bare specifier <code>observability-card-base</code>; it extends
+<code>QwcHotReloadElement</code> itself, so you keep <code>hotReload()</code>, and adds the affordances every signal
+component ends up wanting, currently <code>exportCsv(rows, filename)</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-javascript hljs" data-lang="javascript">import { ObservabilityCardBase } from 'observability-card-base';
+
+export class QwcOtelTraces extends ObservabilityCardBase {
+    // ...
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="contributing-metrics"><a class="anchor" href="#contributing-metrics"></a>Contributing metrics</h4>
+<div class="paragraph">
+<p>Meters need no work at all. Every meter registered with Micrometer or with the OpenTelemetry SDK
+is listed in the dashboard&#8217;s picker automatically, and the dashboard chooses how to draw the ones
+the user adds. That choice follows what was actually captured rather than the declared meter
+type: a rate for a counter, a dial for a gauge, and mean and max per interval for a timer or a
+distribution summary, joined by percentiles when the meter publishes them and replaced by bucket
+bars when it publishes a histogram. If your extension exposes metrics, simply register them as
+usual.</p>
+</div>
+<div class="paragraph">
+<p>Writing a new metrics <strong>backend</strong> is the exception. A backend samples meters into the shared
+<code>MetricsTimeSeriesStore</code> and tells the core Dev UI it did so by producing a
+<code>MetricsBackendBuildItem</code> naming itself (<code>new MetricsBackendBuildItem("micrometer")</code>); the core
+then registers the JSON-RPC service and the metrics signal once, no matter how many backends are
+active. See <code>DevUiMetricsSampler</code> (Micrometer) and <code>DevUiMetricsExporter</code> (OpenTelemetry) for the
+two existing implementations.</p>
 </div>
 </div>
 </div>
