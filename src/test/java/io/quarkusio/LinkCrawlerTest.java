@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -34,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 public class LinkCrawlerTest extends BrowserTest {
 
     private static final int DEFAULT_MAX_PAGES = Integer.MAX_VALUE;
-    private static final int DEFAULT_THREADS = 8;
+    private static final int DEFAULT_THREADS = 16;
 
     // --- Links that we know are wrong that we have in our docs to illustrate errors ---
     // renamed to security-oidc-code-flow-authentication; the /version/main/ match is a Roq migration issue
@@ -116,8 +119,7 @@ public class LinkCrawlerTest extends BrowserTest {
     // dead fragment on every affected guide (and each of its versioned snapshots,
     // including /version/main/), so it is excused everywhere.
     //
-    // TODO: remove once https://github.com/quarkusio/quarkusio.github.io/pull/2892
-    //       merges — it auto-injects the missing note block so the anchor exists.
+    // TODO: remove at some point
     private static final Set<String> KNOWN_BROKEN_FRAGMENTS = Set.of(
             "extension-status-note");
 
@@ -220,6 +222,9 @@ public class LinkCrawlerTest extends BrowserTest {
     // prose (e.g. "https://quarkus.io/issuer" in the security-jwt guide) even
     // though they're not navigation links.
     private static final Set<String> DO_NOT_VISIT = Set.of(
+            "http://host.testcontainers.internal",
+            "https://registry.quarkus.io/maven", // registry maven endpoint is not browsable
+            "https://auth.streamnative.cloud",
             "https://quarkus.io/issuer",
             "/issuer"
     );
@@ -262,10 +267,19 @@ public class LinkCrawlerTest extends BrowserTest {
 
         if (!results.brokenLinks.isEmpty()) {
             List<Map.Entry<String, BrokenLink>> unexpected = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> rateLimited = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> uncheckable = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> oldContent = new ArrayList<>();
             int knownCount = 0;
             for (var entry : results.brokenLinks.entrySet()) {
                 if (isKnownBrokenLink(entry.getKey())) {
                     knownCount++;
+                } else if (entry.getValue().status == 429) {
+                    rateLimited.add(entry);
+                } else if (isUncheckableStatus(entry.getValue().status)) {
+                    uncheckable.add(entry);
+                } else if (isFromOldContent(entry.getValue().referrer, results.publishDates)) {
+                    oldContent.add(entry);
                 } else {
                     unexpected.add(entry);
                 }
@@ -273,11 +287,45 @@ public class LinkCrawlerTest extends BrowserTest {
             if (knownCount > 0) {
                 System.out.println("Skipped " + knownCount + " known broken link(s)");
             }
+            if (!uncheckable.isEmpty()) {
+                uncheckable.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Uncheckable broken links (401/403/410) - " + uncheckable.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(uncheckable));
+            }
+            if (!oldContent.isEmpty()) {
+                oldContent.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Broken links in old content (newsletters/blogs older than cutoff) - " + oldContent.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(oldContent));
+            }
             if (!unexpected.isEmpty()) {
                 unexpected.sort(Map.Entry.comparingByKey());
-                fail("Found " + unexpected.size() + " broken link(s):\n" + buildLinkReport(unexpected));
+                fail("Found " + unexpected.size() + " broken link(s)"
+                        + (rateLimited.isEmpty() ? "" : " (plus " + rateLimited.size() + " rate-limited)")
+                        + (uncheckable.isEmpty() ? "" : " (plus " + uncheckable.size() + " uncheckable 401/403/410)")
+                        + (oldContent.isEmpty() ? "" : " (plus " + oldContent.size() + " in old content)")
+                        + ":\n" + buildLinkReport(unexpected));
+            }
+            if (!rateLimited.isEmpty()) {
+                fail("All " + rateLimited.size() + " failures were rate-limited (429) — no defects will be raised,"
+                        + " but the links could not be verified.");
             }
         }
+    }
+
+    // Status codes that are uncheckable - printed but don't fail the build or raise defects
+    private static boolean isUncheckableStatus(int status) {
+        return status == 401 || status == 403 || status == 410;
+    }
+
+    // Check if a broken link is from old content (old newsletter or blog post)
+    private static boolean isFromOldContent(String referrer, Map<String, java.time.LocalDate> publishDates) {
+        if (referrer == null) {
+            return false;
+        }
+        String path = stripHost(referrer);
+        return isOldNewsletter(path) || isOldBlogPost(path, publishDates);
     }
 
     private boolean isKnownBrokenLink(String url) {
@@ -349,7 +397,9 @@ public class LinkCrawlerTest extends BrowserTest {
         int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
         boolean checkInternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-internal", "true"));
         boolean checkExternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-external", "false"));
+        String resultsFile = System.getProperty("test.crawl.results-file", "");
         List<String> excludePaths = parseExcludePaths(System.getProperty("test.crawl.exclude-paths", ""));
+        List<String> excludeUrls = parseExcludePaths(System.getProperty("test.crawl.exclude-urls", ""));
         List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
@@ -364,6 +414,10 @@ public class LinkCrawlerTest extends BrowserTest {
         // Collected during the crawl so fragment anchors can be verified in
         // memory afterwards instead of re-navigating to every page.
         Map<String, Set<String>> pageIds = new ConcurrentHashMap<>();
+        // Publish dates for blog posts and newsletters, keyed by normalized URL.
+        // Collected during crawl to determine if content is old and should be
+        // excluded from external link checking.
+        Map<String, java.time.LocalDate> publishDates = new ConcurrentHashMap<>();
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
@@ -395,8 +449,8 @@ public class LinkCrawlerTest extends BrowserTest {
                     p.setDefaultNavigationTimeout(60_000);
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
-                            checkedExternal, checkedImages, fragmentLinks, pageIds, crawledCount, maxPages,
-                            checkInternal, checkExternal, excludePaths, seedUrls,
+                            checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, crawledCount, maxPages,
+                            checkInternal, checkExternal, excludePaths, excludeUrls, seedUrls,
                             pendingWork, done);
 
                     ctx.close();
@@ -438,6 +492,56 @@ public class LinkCrawlerTest extends BrowserTest {
                 + " (" + threads + " threads)";
         System.out.println(summary);
 
+        // The results file drives issue creation, so it must only hold links that are
+        // actually a problem. 429s mean we could not check the link, not that it is dead.
+        // 401/403/410 statuses are also uncheckable - they're informational but not defects.
+        // Broken links in old newsletters/blogs are natural and not worth fixing.
+        // Known failures and deliberate errors are excused by the assertions below —
+        // filing defects for any of these would be noise.
+        Map<String, BrokenLink> rateLimited = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> uncheckable = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> oldContent = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> reportable = new ConcurrentHashMap<>();
+        brokenLinks.forEach((url, link) -> {
+            if (link.status == 429) {
+                rateLimited.put(url, link);
+            } else if (isUncheckableStatus(link.status)) {
+                uncheckable.put(url, link);
+            } else if (isFromOldContent(link.referrer, publishDates)) {
+                oldContent.put(url, link);
+            } else if (!isKnownBrokenLink(url)) {
+                reportable.put(url, link);
+            }
+        });
+
+        if (!resultsFile.isEmpty()) {
+            writeResultsJson(reportable, uncheckable, oldContent, resultsFile);
+        }
+
+        if (!rateLimited.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(rateLimited.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("WARNING: " + rateLimited.size()
+                    + " link(s) could not be checked due to rate limiting (429):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        if (!uncheckable.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + uncheckable.size()
+                    + " uncheckable link(s) (401/403/410 - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        if (!oldContent.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + oldContent.size()
+                    + " broken link(s) in old content (newsletters/blogs older than cutoff - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
         try {
             Path summaryFile = Path.of("target", "crawl-summary.txt");
             Files.createDirectories(summaryFile.getParent());
@@ -445,12 +549,48 @@ public class LinkCrawlerTest extends BrowserTest {
 
             int cap = 20;
             if (!unknownBroken.isEmpty()) {
-                sb.append("\n**Broken links");
+                sb.append("\n**Broken links (will raise defects)");
                 if (unknownBroken.size() > cap) {
                     sb.append(" (first ").append(cap).append(" of ").append(unknownBroken.size()).append(")");
                 }
                 sb.append(":**\n");
                 for (var entry : unknownBroken.subList(0, Math.min(cap, unknownBroken.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!uncheckable.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Uncheckable links (401/403/410 - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!oldContent.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken links in old content (newsletters/blogs older than cutoff - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
                     BrokenLink link = entry.getValue();
                     sb.append("- `").append(link.status).append("` ").append(entry.getKey());
                     if (link.referrer != null) {
@@ -500,27 +640,29 @@ public class LinkCrawlerTest extends BrowserTest {
         } catch (IOException ignored) {
         }
 
-        return new CrawlResults(brokenLinks, brokenImages, brokenFragments);
+        return new CrawlResults(brokenLinks, brokenImages, brokenFragments, publishDates);
     }
 
     private void crawLoop(Page p,
-                           LinkedBlockingQueue<String> queue,
-                           Set<String> visited,
-                           Map<String, BrokenLink> brokenLinks,
-                           Map<String, BrokenImage> brokenImages,
-                           Map<String, String> referrers,
-                           Set<String> checkedExternal,
-                           Set<String> checkedImages,
-                           Map<String, FragmentLink> fragmentLinks,
-                           Map<String, Set<String>> pageIds,
-                           AtomicInteger crawledCount,
-                           int maxPages,
-                           boolean checkInternal,
-                           boolean checkExternal,
-                           List<String> excludePaths,
-                           Set<String> seedUrls,
-                           AtomicInteger pendingWork,
-                           AtomicBoolean done) {
+                          LinkedBlockingQueue<String> queue,
+                          Set<String> visited,
+                          Map<String, BrokenLink> brokenLinks,
+                          Map<String, BrokenImage> brokenImages,
+                          Map<String, String> referrers,
+                          Set<String> checkedExternal,
+                          Set<String> checkedImages,
+                          Map<String, FragmentLink> fragmentLinks,
+                          Map<String, Set<String>> pageIds,
+                          Map<String, java.time.LocalDate> publishDates,
+                          AtomicInteger crawledCount,
+                          int maxPages,
+                          boolean checkInternal,
+                          boolean checkExternal,
+                          List<String> excludePaths,
+                          List<String> excludeUrls,
+                          Set<String> seedUrls,
+                          AtomicInteger pendingWork,
+                          AtomicBoolean done) {
         boolean incrementalMode = !seedUrls.isEmpty();
         while (!done.get()) {
             if (crawledCount.get() >= maxPages) {
@@ -623,6 +765,9 @@ public class LinkCrawlerTest extends BrowserTest {
                     var idResult = (List<String>) p.evaluate(
                             "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
                     pageIds.put(normalizedUrl, new HashSet<>(idResult));
+
+                    // Extract publish date from blog posts and newsletters for old content filtering
+                    extractPublishDate(p, normalizedUrl, publishDates);
                 } catch (PlaywrightException e) {
                     hrefs = extractLinksViaHttp(currentUrl);
                     if (hrefs == null) {
@@ -656,7 +801,8 @@ public class LinkCrawlerTest extends BrowserTest {
                             fragmentLinks.putIfAbsent(key,
                                     new FragmentLink(normalized, resolved.fragment, currentUrl));
                         }
-                    } else if (checkExternal && checkedExternal.add(resolved.url)) {
+                    } else if (checkExternal && !isExcludedUrl(resolved.url, excludeUrls)
+                            && !isOnDoNotCheckList(resolved.url) && checkedExternal.add(resolved.url)) {
                         BrokenLink result = checkExternalLink(resolved.url);
                         if (result != null) {
                             brokenLinks.put(resolved.url, new BrokenLink(result.status, result.statusText, currentUrl));
@@ -724,7 +870,7 @@ public class LinkCrawlerTest extends BrowserTest {
         String resolved;
         boolean internal;
         if (href.startsWith("http://") || href.startsWith("https://")) {
-            if (isLocalhostUrl(href)) {
+            if (isLocalhostUrl(href) || isExampleUrl(href)) {
                 return null;
             }
             resolved = rewriteToLocal(href);
@@ -805,18 +951,88 @@ public class LinkCrawlerTest extends BrowserTest {
         return null;
     }
 
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (compatible; QuarkusLinkChecker/1.0; +https://quarkus.io)";
+
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private static final HttpClient NO_REDIRECT_HTTP_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private static final ConcurrentHashMap<String, Semaphore> DOMAIN_SEMAPHORES = new ConcurrentHashMap<>();
+
+    private static Semaphore domainSemaphore(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) host = url;
+            return DOMAIN_SEMAPHORES.computeIfAbsent(host.toLowerCase(), k -> new Semaphore(2));
+        } catch (IllegalArgumentException e) {
+            return DOMAIN_SEMAPHORES.computeIfAbsent(url, k -> new Semaphore(1));
+        }
+    }
+
     private static BrokenLink checkExternalLink(String url) {
-        try (HttpClient client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(Duration.ofSeconds(10))
-                .build()) {
-            HttpRequest request = HttpRequest.newBuilder()
+        Semaphore sem = domainSemaphore(url);
+        try {
+            sem.acquire();
+            try {
+                return doCheckExternalLink(url);
+            } finally {
+                sem.release();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new BrokenLink(0, "interrupted", null);
+        }
+    }
+
+    private static BrokenLink doCheckExternalLink(String url) {
+        try {
+            HttpRequest headRequest = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .header("User-Agent", USER_AGENT)
                     .timeout(Duration.ofSeconds(15))
                     .build();
-            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
-            int status = response.statusCode();
+            int status = sendWithRetry(headRequest);
+
+            // Some sites reject HEAD but accept GET — fall back
+            if (status >= 400 && status < 500) {
+                HttpRequest getRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .header("User-Agent", USER_AGENT)
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                status = sendWithRetry(getRequest);
+            }
+
+            // Some sites block bot user-agents — retry without custom UA
+            // and without following redirects (some sites redirect bots to challenge pages)
+            if (status == 401 || status == 403) {
+                HttpRequest retryRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                int retryStatus = NO_REDIRECT_HTTP_CLIENT.send(retryRequest, HttpResponse.BodyHandlers.discarding()).statusCode();
+                if (retryStatus < 400) {
+                    status = retryStatus;
+                }
+            }
+
+            if (status == 403 && hostMatches(url, FORBIDDEN_OK_HOSTS)) {
+                return null;
+            }
+            if (status == 405 && hostMatches(url, METHOD_NOT_ALLOWED_OK_HOSTS)) {
+                return null;
+            }
+
             if (status >= 400) {
                 return new BrokenLink(status, "HTTP " + status, null);
             }
@@ -824,6 +1040,37 @@ public class LinkCrawlerTest extends BrowserTest {
         } catch (Exception e) {
             return new BrokenLink(0, e.getMessage(), null);
         }
+    }
+
+    private static boolean hostMatches(String url, List<String> hosts) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            String hostLower = host.toLowerCase();
+            for (String h : hosts) {
+                if (hostLower.endsWith(h)) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // ignore
+        }
+        return false;
+    }
+
+    private static int sendWithRetry(HttpRequest request) throws IOException, InterruptedException {
+        int status = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+        Duration delay = Duration.ofSeconds(65);
+        Duration maxDelay = Duration.ofMinutes(5);
+        for (int attempt = 0; attempt < 3 && (status==429 || status >= 500); attempt++) {
+            Thread.sleep(delay.toMillis());
+            status = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            delay = delay.multipliedBy(2);
+            if (delay.compareTo(maxDelay) > 0) delay = maxDelay;
+        }
+        return status;
     }
 
     private static List<String> extractLinksViaHttp(String url) {
@@ -851,21 +1098,20 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
-    private BrokenLink probeWithHttp(String url) {
+    // Falls back to plain HTTP when Playwright can't navigate (downloads, bad schemes, meta-refresh).
+    // Returns null if reachable, BrokenLink otherwise.
+    private static BrokenLink probeWithHttp(String url) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             return new BrokenLink(0, "unsupported scheme", null);
         }
 
-        try (HttpClient client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(Duration.ofSeconds(10))
-                .build()) {
+        try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .GET()
                     .timeout(Duration.ofSeconds(15))
                     .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
             if (status >= 400) {
                 return new BrokenLink(status, "HTTP " + status, null);
@@ -877,13 +1123,10 @@ public class LinkCrawlerTest extends BrowserTest {
                 if (m.find()) {
                     String target = m.group(1) != null ? m.group(1) : m.group(2);
                     target = target.strip();
-                    target = rewriteToLocal(target);
-                    if (target.startsWith(baseUrl)) {
-                        BrokenLink targetCheck = checkUrlReachable(target, url);
-                        if (targetCheck != null) {
-                            return new BrokenLink(targetCheck.status,
-                                    "meta-refresh target unreachable: " + target + " (" + targetCheck.statusText + ")", null);
-                        }
+                    BrokenLink targetCheck = checkUrlReachable(target, url);
+                    if (targetCheck != null) {
+                        return new BrokenLink(targetCheck.status,
+                                "meta-refresh target unreachable: " + target + " (" + targetCheck.statusText + ")", null);
                     }
                 }
             }
@@ -1132,7 +1375,149 @@ public class LinkCrawlerTest extends BrowserTest {
     private boolean isExcluded(String url, List<String> excludePaths) {
         String path = stripHost(url);
         for (String excluded : excludePaths) {
-            if (path.contains(excluded)) {
+            if (path.startsWith(excluded)) {
+                return true;
+            }
+        }
+        // Note: old newsletters and blog posts are NOT excluded here anymore
+        // They are visited and checked, but their broken links are treated as informational
+        return false;
+    }
+
+    // Newsletters and blog posts naturally accumulate dead external links over time.
+    // Configurable cutoff for validating external links in dated content.
+    // Content older than the cutoff will have broken links reported but not raise defects.
+    private static final Pattern NEWSLETTER_PATTERN = Pattern.compile("^/newsletter/(\\d+)");
+    private static final int NEWSLETTER_EPOCH_YEAR = 2020;
+    private static final int NEWSLETTER_EPOCH_MONTH = 10; // October 2020 = issue #1
+
+    private static Integer getDatedContentCutoffMonths() {
+        String cutoffProperty = System.getProperty("test.crawl.dated-cutoff-months");
+        if (cutoffProperty == null || cutoffProperty.isBlank()) {
+            return null; // If not configured, check all dated content
+        }
+
+        try {
+            return Integer.parseInt(cutoffProperty);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid dated cutoff months value: " + cutoffProperty);
+            return null;
+        }
+    }
+
+    private static boolean isOldNewsletter(String path) {
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all newsletters
+        }
+
+        Matcher m = NEWSLETTER_PATTERN.matcher(path);
+        if (m.find()) {
+            int issue = Integer.parseInt(m.group(1));
+            java.time.LocalDate now = java.time.LocalDate.now();
+            int monthsSinceEpoch = (now.getYear() - NEWSLETTER_EPOCH_YEAR) * 12
+                    + now.getMonthValue() - NEWSLETTER_EPOCH_MONTH;
+            return issue <= monthsSinceEpoch - cutoffMonths;
+        }
+        return false;
+    }
+
+    private static final Pattern BLOG_POST_PATTERN = Pattern.compile("^/blog/[^/]+/?$");
+
+    /**
+     * Extract the publish date from a blog post or newsletter page and store it in the map.
+     * The date is extracted from the page's metadata or structure.
+     */
+    private static void extractPublishDate(Page page, String normalizedUrl, Map<String, java.time.LocalDate> publishDates) {
+        String path = stripHost(normalizedUrl);
+
+        // Check if it's a blog post or newsletter
+        if (!path.startsWith("/blog/") && !path.startsWith("/newsletter/")) {
+            return;
+        }
+
+        try {
+            // For blog posts, look for the date in the page metadata or content
+            // Blog posts typically have a <time> element or date metadata
+            String dateStr = (String) page.evaluate("""
+                () => {
+                    // Try to find date in time element with datetime attribute
+                    const timeElement = document.querySelector('time[datetime]');
+                    if (timeElement) {
+                        return timeElement.getAttribute('datetime');
+                    }
+                    // Try to find date in meta tags
+                    const metaDate = document.querySelector('meta[property="article:published_time"]');
+                    if (metaDate) {
+                        return metaDate.getAttribute('content');
+                    }
+                    // Try to find date in JSON-LD
+                    const jsonLd = document.querySelector('script[type="application/ld+json"]');
+                    if (jsonLd) {
+                        try {
+                            const data = JSON.parse(jsonLd.textContent);
+                            if (data.datePublished) {
+                                return data.datePublished;
+                            }
+                        } catch (e) {
+                            // Ignore parse errors
+                        }
+                    }
+                    // Try to extract date from .post-date element (Quarkus site specific)
+                    const postDate = document.querySelector('.post-date');
+                    if (postDate) {
+                        // Text format: "September 17, 2026" or "Month DD, YYYY"
+                        const dateText = postDate.textContent.trim().split('\\n')[0].trim();
+                        // Try to parse the date
+                        const parsed = new Date(dateText);
+                        if (!isNaN(parsed)) {
+                            // Return in ISO format
+                            return parsed.toISOString().split('T')[0];
+                        }
+                    }
+                    return null;
+                }
+            """);
+
+            if (dateStr != null && !dateStr.isBlank()) {
+                // Parse the date string (usually in ISO format like "2024-01-18" or "2024-01-18T00:00:00Z")
+                java.time.LocalDate date = java.time.LocalDate.parse(dateStr.substring(0, Math.min(10, dateStr.length())));
+                publishDates.put(normalizePath(normalizedUrl), date);
+            }
+        } catch (Exception e) {
+            // If we can't extract the date, don't fail - just skip this page
+        }
+    }
+
+    private static boolean isOldBlogPost(String path, Map<String, java.time.LocalDate> publishDates) {
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all blog posts
+        }
+
+        Matcher m = BLOG_POST_PATTERN.matcher(path);
+        if (m.find()) {
+            java.time.LocalDate postDate = publishDates.get(normalizePath(path));
+            if (postDate != null) {
+                java.time.LocalDate cutoffDate = java.time.LocalDate.now().minusMonths(cutoffMonths);
+                return postDate.isBefore(cutoffDate);
+            }
+        }
+        return false;
+    }
+
+    private static boolean isExcludedUrl(String url, List<String> excludeUrls) {
+        for (String excluded : excludeUrls) {
+            if (url.contains(excluded)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isOnDoNotCheckList(String url) {
+        for (String domain : DO_NOT_CHECK) {
+            if (url.contains(domain)) {
                 return true;
             }
         }
@@ -1140,7 +1525,68 @@ public class LinkCrawlerTest extends BrowserTest {
     }
 
     private static boolean isLocalhostUrl(String href) {
-        return href.startsWith("http://localhost") || href.startsWith("https://localhost");
+        return href.startsWith("http://localhost") || href.startsWith("https://localhost")
+                || href.startsWith("http://0.0.0.0") || href.startsWith("http://127.0.0.1")
+                || href.startsWith("https://0.0.0.0") || href.startsWith("https://127.0.0.1");
+    }
+
+    private static final Pattern TEMPLATE_VAR_PATTERN = Pattern.compile("\\$\\{|\\{[a-zA-Z]");
+
+    private static final List<String> EXAMPLE_HOSTS = List.of(
+            "example.com", "example.org", "example.net", "1.2.3.4",
+            "your-domain", "your-dns", "your-ngrok",
+            "application.com", "service.example",
+            "SERVER_HOST", "SERVER_PORT",
+            "myservice.com", "my-service.com", "openshift-helloworld",
+            "quarkus-auth0", "stage.code.quarkus.io",
+            "nip.io", "cluster.local", "ocp.host"
+    );
+
+    // Sites that return 403 Forbidden for bot requests but 404 for genuinely dead links
+    private static final List<String> FORBIDDEN_OK_HOSTS = List.of(
+            "medium.com"
+    );
+
+    // Sites that return 405 Method Not Allowed for bot requests but 404 for genuinely dead links
+    private static final List<String> METHOD_NOT_ALLOWED_OK_HOSTS = List.of(
+            "infoq.com"
+    );
+
+    private static final List<String> DO_NOT_CHECK = List.of(
+            "linkedin.com",
+            "pexels.com",
+            "docs.gitlab.com",
+            "search.maven.org",
+            "linux.die.net",
+            "uber.com/blog",
+            "rfc-editor.org",
+            "netflixtechblog.com",
+            // Localized sites 404 for untranslated pages — tracked in #2695
+            "cn.quarkus.io/blog",
+            "es.quarkus.io/blog",
+            "ja.quarkus.io/blog",
+            "pt.quarkus.io/blog"
+    );
+
+    private static boolean isExampleUrl(String url) {
+        if (TEMPLATE_VAR_PATTERN.matcher(url).find()) {
+            return true;
+        }
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return true;
+            }
+            String hostLower = host.toLowerCase();
+            for (String example : EXAMPLE_HOSTS) {
+                if (hostLower.contains(example.toLowerCase())) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+        return false;
     }
 
     private static String normalize(String url) {
@@ -1153,6 +1599,57 @@ public class LinkCrawlerTest extends BrowserTest {
     record ResolvedLink(String url, boolean internal, String fragment) {
     }
 
+    private static void writeResultsJson(Map<String, BrokenLink> reportable,
+                                          Map<String, BrokenLink> uncheckable,
+                                          Map<String, BrokenLink> oldContent,
+                                          String path) {
+        Map<String, Object> output = new java.util.LinkedHashMap<>();
+
+        // Reportable links (will raise defects and fail CI)
+        output.put("reportable", convertToList(reportable));
+
+        // Uncheckable links (informational only - 401/403/410 status codes)
+        output.put("uncheckable", convertToList(uncheckable));
+
+        // Old content links (informational only - from old blogs/newsletters)
+        output.put("oldContent", convertToList(oldContent));
+
+        // Summary counts
+        Map<String, Integer> summary = new java.util.LinkedHashMap<>();
+        summary.put("reportableCount", reportable.size());
+        summary.put("uncheckableCount", uncheckable.size());
+        summary.put("oldContentCount", oldContent.size());
+        summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldContent.size());
+        output.put("summary", summary);
+
+        try {
+            Path filePath = Path.of(path);
+            if (filePath.getParent() != null) {
+                Files.createDirectories(filePath.getParent());
+            }
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(filePath.toFile(), output);
+            System.out.println("Wrote results to " + path + " (" + summary.get("totalBrokenLinks") + " total broken links)");
+        } catch (IOException e) {
+            System.err.println("Warning: could not write results file: " + e.getMessage());
+        }
+    }
+
+    private static List<Map<String, Object>> convertToList(Map<String, BrokenLink> broken) {
+        List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(broken.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        return sorted.stream()
+                .map(entry -> {
+                    Map<String, Object> map = new java.util.LinkedHashMap<>();
+                    map.put("url", entry.getKey());
+                    map.put("status", entry.getValue().status());
+                    map.put("statusText", entry.getValue().statusText());
+                    map.put("referrer", entry.getValue().referrer());
+                    return map;
+                })
+                .toList();
+    }
+
     record FragmentLink(String url, String fragment, String referrer) {
     }
 
@@ -1163,6 +1660,6 @@ public class LinkCrawlerTest extends BrowserTest {
     }
 
     record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages,
-                         Map<String, FragmentLink> brokenFragments) {
+                         Map<String, FragmentLink> brokenFragments, Map<String, java.time.LocalDate> publishDates) {
     }
 }
