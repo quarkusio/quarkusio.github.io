@@ -90,7 +90,8 @@ For blog-only work, `serve-noguides.sh` is the fastest option.
 ## Future-Dated Posts
 
 Posts with a `date` value in the future are served normally by the
-local dev server. No special flag or workaround is needed.
+local dev server and by the pull request preview. No special flag or
+workaround is needed; production hides them until their date.
 
 ## Iteration Loop
 

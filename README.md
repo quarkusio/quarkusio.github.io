@@ -76,7 +76,7 @@ To write a blog:
   - tags is a space-separated list: `tags: extension grpc`
   - tags must be in lowercase
 - it's in asciidoc format, there is an example at [2019-06-05-quarkus-and-web-ui-development-mode.adoc](https://github.com/quarkusio/quarkusio.github.io/blob/main/content/posts/2019-06-05-quarkus-and-web-ui-development-mode.adoc)
-  - Be aware that the `date` attribute in the file name defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; use dev mode or `./serve.sh` locally to preview them regardless of date.
+  - Be aware that the `date` attribute in the file name defines when the article will be published. Posts with a future date will not be visible in production until that date arrives; the pull request preview, dev mode and `./serve.sh` show them regardless of date.
 - send a pull request against the main branch and voilà
 
 
