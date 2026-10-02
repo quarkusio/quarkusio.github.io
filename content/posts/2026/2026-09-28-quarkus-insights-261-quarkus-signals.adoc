@@ -1,0 +1,110 @@
+---
+layout: post
+title: 'Quarkus Insights #261: Quarkus Signals — In-Process Messaging Done Right'
+date: 2026-09-28
+tags: quarkus-insights
+synopsis: 'Martin Kouba joins host Holly Cummins to introduce Quarkus Signals, a type-safe, asynchronous in-process messaging extension that synthesizes the best of CDI events and the Vert.x event bus into a single, Quarkus-native API with declarative and programmatic registration, three emission modes, and proper execution model support.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://www.youtube.com/watch?v=LUOgq-dlXvA[watch the video] for the full story.
+
+== Quarkus Insights #261: Quarkus Signals — In-Process Messaging Done Right
+
+Every non-trivial application eventually needs its components to talk to each other without calling each other directly. The problem is not new, and Quarkus already ships two well-established solutions: https://jakarta.ee/specifications/cdi/[CDI events] and the https://vertx.io/docs/vertx-core/java/#event_bus[Vert.x event bus]. So why introduce a third? In episode 261, Martin Kouba — one of the original Quarkus engineers, author of the https://quarkus.io/guides/qute[Qute templating engine], and now the lead developer on the https://quarkus.io/guides/agent-mcp/[Quarkus MCP server] — joins host Holly Cummins to answer exactly that question, with slides, a live demo, and a thorough Q&A.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/LUOgq-dlXvA" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Holly opened with a brief news round: work on Quarkus 4 is continuing on schedule — the release plan is tracked on the Quarkus wiki. Quarkus 3.40 is imminent: the core release is out and the platform release was being cut that week. It is the last LTS on the 3.x branch, and it should start appearing in https://docs.github.com/en/code-security/dependabot[Dependabot] and https://docs.renovatebot.com/[Renovate] update proposals shortly.
+
+Holly also took a moment to credit Martin for the Quarkus website itself: quarkus.io now runs on the Qute templating engine that Martin built, which means that bugs in Qute get discovered — and reported directly to Martin — by the website team. "Eating our own dog food" was the polite framing.
+
+== The Problem: Three Solutions Looking for a Unified API
+
+Martin's framing is simple: Quarkus applications running in a single JVM sometimes need loosely coupled in-process communication — where one component announces something without knowing which other components are listening, and without invoking them directly. This is distinct from distributed messaging; no brokers, no clustering, no cross-process serialization. The scope is one application, one JVM.
+
+Three existing tools already address this:
+
+* **CDI events** — type-safe, declarative, well-specified. Fires synchronously on the calling thread by default; all matching observers execute before control returns to the caller. An asynchronous API was added in CDI 2.0, but it always offloads to a separate thread and cannot participate directly in a reactive pipeline.
+* **Vert.x event bus** — asynchronous and flexible, with three emission modes: publish/subscribe, point-to-point, and request/response. Consumers are always notified asynchronously on an event loop thread. Addresses are string-based, which sacrifices type safety and makes class-cast exceptions possible at runtime. Originally designed with clustering in mind, which imposes serialization constraints that are irrelevant for purely in-process use.
+* **Reactive messaging** — intended for pipeline construction and external broker integration. Can be used with internal channels, but it is an architectural mismatch for simple component-to-component signalling.
+
+Each solution has a footprint that does not quite fit the use case Martin wanted to address cleanly. CDI events are synchronous by default in a way that surprises users — calling `event.fire()` blocks until all observers complete, even though "fire" implies "fire and forget." The Vert.x event bus is the right shape architecturally but operates on string addresses rather than typesafe objects. It also lacks the execution model flexibility that the rest of Quarkus provides.
+
+== What Quarkus Signals Brings
+
+Signals is an experimental core extension, available since Quarkus 3.36, and targeting stable status in Quarkus 4. Martin's design goals were deliberately synthesized from the strengths of both existing solutions:
+
+* **Type-safe resolution** — the type system and qualifiers from CDI events are used to match senders to receivers, not strings.
+* **Three emission modes** — publish/subscribe, point-to-point (`send`), and request/response, directly from the Vert.x event bus model.
+* **Receivers are always asynchronous** — unlike CDI events, calling `publish()` does not block the caller while receivers execute. Receivers run on their own threads, each with a fresh CDI request context.
+* **Quarkus execution model** — annotate a receiver method with `@RunOnVirtualThread`, return a `Uni`, or leave it as a plain blocking method; Signals applies the same execution model rules as every other Quarkus extension.
+* **Both declarative and programmatic** — annotate a method with `@Receives` to register it at build time, or register receivers programmatically at runtime, matching the trade-off between CDI's closed-world optimization and the Vert.x event bus's flexibility.
+
+The naming was deliberately chosen to avoid collisions. "Event," "observer," "message," and "consumer" are all taken by CDI or Vert.x. Martin landed on _signals_ (sent) and _receivers_ (processed), which are similar enough to feel familiar but distinct enough not to pollute auto-import menus.
+
+== CDI Events vs. Signals: A Concrete Demo
+
+Martin's demo started with a standard CDI event scenario: a Jakarta REST endpoint fires a `HelloLog` event (a plain Java record), and a `Greetings` component declares two observers. Without a surrounding transaction, all observers execute synchronously on the same thread before the endpoint method returns — the log clearly shows each observer completing before the "method finished" log line. Adding `@Transactional` to the endpoint changes the behavior: the transactional observer (`@Observes(during = AFTER_SUCCESS)`) is deferred until after commit, making the ordering subtly different and potentially surprising.
+
+The same scenario rewritten with Signals shows the contrast immediately. The resource injects `Signal<HelloLog>` and calls `signal.publish(payload)`. The log shows "method started" and "method completed" back-to-back, with receiver output arriving afterward — publish does not block the caller. Each receiver gets its own CDI request context: Martin pointed out that the two `Greetings` receivers logged different instance IDs from the injected request-scoped `MyService` bean, demonstrating that receiver isolation is automatic.
+
+== Execution Model, Context Propagation, and the SPI
+
+Martin flagged context propagation as one of the harder design decisions. CDI request contexts are deliberately _not_ propagated across receivers — receivers run in parallel and sharing a mutable request context would be unsafe. What _is_ propagated:
+
+* **Security identity** — if the caller has an authenticated identity, all receivers see it.
+* **https://opentelemetry.io/[OpenTelemetry] traces** — distributed tracing spans are carried into receivers, so a signal emission is visible as a child span in the trace.
+* **Basic metrics** — instrumentation at the emission and receiver level.
+
+For anything else — custom metadata that needs to flow from sender to receiver — there is a simple metadata map holder on the signal. Extensions and user code can read and write it directly.
+
+The SPI has two extension points:
+
+* **Metadata enrichers** — executed at emission time, they can add data to the metadata map before receivers are called. The security identity propagation is implemented this way.
+* **Receiver interceptors** — analogous to CDI interceptors, they execute logic around each receiver call. The OpenTelemetry span injection uses this path.
+
+Both extension points use https://smallrye.io/smallrye-mutiny/[Mutiny] return types so they participate naturally in the reactive pipeline.
+
+== Q&A Highlights
+
+The audience questions probed several practical concerns:
+
+**Is Signals implemented on top of the Vert.x event bus?** No. Martin's team originally considered it, but adding a string-address layer on top of Vert.x to support type-safe resolution would have been pure overhead. The implementation is standalone and follows the same patterns as other Quarkus extensions.
+
+**When should I use Signals vs. CDI events vs. Vert.x event bus?** The Signals documentation includes a comparison section. CDI events are still the right choice if you specifically need synchronous communication or rely on transactional observers; the Vert.x event bus still has valid use cases. Martin's position: with Signals, most new code will have a better experience, but neither older API is going away.
+
+**Is there a compatibility layer to route signals into the Vert.x event bus?** Not yet. Feedback and feature requests on GitHub are the best way to influence whether this gets built.
+
+**Back pressure and bounded queues?** Not currently implemented. Signals does ship a configuration limit on the maximum number of concurrent blocking and virtual-thread receivers to prevent thread pool exhaustion, but queue depth management is on the roadmap pending community demand.
+
+**Message delivery guarantees?** Within a single JVM, delivery is reliable under normal conditions. The pathological failure mode — a full blocking thread pool starving receivers — was acknowledged. For request/response mode, callers can subscribe to the returned `Uni` to wait for receiver completion. For publish/subscribe, the design intent is that the sender does not need to know or care whether anyone receives the signal.
+
+**Should I manage delivery myself?** Martin's answer: in most cases, no. Choose your emission mode and let Signals handle the rest.
+
+== Status and Roadmap
+
+Signals is experimental in Quarkus 3.x and has been since 3.36. The API is described as "more or less feature complete" — no major breaking changes are expected before the stable release in Quarkus 4. Some users are already running it in production despite the experimental label. The longer-term plan, originally conceived by Clément Escoffier, is to merge Signals into core so that any Quarkus application — and any extension — has access to it without an explicit dependency.
+
+== Key Takeaways
+
+1. **Signals is not a replacement — it is an addition** — it takes type safety from CDI events and emission mode flexibility from the Vert.x event bus, and adds the Quarkus execution model on top.
+2. **Receivers are always asynchronous** — `publish()` returns immediately; receivers execute on separate threads with fresh CDI request contexts.
+3. **Three emission modes** — publish/subscribe (all receivers notified), point-to-point (one receiver selected), and request/response (caller awaits a return value).
+4. **Execution model is first-class** — `@RunOnVirtualThread`, reactive `Uni` returns, and blocking workers all work exactly as they do elsewhere in Quarkus.
+5. **Context propagation is selective** — security identity and OpenTelemetry traces are propagated; CDI request context is deliberately not, since receivers may execute in parallel.
+6. **Declarative and programmatic** — `@Receives` for build-time registration, programmatic API for runtime flexibility.
+7. **SPI for extension authors** — metadata enrichers and receiver interceptors let extensions (and user code) customize signal behaviour without forking the core.
+8. **Not built on Vert.x event bus** — the implementation is independent; the design similarity is intentional but the execution path is separate.
+9. **Stable in Quarkus 4** — currently experimental in 3.36+; no major API changes expected; already used in production by some adopters.
+10. **Heading into core** — the plan is for Signals to become a zero-dependency part of Quarkus core so extensions can rely on it without users needing to add a dependency.
+
+== Conclusion
+
+Quarkus Signals is the answer to a question that has been asked implicitly by Quarkus users for years: what is the right way to wire components together loosely when CDI events are too synchronous, the Vert.x event bus is too low-level, and reactive messaging is too much? The answer Martin arrived at is not a compromise but a deliberate design: take the best resolution model from CDI, the best emission modes from Vert.x, drop what neither needed (clustering infrastructure, string addresses, spec-committee constraints), and integrate the result with the Quarkus execution model that users already know. Episode 261 makes a strong case that the resulting API is both more ergonomic and less surprising than the options it complements.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel].
