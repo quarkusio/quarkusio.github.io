@@ -54,15 +54,6 @@ public class LinkCrawlerTest extends BrowserTest {
     private static final List<Pattern> DELIBERATE_ERRORS = List.of(
             Pattern.compile("^/version/([\\d.]+|main)/guides/security-openid-connect-web-authentication$"));
 
-    // --- Known failures that need fixing ---
-    // https://github.com/quarkusio/quarkusio.github.io/issues/1693
-    private static final Set<String> KNOWN_FAILURES = Set.of(
-            // sub-paths that don't exist as standalone pages,relative path issue related to Roq
-            "/guides/building-native-image/getting-started-testing",
-            "/guides/security-webauthn/all-config",
-            "/guides/security-webauthn/security-authentication-mechanisms"
-    );
-
     // --- Waiting for release ---
     private static final Pattern WAITING_FOR_RELEASE = Pattern.compile(
             // Generated config docs use a relative link:native-and-ssl.html which
@@ -287,9 +278,6 @@ public class LinkCrawlerTest extends BrowserTest {
             return true;
         }
 
-        if (KNOWN_FAILURES.contains(path)) {
-            return true;
-        }
         if (WAITING_FOR_RELEASE.matcher(path).find()) {
             return true;
         }
