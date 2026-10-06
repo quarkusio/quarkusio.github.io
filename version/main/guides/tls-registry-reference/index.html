@@ -2089,6 +2089,7 @@
         
         
         
+        
 
     <details class="guide-nav-cat" >
       <summary>Writing extensions</summary>
@@ -2096,6 +2097,9 @@
         <ul>
                 <li >
                   <a href="/version/main/guides/writing-extensions/">Writing your own extension</a>
+                </li>
+                <li >
+                  <a href="/version/main/guides/recorders-to-services-migration/">Recorders-to-Services Migration Guide</a>
                 </li>
                 <li >
                   <a href="/version/main/guides/building-my-first-extension/">Building my first extension</a>
@@ -3389,26 +3393,6 @@ Use this when all clients are known to support post-quantum cryptography.</p>
 </dd>
 </dl>
 </div>
-<div class="admonitionblock important">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-important" title="Important"></i>
-</td>
-<td class="content">
-<div class="paragraph">
-<p><code>pqc-enforcement-policy</code> does more than enforce post-quantum key exchange: it controls which SSL engine Vert.x selects.
-Setting <code>pqc-enforcement-policy</code> to <code>client-negotiated</code> or <code>strict</code> activates the native OpenSSL engine (requires OpenSSL 3.5+), which negotiates post-quantum key exchange groups.
-With the default <code>relaxed</code> policy, Vert.x uses the JDK SSL engine, which ignores any post-quantum key-exchange groups before JDK 27 — meaning that configuring post-quantum groups without also setting the enforcement policy results in no post-quantum key exchange at all.
-On JDK 27+, the JDK natively supports <code>X25519MLKEM768</code> and post-quantum key exchange works without changing the enforcement policy.</p>
-</div>
-<div class="paragraph">
-<p>Quarkus logs a warning at startup if you configure a post-quantum group with <code>relaxed</code> policy to help catch this misconfiguration.</p>
-</div>
-</td>
-</tr>
-</table>
-</div>
 <div class="admonitionblock note">
 <table>
 <tr>
@@ -3417,8 +3401,9 @@ On JDK 27+, the JDK natively supports <code>X25519MLKEM768</code> and post-quant
 </td>
 <td class="content">
 <div class="paragraph">
-<p>When using <code>client-negotiated</code> or <code>strict</code>, <code>quarkus.tls.key-exchange-groups</code> must include at least one post-quantum-capable group such as <code>X25519MLKEM768</code>.
-Vert.x validates this at startup and throws an exception if no compatible engine or group is configured.</p>
+<p>When using <code>client-negotiated</code>, <code>quarkus.tls.key-exchange-groups</code> must include at least one post-quantum-capable group such as <code>X25519MLKEM768</code>.
+When using <code>strict</code>, <code>quarkus.tls.key-exchange-groups</code> must include only post-quantum-capable groups.
+Vert.x validates this at startup and overrides the specified set of groups if this condition is not respected. It will throw an exception if no compatible engine is available (see <a href="#pqc-availability-summary">PQC availability summary</a>).</p>
 </div>
 </td>
 </tr>
@@ -3439,22 +3424,6 @@ Ensure all clients are upgraded before enabling this mode.</p>
 </tr>
 </table>
 </div>
-<div class="admonitionblock note">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-note" title="Note"></i>
-</td>
-<td class="content">
-<div class="paragraph">
-<p>Policy enforcement (<code>strict</code> and <code>client-negotiated</code>) is not supported when using the JDK SSL engine.
-If you are running on JDK 27+, or on JDK 25+ once the post-quantum backport ships (expected October 2026), you can still enable post-quantum key exchange by setting <code>quarkus.tls.key-exchange-groups</code> — the negotiation will work correctly without policy enforcement.
-For full enforcement, OpenSSL 3.5+ via the native SSL engine is required.</p>
-</div>
-</td>
-</tr>
-</table>
-</div>
 <div class="admonitionblock important">
 <table>
 <tr>
@@ -3463,11 +3432,16 @@ For full enforcement, OpenSSL 3.5+ via the native SSL engine is required.</p>
 </td>
 <td class="content">
 <div class="paragraph">
-<p>Post-quantum enforcement (<code>client-negotiated</code> and <code>strict</code>) relies on a native OpenSSL 3.5+ library.
-Quarkus bundles this library only for <strong>Linux x86_64</strong> and <strong>Linux aarch64</strong>.
-In addition, <code>libapr-1</code> must be installed on the host OS (see <a href="https://netty.io/wiki/forked-tomcat-native.html">netty-tcnative prerequisites</a>).
-Other operating systems and architectures (macOS, Windows, Alpine Linux, Linux on RISC-V, etc.) are <strong>not supported</strong>: attempting to use <code>client-negotiated</code> or <code>strict</code> on an unsupported platform will fail at runtime because the native OpenSSL engine is unavailable.
-On those platforms, use <code>relaxed</code> with JDK 27+ for post-quantum key exchange.</p>
+<p><code>pqc-enforcement-policy</code> does more than enforce post-quantum key exchange: it also controls which SSL engine Vert.x selects.
+When <code>pqc-enforcement-policy</code> is set to <code>client-negotiated</code> or <code>strict</code>, Quarkus first checks whether the JDK SSL engine supports post-quantum key exchange.
+If it does (JDK 27+), the JDK engine is used; otherwise Quarkus falls back to the native OpenSSL 3.5+ engine.
+With the default <code>relaxed</code> policy, Vert.x uses the JDK SSL engine, which ignores any post-quantum key-exchange groups before JDK 27.
+Thus, configuring post-quantum groups without also setting the enforcement policy may result in no post-quantum key exchange at all.
+Quarkus logs a warning at startup if you configure a post-quantum group with <code>relaxed</code> policy to help catch this misconfiguration.</p>
+</div>
+<div class="paragraph">
+<p>For platform requirements when OpenSSL is used as fallback, see <a href="#openssl-engine-classical-tls">Using the OpenSSL engine for classical TLS</a>.
+For a full overview of which engine is used in each configuration, see the <a href="#pqc-availability-summary">PQC availability summary</a>.</p>
 </div>
 </td>
 </tr>
@@ -3475,22 +3449,9 @@ On those platforms, use <code>relaxed</code> with JDK 27+ for post-quantum key e
 </div>
 </div>
 <div class="sect4">
-<h5 id="ssl-engine-override"><a class="anchor" href="#ssl-engine-override"></a>3.3.5.3. SSL engine override</h5>
+<h5 id="pqc-ssl-engine-override"><a class="anchor" href="#pqc-ssl-engine-override"></a>3.3.5.3. SSL engine override</h5>
 <div class="paragraph">
-<p>By default, Vert.x selects the SSL engine automatically based on the enforcement policy:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p><code>client-negotiated</code> or <code>strict</code> activates the native OpenSSL engine (requires OpenSSL 3.5+).</p>
-</li>
-<li>
-<p><code>relaxed</code> uses the JDK SSL engine.</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>You can override this selection with the <code>ssl-engine</code> property:</p>
+<p>You can override the automatic engine selection with the <code>ssl-engine</code> property:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3499,58 +3460,24 @@ On those platforms, use <code>relaxed</code> with JDK 27+ for post-quantum key e
 </div>
 <div class="paragraph">
 <p>The supported values are <code>openssl</code> (requires netty-tcnative on the classpath) and <code>jdkssl</code> (the standard JDK SSL engine).
-This property is useful for testing or when you need explicit control over the engine — for example, forcing <code>jdkssl</code> on JDK 27+ where the JDK natively supports post-quantum groups.</p>
+This property is useful for testing or when you need explicit control over the engine.</p>
+</div>
+<div class="paragraph">
+<p>For using the OpenSSL engine on classical (non-PQC) TLS paths, see <a href="#openssl-engine-classical-tls">Using the OpenSSL engine for classical TLS</a>.</p>
 </div>
 </div>
 <div class="sect4">
 <h5 id="pqc-and-native-mode"><a class="anchor" href="#pqc-and-native-mode"></a>3.3.5.4. PQC and native mode</h5>
 <div class="paragraph">
-<p>In native mode, quantum-safe TLS is not available using OpenSSL. Thus, the only way to leverage PQC-compliant key exchange groups is to use a JDK SSL engine that supports them. This are not yet available in GraalVM/Mandrel, but should be available in the near future.</p>
+<p>The OpenSSL engine is unavailable in native mode (see <a href="#openssl-engine-native-mode">Native mode</a>).
+The only way to leverage PQC-compliant key exchange groups in native images is to use a JDK SSL engine that supports them; these are not yet available in GraalVM/Mandrel but should be in the near future.</p>
 </div>
 </div>
 <div class="sect4">
 <h5 id="pqc-in-containerized-environments"><a class="anchor" href="#pqc-in-containerized-environments"></a>3.3.5.5. PQC in containerized environments</h5>
 <div class="paragraph">
-<p>When running in a container with a UBI image as the base, <code>libapr-1</code> isn&#8217;t installed by default.
-So you need to install it explicitly.
-Without it, netty-tcnative cannot load the native OpenSSL engine at runtime, and PQC enforcement will fail even if OpenSSL 3.5+ is present.</p>
-</div>
-<div class="paragraph">
-<p>Install <code>apr</code> explicitly in your <code>Containerfile</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi9/openjdk-21-runtime
-# Explicitly add the `apr` package. Refer to your base image documentation to install the apr package
-RUN microdnf install -y apr &amp;&amp; microdnf clean all</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Below is an example of a complete <code>Containerfile</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi10/openjdk-25-runtime:latest
-
-ENV LANGUAGE='en_US:en'
-
-USER root
-RUN microdnf install -y apr &amp;&amp; microdnf clean all
-USER 185
-
-# We make four distinct layers so if there are application changes the library layers can be re-used
-COPY --chown=185 target/quarkus-app/lib/ /deployments/lib/
-COPY --chown=185 target/quarkus-app/*.jar /deployments/
-COPY --chown=185 target/quarkus-app/app/ /deployments/app/
-COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
-
-EXPOSE 8080 8443
-USER 185
-ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
-ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
-
-ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]</code></pre>
-</div>
+<p>The <code>libapr-1</code> requirement and container setup are identical whether OpenSSL is used for PQC or classical TLS.
+See <a href="#openssl-engine-prerequisites">Container setup</a> for installation instructions.</p>
 </div>
 </div>
 <div class="sect4">
@@ -3615,7 +3542,89 @@ ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]</code></pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="certificate-revocation-list-crl"><a class="anchor" href="#certificate-revocation-list-crl"></a>3.3.6. Certificate Revocation List (CRL)</h4>
+<h4 id="openssl-engine-classical-tls"><a class="anchor" href="#openssl-engine-classical-tls"></a>3.3.6. Using the OpenSSL engine for classical TLS</h4>
+<div class="paragraph">
+<p>Quarkus can automatically select the SSL engine based on the Post-Quantum Cryptography configuration (see <a href="#pqc-ssl-engine-override">SSL engine override</a>). However, even without post-quantum cryptography, you can configure Quarkus to use the native OpenSSL engine (via netty-tcnative) instead of the JDK SSL engine on classical TLS paths.
+The native engine can offer improved handshake throughput and hardware-accelerated cryptography on supported platforms.</p>
+</div>
+<div class="paragraph">
+<p>To force the OpenSSL engine for all TLS connections:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.tls.ssl-engine=openssl</code></pre>
+</div>
+</div>
+<div class="sect4">
+<h5 id="prerequisites"><a class="anchor" href="#prerequisites"></a>3.3.6.1. Prerequisites</h5>
+<div class="paragraph">
+<p>The native OpenSSL engine has the same platform requirements whether it is used for PQC or classical TLS:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Supported platforms only:</strong> Linux x86_64 and Linux aarch64.
+macOS, Windows, Alpine Linux, and other architectures are not supported.
+Quarkus bundles netty-tcnative only for the two platforms listed above; the property is silently ignored on unsupported platforms.</p>
+</li>
+<li>
+<p><strong><code>libapr-1</code> must be installed on the host OS.</strong>
+Without <code>libapr-1</code>, netty-tcnative cannot load the native OpenSSL library at runtime and the engine will not be available.</p>
+</li>
+</ul>
+</div>
+<div class="sect5">
+<h6 id="openssl-engine-prerequisites"><a class="anchor" href="#openssl-engine-prerequisites"></a>Container setup</h6>
+<div class="paragraph">
+<p>On UBI-based container images, <code>libapr-1</code> is not installed by default. Add it explicitly in your <code>Containerfile</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi9/openjdk-21-runtime
+# Explicitly add the `apr` package. Refer to your base image documentation to install the apr package
+RUN microdnf install -y apr &amp;&amp; microdnf clean all</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Below is an example of a complete <code>Containerfile</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-dockerfile hljs" data-lang="dockerfile">FROM registry.access.redhat.com/ubi10/openjdk-25-runtime:latest
+
+ENV LANGUAGE='en_US:en'
+
+USER root
+RUN microdnf install -y apr &amp;&amp; microdnf clean all
+USER 185
+
+# We make four distinct layers so if there are application changes the library layers can be re-used
+COPY --chown=185 target/quarkus-app/lib/ /deployments/lib/
+COPY --chown=185 target/quarkus-app/*.jar /deployments/
+COPY --chown=185 target/quarkus-app/app/ /deployments/app/
+COPY --chown=185 target/quarkus-app/quarkus/ /deployments/quarkus/
+
+EXPOSE 8080 8443
+USER 185
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
+ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
+
+ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="openssl-engine-native-mode"><a class="anchor" href="#openssl-engine-native-mode"></a>3.3.6.2. Native mode</h5>
+<div class="paragraph">
+<p>The OpenSSL engine is <strong>not supported in native (GraalVM/Mandrel) mode</strong>.
+netty-tcnative cannot be loaded inside a native image, so setting <code>ssl-engine=openssl</code> in a native application will cause a startup failure.
+In native mode, use the JDK SSL engine (the default) or leave <code>ssl-engine</code> unset.</p>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="certificate-revocation-list-crl"><a class="anchor" href="#certificate-revocation-list-crl"></a>3.3.7. Certificate Revocation List (CRL)</h4>
 <div class="paragraph">
 <p>A Certificate Revocation List (CRL) is a list of certificates that the issuing Certificate Authority (CA) revoked before their scheduled expiration date.
 When a certificate is compromised, no longer needed, or deemed invalid, the CA adds it to the CRL to inform relying parties not to trust it anymore.</p>
@@ -3643,7 +3652,7 @@ When a certificate is compromised, no longer needed, or deemed invalid, the CA a
 </div>
 </div>
 <div class="sect3">
-<h4 id="trusting-all-certificates-and-hostname-verification"><a class="anchor" href="#trusting-all-certificates-and-hostname-verification"></a>3.3.7. Trusting all certificates and hostname verification</h4>
+<h4 id="trusting-all-certificates-and-hostname-verification"><a class="anchor" href="#trusting-all-certificates-and-hostname-verification"></a>3.3.8. Trusting all certificates and hostname verification</h4>
 <div class="paragraph">
 <p>You can configure your TLS connection to trust all certificates and disable hostname verification.
 Note that these are two different processes:</p>
@@ -3694,7 +3703,7 @@ This method is useful for testing with self-signed certificates, but do not use 
 </div>
 </div>
 <div class="sect3">
-<h4 id="client-renegotiation"><a class="anchor" href="#client-renegotiation"></a>3.3.8. Preventing client renegotiation</h4>
+<h4 id="client-renegotiation"><a class="anchor" href="#client-renegotiation"></a>3.3.9. Preventing client renegotiation</h4>
 <div class="paragraph">
 <p>Client-initiated renegotiation allows a client to request new session parameters, such as a different cipher suite, during an established TLS connection.
 While this feature can provide flexibility, it also introduces a potential security risk when using TLS 1.2.</p>

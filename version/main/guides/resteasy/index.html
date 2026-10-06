@@ -2097,6 +2097,7 @@
         
         
         
+        
 
     <details class="guide-nav-cat" >
       <summary>Writing extensions</summary>
@@ -2104,6 +2105,9 @@
         <ul>
                 <li >
                   <a href="/version/main/guides/writing-extensions/">Writing your own extension</a>
+                </li>
+                <li >
+                  <a href="/version/main/guides/recorders-to-services-migration/">Recorders-to-Services Migration Guide</a>
                 </li>
                 <li >
                   <a href="/version/main/guides/building-my-first-extension/">Building my first extension</a>
@@ -2562,14 +2566,14 @@ This helps reduce the number of Jakarta REST providers (essentially converters) 
 For custom date format on a single field, use the <code>@JsonFormat</code> annotation.</p>
 </div>
 <div class="paragraph">
-<p>Quarkus simplifies Jackson configuration via CDI beans. Create a CDI bean of type <code>io.quarkus.jackson.ObjectMapperCustomizer</code> to apply various Jackson settings. Here&#8217;s an example for registering a custom module:</p>
+<p>Quarkus simplifies Jackson configuration via CDI beans. Create a CDI bean of type <code>io.quarkus.jackson.JsonMapperBuilderCustomizer</code> to apply various Jackson settings. Here&#8217;s an example for registering a custom module:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@ApplicationScoped
-public class MyObjectMapperCustomizer implements ObjectMapperCustomizer {
+public class MyJsonMapperBuilderCustomizer implements JsonMapperBuilderCustomizer {
     @Override
-    public void customize(ObjectMapper objectMapper) {
+    public void customize(JsonMapper.Builder builder) {
         // Add custom Jackson configuration here
     }
 }</code></pre>
@@ -2580,45 +2584,52 @@ public class MyObjectMapperCustomizer implements ObjectMapperCustomizer {
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import com.fasterxml.jackson.databind.ObjectMapper;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import jakarta.inject.Singleton;
+import tools.jackson.databind.json.JsonMapper;
 
 @Singleton
-public class RegisterCustomModuleCustomizer implements ObjectMapperCustomizer {
+public class RegisterCustomModuleCustomizer implements JsonMapperBuilderCustomizer {
 
-    public void customize(ObjectMapper mapper) {
-        mapper.registerModule(new CustomModule());
+    public void customize(JsonMapper.Builder builder) {
+        builder.addModule(new CustomModule());
     }
 }</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Users can even provide their own <code>ObjectMapper</code> bean if they so choose.
-If this is done, it is very important to manually inject and apply all <code>io.quarkus.jackson.ObjectMapperCustomizer</code> beans in the CDI producer that produces <code>ObjectMapper</code>.
+<p>Users can even provide their own <code>JsonMapper</code> bean if they so choose.
+If this is done, it is very important to manually inject and apply all <code>io.quarkus.jackson.JsonMapperBuilderCustomizer</code> beans in the CDI producer that produces <code>JsonMapper</code>.
 Failure to do so will prevent Jackson-specific customizations provided by various extensions from being applied.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import com.fasterxml.jackson.databind.ObjectMapper;
-import io.quarkus.arc.All;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.arc.All;
+import io.quarkus.jackson.JsonFactoryBuilderCustomizer;
+import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import java.util.List;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.json.JsonFactoryBuilder;
+import tools.jackson.databind.json.JsonMapper;
 
 public class CustomObjectMapper {
 
-    // Replaces the CDI producer for ObjectMapper built into Quarkus
+    // Replaces the CDI producer for JsonMapper built into Quarkus
     @Singleton
-    ObjectMapper objectMapper(@All List&lt;ObjectMapperCustomizer&gt; customizers) {
-        ObjectMapper mapper = myObjectMapper(); // Custom `ObjectMapper`
+    @Produces
+    JsonMapper jsonMapper(@All List&lt;JsonMapperBuilderCustomizer&gt; customizers,
+            @All List&lt;JsonFactoryBuilderCustomizer&gt; factoryCustomizers) {
+        JsonFactoryBuilder factoryBuilder = JsonFactory.builder();
+        factoryCustomizers.stream().sorted().forEach(customizer -&gt; customizer.customize(factoryBuilder));
 
-        // Apply all ObjectMapperCustomizer beans (incl. Quarkus)
-        for (ObjectMapperCustomizer customizer : customizers) {
-            customizer.customize(mapper);
-        }
+        JsonMapper.Builder builder = JsonMapper.builder(factoryBuilder.build());
 
-        return mapper;
+        // Apply all JsonMapperBuilderCustomizer beans (including Quarkus customizers)
+        customizers.stream().sorted().forEach(customizer -&gt; customizer.customize(builder));
+
+        return builder.build();
     }
 }</code></pre>
 </div>
