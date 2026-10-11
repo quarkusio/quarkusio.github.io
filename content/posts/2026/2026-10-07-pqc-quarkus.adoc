@@ -1,0 +1,154 @@
+---
+layout: post
+title: 'Post-Quantum Cryptography in Quarkus'
+date: 2026-10-07
+tags: security tls cryptography pqc
+synopsis: Quarkus 3.39 brings post-quantum cryptography support via X25519MLKEM768, protecting your TLS connections against harvest-now-decrypt-later attacks regardless of your JDK version.
+author: arnavarr
+---
+:imagesdir: /assets/images/posts/pqc-quarkus
+
+Quantum computing is progressing fast, and the cryptographic threat it poses is not purely a
+future concern: adversaries can collect your encrypted traffic *today* and decrypt it once a
+sufficiently capable quantum computer becomes available. This _harvest now, decrypt later_ attack
+is already happening.
+
+The good news: new post-quantum standards are ready and Quarkus 3.39 integrates them.
+This post gives an overview and a quick start; the link:/guides/post-quantum-cryptography[Quarkus PQC guide] covers the full background and a step-by-step tutorial.
+
+== Key exchange: today's weak link
+
+Not all cryptographic operations are equally exposed.
+
+*Authentication* is safe for now: forging a certificate requires a quantum computer operating live at connection time, not one that runs years later.
+
+*Key exchange*: the handshake step where client and server agree on a shared secret is
+vulnerable today: anyone recording your TLS traffic can store the exchanged parameters and apply
+Shor's algorithm to break the private key in sub-exponential time.
+
+*Symmetric encryption*: (AES) is safe: Grover's algorithm halves effective key strength, so moving
+from AES-128 to AES-256 restores full post-quantum security.
+
+Key exchange is therefore the urgent piece. The standardized replacement is *X25519MLKEM768*: a
+hybrid of the time-tested X25519 and the new quantum-resistant MLKEM768. The hybrid design
+ensures that if either component is secure, the combined secret is secure.
+
+See the link:/guides/post-quantum-cryptography[Quarkus PQC guide] for a full
+explanation of the underlying mathematics and how Shor's algorithm threatens classical key exchange.
+
+== Enabling PQC in Quarkus
+
+Quarkus exposes PQC through a single `application.properties` property. Setting the enforcement
+policy on the server is all it takes to get started:
+
+[source,properties]
+----
+quarkus.tls.pqc-enforcement-policy=strict
+----
+
+Three policy values are available:
+
+* `strict`: only PQC-compliant key exchange is accepted; non-PQC clients are rejected and startup
+  fails if no PQC-capable SSL engine is available.
+* `client_negotiated`: the server supports PQC but falls back to classical groups for clients that
+  don't advertise it.
+* `relaxed`: no enforcement; classical groups are accepted (the default behavior).
+
+The runtime selects the right SSL engine automatically based on your policy and JDK version.
+
+=== Prerequisites by JDK version
+
+[cols="1,2,2", options="header"]
+|===
+| Java Runtime | PQC available via | What you need
+
+| JDK 27+
+| JDK built-in SSL
+| Nothing extra
+
+| JDK 21/25 (after backport)*
+| JDK built-in SSL
+| JDK with backport applied
+
+| JDK < 27 (today)
+| OpenSSL 3.5+ via `smallrye-openssl`
+| OpenSSL 3.5+ and `libapr-1` on the host; two Maven dependencies
+|===
+
+*The link:https://www.java.com/en/jre-jdk-cryptoroadmap.html[Oracle Cryptographic Roadmap] targets
+Java 25 by October 2026 and Java 21/17 in the first half of 2027.
+
+For JDK < 27, install OpenSSL 3.5+ and `libapr-1` on the host machine, then add these dependencies to `pom.xml`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.netty</groupId>
+    <artifactId>netty-tcnative-classes</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.smallrye</groupId>
+    <artifactId>smallrye-openssl</artifactId>
+    <version>0.2.3</version>
+</dependency>
+<dependency>
+    <groupId>io.smallrye</groupId>
+    <artifactId>smallrye-openssl</artifactId>
+    <version>0.2.3</version>
+    <classifier>linux-x86_64</classifier>  <!-- or linux-aarch_64 -->
+</dependency>
+----
+
+[NOTE]
+====
+The OpenSSL path is JVM-only. Native mode is not supported when relying on `smallrye-openssl` for PQC; use JDK 27+ for native image builds.
+====
+
+=== Enabling PQC on the client side
+
+The same property applies to REST clients, scoped to a named TLS configuration:
+
+[source,properties]
+----
+# Apply PQC to the named "client" TLS configuration
+quarkus.tls.client.pqc-enforcement-policy=strict
+quarkus.rest-client."org.acme.GreetingClient".tls-configuration-name=client
+----
+
+With both server and client set to `strict`, Wireshark confirms that the TLS handshake negotiates
+X25519MLKEM768:
+
+----
+Extension: key_share (len=1222) X25519MLKEM768
+    Key Share Entry: Group: X25519MLKEM768, Key Exchange length: 1216
+----
+
+== How it works under the hood
+
+The integration required rebuilding `netty-tcnative` against OpenSSL 3.x headers and publishing the
+result as link:https://github.com/smallrye/smallrye-openssl[smallrye-openssl]. Vert.x gained three
+new options (`setKeyExchangeGroups`, `setPqcEnforcementPolicy`, `setSslEngineOptions`) and an
+automatic engine-selection mechanism that picks JdkSSL or OpenSSL based on PQC availability at
+startup.
+
+Quarkus surfaces all of this through the TLS Registry (`quarkus.tls.*`), so the same
+`pqc-enforcement-policy` property works for both servers and REST clients.
+
+The full details (including the key exchange group resolution tables, engine selection logic, and a
+step-by-step tutorial) are in the link:/guides/post-quantum-cryptography[Quarkus PQC guide].
+
+The initial contributions are available in Vert.x 4.5.28+ and Vert.x 5.1.0+, and were integrated in Quarkus 3.39.
+
+== What's next?
+
+This release covers key exchange. Certificate-based mutual authentication still uses classical
+signature schemes (RSA/ECDSA). Post-quantum signatures (ML-DSA) exist and are standardized; that
+migration is the natural next step.
+
+== Resources
+
+* link:/guides/post-quantum-cryptography[Quarkus PQC guide] - background,
+  integration details, and full step-by-step tutorial
+* link:/guides/tls-registry-reference[TLS Registry Reference]
+* link:https://github.com/smallrye/smallrye-openssl[smallrye-openssl]
+* link:https://www.java.com/en/jre-jdk-cryptoroadmap.html[Oracle JRE and JDK Cryptographic Roadmap]
