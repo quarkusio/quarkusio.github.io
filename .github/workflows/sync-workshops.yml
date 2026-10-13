@@ -1,0 +1,60 @@
+name: Sync workshops
+
+on:
+  schedule:
+    - cron: '37 0 * * *' # daily at 00:37 UTC
+  pull_request:
+    paths:
+      - 'tools/workshops-sync/**'
+      - '.github/workflows/sync-workshops.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token || github.token }}
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: jbangdev/setup-jbang@main
+
+      - name: Run workshops sync
+        # Run from the script's directory to avoid picking up the website's config/application.properties
+        working-directory: tools/workshops-sync
+        run: jbang main.java ${{ github.event_name == 'pull_request' && '--dry-run' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || github.token }}
+          WORKSHOPS_INPUT: ../../_data/workshops.yaml
+          WORKSHOPS_OUTPUT: ../../_data/workshops.yaml
+
+      - name: Commit and push
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _data/workshops.yaml
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Sync workshops data"
+            git pull origin main --rebase
+            git push origin main
+          fi
