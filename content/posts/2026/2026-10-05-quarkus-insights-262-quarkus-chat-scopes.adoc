@@ -1,0 +1,96 @@
+---
+layout: post
+title: 'Quarkus Insights #262: What is Quarkus Chat Scopes?'
+date: 2026-10-05
+tags: quarkus-insights
+author: jcobb
+synopsis: 'Building a chat UI backed by an LLM sounds straightforward until you try to hold a real multi-turn conversation on a server that only knows about request scope and application scope. Bill Burke presents the solution he built: Quarkus Chat Scopes, a new CDI conversational scope and client-server remoting framework.'
+---
+
+This summary was generated using AI, reviewed by humans - https://www.youtube.com/watch?v=-aIIXB2auks[watch the video] for the full story.
+
+== Quarkus Insights #262: What is Quarkus Chat Scopes?
+
+Building a chat UI backed by an LLM sounds straightforward until you try to hold a real multi-turn conversation on a server that only knows about request scope and application scope. In episode 262, Bill Burke, a longtime Red Hat/IBM architect, EJB specification veteran, author of https://www.oreilly.com/[O'Reilly] books on https://www.oreilly.com/library/view/restful-java-with/9781449361433/[RESTful Java], and contributor to Quarkus Lambda and Azure Functions integrations, joins hosts Eric Deandrea and Holly Cummins to present the solution he built: Quarkus Chat Scopes, a new CDI conversational scope and client-server remoting framework living inside https://github.com/quarkiverse/quarkus-langchain4j[Quarkus LangChain4j].
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/-aIIXB2auks" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Holly opened with a notable week of releases. The long-awaited Quarkus 4 beta is now available for anyone who wants to kick the tires. Quarkus 3.40, the last LTS on the 3.x stream, is also out and ready for teams looking to move to the latest long-term support baseline. For those who prefer in-person feedback, several members of the Quarkus team will be at https://devoxx.be/[Devoxx Belgium], and Eric will be at https://www.dev2next.com/[dev2next] in Denver, Colorado the following week for anyone who cannot make it to Europe.
+
+== The Problem: Chat Applications Need More Than Request Scope
+
+Bill's framing is rooted in direct experience. A year and a half ago he started writing chat applications with Quarkus LangChain4j and quickly ran into three gaps:
+
+* **No conversation-scoped state.** LLM conversations are managed on the server, but beyond chat memory, applications need to store and reference intermediate business state across multiple user messages. The built-in `@RequestScoped` and `@ApplicationScoped` CDI scopes are the wrong shape: request scope destroys everything when the response returns, and application scope is global.
+* **No structured memory ID management.** Without a first-class conversation scope, developers had to manually pass `@MemoryId`-annotated parameters throughout their AI services to keep chat histories separate.
+* **No remote client framework.** There was no dedicated API for chat UIs (web, mobile, terminal) to talk to Quarkus AI services. Clients had to wire their own WebSocket handling and figure out a protocol from scratch.
+
+Chat Scopes addresses all three.
+
+== The New CDI Scope: `@ChatScoped`
+
+The first half of Chat Scopes is a new https://jakarta.ee/specifications/cdi/[CDI] conversational scope, `@ChatScoped`, which sits between request scope and session scope in its lifetime. It is manually started and stopped, and its lifetime maps precisely to a conversation with a user.
+
+Starting a conversation is a single call: `ChatScope.begin()`. The conversation is tied to the current thread. It can be deactivated and reactivated by ID (supporting reconnections and failover), and `ChatScope.end()` destroys it, cleaning up all associated state. Because the scope is tied to a long-running conversation rather than a single request, chat memory lifecycle is also tied to it: when the conversation ends, the memory is destroyed. Developers no longer need to manage memory IDs by hand; the framework generates a default ID from the conversation ID, the AI service interface name, and the method name.
+
+Tool classes (the beans containing `@Tool`-annotated methods called by the LLM) can themselves be `@ChatScoped`. This means tool instances can hold mutable fields that accumulate state as the LLM calls them across multiple turns. In the demo's travel agent example, a `FlightBookerToolbox` bean stores departure airport, arrival airport, and travel dates in ordinary fields, gradually filled by successive LLM tool calls within the same conversation, with no manual state threading required.
+
+=== Nested Conversations
+
+Chat Scopes supports a conversation stack via `ChatScope.push()` and `ChatScope.pop()`. When the server decides a user interaction has shifted context (say, from a top-level vacation planner to a hotel reservation sub-workflow), it can push a new conversation onto the stack, handle the sub-workflow with its own scoped beans and chat memory, then pop back to the parent conversation when done. The parent conversation's beans and memory are cleanly restored.
+
+=== Passivation
+
+Bill noted that passivation support is in progress: when a conversation is deactivated, any `@ChatScoped` CDI beans are serialized to JSON and stored in a backing store (a file, https://infinispan.org/[Infinispan], or any other backend). When the client reconnects and reactivates the conversation, beans are deserialized and restored transparently. This covers both the server crash and the client disconnect scenarios.
+
+== The Chat Invocation Framework: `@ChatRoute`
+
+The second half of Chat Scopes is a WebSocket-based message protocol and framework for remote chat UIs. Annotating an AI service method with `@ChatRoute` and giving it a name is all that is required to make it remotely invocable. The framework handles:
+
+* **Server-driven conversation routing.** The server can switch which chat route the client is currently talking to at any time. The client sends user messages and handles events; it does not need to track conversation context itself.
+* **Asynchronous thinking messages.** From inside a tool method, injecting a `ChatRouteContext` object allows the server to push intermediate "thinking" events back to the client while long-running operations are in progress, keeping the UX responsive.
+* **Rich event types.** The server can send structured POJOs that are marshalled to JSON. Client event handlers render them appropriately, whether in a terminal, a browser, or a mobile app.
+* **Security.** `@RolesAllowed` and other standard Quarkus security annotations apply directly to chat route methods.
+
+=== Client API: Java and JavaScript
+
+The Chat Scopes client API wraps the WebSocket connection and is intentionally designed to feel almost identical in Java and JavaScript. A JavaScript client is served over an HTTP URL so web apps can include it with a standard `<script>` tag. The Java client, demonstrated as a terminal console application, uses a promise-based async model that mirrors the JavaScript API.
+
+Client setup follows three steps: call `client.builder()`, register event handlers (including a default handler for plain string responses), and call `builder.connect()` specifying the initial chat route. All WebSocket lifecycle and multiplexing is handled by the framework; applications just send user messages and respond to events.
+
+== Demo: A Terminal Travel Agent
+
+Bill's demo assembled the full picture with a three-AI-service travel agent:
+
+1. **Travel agent:** the top-level `@ChatRoute`, annotated as the default endpoint. It inspects each incoming user message and routes to the appropriate sub-workflow tool.
+2. **Flight reservation AI service:** handles the conversation to gather departure city, destination airport, travel date, and return date, then books the flight.
+3. **Hotel reservation AI service:** handles the conversation to collect hotel name, check-in date, check-out date, and room type, then books the hotel.
+
+The demo showed the full flow in a terminal client with ANSI colour output: asking to fly from Boston to London (Gatwick), the LLM collecting the required fields one by one via tool calls, booking the flight, then switching to a hotel reservation conversation (a `ChatScope.push()`) at the Ritz Carlton, collecting hotel details, booking the room, calling `ChatScope.pop()`, and returning to the top-level planner, all while sending real-time "thinking" messages to the terminal as each tool executed.
+
+Both a terminal client example and a web application using the JavaScript client API are in the https://github.com/quarkiverse/quarkus-langchain4j/tree/main/samples[samples directory of the quarkus-langchain4j repository].
+
+Eric also mentioned that he has been building https://github.com/edeandrea/non-deterministic-no-problem[a more complex agentic example] on top of Chat Scopes: a fully agentic workflow with human-in-the-loop interactions and saved state.
+
+== Key Takeaways
+
+1. **`@ChatScoped` is a new first-class CDI bean scope**, longer-lived than request scope, shorter-lived and manually managed compared to session scope, and designed specifically for multi-turn LLM conversations.
+2. **Chat memory lifecycle is tied to the conversation.** No more manual `@MemoryId` annotations; the framework generates scoped memory IDs automatically.
+3. **Tool beans can hold state.** `@ChatScoped` tool classes accumulate field values as the LLM calls them across turns, replacing the need to thread state through method parameters.
+4. **Nested conversations via push/pop.** `ChatScope.push()` starts a sub-conversation with its own scope; `ChatScope.pop()` ends it and restores the parent, enabling menu-style navigation across AI service workflows.
+5. **Passivation is coming.** Conversation beans will be serializable to any backing store, supporting server restarts and client reconnections transparently.
+6. **`@ChatRoute` turns any AI service method into a WebSocket endpoint.** One annotation makes it remotely invocable with a structured protocol.
+7. **Server drives the conversation.** The server can switch the active chat route at any time; the client only sends messages and handles events, keeping client logic thin.
+8. **Asynchronous thinking messages.** Inject `ChatRouteContext` in a tool method to push intermediate status events to the client during long-running operations.
+9. **Java and JavaScript clients share the same API shape.** A promise-based model works identically whether you are writing a Java terminal app or a web front end.
+10. **All samples are in the quarkus-langchain4j repo.** Terminal and web examples are in the `samples` directory and ready to explore.
+
+== Conclusion
+
+Chat Scopes fills a gap that becomes apparent the moment you try to build a real, multi-turn, stateful chat application with Quarkus LangChain4j. The `@ChatScoped` bean scope gives the application a first-class container for conversational state that neither request scope nor application scope can provide. The `@ChatRoute` framework turns AI services into proper remote endpoints with a structured protocol, asynchronous events, and thin client libraries in both Java and JavaScript. Together they replace a collection of manual workarounds (memory ID bookkeeping, custom WebSocket handlers, ad-hoc state threading) with a clean programming model that lets CDI do what CDI is good at. Next week, the team turns to build reproducibility: what it takes to get the same binaries from the same source, every time.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel]. Explore the samples at https://github.com/quarkiverse/quarkus-langchain4j/tree/main/samples[github.com/quarkiverse/quarkus-langchain4j/tree/main/samples] and read the documentation at https://docs.quarkiverse.io/quarkus-langchain4j/dev/chat-scopes.html[docs.quarkiverse.io].
