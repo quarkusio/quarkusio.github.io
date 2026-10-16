@@ -1,0 +1,474 @@
+---
+layout: post
+title: 'Debates, voting, and reflection loops: composing an agentic PR reviewer that costs less than a dollar'
+date: 2026-10-23T00:00:00Z
+tags:
+  - ai
+  - llm
+  - agents
+  - langchain4j
+synopsis: 'How an agentic GitHub pull request reviewer, built with Quarkus LangChain4j, combines a decision router, debates, voting, reflection loops and a human in the loop, with the right model for each step and a cost cap.'
+author: mariofusco
+---
+:imagesdir: /assets/images/posts/agentic
+
+We review thousands of pull requests a year on LangChain4j, and we wanted an agentic system to help. But a single pattern can't do it: routing, debating, voting and reflection all need to work together, within a cost budget, in a real Quarkus application. Here's how we built one that reviews a 2900-line pull request for $0.45.
+
+In previous articles we discussed why no single agentic pattern can cover all use cases, introducing a https://quarkus.io/blog/agentic-ai-patterns/[generic `Planner` abstraction] to define custom orchestration strategies, and we showed how the https://quarkus.io/blog/introducing-voting-pattern/[voting pattern and dynamic chat model selection] make an agentic system more reliable and more cost-efficient. Each of those articles focused on one pattern, applied to a deliberately small example. This time we want to see what happens when many of these patterns have to work together in a real application, with real costs, real failures, and a human who wants to have the last word.
+
+Given a pull request, the reviewer produces a report saying what is good, what is wrong and what could be improved, with every problem anchored to a file and a line of the diff. It also gives a score from 0 to 10 for usefulness, correctness, conciseness, security, test coverage, maintainability, API and documentation, and PR hygiene, plus an overall score with its confidence, and a verdict: `APPROVE`, `COMMENT` or `REQUEST_CHANGES`.
+
+It only reads GitHub, with a read-only token, and never writes to it: its output is a Markdown report, the same report in JSON, and an HTML trace of the execution of its agents.
+
+The reviewer is a Quarkus application built with the Quarkus LangChain4j extensions, version 1.15 on LangChain4j 1.21: `quarkus-langchain4j-agentic` for the agents, the Anthropic and OpenAI extensions for the chat models, `quarkus-langchain4j-typesafe` for the decision model (where https://typesafe.ai[TypeSafe] is the company behind the Jev decision models), and `quarkus-github-api` to read GitHub.
+
+The agents are plain Java interfaces written with the declarative agentic API: the extension finds them at build time, validates how they are wired together and registers each of them as a CDI bean. The reviewer can be used both from the command line and from a local web interface. Let's see how it works.
+
+== A deterministic backbone, with model judgment inside
+
+When designing an agentic system, it is tempting to hand everything to a supervisor and let an LLM decide what to do next. For a reviewer this would be a poor choice: we want every review to fetch the same data, to run the checks that matter and to produce a report with the same structure, and we want to be able to test all of this. For this reason, the root of the reviewer is a plain sequence, and model judgment lives inside its steps, where it is actually needed.
+
+[source,java]
+----
+public interface PrReviewSystem extends MonitoredAgent {
+
+    @SequenceAgent(name = "prReviewSystem",
+            description = "Reviews a GitHub pull request and produces a scored report",
+            outputKey = Keys.FINAL_REPORT,
+            subAgents = {
+                PrFetcher.class,
+                DiffPreprocessor.class,
+                DiffTextProjection.class,
+                PrOverviewProjection.class,
+                DiffChunksProjection.class,
+                PrTriage.class,
+                RoutingInputs.class,
+                ContextGate.class,
+                ClarificationGate.class,
+                ReviewBundleBuilder.class,
+                UsefulnessAssessor.class,
+                ReviewPanel.class,
+                CoverageFloor.class,
+                DiffChunkDeclaration.class,
+                LargeDiffGate.class,
+                FindingsConsolidator.class,
+                ReviewRevisionLoop.class,
+                FinalizerGate.class,
+                ReportExporter.class
+            })
+    ReviewReport review(String prUrl, ReviewMode mode, ReviewOptions options);
+}
+----
+
+There is nothing to implement behind this interface. Quarkus LangChain4j detects it at build time, checks that every parameter an agent reads is the output key of another agent or an input of the root, and registers the whole system as a CDI bean, so that running a review is one injection away:
+
+[source,java]
+----
+@ApplicationScoped
+public class ReviewService {
+
+    @Inject
+    PrReviewSystem system;
+
+    // ...
+}
+----
+
+A parameter named after a key that no agent produces fails the build, with the message `No agent provides an output key named '...'`, instead of failing a review.
+
+Many of these subagents don't use an LLM at all. Fetching the pull request, parsing and classifying its diff, validating the findings and rendering the report are better done by plain code, which in the declarative API is simply a static method annotated with `@Agent`. For instance, this non-AI agent renders the description of the pull request that all the reviewers read:
+
+[source,java]
+----
+public class ReviewBundleBuilder {
+
+    @Agent(name = "reviewBundleBuilder", description = "Renders the pull request bundle shared by all reviewers",
+            outputKey = Keys.REVIEW_BUNDLE)
+    public static String build(String prOverview, PrSummary prSummary, String codeContext,
+                               String reviewerGuidance, String diffText) {
+        return "## Overview\n" + prOverview
+                + "\n## Triage\n" + prSummary
+                // ... the code context, the guidance of the human reviewer and the diff
+                + "<diff>\n" + diffText + "\n</diff>\n";
+    }
+}
+----
+
+== Two ways to read GitHub: structured fetch vs. tool-calling agents
+
+The reviewer reads GitHub through the https://github.com/hub4j/github-api[hub4j] client that the https://docs.quarkiverse.io/quarkus-github-api/dev/[`quarkus-github-api`] extension brings, with a read-only token, in two different ways. The first agent of the sequence reads the pull request with its diff, commits, CI checks, previous reviews and linked issue through a small `GitHubReads` interface: there is no point in asking an LLM what to fetch, when the answer is always the same.
+
+Conversely, the agents that need to explore the repository, like the context gatherer collecting the code around the change, get five read-only tools: the `@Tool` methods of a CDI bean, reading files, searching code, reading commits and issues, that the agent declares with `@ToolBox`:
+
+[source,java]
+----
+public interface ContextGatherer {
+
+    @SystemMessage(fromResource = "/prompts/analyst-system.md")
+    @UserMessage(fromResource = "/prompts/context-gatherer-user.md")
+    @ToolBox(GitHubTools.class)
+    @Agent(name = "contextGatherer",
+            description = "Reads the repository to collect the code around the change: callers, interfaces, existing tests",
+            outputKey = Keys.CODE_CONTEXT)
+    String gather(String prOverview, PrSummary prSummary, String diffText);
+}
+----
+
+Quarkus LangChain4j generates the executors of these tools at build time, and lets a wrapper bean see every tool call together with the invocation context of the agent call. The reviewer uses one to enforce a budget on the number of tool calls per invocation, so that a curious agent cannot spend the whole review budget browsing the repository. Read-only access is a matter of construction: the interface has no write method, and the bean exposes exactly these five read tools.
+
+Moreover, this agent runs only when the triage agent says that the diff alone is not enough to understand the change: it is the subagent of a `@ConditionalAgent` whose activation condition reads the `PrSummary` produced by the triage.
+
+== Choosing the reviewers with a decision model
+
+The heart of the review is a panel of five specialized reviewers: correctness, security, design, tests, and documentation and API. Running all of them on every pull request would be a waste: a fix in a README doesn't need a security review, and a dependency bump doesn't need a design review. We could ask an LLM which reviewers to run, but every routing decision would cost a full LLM call whose textual answer has to be parsed, and it would say nothing about how sure the LLM was about its choice.
+
+This is a job for a https://docs.langchain4j.dev/tutorials/decision-models[decision model]: a model that doesn't generate text, but answers typed questions about an input, returning the probability of each possible answer. The https://docs.langchain4j.dev/tutorials/agents/#decision-router-agentic-pattern[decision router pattern] uses one to choose among its subagents: given an activation threshold, it asks in a single call whether each subagent should handle the request, and then runs in parallel all those whose probability of "yes" reaches the threshold.
+
+[source,java]
+----
+public interface ReviewPanel {
+
+    @PlannerAgent(name = "reviewPanel", description = "Selects the relevant reviewers and runs them in parallel",
+            outputKey = Keys.PANEL_OUTPUTS,
+            subAgents = {CorrectnessReviewer.class, SecurityReviewer.class, DesignReviewer.class, TestReviewer.class,
+                    DocsApiReviewer.class})
+    Map<String, Object> review(Map<String, Object> routingInput);
+
+    @PlannerSupplier
+    static Planner planner() {
+        ReviewOptions options = ActiveReview.get().current()
+                .map(run -> run.request().options())
+                .orElseGet(() -> ReviewDefaults.get().options());
+        return new DecisionRouterPlanner(DecisionModels.get().model(options.decisionModel()),
+                options.routerThreshold());
+    }
+}
+----
+
+The decision model reads the arguments of the router agent and the descriptions of its subagents. Here the argument is a compact routing input made of a few flags computed by a non-AI agent: whether the change touches production code, tests, security-sensitive code, the public API or the build files, and whether it is documentation only. For this reason, the description of each reviewer states the flags it needs:
+
+[source,java]
+----
+@Agent(name = "correctnessReviewer",
+        description = "Finds functional bugs in Java production code. Handles the request only if productionCodeChanged is true.",
+        outputKey = Keys.CORRECTNESS_FINDINGS)
+List<RawFinding> review(String reviewBundle);
+----
+
+This made a big difference. We measured 25 routing decisions on five synthetic changes: with topic-style descriptions, a small decision model with 0.8 billion parameters running locally got 13 of them right; with the flags it got 22 at its best threshold, and a hosted decision model got all 25.
+
+Decision models are configured in `application.properties` like any other model, here with the `quarkus-langchain4j-typesafe` extension, both for the small model served locally and for the hosted one, and, like the chat models, they become beans qualified by their name, which is how the planner supplier above picks the local or the hosted one at each review:
+
+[source,properties]
+----
+quarkus.langchain4j.local.decision-model.provider=typesafe
+quarkus.langchain4j.typesafe.local.base-url=${SYSTEM_ONE_BASE_URL:http://localhost:11434}
+quarkus.langchain4j.typesafe.local.decision-model.model-name=${SYSTEM_ONE_MODEL_NAME:tev1:0.8b}
+
+quarkus.langchain4j.hosted.decision-model.provider=typesafe
+quarkus.langchain4j.typesafe.hosted.api-key=${TYPESAFE_API_KEY:missing}
+quarkus.langchain4j.typesafe.hosted.decision-model.model-name=${TYPESAFE_MODEL_NAME:jev-latest}
+----
+
+A small local model is free and fast, but it can be wrong, and some reviews are too important to be skipped. For this reason, a deterministic safety net follows the router: a `@ConditionalAgent` runs a fallback correctness review on production code, a security review on security-sensitive code, and a documentation review on documentation-only changes, whenever the router skipped them.
+
+[source,java]
+----
+public interface CoverageFloor {
+
+    @ConditionalAgent(name = "coverageFloor", description = "Runs the essential reviewers the router did not select",
+            subAgents = {CorrectnessReviewerFallback.class, SecurityReviewerFallback.class, DocsApiReviewerFallback.class})
+    void ensureCoverage(DiffStats diffStats);
+
+    @ActivationCondition(value = CorrectnessReviewerFallback.class, description = "production code without correctness review")
+    static boolean correctness(Map<String, Object> panelOutputs, DiffStats diffStats) {
+        return ReviewerCoverage.correctnessMissing(panelOutputs, diffStats);
+    }
+
+    // ... the same for the security and the documentation reviews
+}
+----
+
+Finally, very large pull requests don't fit in the token budget of the reviewers. The files left out of the main diff are split into chunks, and a `@ParallelMapperAgent` reviews all of them in parallel, one chunk reviewer per chunk.
+
+[.text-center]
+.The reviewer panel: the decision router, the coverage floor and the chunked review of very large pull requests
+image::pr-reviewer-routing.webp[width=80%, align="center", alt="The reviewer panel: the decision router, the coverage floor and the chunked review of very large pull requests"]
+
+== Putting findings on trial: the debate pattern
+
+The reviewers return raw findings, each one with a category, a severity, a confidence, a file and a line. LLMs sometimes see problems that aren't there, so before reaching the report, the findings are validated by a non-AI agent: a finding must point at a file of the diff, at a line near a changed hunk, otherwise it is discarded. This removes hallucinated locations, and also anything smuggled into the prompts through the text of the pull request. Then duplicates reported by different reviewers are merged, and each finding gets an id, from F1 to Fn.
+
+Some findings deserve a second look before being accepted: a high-severity finding reported with low confidence, or contradicted by another reviewer rating the same place as minor, is too important to be either trusted or ignored. These findings are put on trial with the https://docs.langchain4j.dev/tutorials/agents/#debate-agentic-pattern[debate pattern]: a prosecutor argues that the problem is real, a defender argues that it is not, both reading the changes of the file in question with read-only tools, and a judge decides.
+
+[source,java]
+----
+public interface FindingDebate {
+
+    int MAX_ROUNDS = 2;
+
+    @PlannerAgent(name = "findingDebate", description = "Settles a contested finding through a debate",
+            outputKey = Keys.DEBATE_VERDICT,
+            subAgents = {FindingProsecutor.class, FindingDefender.class, DebateJudge.class})
+    DebateVerdict debate(Finding contestedFinding);
+
+    @PlannerSupplier
+    static Planner planner() {
+        return new DebatePlanner(MAX_ROUNDS, ConvergenceStrategy.unanimousLastWord());
+    }
+}
+----
+
+The prosecutor and the defender argue in parallel for up to two rounds, each one reading the arguments of the other in the transcript of the debate, and the debate stops early when both end with the same word. Then the judge, always last, confirms the finding, rejects it, or lowers its severity. A finding that the debate could not settle stays in the report, but it no longer drives the verdict.
+
+The contested findings are debated one at a time, inside a `@LoopAgent` that takes the next one at each iteration, and stops when there are no more contested findings or when the cost cap is reached.
+
+[.text-center]
+.Findings: the validation of the findings and the debates of the contested ones
+image::pr-reviewer-debates.webp[width=80%, align="center", alt="Findings: the validation of the findings and the debates of the contested ones"]
+
+== Scoring: voting only when it matters
+
+A scorer agent reads the surviving findings and proposes a score card, with a score and a rationale for each metric, a verdict and its reasoning.
+
+A single scorer is usually enough, but when its card is borderline, we would rather have more opinions: this is exactly the use case of the voting pattern discussed in the https://quarkus.io/blog/introducing-voting-pattern/[previous article]. Here three scorers with different perspectives, neutral, skeptical and lenient, vote in parallel, and their score cards are aggregated by averaging the scores and taking the majority verdict:
+
+[source,java]
+----
+public interface ScoreVoting {
+
+    @PlannerAgent(name = "scoreVoting", description = "Aggregates independent score cards for a borderline review",
+            outputKey = Keys.SCORE_CARD,
+            subAgents = {NeutralScorer.class, SkepticalScorer.class, LenientScorer.class})
+    ScoreCard vote(List<Finding> activeFindings);
+
+    @PlannerSupplier
+    static Planner planner() {
+        return new VotingPlanner(ScoreCardVotingStrategy.averageAndMajority());
+    }
+}
+----
+
+However, voting on every review would multiply the cost of scoring for no benefit when the first card is clear-cut. For this reason, the voting runs only when the draft is borderline: an overall score within half a point of the approval threshold, a verdict that the findings would make one step stricter on the strength of a finding of middling confidence, or a request for changes without any high-severity finding. A `@ConditionalAgent` makes this decision, also checking how much the review has cost so far:
+
+[source,java]
+----
+public interface VotingGate {
+
+    @ConditionalAgent(name = "votingGate", description = "Votes on borderline score cards",
+            outputKey = Keys.SCORE_CARD, subAgents = ScoreVoting.class)
+    ScoreCard vote(ScoreCard scoreCard);
+
+    @ActivationCondition(value = ScoreVoting.class, description = "borderline score card within the cost cap")
+    static boolean borderline(ScoreCard scoreCard, List<Finding> activeFindings, DiffStats diffStats,
+                              PrSummary prSummary, ReviewOptions options) {
+        return VotingTrigger.isBorderline(scoreCard, activeFindings, diffStats, prSummary)
+                && !ActiveReview.get().ledger().exceeded(options.maxCostUsd());
+    }
+}
+----
+
+The models propose, but a non-AI calibrator has the last word, and it can only make the outcome stricter. It caps the scores that the findings contradict, for instance a credible critical security finding caps the security score at 2.0, and it raises the verdict to the minimum that the findings require, so that a medium correctness finding means at least `COMMENT`.
+
+== Writing the report: a reflection loop
+
+The report writer produces only the prose: the summary, what is good and what could be improved. The findings, the scores and the verdict are rendered from the data by a non-AI assembler, so that the writer can neither invent a finding nor lose one.
+
+A critic then rates the rendered report, and the writer rewrites it until the critic is satisfied, in a classic reflection loop:
+
+[source,java]
+----
+public interface ReportQualityLoop {
+
+    double FIRST_ROUND_THRESHOLD = 0.85;
+    double LATER_ROUNDS_THRESHOLD = 0.7;
+
+    @LoopAgent(name = "reportQualityLoop", description = "Writes the report and refines it until the critic passes",
+            outputKey = Keys.REVIEW_REPORT, maxIterations = 3,
+            subAgents = {ReportWriter.class, ReportAssembler.class, ReportCritic.class})
+    ReviewReport write(Scores scores);
+
+    @ExitCondition(testExitAtLoopEnd = true, description = "the critic is satisfied, or the cost cap is reached")
+    static boolean exit(AgenticScope scope, Critique reportCritique, ReviewOptions options) {
+        int round = ScopeState.read(scope, Keys.REPORT_ROUND);
+        double threshold = round <= 1 ? FIRST_ROUND_THRESHOLD : LATER_ROUNDS_THRESHOLD;
+        return reportCritique.score() >= threshold || ActiveReview.get().ledger().exceeded(options.maxCostUsd());
+    }
+}
+----
+
+The bar is lowered after the first round, so that the loop converges, and a report that has been criticized is rewritten by a more capable model, as we will see in a moment.
+
+== Keeping the human in the loop
+
+By default the review runs unattended, but in interactive mode the human reviewer takes part in it at two points. Before the review, they can answer up to three clarification questions generated from the pull request, plus an open question about the areas to focus on, and their answers reach every reviewer. After the report is written, they can approve it, edit it with some notes, reject it, drop some findings, or contest them:
+
+[source,java]
+----
+public interface HumanApproval {
+
+    @HumanInTheLoop(name = "humanApproval",
+            description = "Shows the report to the human reviewer and asks to approve, edit, contest or drop findings, or reject",
+            outputKey = Keys.APPROVAL)
+    static ApprovalDecision ask(ReviewReport reviewReport, List<Finding> findings, ReviewOptions options) {
+        ActiveReview active = ActiveReview.get();
+        CostLedger ledger = active.ledger();
+        return active.console().askApproval(reviewReport, findings.stream().filter(Finding::active).toList(),
+                ledger.total(), options.maxCostUsd(), !ledger.exceeded(options.maxCostUsd()));
+    }
+}
+----
+
+Contesting a finding sends it to a debate, together with the notes of the human, and then scoring and writing run again. All these steps belong to a `@LoopAgent`, whose exit condition simply checks the decision of the human, with at most two contest rounds:
+
+[source,java]
+----
+@ExitCondition(testExitAtLoopEnd = true, description = "the reviewer did not contest the report")
+static boolean exit(ApprovalDecision approval) {
+    return approval.decision() != ApprovalDecision.Decision.CONTEST;
+}
+----
+
+The human-in-the-loop agent doesn't know whether the human is sitting in front of a terminal or of a browser: it talks to a `ReviewerConsole`, with one implementation reading the answers from the standard input and another one for the web interface. The latter publishes the question to the page of the review, and then blocks the review until the browser posts the answer:
+
+[source,java]
+----
+@Override
+public ApprovalDecision askApproval(ReviewReport report, List<Finding> findings, double spentUsd, double capUsd,
+                                    boolean debatesAffordable) {
+    CompletableFuture<ApprovalDecision> answer = new CompletableFuture<>();
+    run.waitFor(new Interaction.Approval(report, List.copyOf(findings), spentUsd, capUsd, debatesAffordable, answer));
+    return await(answer);
+}
+----
+
+== The right model for each agent, within a budget
+
+Not every agent needs the most capable model. The reviewer uses three tiers: a small model for the triage, the checklists and the critic, a medium model for judging code, scoring and writing, and a large model only when there is evidence that it is needed: a high-risk or large change, security-sensitive code, a critical contested finding, a report that the critic didn't like, or an explicit request for a deep review.
+
+The tiers are named models, a feature of Quarkus LangChain4j: each `quarkus.langchain4j.<name>` block in `application.properties` becomes a `ChatModel` bean qualified with `@ModelName`, here one per provider and tier, Anthropic and OpenAI:
+
+[source,properties]
+----
+quarkus.langchain4j.openai-standard.chat-model.provider=openai
+quarkus.langchain4j.openai.openai-standard.api-key=${OPENAI_API_KEY:missing}
+quarkus.langchain4j.openai.openai-standard.chat-model.model-name=gpt-5.6-luna
+quarkus.langchain4j.openai.openai-standard.chat-model.reasoning-effort=medium
+
+quarkus.langchain4j.openai-premium.chat-model.provider=openai
+quarkus.langchain4j.openai.openai-premium.api-key=${OPENAI_API_KEY:missing}
+quarkus.langchain4j.openai.openai-premium.chat-model.model-name=gpt-5.1
+quarkus.langchain4j.openai.openai-premium.chat-model.reasoning-effort=high
+----
+
+Each agent then selects its model at every invocation, through the https://docs.langchain4j.dev/tutorials/agents/#dynamic-chat-model-selection[dynamic chat model selection] also discussed in the previous article. The `@ChatModelSupplier` method receives both a CDI bean, marked `@CdiBean`, a catalog that is nothing more than an `Instance<ChatModel>` selecting the model beans by name, and the `AgenticScope`, which tells whether the evidence for an escalation is there:
+
+[source,java]
+----
+public interface CorrectnessReviewer {
+
+    @SystemMessage(fromResource = "/prompts/reviewer-system.md")
+    @UserMessage(fromResource = "/prompts/correctness-user.md")
+    @Agent(name = "correctnessReviewer",
+            description = "Finds functional bugs in Java production code. Handles the request only if productionCodeChanged is true.",
+            outputKey = Keys.CORRECTNESS_FINDINGS)
+    List<RawFinding> review(String reviewBundle);
+
+    @ChatModelSupplier
+    static ChatModel model(@CdiBean ModelCatalog catalog, AgenticScope scope) {
+        return ModelSelection.select(catalog, scope, "correctnessReviewer",
+                ModelTier.STANDARD, ModelTier.PREMIUM, Escalation::highRiskLargeOrDeep);
+    }
+}
+----
+
+A `ChatModelListener` bean, which the extension attaches to every configured model, prices every call as it happens, including each round trip of the tool-using agents, and a soft cost cap, 2 USD by default, governs all the optional work: once it is reached, voting, debates and escalations are skipped. The review always completes, and its report lists what was skipped.
+
+== Why transient failures don't kill the review
+
+Model calls fail: rate limits, timeouts, malformed answers, an exhausted account. Since the `AgenticScope` is shared by the whole tree of agents, a single `@ErrorHandler` on the root, a static method whose signature the extension checks at build time like every supplier and condition, sees the failures of all of them:
+
+[source,java]
+----
+@ErrorHandler
+static ErrorRecoveryResult onError(ErrorContext context) {
+    return RootErrorHandler.recover(context);
+}
+----
+
+It retries a transient failure once. When a reviewer, a voter, a debater or the router keeps failing, it replaces its output with a neutral fallback, like a reviewer with no findings, and the report discloses it among its limitations.
+
+On the other hand, it stops the run at once on an account problem, like an invalid key or no credit left, where degrading every agent one after another would be pointless, and when the failing agent is one without which there can be no review, like the fetcher or the scorer.
+
+== Two front ends on the same core
+
+The command line and the web interface run reviews through the same `ReviewService` bean, into which Quarkus injects the agentic system, as shown above. The picocli commands and the REST resources are CDI beans as well, so each front end is a thin layer that injects the service.
+
+The command line is built with the `quarkus-picocli` extension, and has subcommands to review a pull request, to start the web interface, and to evaluate the reviewer against a set of past pull requests labeled from their outcome:
+
+[source,shell]
+----
+pr-reviewer review https://github.com/owner/repo/pull/123
+pr-reviewer review owner/repo#123 --mode interactive --provider openai
+pr-reviewer serve
+----
+
+The application is packaged as an uber-jar and installed as a JBang alias, so that `pr-reviewer` is just another command on the `PATH`.
+
+The `serve` subcommand starts a local web interface built with Qute templates and htmx, with no JavaScript build at all: a form with the same options of the command line, the past reports, and a page following each review live.
+
+An `AgentListener` bean, which the extension attaches to every agent, publishes the start and the end of each agent, with its model, its duration and the running cost of the review, and the page receives them as server-sent events. In interactive mode, the same page shows the clarification questions first, and then the report with a checkbox to contest and one to drop each finding.
+
+== What happens when you review a 2900-line PR for $0.45
+
+Let's try the reviewer on a real pull request, https://github.com/langchain4j/langchain4j/pull/6731[langchain4j#6731], one of ours, which allows any agent or agentic pattern to declare its own activation condition, so that a single agent no longer needs to be wrapped in a `@ConditionalAgent`, as the context gatherer above is. An extract of the report produced by the reviewer for this pull request follows.
+
+[.text-center]
+.A review rendered by the web interface
+image::pr-reviewer-web-report.png[width=80%, align="center", alt="A review rendered by the web interface"]
+
+The same report also scores the pull request, with a score from 0 to 10 for each metric, and an overall score with its confidence, and a verdict: `APPROVE`, `COMMENT` or `REQUEST_CHANGES`. The scores are produced by the scorers, and the verdict is the result of the calibrator.
+
+[.text-center]
+.The scores produced by the reviewers
+image::pr-reviewer-scores.png[width=80%, align="center", alt="The scores produced by the reviewers"]
+
+It is a large change, about 2900 added and 300 deleted lines across 56 files, and we reviewed it using the OpenAI models and the small local decision model for the routing.
+
+Making `PrReviewSystem` extend `MonitoredAgent` allows us to save the trace of every review in an HTML page, which shows the topology of the system and the history of its executions:
+
+[.text-center]
+.The execution of the review of langchain4j#6731
+image::pr-reviewer-execution.webp[width=80%, align="center", alt="The execution of the review of langchain4j#6731"]
+
+=== The review: routing, findings and a debate
+
+This execution shows almost all the patterns we discussed at work. The triage classified the change as a large, high-risk feature that could be understood from the diff alone, so the context gatherer was skipped.
+
+The decision router selected all five reviewers, which ran in parallel, leaving nothing for the coverage floor to add; the correctness reviewer, escalated to the large model by the risk and the size of the change, took 3 minutes and 48 seconds, two thirds of the whole review, to report no finding at all.
+
+Seven files didn't fit in the token budget of the reviewers, five test classes, the documentation and the Revapi configuration, so the large diff gate handed them, as a single chunk, to a chunk reviewer.
+
+The reviewers returned seven findings, all pointing at a valid location of the diff. One of them was contested: the documentation and API reviewer, running on the small model, reported as high severity, but with a confidence of 0.65, that adding a `skipped` component to the `AgentInvocation` record breaks binary compatibility. The prosecutor and the defender argued for the full two rounds, the defender reading the record and searching its usages in the repository, and the judge rejected the finding: the five-argument constructor is kept as an explicit overload, with the same JVM descriptor as the former canonical constructor, so the existing compiled callers still link.
+
+Meanwhile, a real compatibility problem survived among the medium-severity findings, and it came from the chunk reviewer: the Revapi configuration suppresses the warning about the abstract `activationCondition` methods added to the public `AgenticService` and `SupervisorAgentService` interfaces, which breaks the source compatibility of anybody implementing them, while the description of the pull request claims that there is no breaking change.
+
+=== Scoring and reporting: voting, reflection and the cost
+
+The first score card was borderline on two counts: an overall score of 6.8, within half a point of the approval threshold, and a request for changes without any high-severity finding left to back it. The three scorers then voted in parallel, all three for `REQUEST_CHANGES`, and the average of their cards was again 6.8, with a confidence of 0.5; the calibrator had nothing to correct.
+
+Finally, the report went through all the three rounds of the reflection loop: the critic rated the first draft 0.68, so the writer, escalated to the large model, rewrote it twice, but the critic rated the second draft 0.68 again and the third 0.28, and the loop stopped at its last iteration.
+
+Here the critic, on the small model, was the weak link of the review: it listed the findings themselves as the issues to fix, as if it had been asked to review the pull request rather than the report about it.
+
+The whole review took 5 minutes and 49 seconds and cost $0.45.
+
+== Conclusion
+
+A real application needs more than one agentic pattern, and the reviewer uses many of those made available by LangChain4j: a sequence as its backbone, conditional agents as gates, a decision router choosing the reviewers, a parallel mapper for very large pull requests, debates for the doubtful findings, voting for the borderline scores, reflection loops for the report, and a human in the loop for the final decision.
+
+What made them work together was not using any of them everywhere, but each one only where it pays off, while plain code does everything that doesn't need judgment: fetching, validating, calibrating, rendering. The same principle drives the choice of the models, with a small one by default, a larger one only when there is evidence that it is needed, and a decision model, instead of an LLM, for routing.
+
+Quarkus LangChain4j is what turns these patterns into an application. The agent interfaces are detected and validated at build time and become beans, so the whole system is injected like any other service; chat models and decision models are named configurations, and what the agents choose from at run time is the set of beans the extension builds from them; the tools of the agents are the methods of a bean, with their executors generated at build time; the listener that prices every call and the one that feeds the web page are beans the extension attaches to every model and every agent; and the same core serves a command line and a web interface.
+
+In the near future we plan to keep growing the set of agentic patterns available out-of-the-box, in LangChain4j and in its Quarkus extension, using real applications like this one to find out what is still missing. The reviewer is open source: clone https://github.com/mariofusco/langchain4j-pr-reviewer[the repository], try it on one of your own pull requests, and tell us what it finds, and what it gets wrong.
