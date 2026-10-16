@@ -2157,16 +2157,19 @@
 </li>
 <li data-level="1"><a href="#coexistence-and-bridge-apis">Coexistence and Bridge APIs</a>
 <ul>
-<li data-level="2"><a href="#1-recorder-rightarrow-service-bridge">1. Recorder $\rightarrow$ Service Bridge</a></li>
-<li data-level="2"><a href="#2-service-rightarrow-recorder-bridge">2. Service $\rightarrow$ Recorder Bridge</a></li>
+<li data-level="2"><a href="#recorder-to-service-bridge">Recorder-to-Service Bridge</a></li>
+<li data-level="2"><a href="#service-to-recorder-bridge">Service-to-Recorder Bridge</a></li>
+<li data-level="2"><a href="#updating-downstream-consumers">Updating Downstream Consumers</a></li>
 </ul>
 </li>
 <li data-level="1"><a href="#common-conversion-pitfalls">Common Conversion Pitfalls</a>
 <ul>
+<li data-level="2"><a href="#global-mutable-state">Global Mutable State</a></li>
 <li data-level="2"><a href="#classloader-thread-context-classloader-tccl">ClassLoader &amp; Thread Context ClassLoader (TCCL)</a></li>
 <li data-level="2"><a href="#concrete-class-proxying">Concrete Class Proxying</a></li>
 <li data-level="2"><a href="#package-private-visibility">Package-Private Visibility</a></li>
 <li data-level="2"><a href="#never-reference-deployment-classes-inside-service-lambdas">Never Reference Deployment Classes inside Service Lambdas</a></li>
+<li data-level="2"><a href="#teardown-ordering-parity">Teardown-Ordering Parity</a></li>
 </ul>
 </li>
 </ul>
@@ -2198,7 +2201,7 @@
 <div class="sect2">
 <h3 id="services-are-independent-from-recorders-in-the-same-step"><a class="anchor" href="#services-are-independent-from-recorders-in-the-same-step"></a>Services are Independent from Recorders in the Same Step</h3>
 <div class="paragraph">
-<p>Even if a build step method contains both a <code>@Record</code> call and an <code>ServiceRegistrar</code> call, the service and recorder are separate nodes in the build execution plan with no implicit ordering between them.</p>
+<p>Even if a build step method contains both a <code>@Record</code> call and a <code>ServiceRegistrar</code> call, the service and recorder are separate nodes in the build execution plan with no implicit ordering between them.</p>
 </div>
 </div>
 <div class="sect2">
@@ -2303,9 +2306,6 @@
 </div>
 <div class="sect2">
 <h3 id="3-convert-the-build-step"><a class="anchor" href="#3-convert-the-build-step"></a>3. Convert the Build Step</h3>
-<div class="paragraph">
-<p>Let&#8217;s look at a classic conversion.</p>
-</div>
 <div class="sect3">
 <h4 id="before"><a class="anchor" href="#before"></a>Before:</h4>
 <div class="listingblock">
@@ -2381,8 +2381,19 @@ ServiceStartBuildItem setup(ServiceRegistrar reg, SomeBuildItem item) {
 </div>
 </div>
 <div class="paragraph">
-<p>This resolves the producing step&#8217;s nodes and creates ordering edges.
-NOTE: <code>afterBuildItem()</code> is deprecated — it exists only for recorder coexistence. Once the producing recorder is converted to a service, replace with <code>require()</code> or <code>after()</code>, or drop it as appropriate.</p>
+<p>This resolves the producing step&#8217;s nodes and creates ordering edges.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<code>afterBuildItem()</code> is deprecated — it exists only for recorder coexistence. Before adding one, check whether the target has already been converted to a service; if so, use <code>require()</code> or <code>after()</code> directly instead.
+</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect3">
@@ -2416,7 +2427,7 @@ reg.forService("io.quarkus.my-ext.setup")
 <p>During the transitional period, the <code>ServiceRegistrar</code> provides bridge APIs to allow incremental migration of extensions.</p>
 </div>
 <div class="sect2">
-<h3 id="1-recorder-rightarrow-service-bridge"><a class="anchor" href="#1-recorder-rightarrow-service-bridge"></a>1. Recorder $\rightarrow$ Service Bridge</h3>
+<h3 id="recorder-to-service-bridge"><a class="anchor" href="#recorder-to-service-bridge"></a>Recorder-to-Service Bridge</h3>
 <div class="paragraph">
 <p>If you have a value produced by a legacy recorder that a new service needs to depend on, register it using <code>aliasRecorderValue</code>:</p>
 </div>
@@ -2437,7 +2448,7 @@ void setupLegacyAndService(MyRecorder recorder, ServiceRegistrar reg) {
 </div>
 </div>
 <div class="sect2">
-<h3 id="2-service-rightarrow-recorder-bridge"><a class="anchor" href="#2-service-rightarrow-recorder-bridge"></a>2. Service $\rightarrow$ Recorder Bridge</h3>
+<h3 id="service-to-recorder-bridge"><a class="anchor" href="#service-to-recorder-bridge"></a>Service-to-Recorder Bridge</h3>
 <div class="paragraph">
 <p>If an unconverted legacy recorder or an existing build item consumes a value that is now produced by a service, use the service-to-recorder bridge methods:</p>
 </div>
@@ -2466,6 +2477,12 @@ void bridgeServiceToLegacy(ServiceRegistrar reg, BuildProducer&lt;LegacyBuildIte
 }</code></pre>
 </div>
 </div>
+</div>
+<div class="sect2">
+<h3 id="updating-downstream-consumers"><a class="anchor" href="#updating-downstream-consumers"></a>Updating Downstream Consumers</h3>
+<div class="paragraph">
+<p>After converting a recorder to a service, search for other extensions that use <code>afterBuildItem()</code> referencing build items your old recorder produced. Those consumers can now migrate from <code>afterBuildItem()</code> to <code>require()</code> or <code>after()</code> on your new service directly, removing one more link in the legacy bridge chain.</p>
+</div>
 <hr>
 </div>
 </div>
@@ -2474,11 +2491,15 @@ void bridgeServiceToLegacy(ServiceRegistrar reg, BuildProducer&lt;LegacyBuildIte
 <h2 id="common-conversion-pitfalls"><a class="anchor" href="#common-conversion-pitfalls"></a>Common Conversion Pitfalls</h2>
 <div class="sectionbody">
 <div class="sect2">
+<h3 id="global-mutable-state"><a class="anchor" href="#global-mutable-state"></a>Global Mutable State</h3>
+<div class="paragraph">
+<p>Recorders ran sequentially, so global mutable state (static maps, shared lists, singletons populated during startup) was incidentally safe. Services run concurrently — any global state that survives conversion must be made thread-safe. Prefer eliminating it entirely: the dependency graph carries values directly, so each entry becomes a named service and each lookup becomes <code>require()</code> or <code>request()</code>.</p>
+</div>
+</div>
+<div class="sect2">
 <h3 id="classloader-thread-context-classloader-tccl"><a class="anchor" href="#classloader-thread-context-classloader-tccl"></a>ClassLoader &amp; Thread Context ClassLoader (TCCL)</h3>
 <div class="paragraph">
-<p>Recorder bytecode always ran with the <strong>runtime classloader as the TCCL</strong>. Any recorder code that captured <code>Thread.currentThread().getContextClassLoader()</code> for later use relied on that.
-* After converting, ensure that the service still runs with the runtime CL as TCCL, and that captured/inherited CLs are the runtime CL (not the system <code>AppClassLoader</code>).
-* Clean up threads or <code>ThreadLocal`s your service owns in `onStop()</code>; never leak the <code>QuarkusClassLoader</code>.</p>
+<p>A wrong TCCL surfaces as <code>ServiceLoader</code> "not a subtype" errors or dev-mode failures. Threads created during startup inherit the creating thread&#8217;s TCCL — a long-lived thread that captures the per-app runtime CL leaks the <code>QuarkusClassLoader</code> across restarts. Clean up threads or <code>ThreadLocal`s your service owns in `onStop()</code>; never rely on a global "reset all TCCLs" sweep.</p>
 </div>
 </div>
 <div class="sect2">
@@ -2490,13 +2511,19 @@ void bridgeServiceToLegacy(ServiceRegistrar reg, BuildProducer&lt;LegacyBuildIte
 <div class="sect2">
 <h3 id="package-private-visibility"><a class="anchor" href="#package-private-visibility"></a>Package-Private Visibility</h3>
 <div class="paragraph">
-<p>Lambda bytecode runs at runtime but references runtime classes directly. Package-private classes become inaccessible from the generated consolidated class. Ensure any classes referenced within the lambda are <code>public</code>.</p>
+<p>Lambda bytecode runs at runtime but references runtime classes directly. Package-private classes become inaccessible from the generated consolidated class. Ensure any classes referenced within the lambda are <code>public</code>, or move them to a <code>.impl</code> subpackage and make them public.</p>
 </div>
 </div>
 <div class="sect2">
 <h3 id="never-reference-deployment-classes-inside-service-lambdas"><a class="anchor" href="#never-reference-deployment-classes-inside-service-lambdas"></a>Never Reference Deployment Classes inside Service Lambdas</h3>
 <div class="paragraph">
-<p>Always place helper methods, custom interfaces, or static factory methods inside your <strong>runtime</strong> module classes (which are present at runtime). Doing so inside your processor class compiles successfully but throws <code>NoClassDefFoundError</code> at runtime.</p>
+<p>Service lambda bodies execute at <strong>runtime</strong> — deployment classes are absent from the runtime classpath. Anonymous inner classes inside instance-method lambdas silently capture <code>this</code> (the processor), causing <code>TransliterationException</code>. Moving the instantiation to a <code>private static</code> helper in the processor avoids the capture but still references a deployment class, causing <code>NoClassDefFoundError</code>. Place all helper methods and factories in <strong>runtime</strong> module classes.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="teardown-ordering-parity"><a class="anchor" href="#teardown-ordering-parity"></a>Teardown-Ordering Parity</h3>
+<div class="paragraph">
+<p>Start ordering is explicit — but so is <strong>stop ordering</strong>, and that is the easy thing to lose. The recorder model gave cleanup incidental ordering from build-step order; a converted service&#8217;s <code>onStop</code> runs only in reverse dependency order. If a cleanup implicitly depended on running before/after another, declare it with <code>before()</code> or <code>after()</code>. Lost teardown ordering surfaces as unrelated downstream symptoms — verify shutdown explicitly.</p>
 </div>
 </div>
 </div>
