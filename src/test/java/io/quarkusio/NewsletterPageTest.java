@@ -10,15 +10,15 @@ public class NewsletterPageTest extends BrowserTest {
     @Test
     void newsletterIndexHasSubstantialEditions() {
         page.navigate(baseUrl + "/newsletter/");
-        int cardCount = page.locator(".card").count();
-        assertTrue(cardCount >= 20,
-                "Expected at least 20 newsletter editions but found " + cardCount);
+        int rowCount = page.locator(".newsletter-table tbody tr").count();
+        assertTrue(rowCount >= 20,
+                "Expected at least 20 newsletter rows but found " + rowCount);
     }
 
     @Test
     void newsletterEditionsLinkToValidPaths() {
         page.navigate(baseUrl + "/newsletter/");
-        int linkCount = page.locator(".card a[href^='/newsletter/']").count();
+        int linkCount = page.locator(".newsletter-table a[href^='/newsletter/']").count();
         assertTrue(linkCount >= 10,
                 "Expected at least 10 newsletter links but found " + linkCount);
     }
@@ -26,9 +26,17 @@ public class NewsletterPageTest extends BrowserTest {
     @Test
     void newsletterEditionShowsTitle() {
         page.navigate(baseUrl + "/newsletter/");
-        int titleCount = page.locator(".card .title").count();
+        int titleCount = page.locator(".newsletter-table .newsletter-title-col").count();
         assertTrue(titleCount >= 20,
-                "Expected newsletter cards to have titles but found " + titleCount);
+                "Expected newsletter edition titles but found " + titleCount);
+    }
+
+    @Test
+    void newsletterEditionsHaveSummaries() {
+        page.navigate(baseUrl + "/newsletter/");
+        int summaryCount = page.locator(".newsletter-table .newsletter-summary-col").count();
+        assertTrue(summaryCount >= 20,
+                "Expected newsletter edition summaries but found " + summaryCount);
     }
 
     @Test
