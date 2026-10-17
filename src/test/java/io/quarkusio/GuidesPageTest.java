@@ -582,8 +582,8 @@ public class GuidesPageTest extends BrowserTest {
         Locator current = page.locator("#guide-version-split .version-split-item.is-current");
         assertTrue(current.count() > 0,
                 "Expected a current item in the split version selector");
-        assertEquals("Main", current.first().textContent().trim(),
-                "Split version selector should mark 'Main' as current");
+        assertEquals("Main - SNAPSHOT", current.first().textContent().trim(),
+                "Split version selector should mark 'Main - SNAPSHOT' as current");
     }
 
     @Test
