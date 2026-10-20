@@ -501,6 +501,86 @@ public class JekyllFiltersExtension {
         return present;
     }
 
+    /**
+     * Drops the documentation-list entry that duplicates "latest" (e.g. "3.40" when the list
+     * already contains "latest" and the current release is 3.40.x), so a version picker shows
+     * a single entry for the current release instead of two.
+     *
+     * Usage in Qute: {@code {versions.dropLatestDuplicate(cdi:versions.quarkus.version)}}.
+     */
+    static List<String> dropLatestDuplicate(Object versions, String quarkusVersion) {
+        List<String> result = new ArrayList<>();
+        boolean hasLatest = false;
+        for (Object versionObj : listAsIterableOrEmpty(versions)) {
+            if ("latest".equals(versionObj)) {
+                hasLatest = true;
+            }
+        }
+        String latestMinor = hasLatest ? majorMinor(quarkusVersion) : null;
+        for (Object versionObj : listAsIterableOrEmpty(versions)) {
+            if (versionObj == null) {
+                continue;
+            }
+            String version = String.valueOf(versionObj);
+            if (!version.equals(latestMinor)) {
+                result.add(version);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Maps a version onto "latest" if it is the documentation-list entry that duplicates it
+     * (e.g. "3.40" while the current release is 3.40.x), so pages served at that duplicate
+     * version (e.g. /version/3.40/...) still match and highlight the single "latest" entry in
+     * a version picker built with {@link #dropLatestDuplicate}.
+     *
+     * Usage in Qute: {@code {docversion.normalizeVersion(cdi:versions.quarkus.version)}}.
+     */
+    static String normalizeVersion(String version, String quarkusVersion) {
+        if (version != null && version.equals(majorMinor(quarkusVersion))) {
+            return "latest";
+        }
+        return version;
+    }
+
+    /**
+     * True if {@code version} is the version picker entry that corresponds to {@code docversion},
+     * accounting for the "latest" vs. major.minor duplicate (e.g. docversion "3.40" selects the
+     * "latest" entry when 3.40 is the current release, same as docversion "latest" itself).
+     *
+     * Usage in Qute: {@code {version.isSelectedVersion(docversion, cdi:versions.quarkus.version)}}.
+     */
+    static boolean isSelectedVersion(String version, String docversion, String quarkusVersion) {
+        return normalizeVersion(docversion, quarkusVersion).equals(version);
+    }
+
+    /**
+     * Display label for a documentation version in a version picker, e.g. "3.40 (latest)" for
+     * "latest", "Main - SNAPSHOT" for "main", or the version itself otherwise, e.g. "3.33".
+     *
+     * Usage in Qute: {@code {version.versionLabel(cdi:versions.quarkus.version)}}.
+     */
+    static String versionLabel(String version, String quarkusVersion) {
+        if ("latest".equals(version)) {
+            return majorMinor(quarkusVersion) + " (latest)";
+        }
+        if ("main".equals(version)) {
+            return "Main - SNAPSHOT";
+        }
+        return version;
+    }
+
+	private static final Pattern MAJOR_MINOR = Pattern.compile("^(\\d+\\.\\d+)");
+
+	private static String majorMinor(String quarkusVersion) {
+		if (quarkusVersion == null) {
+			return quarkusVersion;
+		}
+		var matcher = MAJOR_MINOR.matcher(quarkusVersion);
+		return matcher.find() ? matcher.group(1) : quarkusVersion;
+	}
+
 	private static Iterable<?> listAsIterableOrEmpty(Object items) {
 		if ( items instanceof JsonArray array ) {
 			return array;
