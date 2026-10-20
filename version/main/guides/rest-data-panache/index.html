@@ -176,7 +176,7 @@
           aria-haspopup="true" aria-expanded="false"
           aria-label="Select documentation version">
     <span class="version-split-display">
-      <span class="version-split-label">Main</span>
+      <span class="version-split-label">Main - SNAPSHOT</span>
     </span>
     <span class="version-split-caret">
       <i class="fa-solid fa-chevron-down"></i>
@@ -188,7 +188,7 @@
          class="version-split-item is-current"
          aria-current="true"
          href="/version/main/guides/rest-data-panache/">
-        Main
+        Main - SNAPSHOT
       </a>
     </li>
     <li role="none">
@@ -196,15 +196,7 @@
          class="version-split-item"
          
          href="/guides/rest-data-panache/">
-        Latest
-      </a>
-    </li>
-    <li role="none">
-      <a role="menuitem"
-         class="version-split-item"
-         
-         href="/version/3.40/guides/rest-data-panache/">
-        3.40
+        3.40 (latest)
       </a>
     </li>
     <li role="none">
@@ -2221,6 +2213,7 @@
 <ul>
 <li data-level="2"><a href="#using-authenticated">Using @Authenticated</a></li>
 <li data-level="2"><a href="#securing-endpoints-using-permissionsallowed-annotation">Securing endpoints using @PermissionsAllowed annotation</a></li>
+<li data-level="2"><a href="#securing-sort-and-filter-fields">Securing sort and filter fields</a></li>
 </ul>
 </li>
 <li data-level="1"><a href="#query-parameters-to-list-entities">Query parameters to list entities</a></li>
@@ -2667,7 +2660,7 @@ Default is <code>false</code>.</p>
 <p><code>path</code> - operation path (this is appended to the resource base path). Default is an empty string.</p>
 </li>
 <li>
-<p><code>rolesAllowed</code> - List of the security roles permitted to access this operation. It needs a Quarkus Security extension to be present, otherwise it will be ignored. Default is empty.</p>
+<p><code>rolesAllowed</code> - List of the security roles permitted to access this operation. It needs a Quarkus Security extension to be present, otherwise it will be ignored. When left empty, the operation inherits the <code>rolesAllowed</code> declared on the <code>@ResourceProperties</code> of the resource; set it to override the resource-level roles for this operation only. Default is empty.</p>
 </li>
 </ul>
 </div>
@@ -2720,6 +2713,9 @@ public interface PeopleResource extends PanacheEntityResource&lt;Person, Long&gt
 <div class="paragraph">
 <p>Additionally, if you are only interested in specifying the roles that are allowed to use the resources, the <code>@ResourceProperties</code> and <code>@MethodProperties</code> annotations have the field <code>rolesAllowed</code> to list the security roles permitted to access the resource or operation.</p>
 </div>
+<div class="paragraph">
+<p>An operation that is customized with <code>@MethodProperties</code> but does not set its own <code>rolesAllowed</code> still inherits the <code>rolesAllowed</code> declared on the resource&#8217;s <code>@ResourceProperties</code>. If you instead want a single operation of an otherwise-secured resource to be publicly accessible, annotate that operation with <code>jakarta.annotation.security.PermitAll</code> (or with <code>@Authenticated</code> if you only want to require an authenticated user); a security annotation declared directly on the operation always takes precedence over the resource-level <code>rolesAllowed</code>.</p>
+</div>
 <div class="sect2">
 <h3 id="using-authenticated"><a class="anchor" href="#using-authenticated"></a>Using @Authenticated</h3>
 <div class="paragraph">
@@ -2747,6 +2743,9 @@ public interface PeopleResource extends PanacheEntityResource&lt;Person, Long&gt
 }</code></pre>
 </div>
 </div>
+<div class="paragraph">
+<p>As with <code>rolesAllowed</code>, a security annotation placed directly on an operation takes precedence over <code>@ResourceProperties(authenticated=true)</code>: the operation is governed by its own annotation only. For example, annotating a single operation with <code>jakarta.annotation.security.PermitAll</code> makes that operation publicly accessible while every other operation of the resource still requires an authenticated user.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="securing-endpoints-using-permissionsallowed-annotation"><a class="anchor" href="#securing-endpoints-using-permissionsallowed-annotation"></a>Securing endpoints using @PermissionsAllowed annotation</h3>
@@ -2770,6 +2769,91 @@ public interface PeopleResource extends PanacheEntityResource&lt;Person, Long&gt
 </div>
 </div>
 </div>
+<div class="sect2">
+<h3 id="securing-sort-and-filter-fields"><a class="anchor" href="#securing-sort-and-filter-fields"></a>Securing sort and filter fields</h3>
+<div class="paragraph">
+<p>REST Data with Panache validates the <code>sort</code> query parameter and field filter parameters against the entity&#8217;s actual fields.
+This prevents users from attempting to sort or filter by non-existent fields, which could potentially be used for enumeration attacks or cause database errors.</p>
+</div>
+<div class="paragraph">
+<p>Additionally, fields that are hidden from JSON serialization are automatically excluded from sorting and filtering:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Fields annotated with <code>@JsonIgnore</code> (Jackson)</p>
+</li>
+<li>
+<p>Fields annotated with <code>@JsonbTransient</code> (JSON-B)</p>
+</li>
+<li>
+<p>Fields annotated with <code>@XmlTransient</code> (JAXB)</p>
+</li>
+<li>
+<p>Fields listed in <code>@JsonIgnoreProperties</code> on the entity class</p>
+</li>
+<li>
+<p>Fields whose type is annotated with <code>@JsonIgnoreType</code></p>
+</li>
+</ul>
+</div>
+<div class="sect3">
+<h4 id="securing-fields-with-securefield"><a class="anchor" href="#securing-fields-with-securefield"></a>Securing fields with @SecureField</h4>
+<div class="paragraph">
+<p>When using Quarkus REST with Jackson, you can use the <code>@SecureField</code> annotation to restrict sorting and filtering by sensitive fields based on the user&#8217;s security roles.
+If a field is annotated with <code>@SecureField</code> and the user lacks the required roles, attempting to sort or filter by that field will result in a <code>400 Bad Request</code> response.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import io.quarkus.resteasy.reactive.jackson.SecureField;
+
+@Entity
+public class Employee extends PanacheEntity {
+    public String name;
+    public String department;
+
+    @SecureField(rolesAllowed = {"hr", "admin"})
+    public BigDecimal salary;
+
+    @SecureField(rolesAllowed = "admin")
+    public String ssn;
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With this configuration:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Any user can sort or filter by <code>name</code> and <code>department</code></p>
+</li>
+<li>
+<p>Only users with the <code>hr</code> or <code>admin</code> role can use <code>?sort=salary</code> or <code>?salary=50000</code></p>
+</li>
+<li>
+<p>Only users with the <code>admin</code> role can use <code>?sort=ssn</code> or <code>?ssn=123-45-6789</code></p>
+</li>
+<li>
+<p>Unauthenticated users or users without the required roles will receive a <code>400 Bad Request</code> response that treats the field as invalid, to avoid revealing the existence of protected fields</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+The <code>@SecureField</code> annotation is provided by the <code>quarkus-rest-jackson</code> extension.
+See <a href="/version/main/guides/rest/#secure-serialization">Secure Serialization</a> in the Quarkus REST guide for more details.
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -2786,17 +2870,33 @@ It applies to the paged resources only and is a number starting with 0. Default 
 </li>
 <li>
 <p><code>size</code> - a page size which should be returned by a list operation.
-It applies to the paged resources only and is a number starting with 1. Default is 20.</p>
+It applies to the paged resources only and is a number starting with 1. Default is 20.
+The maximum page size is limited to 100 by default to prevent excessive database load. You can configure this limit using the <code>quarkus.rest-data-panache.max-page-size</code> property.
+Set it to empty to disable the limit entirely.</p>
 </li>
 <li>
 <p><code>sort</code> - a comma separated list of fields which should be used for sorting a result of a list operation.
 Fields are sorted in the ascending order unless they&#8217;re prefixed with a <code>-</code>.
-E.g. <code>?sort=name,-age</code> will sort the result by the name ascending by the age descending.</p>
+E.g. <code>?sort=name,-age</code> will sort the result by the name ascending by the age descending.
+Only direct entity fields are supported; nested properties (e.g., <code>author.name</code>) cannot be used for sorting.</p>
 </li>
 <li>
 <p><code>namedQuery</code> - a named query that should be configured at entity level using the annotation <code>@NamedQuery</code>.</p>
 </li>
 </ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+These query parameter names (<code>page</code>, <code>size</code>, <code>sort</code>, <code>namedQuery</code>) are reserved by the framework.
+If your entity has a field with one of these names, it cannot be filtered via query parameters.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>For example, if you want to get two <code>People</code> entities in the first page, you should call <code><a href="http://localhost:8080/people?page=0&amp;size=2" class="bare">http://localhost:8080/people?page=0&amp;size=2</a></code>, and the response should look like:</p>
@@ -2839,6 +2939,7 @@ E.g. <code>?sort=name,-age</code> will sort the result by the name ascending by 
 </td>
 <td class="content">
 Filtering by fields is only supported for String, Boolean, Character, Double, Float, Integer, Long, Short, Byte and the primitive types.
+Nested properties (e.g., <code>author.name</code>) are not supported for filtering.
 </td>
 </tr>
 </table>
