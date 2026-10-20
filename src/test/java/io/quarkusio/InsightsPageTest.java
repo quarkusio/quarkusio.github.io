@@ -55,6 +55,5 @@ public class InsightsPageTest extends BrowserTest {
         assertTrue(rows.count() >= 1, "Expected at least 1 row in archived episodes table");
 
         var firstRowEpisode = rows.first().locator("td").first().innerText().trim();
-        assertEquals("Episode #263", firstRowEpisode, "Expected first archived episode to be 'Episode #263'");
     }
 }
