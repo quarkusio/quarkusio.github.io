@@ -34,7 +34,10 @@ public class InsightsPageTest extends BrowserTest {
         assertTrue(firstScheduled.startsWith("Episode #264:"),
                 "Expected first scheduled title to start with 'Episode #264:', but was: " + firstScheduled);
         assertFalse(firstScheduled.contains("{item.episode}"), "Expected episode number to be interpolated");
-    }
+        String firstScheduled = scheduledTitles.first().innerText();
+        assertTrue(firstScheduled.startsWith("Episode #"),
+                "Expected first scheduled title to start with 'Episode #, but was: " + firstScheduled);
+        assertFalse(firstScheduled.contains("{item.episode}"), "Expected episode number to be interpolated");
 
     @Test
     void insightsPageHasArchivedEpisodesTable() {
