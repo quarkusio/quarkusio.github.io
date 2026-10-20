@@ -1,6 +1,6 @@
 ///usr/bin/env jbang "$0" "$@" ; exit $?
 //JAVAC_OPTIONS -parameters
-//DEPS io.quarkus.platform:quarkus-bom:3.12.1@pom
+//DEPS io.quarkus.platform:quarkus-bom:3.40.1.1@pom
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-smallrye-graphql-client
 //DEPS io.quarkus:quarkus-qute
