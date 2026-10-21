@@ -2,6 +2,8 @@ package io.quarkusio;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
@@ -133,6 +135,39 @@ public class GuidesPageTest extends BrowserTest {
         int versionCount = page.locator(".pulldown.version, select:has(option), [class*='version']").count();
         assertTrue(versionCount > 0,
                 path + ": Expected a version selector on the guides page");
+    }
+
+    // Titles come from the AsciiDoc source, where they may use attributes such as {project-name};
+    // the index only shows a copy of the title, so each guide page itself is checked.
+    @Test
+    void guideTitlesDoNotContainUnexpandedVariables() {
+        String path = "/version/main/guides/";
+        page.navigate(baseUrl + path);
+        Locator links = page.locator("qs-guide a[href^='/']");
+        List<String> urls = new ArrayList<>();
+        for (int i = 0; i < links.count(); i++) {
+            String href = links.nth(i).getAttribute("href");
+            if (href != null && !urls.contains(href)) {
+                urls.add(href);
+            }
+        }
+        assertTrue(urls.size() >= 50, path + ": Expected at least 50 guides but found " + urls.size());
+
+        Pattern titleTag = Pattern.compile("<title[^>]*>(.*?)</title>", Pattern.DOTALL);
+        Pattern heading = Pattern.compile("<h1[^>]*>(.*?)</h1>", Pattern.DOTALL);
+        List<String> offenders = new ArrayList<>();
+        for (String url : urls) {
+            String html = page.request().get(baseUrl + url).text();
+            for (Pattern pattern : List.of(titleTag, heading)) {
+                Matcher m = pattern.matcher(html);
+                if (m.find() && (m.group(1).contains("{") || m.group(1).contains("}"))) {
+                    offenders.add(url + " -> " + m.group(1).trim());
+                    break;
+                }
+            }
+        }
+        assertTrue(offenders.isEmpty(),
+                path + ": Guide titles contain un-expanded variables:\n" + String.join("\n", offenders));
     }
 
     @Test
