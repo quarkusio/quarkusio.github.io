@@ -153,8 +153,8 @@ public class GuidesPageTest extends BrowserTest {
         }
         assertTrue(urls.size() >= 50, path + ": Expected at least 50 guides but found " + urls.size());
 
-        Pattern titleTag = Pattern.compile("<title>([^<]*)</title>");
-        Pattern heading = Pattern.compile("<h1[^>]*>([^<]*)</h1>");
+        Pattern titleTag = Pattern.compile("<title[^>]*>(.*?)</title>", Pattern.DOTALL);
+        Pattern heading = Pattern.compile("<h1[^>]*>(.*?)</h1>", Pattern.DOTALL);
         List<String> offenders = new ArrayList<>();
         for (String url : urls) {
             String html = page.request().get(baseUrl + url).text();
