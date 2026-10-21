@@ -31,13 +31,10 @@ public class InsightsPageTest extends BrowserTest {
         assertTrue(count >= 1, "Expected at least 1 scheduled session, but found " + count);
 
         String firstScheduled = scheduledTitles.first().innerText();
-        assertTrue(firstScheduled.startsWith("Episode #264:"),
-                "Expected first scheduled title to start with 'Episode #264:', but was: " + firstScheduled);
-        assertFalse(firstScheduled.contains("{item.episode}"), "Expected episode number to be interpolated");
-        String firstScheduled = scheduledTitles.first().innerText();
         assertTrue(firstScheduled.startsWith("Episode #"),
-                "Expected first scheduled title to start with 'Episode #, but was: " + firstScheduled);
+                "Expected first scheduled title to start with 'Episode #', but was: " + firstScheduled);
         assertFalse(firstScheduled.contains("{item.episode}"), "Expected episode number to be interpolated");
+    }
 
     @Test
     void insightsPageHasArchivedEpisodesTable() {
@@ -58,5 +55,6 @@ public class InsightsPageTest extends BrowserTest {
         assertTrue(rows.count() >= 1, "Expected at least 1 row in archived episodes table");
 
         var firstRowEpisode = rows.first().locator("td").first().innerText().trim();
+        assertFalse(firstRowEpisode.isEmpty(), "Expected first row episode to be non-empty");
     }
 }
