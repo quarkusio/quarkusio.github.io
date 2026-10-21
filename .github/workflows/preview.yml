@@ -37,6 +37,35 @@ jobs:
         fi
         echo "id=${pr}" >> $GITHUB_OUTPUT
         rm -f pr-id.txt
+    - name: List changed pages
+      id: pages
+      run: |
+        base="https://quarkus-website-pr-${PR_ID}-preview.surge.sh"
+        links=""
+        # changed-paths.txt is written by the build job (comma separated) and only exists
+        # when the build narrowed the changes down to specific pages
+        if [ -f changed-paths.txt ]; then
+          IFS=',' read -ra paths < changed-paths.txt
+          rm -f changed-paths.txt
+          # deep links are only listed when fewer than 5 pages changed
+          if [ "${#paths[@]}" -gt 0 ] && [ "${#paths[@]}" -lt 5 ]; then
+            list=""
+            for p in "${paths[@]}"; do
+              # the artifact comes from the PR and isn't totally trusted, so only accept plain paths
+              [[ $p =~ ^/[A-Za-z0-9_./-]*$ ]] || continue
+              list+="- ${base}${p}"$'\n'
+            done
+            [ -n "$list" ] && links=$'\n'"👀 Changed pages:"$'\n\n'"${list}"
+          fi
+        fi
+        {
+          echo "links<<EOF_LINKS"
+          echo "$links"
+          echo "EOF_LINKS"
+        } >> $GITHUB_OUTPUT
+      env:
+        PR_ID: ${{ steps.pr.outputs.id }}
+
     - name: Publishing to surge for preview
       id: deploy
       run: npx surge@0.23.1 ./ --domain https://quarkus-website-pr-${PR_ID}-preview.surge.sh --token ${{ secrets.SURGE_TOKEN }}
@@ -50,10 +79,11 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr-number: ${{ steps.pr.outputs.id }}
         body: |
-          🎊 PR Preview ${{ github.sha }} has been successfully built and deployed to https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          🚀 PR Preview ${{ github.sha }} has been successfully built and deployed to https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          ${{ steps.pages.outputs.links }}
 
-          - Images of blog posts older than 3 months are not available.
-          - Newsletters older than 3 months are not available.
+          - ✂️ Images of blog posts older than 3 months are not available.
+          - ✂️ Newsletters older than 3 months are not available.
 
           <img width="300" src="https://user-images.githubusercontent.com/507615/90250366-88233900-de6e-11ea-95a5-84f0762ffd39.png">
         body-marker: <!-- Preview status comment marker -->
@@ -65,6 +95,6 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr-number: ${{ steps.pr.outputs.id }}
         body: |
-          😭 Deploy PR Preview failed.
+          😩 Deploy PR Preview failed.
           <img width="300" src="https://user-images.githubusercontent.com/507615/90250824-4e066700-de6f-11ea-8230-600ecc3d6a6b.png">
         body-marker: <!-- Preview status comment marker -->
