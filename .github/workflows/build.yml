@@ -115,7 +115,25 @@ jobs:
             exit 0
           }
 
-          git worktree add --detach /tmp/gh-pages origin/gh-pages 2>/dev/null || {
+          # Compare with the deployment of the commit this PR branched from, rather than the
+          # latest deployment, so what has landed on main since then is not counted as a change.
+          # Each deploy commit on gh-pages is titled "deploy: <source sha>"; use the newest one
+          # whose source is an ancestor of the branch point, or the latest if there is none.
+          BASE_COMMIT=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD 2>/dev/null || true)
+          DEPLOYED=origin/gh-pages
+          if [ -n "$BASE_COMMIT" ]; then
+            while read -r commit subject; do
+              source_sha=${subject#deploy: }
+              [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || continue
+              if git merge-base --is-ancestor "$source_sha" "$BASE_COMMIT" 2>/dev/null; then
+                DEPLOYED=$commit
+                break
+              fi
+            done < <(git log origin/gh-pages --max-count=500 --format='%H %s')
+          fi
+          echo "Comparing the built site with gh-pages commit $DEPLOYED (branch point $BASE_COMMIT)"
+
+          git worktree add --detach /tmp/gh-pages "$DEPLOYED" 2>/dev/null || {
             echo "mode=full" >> $GITHUB_OUTPUT
             echo "Could not check out gh-pages, running full link check"
             exit 0
@@ -274,14 +292,15 @@ jobs:
       - name: Store PR id
         run: echo ${{ github.event.number }} > ./target/roq/pr-id.txt
 
-      # Re-use the changed-page detection the link crawler uses, so the preview job can be smarter
+      # Same changed-page detection as the link crawler uses, so the preview job can report on it:
+      # the first line is the scope (skip, full or partial), the second the comma separated pages
       - name: Store changed pages
         env:
           SCOPE_MODE: ${{ steps.link_scope.outputs.mode }}
           CHANGED_PATHS: ${{ steps.link_scope.outputs.paths }}
         run: |
-          if [ "$SCOPE_MODE" = "partial" ]; then
-            echo "$CHANGED_PATHS" > ./target/roq/changed-paths.txt
+          if [ -n "$SCOPE_MODE" ]; then
+            printf '%s\n%s\n' "$SCOPE_MODE" "$CHANGED_PATHS" > ./target/roq/changed-pages.txt
           fi
 
       - name: Reduce the size of the website to be compatible with surge
@@ -289,8 +308,7 @@ jobs:
           SITE_DIR="target/roq"
           # Keep only the 10 most recent newsletter editions (by number)
           if [ -d "$SITE_DIR/newsletter" ]; then
-            # Only numeric entries: index.html must survive (it sorts as 0 and would be trimmed)
-            ls -1 "$SITE_DIR/newsletter" | grep -E '^[0-9]+$' | sort -n | head -n -10 | while read -r dir; do
+            ls -1 "$SITE_DIR/newsletter" | sort -n | head -n -10 | while read -r dir; do
               rm -rf "$SITE_DIR/newsletter/$dir"
             done
           fi
