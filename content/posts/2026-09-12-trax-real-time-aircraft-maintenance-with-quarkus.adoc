@@ -1,0 +1,421 @@
+---
+layout: post
+title: 'How TRAX keeps aircraft maintenance real-time with Quarkus'
+date: 2026-09-12
+tags: user-story websockets kafka debezium openapi
+synopsis: 'How TRAX uses Quarkus to stream Oracle change data through Debezium and Kafka Streams and push it live to React and Swift iOS clients over WebSockets. TRAX is an aviation MRO software provider whose systems cover thousands of aircraft for airlines, cargo operators and maintenance providers worldwide.'
+author: melloware
+thumbnailimage: /assets/images/posts/quarkus-user-stories/trax/trax-logo.webp
+---
+
+:imagesdir: /assets/images/posts/quarkus-user-stories/trax
+ifdef::env-github,env-browser,env-vscode[:imagesdir: ../assets/images/posts/quarkus-user-stories/trax]
+
+image::trax-logo.webp[alt=TRAX logo,align="center",width=300]
+
+Quarkus turns up in places most people never think to look for it.
+This one lives on the ramp, in the hangar, and in the hands of the mechanic standing under a wing at 3am.
+
+== A short background on TRAX
+
+https://www.trax.aero/[TRAX^] builds MRO software — Maintenance, Repair and Overhaul — for airlines, cargo operators and independent maintenance providers.
+If an aircraft is being worked on, something has to track it: the work orders, the task cards, the parts consumed, the sign-offs, the airworthiness records that a regulator can ask to see years later.
+TRAX has been doing that for over 25 years, and today its systems cover thousands of aircraft for customers across dozens of countries.
+
+Historically this was a heavyweight desktop application backed by a very large Oracle database.
+The modern push is *paperless* maintenance: get the mechanic off the clipboard and onto an iPad at the aircraft, and give the maintenance controller a live web dashboard instead of a report that was true ten minutes ago.
+That product line is called *eMobility*, and the technology behind it is a suite of Quarkus applications.
+
+== The problem
+
+These services have to serve two very different front ends:
+
+* A **React** web application used by maintenance control and line control staff on desktops.
+* A **Swift/SwiftUI iOS** application used by mechanics on iPads out at the aircraft.
+
+Both need the same data, and both need it to be *current*.
+When a work order changes status, when a flight's maintenance crew assignment moves, when a defect is raised against an aircraft, every connected client should know within seconds — without hammering the database with polling.
+
+The wrinkle is that the system of record is the existing Oracle ERP database, and a great deal of what writes to it is *not* our service.
+Other TRAX applications, batch jobs, and integrations all write to the same tables.
+We cannot simply fire an event from our own code after a transaction commits, because most of the interesting changes do not originate in our code at all.
+
+So the requirement became: **react to changes in the database itself, regardless of who made them, and fan them out to every connected client.**
+
+== The architecture
+
+The answer was change data capture, and Quarkus made every hop of it boring in the best possible way:
+
+[role=nowrap]
+----
+Oracle
+  │  redo log
+  ▼
+Debezium ──▶ Kafka
+               │
+               ▼
+     Quarkus (Kafka Streams)
+               │
+               ├─▶ refresh caches
+               │
+               ├─▶ WebSockets Next
+               │     └─▶ React + iOS  (live)
+               │
+               └─▶ APNs (Pushy)
+                     └─▶ iOS  (backgrounded)
+----
+
+Debezium tails the Oracle redo log and publishes change events to Kafka.
+The Quarkus service consumes those topics with Kafka Streams, refreshes whatever cached view the change affects, and then broadcasts a compact "something you care about changed" message to every open WebSocket.
+Clients re-fetch only what they need over REST.
+
+What I like about this shape is that the payload on the wire is deliberately *thin*.
+We are not trying to replicate the database into the browser — we are telling the client which slice of its state is now stale.
+
+== Consuming CDC with Kafka Streams
+
+The `quarkus-kafka-streams` extension gives you a `Topology` producer and Quarkus handles the lifecycle.
+We wanted adding a new captured table to be a one-class change, so the topology is assembled by discovering CDI beans:
+
+[source,java]
+----
+@ApplicationScoped
+public class DebeziumConsumer {
+
+    @Inject
+    Instance<CdcTopicHandler> topicHandlers;
+
+    @Produces
+    Topology createStreamTopology() {
+        StreamsBuilder builder = new StreamsBuilder();
+        for (CdcTopicHandler handler : topicHandlers) {
+            handler.register(builder);
+        }
+        return builder.build();
+    }
+}
+----
+
+Every handler extends a small base class that takes care of the serdes, the error handling and the logging context, so the subclass only has to say which topic it wants and what to do with a record:
+
+[source,java]
+----
+public abstract class AbstractCdcTopicHandler implements CdcTopicHandler {
+
+    @Override
+    public void register(final StreamsBuilder builder) {
+        Serde<String> keySerde = Serdes.String();
+        Serde<String> valueSerde = Serdes.String();
+        builder.stream(topicName(), Consumed.with(keySerde, valueSerde))
+               .peek((k, v) -> processRecord(k, v));
+    }
+
+    protected abstract String topicName();
+
+    protected abstract void onMessage(String key, String value);
+}
+----
+
+A concrete handler for the work order table is then almost entirely business logic:
+
+[source,java]
+----
+@ApplicationScoped
+public class WorkOrderTopicHandler extends AbstractCdcTopicHandler {
+
+    @Inject
+    @ConfigProperty(name = "debezium.topic.work-order")
+    String workOrderTopic;
+
+    @Override
+    protected String topicName() {
+        return workOrderTopic;
+    }
+
+    @Override
+    protected void onMessage(String key, String value) {
+        WorkOrder workOrder = parser.parseValue(value);
+        if (workOrder == null) {
+            return;
+        }
+        log.infof("CDC Work Order Updated: %s", workOrder.getId());
+        cacheService.updateWorkOrder(workOrder);
+    }
+}
+----
+
+Adding capture for a new table is: write one handler, add one topic property.
+CDI discovery does the rest — there is no registry to remember to update, which is exactly the kind of thing that rots in a long-lived codebase.
+
+The topic names live in configuration rather than in the handlers, so a new capture never touches Java that is already working:
+
+[source,properties]
+----
+debezium.topic.work-order=TRAX.WORK_ORDER
+debezium.topic.defect=TRAX.DEFECT
+
+quarkus.kafka-streams.application-id=${quarkus.application.name}-${HOSTNAME}
+quarkus.kafka-streams.topics=${debezium.topic.work-order},${debezium.topic.defect}
+kafka-streams.auto.offset.reset=latest
+kafka-streams.processing.guarantee=at_least_once
+----
+
+The `${HOSTNAME}` in the application id is the detail worth stopping on.
+
+Kafka Streams derives the consumer group from the application id, and a consumer group *divides* partitions among its members.
+That is exactly what you want when you are processing work — and exactly what you do not want here.
+If every pod shared one application id, a change event would be delivered to one pod, and only the users connected to that pod would ever hear about it.
+We need the opposite: every pod must see every record, so it can notify the browsers and iPads holding open WebSockets against *it*.
+This is a broadcast, not a work queue, so each pod needs a consumer group of its own.
+
+The container runtime hands us a unique value for free.
+Kubernetes sets `HOSTNAME` to the pod name, and pod names are unique within a namespace — a Deployment appends a random suffix, a StatefulSet an ordinal — so two replicas of the same Deployment land in different consumer groups without any coordination between them.
+Docker does the same thing with the container id.
+No config to template per replica, no init container to generate an identity.
+
+Uniqueness alone is not the whole reason, though.
+A random UUID regenerated at boot would also be unique — and that is precisely the problem.
+Every restart would strand the old consumer group with its committed offsets and its state store directory, and the pod would come back as a stranger.
+`HOSTNAME` is *stable for the life of the pod*, so a container that crashes and restarts in place rejoins the same group and picks up where it left off.
+Unique across pods, stable across restarts: those are the two properties an application id actually needs, and the pod name has both.
+
+== Pushing to clients with WebSockets Next
+
+On the other end, `quarkus-websockets-next` turned out to be a genuine pleasure.
+The endpoint is a plain CDI bean with annotated methods:
+
+[source,java]
+----
+@WebSocket(path = "/ws/push")
+public class PushWebSocket {
+
+    @Inject
+    WebSocketConnection connection;
+
+    @OnOpen
+    public void onOpen(WebSocketConnection connection) {
+        log.infof("Websocket connection %s opened. Query: %s",
+                connection.id(), connection.handshakeRequest().query());
+    }
+
+    @OnTextMessage(broadcast = false)
+    public String onMessage(String message) {
+        // browsers cannot send RFC 6455 ping frames from JavaScript
+        return "ping".equals(message) ? "pong" : message;
+    }
+
+    @OnPingMessage
+    void ping(Buffer data) {
+        // native clients get an automatic pong
+    }
+
+    @OnError
+    public String onException(Exception e) {
+        Throwable rootCause = ExceptionUtils.getRootCause(e);
+        if (rootCause instanceof HttpClosedException) {
+            // the user simply closed the browser
+            return "WebSocket closed by client";
+        }
+        log.errorf("Unexpected WebSocket exception", e);
+        return "An error occurred";
+    }
+}
+----
+
+Two small details in there solved real production problems.
+
+First, keeping a connection alive through corporate firewalls and airport Wi-Fi needs two different mechanisms, because the two clients are not equally capable.
+A native client can send RFC 6455 ping control frames, and `@OnPingMessage` / `@OnPongMessage` hand those to you directly.
+JavaScript in the browser has no API to send a ping frame at all, so the React client sends a literal `"ping"` text message instead and `@OnTextMessage` answers it.
+Two keepalive strategies, one endpoint, no branching in the transport layer.
+On the server side, Quarkus sends its own pings for us:
+
+[source,properties]
+----
+quarkus.websockets-next.server.auto-ping-interval=30
+quarkus.websockets-next.server.metrics.enabled=true
+----
+
+Second, `@OnError` gets a real exception rather than a swallowed one.
+`HttpClosedException` just means someone closed their laptop lid, so we log it at warn and move on, while anything else gets a full stack trace.
+Before we separated those two cases, the logs were unreadable.
+
+Broadcasting uses the injectable `OpenConnections` bean:
+
+[source,java]
+----
+@ApplicationScoped
+public class PushWebSocketService {
+
+    @Inject
+    OpenConnections socketConnections;
+
+    public void broadcastMessage(SocketMessage message, String applicationId) {
+        prepareMessage(message);
+        socketConnections.forEach(connection -> {
+            if (matchesApplication(connection, applicationId)) {
+                sendToConnection(connection, message);
+            }
+        });
+    }
+}
+----
+
+`OpenConnections` is iterable, and the handshake request is available on each connection, so routing a message to just one application's clients is a filter on a query parameter.
+No session registry of our own, no `ConcurrentHashMap` of connection ids to maintain.
+
+The message itself is intentionally small — an id, a timestamp, and a set of enum values naming what changed:
+
+[source,java]
+----
+@Schema(description = "WebSocket message for real-time updates")
+public class SocketMessage {
+
+    private String id;
+    private ZonedDateTime timestamp;
+    private String message;
+    private Set<SocketUpdate> updates;
+    private Set<String> users;
+    private Set<Object> metadata;
+
+    public enum SocketUpdate {
+        AIRCRAFT, ANNOUNCEMENT, ASSIGNMENT, BRANDING, CREW,
+        CLIENT_UPDATE, CONFIGURATION, FLEET, FLIGHTS,
+        NOTE, TASK_CARD, WORK_ORDER // ...
+    }
+}
+----
+
+So a CDC event on the work order table ends up as `updates: ["WORK_ORDER"]` plus a little metadata naming the aircraft and station, and the React app invalidates exactly one TanStack Query cache key.
+
+=== Debouncing the firehose
+
+Here is the lesson we learned the hard way, and it is not a Quarkus problem — it is a CDC problem.
+
+Change data capture is *chatty*.
+One human action in the ERP can be a multi-statement transaction touching the same row several times, and a batch job can rewrite thousands of rows in a few seconds.
+Forwarding every one of those to the browser meant a React app re-rendering itself into the ground and an iPad burning battery for no reason.
+
+So updates are coalesced before they leave the building.
+Handlers do not broadcast directly; they enqueue into a per-type map keyed by the record's natural identity, and a shared trailing timer flushes the whole batch a second later:
+
+[source,java]
+----
+static final long SOCKET_DEBOUNCE_MS = 1000L;
+
+void enqueueDebouncedUpdate(SocketUpdate update, Object key, Object payload) {
+    pendingByType.computeIfAbsent(update, ignored -> new ConcurrentHashMap<>())
+                 .put(key, payload);
+
+    ScheduledFuture<?> scheduled = socketDebounceScheduler.schedule(
+            this::flushDebouncedUpdates, SOCKET_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+    ScheduledFuture<?> previous = flushTask.getAndSet(scheduled);
+    if (previous != null) {
+        previous.cancel(false);
+    }
+}
+----
+
+Because the pending map is keyed by identity, five updates to the same work order inside the window collapse to one.
+Because the timer is shared and trailing, a burst across several tables still produces a single `SocketMessage` carrying every affected type.
+A thousand-row batch job becomes one notification instead of a thousand.
+
+=== When the iPad is asleep
+
+A WebSocket is only useful while the app is in the foreground.
+Mechanics put the iPad down, walk around the aircraft, and come back.
+So the same event that broadcasts over WebSockets also fans out to Apple Push Notification Service, driven by CDI events so the notification path never blocks the caller:
+
+[source,java]
+----
+public void onAnnouncementEvent(@ObservesAsync SystemAnnouncement announcement) {
+    if (!announcement.isActive()) {
+        return;
+    }
+    List<EmployeeDevice> devices =
+        employeeDeviceRepository.findAllEnabledForPush(announcement.getApplication());
+    for (EmployeeDevice device : devices) {
+        applePushNotificationService.pushNotificationsNonBlocking(
+            device.getDeviceToken(), device.getAppBundleId(), message, SocketUpdate.ANNOUNCEMENT);
+    }
+}
+----
+
+`@ObservesAsync` from ArC is the whole implementation of "do this off the request thread".
+No executor to configure, no thread pool to tune, no `@Async` annotation processor.
+
+== One OpenAPI contract, two generated clients
+
+This is the part the front-end teams care about most.
+
+`quarkus-smallrye-openapi` generates the specification from the JAX-RS resources and the `@Schema` annotations, and one property makes it a build artifact rather than a runtime curiosity:
+
+[source,properties]
+----
+quarkus.smallrye-openapi.store-schema-directory=src/main/openapi/
+----
+
+The generated `openapi.json` is committed alongside the code, which means it is reviewed in the same pull request as the endpoint change.
+Both clients are generated from that one file.
+
+For iOS:
+
+[source,bash]
+----
+openapi-generator-cli generate -i src/main/openapi/openapi.json \
+  -g swift5 \
+  -o ./generated-clients/swift \
+  --additional-properties=responseAs=AsyncAwait,swiftPackageName=TRAXeMobilityAPI
+----
+
+For React, https://orval.dev/[Orval^] emits TanStack Query hooks:
+
+[source,typescript]
+----
+export default defineConfig({
+  traxApi: {
+    input: '../src/main/openapi/openapi.json',
+    output: {
+      mode: 'tags-split',
+      target: './src/api/generated',
+      client: 'react-query',
+    },
+  },
+});
+----
+
+The effect is that a Java developer renaming a field breaks the Swift build and the TypeScript build, at compile time, instead of at an airport.
+`@Schema` annotations on the DTOs are not documentation busywork — they are the input to two code generators, and the `SocketUpdate` enum above lands in both clients as a real type.
+
+Error responses are standardized too.
+The https://github.com/quarkiverse/quarkus-http-problem[quarkus-http-problem^] extension gives us RFC 7807 problem details across the whole API, with tracing identifiers folded in:
+
+[source,properties]
+----
+quarkus.http-problem.include-mdc-properties=traceId,spanId,parentId,requestAddress,remoteUser,application,userAgent
+quarkus.http-problem.constraint-violation.status=422
+----
+
+So a Bean Validation failure comes back as a `422` with a machine-readable body, and the `traceId` in it is the same one in the Grafana trace.
+When a mechanic reports "it said something went wrong", support has a trace id to paste.
+
+== The rest of the stack
+
+Because everything is a Quarkus extension, a lot of what would normally be infrastructure work was configuration:
+
+* **`quarkus-hibernate-orm-panache` + `quarkus-jdbc-oracle`** against the existing Oracle schema, with a snake-case physical naming strategy so the Java entities read like Java and the tables stay as the ERP defined them decades ago.
+* **`quarkus-cache`** and the Hibernate second-level cache for reference data — aircraft master, locations, gates, profiles — warmed at startup and invalidated by the CDC handlers. Reference data that changes twice a year should not be a database round trip on every request.
+* **`quarkus-oidc`** with Keycloak, mapping OIDC token claims onto the fine-grained permissions already modeled in the ERP.
+* **`quarkus-micrometer-opentelemetry`** and **`quarkus-micrometer-registry-prometheus`**, pointed at a Grafana LGTM stack. JDBC telemetry, scheduler metrics and WebSocket metrics are all one property each.
+* **`quarkus-scheduler`**, **`quarkus-qute`**, **`quarkus-amazon-s3`** and a couple of Quarkiverse PDF extensions for the reporting and document side.
+* **`quarkus-smallrye-health`** and **`quarkus-info`** so the platform team gets liveness, readiness and build metadata without us writing an endpoint.
+
+== Conclusion
+
+The thing that stands out to me about this project is how *little* of it is plumbing.
+
+The hard parts of the problem are genuinely hard: capturing changes from an Oracle database you do not exclusively own, getting them to a mechanic's iPad reliably enough that they trust it, and keeping two independently-built front ends in lockstep with a Java API.
+But the code that solves those problems is a topology producer, a handful of handler classes, one annotated WebSocket endpoint and a build property that writes an OpenAPI file to disk.
+
+Kafka Streams, WebSockets, CDI events, OIDC, OpenTelemetry, Oracle and OpenAPI are one dependency each and one consistent configuration file, and they all show up together in Dev UI when something is not behaving.
+That is the Quarkus pitch, and on this project it held up.
