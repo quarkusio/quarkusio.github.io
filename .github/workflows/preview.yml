@@ -37,6 +37,49 @@ jobs:
         fi
         echo "id=${pr}" >> $GITHUB_OUTPUT
         rm -f pr-id.txt
+    - name: List changed pages
+      id: pages
+      run: |
+        base="https://quarkus-website-pr-${PR_ID}-preview.surge.sh"
+        links=""
+        # changed-pages.txt is written by the build job and holds the scope on the first line
+        # and the comma separated changed pages on the second
+        if [ -f changed-pages.txt ]; then
+          { read -r mode; IFS=',' read -ra paths; } < changed-pages.txt
+          rm -f changed-pages.txt
+          case "$mode" in
+            skip)
+              links=$'\n'"🤔 It looks like nothing changed compared to the live site."
+              ;;
+            full)
+              links=$'\n'"🌊 Many pages changed, so they are not listed individually."
+              ;;
+            partial)
+              # deep links are only listed when fewer than 5 pages changed
+              if [ "${#paths[@]}" -ge 5 ]; then
+                links=$'\n'"🌊 Many pages changed (${#paths[@]}), so they are not listed individually."
+              else
+                list=""
+                for p in "${paths[@]}"; do
+                  # the artifact comes from the PR, so only accept plain paths
+                  [[ $p =~ ^/[A-Za-z0-9_./-]*$ ]] || continue
+                  list+="- ${base}${p}"$'\n'
+                done
+                [ -n "$list" ] && links=$'\n'"👀 Changed pages:"$'\n\n'"${list}"
+              fi
+              ;;
+          esac
+          links=${links%$'\n'}
+          [ -n "$links" ] && links+=$'\n\n'"_Change detection can sometimes be wrong, so treat this as a guide only._"
+        fi
+        {
+          echo "links<<EOF_LINKS"
+          echo "$links"
+          echo "EOF_LINKS"
+        } >> $GITHUB_OUTPUT
+      env:
+        PR_ID: ${{ steps.pr.outputs.id }}
+
     - name: Publishing to surge for preview
       id: deploy
       run: npx surge@0.23.1 ./ --domain https://quarkus-website-pr-${PR_ID}-preview.surge.sh --token ${{ secrets.SURGE_TOKEN }}
@@ -50,10 +93,11 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr-number: ${{ steps.pr.outputs.id }}
         body: |
-          🎊 PR Preview ${{ github.sha }} has been successfully built and deployed to https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          🚀 PR Preview ${{ github.sha }} has been successfully built and deployed to https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          ${{ steps.pages.outputs.links }}
 
-          - Images of blog posts older than 3 months are not available.
-          - Newsletters older than 3 months are not available.
+          - ✂️ Images of blog posts older than 3 months are not available.
+          - ✂️ Newsletters older than 3 months are not available.
 
           <img width="300" src="https://user-images.githubusercontent.com/507615/90250366-88233900-de6e-11ea-95a5-84f0762ffd39.png">
         body-marker: <!-- Preview status comment marker -->
@@ -65,6 +109,6 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr-number: ${{ steps.pr.outputs.id }}
         body: |
-          😭 Deploy PR Preview failed.
+          😩 Deploy PR Preview failed.
           <img width="300" src="https://user-images.githubusercontent.com/507615/90250824-4e066700-de6f-11ea-8230-600ecc3d6a6b.png">
         body-marker: <!-- Preview status comment marker -->
