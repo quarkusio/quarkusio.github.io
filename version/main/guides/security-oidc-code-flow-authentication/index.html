@@ -2200,6 +2200,7 @@
 <li data-level="3"><a href="#apple-post-jwt">Apple POST JWT</a></li>
 <li data-level="3"><a href="#mutual-tls-mtls">Mutual TLS (mTLS)</a></li>
 <li data-level="3"><a href="#post-query">POST query</a></li>
+<li data-level="3"><a href="#attestation-based-client-authentication">Attestation-based client authentication</a></li>
 <li data-level="3"><a href="#introspection-endpoint-authentication">Introspection endpoint authentication</a></li>
 <li data-level="3"><a href="#authenticated-access-to-all-oidc-endpoints">Authenticated access to all OIDC endpoints</a></li>
 </ul>
@@ -2750,6 +2751,185 @@ quarkus.oidc.client-id=quarkus-app
 quarkus.oidc.credentials.client-secret.value=mysecret
 quarkus.oidc.credentials.client-secret.method=query</code></pre>
 </div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="attestation-based-client-authentication"><a class="anchor" href="#attestation-based-client-authentication"></a>Attestation-based client authentication</h4>
+<div class="paragraph">
+<p><a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-attestation-based-client-auth/">OAuth2 Attestation-Based Client Authentication</a> allows clients to authenticate without a pre-shared secret.</p>
+</div>
+<div class="paragraph">
+<p>When attestation is enabled, Quarkus OIDC generates a key pair, requests an Attestation JWT from a default or registered Client Attester, generates a Proof of Possession JWT that proves it owns a private key and is cryptographically bound to the Attestation JWT and sends both JWTs as HTTP headers:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>OAuth-Client-Attestation</code> — a Client Attestation JWT containing the public key in the <code>cnf</code> claim</p>
+</li>
+<li>
+<p><code>OAuth-Client-Attestation-PoP</code> — a Proof of Possession JWT signed with the corresponding private key</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>To enable attestation-based client authentication:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.attestation.enabled=true</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The signature algorithm defaults to <code>ES256</code>. Only EC algorithms (<code>ES256</code>, <code>ES384</code>, <code>ES512</code>) are currently supported.
+This algorithm is used for proof-of-possession (PoP) JWTs and self-attested attestation JWTs. Custom attesters may use different algorithms for signing attestation JWTs.
+To use a different EC algorithm:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.oidc.credentials.attestation.signature-algorithm=ES384</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The default Client Attester performs self-attestation: it acts as both Client Instance and Client Attester.
+It uses separate key pairs for the attestation JWT and the client instance. The attestation JWT is signed with the attestation key pair whose public key is exposed via a JWKS endpoint at <code>/.well-known/attestation-jwks</code> for the default tenant, or <code>/.well-known/attestation-jwks/&lt;tenant-id&gt;</code> for named OIDC tenants. The client instance key pair is used for the <code>cnf</code> claim and for signing the proof-of-possession JWT.</p>
+</div>
+<div class="paragraph">
+<p>To obtain an Attestation JWT from an external Client Attester, provide a custom <code>io.quarkus.oidc.common.ClientAttester</code> CDI bean:</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The <code>io.quarkus.oidc.common.ClientAttester</code> API is currently experimental and may change in future releases.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.common.ClientAttester;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.WebClient;
+
+@Singleton
+@Unremovable
+public class CustomClientAttester implements ClientAttester {
+
+    @Inject
+    Vertx vertx;
+
+    @Override
+    public Uni&lt;String&gt; attest(ClientAttestationContext context) {
+        // Send the client's public key and other required attestation data
+        // to the remote attestation service.
+        // The remote attester will include it in the attestation JWT's `cnf` claim
+        // and sign the JWT with its own private key.
+        // The format of the request data is custom client attester specific.
+        JsonObject requestBody = new JsonObject()
+                .put("client_id", context.clientId())
+                .put("public_key", context.clientPublicKeyJwk());
+
+        return WebClient.create(vertx)
+                .postAbs("https://attestation.example.com/attest")
+                .sendJsonObject(requestBody)
+                .onItem().transform(response -&gt; response.bodyAsString());
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Without a qualifier, the custom bean overrides the default <code>ClientAttester</code> for all tenants.
+To restrict a custom attestation to specific tenants, use the <code>@TenantFeature</code> qualifier:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.common.ClientAttester;
+import io.smallrye.mutiny.Uni;
+
+@Singleton
+@Unremovable
+@TenantFeature("my-tenant")
+public class CustomClientAttester implements ClientAttester {
+
+    @Override
+    public Uni&lt;String&gt; attest(ClientAttestationContext context) {
+        // Only used for the "my-tenant" OIDC tenant
+        ...
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>By default, a custom <code>ClientAttester</code> is assumed to delegate to a remote attestation service, so Quarkus does not publish an attestation public key for its tenant and the attestation JWKS endpoint is not registered.</p>
+</div>
+<div class="paragraph">
+<p>If instead a custom attester self-attests the client by signing the Client Attestation JWT with the attestation key pair managed by Quarkus, it must override <code>selfAttesting()</code> to return <code>true</code>. This tells Quarkus to publish the attestation public key at the attestation JWKS endpoint so the OAuth2 authorization server can verify the Client Attestation JWT.</p>
+</div>
+<div class="paragraph">
+<p>A self-attesting custom attester signs the Client Attestation JWT with the attestation signing key provided in the attestation context. This key is only available to attesters which return <code>true</code> from <code>selfAttesting()</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.common.ClientAttester;
+import io.quarkus.oidc.common.runtime.OidcConstants;
+import io.smallrye.jwt.build.Jwt;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.json.JsonObject;
+
+@Singleton
+@Unremovable
+@TenantFeature("my-tenant")
+public class SelfAttestingClientAttester implements ClientAttester {
+
+    @Override
+    public Uni&lt;String&gt; attest(ClientAttestationContext context) {
+        AttestationSigningKey signingKey = context.attestationSigningKey();
+        JsonObject cnf = new JsonObject().put("jwk", context.clientPublicKeyJwk().getMap());
+        String jwt = Jwt.issuer(context.clientId())
+                .subject(context.clientId())
+                .claim("cnf", cnf.getMap())
+                .expiresIn(signingKey.lifespan())
+                .jws()
+                .type(OidcConstants.CLIENT_ATTESTATION_JWT_TYPE)
+                .algorithm(signingKey.signatureAlgorithm())
+                .keyId(signingKey.kid())
+                .sign(signingKey.signingKey());
+        return Uni.createFrom().item(jwt);
+    }
+
+    @Override
+    public boolean selfAttesting() {
+        return true;
+    }
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The Proof of Possession JWT is always generated by the Quarkus Client Instance.</p>
+</div>
+<div class="paragraph">
+<p>Note that the client attestation may also be used alongside other forms of the client authentication to prove the workload provenance.</p>
 </div>
 </div>
 <div class="sect3">
