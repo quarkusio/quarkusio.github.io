@@ -1,0 +1,882 @@
+---
+layout: post
+title: 'Distributed Transactions in Enterprise Applications: From X/Open to MicroProfile LRA'
+date: 2026-10-21
+tags: transactions xa microprofile lra development-tips
+synopsis: 'Two-phase commit made distributed atomicity an ordinary feature of enterprise Java; microservices took it away again. This post follows the problem from its formalization by X/Open to the present day, then compares two working Quarkus implementations of the same money transfer, one on XA and Narayana, the other on MicroProfile LRA, against a single shared test contract.'
+author: nicolasduminil
+---
+
+[#abstract]
+== Abstract
+
+The problem of making several independent systems agree on a single outcome is
+older than most of the technology used to solve it. Historically, one of the
+first protocols able to provide this synchronization was 2PC (_two-phase commit_)
+that the application servers era made an ordinary feature of enterprise development.
+Later lightweight frameworks, service-oriented and microservices architectures
+have made the same guarantee considerably harder to obtain.
+This article follows that problem from its formalization in the X/Open Distributed
+Transaction Processing to the present situation. It then examines two working
+implementations of an identical use case, one using XA and two-phase commit, the
+other using the saga pattern, as specified by MicroProfile LRA, and compares them
+on evidence rather than on preference. The accompanying source code is available
+in the
+https://github.com/nicolasduminil/quarkus-distributed-tx[`quarkus-distributed-tx`]
+repository, where both implementations expose the same REST contract and are
+exercised by the same test suite.
+
+'''
+
+[#origins]
+== 1. Origins: X/Open, and the Formalization of 2PC
+
+The 2PC protocol is older than the standard that made it famous. Its
+essential shape appears in the database literature of the late 1970s, notably in
+the work of Jim Gray on the recovery and consistency properties of database
+operating systems. The problem it addresses is easy to state and difficult to
+solve: several parties must all either perform or decline an action. And they
+must do that despite the possibility that any of them, including the party
+conducting the negotiation, may fail at any moment.
+
+As its name states, the protocol proceeds in two phases. In the first, the
+coordinator asks every participant whether it is able to commit. A participant
+that answers affirmatively cannot retract itself. It must have
+written enough durable state to guarantee that it can still commit even after
+a crash. In the second phase, the coordinator informs the participants of the
+collective decision, which is affirmative only if every vote was affirmative.
+
+In early '90s, the X/Open consortium decided to contribute by formalizing a reference
+model named DTP (_Distributed Transaction Processing_). This model identified
+three roles namely the application program, the transaction manager and the
+resource manager. The following two interfaces have been defined:
+
+* the TX (_Transaction Demarcation_) interface governs how an application demarcates a transaction;
+* the XA (_eXtended Architecture_) interface defines how the transaction manager drives the resource manager through the phases of the commit.
+
+Once the XA specifications existed, a transaction manager written by one
+vendor could coordinate a database written by another, and the industry acquired
+a genuinely portable mechanism for distributed atomicity.
+
+Let's note a property of the XA specifications that will become important
+later. Between the moment a participant votes to commit and the moment it learns
+the collective decision, it is _blocked_. It holds its locks, it cannot proceed,
+and it cannot unilaterally decide. If the coordinator fails during this interval,
+the participant waits. Skeen and others demonstrated in the early '80s that this
+blocking behavior is not an artifact of a careless design but a logical consequence
+of the quorum-based model which tolerates partitions only by blocking whenever no
+quorum can be assembled. In 1985, Fischer, Lynch and Paterson published the article
+_Impossibility of Distributed Consensus with One Faulty Process_ which establishes
+that deterministic consensus cannot be guaranteed in an asynchronous system in
+which even one process may fail.
+
+Because of this vulnerability 2PC was considered in the beginning a flawed protocol
+that needed improvements. It took some time and experience to understand that,
+on the opposite, it's an exact trade-off between perfect atomicity and availability.
+
+[#decades-of-service]
+== 2. Several Decades of Service
+
+It would be reasonable to expect that a protocol with a documented blocking
+failure mode and a known vulnerability would have been superseded. It has not
+been. 2PC remains the most widely deployed mechanism for distributed atomicity
+in enterprise systems, and it is likely to remain so for some time.
+
+The explanation is that the failure mode is rare and the guarantee is absolute.
+Within a single data center, coordinating two databases and a message broker
+across a reliable local network, with a transaction manager whose recovery log is
+on durable storage, the vulnerable interval is measured in milliseconds and the
+recovery procedure is automatic. Financial institutions, telecommunications
+operators and government systems adopted the protocol because the alternative was
+to write compensation logic by hand for every business operation. Additionally,
+software architects and developers are more confident in a protocol than in a
+promise that reconciliation will probably catch any discrepancies.
+
+Another important point to notice is that 2PC places complexity in the
+infrastructure field, written once, by specialists, and consumed through a single
+annotation. Every other alternative examined in this article moves that work into
+application code, where it must be written again for each operation, by
+developers whose principal expertise is the business domain rather than
+distributed systems. This is a real cost and it is frequently underestimated.
+
+[#ots-jts-jta]
+== 3. OTS, JTS and JTA
+
+The X/Open model assumed a particular shape: an application, a transaction
+manager and some resource managers, generally within reach of one another. What
+it did not address is the case that the OO (_object-oriented_) paradigm made
+central the concept of transactions spanning objects that reside in different
+processes, on different machines, supplied by different vendors, and invoked
+remotely as though they were local.
+
+The OMG (_Object Management Group_), the consortium behind CORBA, answered this in the
+mid-1990s with the OTS (_Object Transaction Service_), adopted as one of the
+CORBAservices. OTS described the roles of a distributed transaction in CORBA's
+IDL (_Interface Definition Language_). The protocol underneath had not changed,
+the same resources, participants and quorum, in Gray's sense, were at work and
+no new algorithms have been proposed. OTS only specified how the 2PC participants
+might be distributed objects. And it settled the question that X/Open had left
+thin, namely how two transaction managers, from different vendors, should
+interoperate.
+
+OTS didn't displace XA but complemented it. The boundary to the resources, like
+databases or message brokers, remained what it had been, OTS typically only fronted
+resource managers driven over XA. Anything that OTS added sat above that
+boundary, between the managers themselves.
+
+The Jakarta EE platform, formerly Java EE and even formerly J2EE, absorbed this
+model with considerable thoroughness. The JTA (_Java Transaction API_) specifications
+defined the interface through which applications and application servers demarcate
+transactions. JTS (_Java Transaction Service_) brought OTS into Java. It required
+a transaction manager to implement that specification in its Java-mapped form,
+to propagate transaction context between managers as OTS prescribed, and to
+present JTA to the layer above. JTS was therefore not an alternative design but
+OTS in Java, with a JTA façade.
+
+The distinction between JTA and JTS is worth mentioning as the two are habitually
+confused, usually as "JTA is the interface and JTS the implementation". That is
+not quite it, since both are specifications. JTA is what an application programmer
+sees: `UserTransaction`, `TransactionManager`, and the interfaces by which resources
+are enlisted. JTS specifies what provides the guarantee underneath, including the
+propagation of transaction context between processes and the interoperability of
+transaction managers from different vendors.
+
+For the application developer, the effect was remarkable and is easily forgotten
+now. A method annotated for container-managed transactions would, upon invoking a
+remote component, carry its transaction context to that component, enlist the
+remote resources, and commit or roll back the entire assembly atomically. The
+programmer wrote business logic. The container arranged consensus. This was one
+of the genuinely impressive achievements of the enterprise Java period which
+worked reliably across products from competing vendors and it is
+somewhat unfair that it is now remembered as an old labyrinthine system.
+
+[#corba-iiop]
+== 4. CORBA and IIOP as the Transport of Context
+
+The transaction context propagation just described required a mechanism, and the
+mechanism was CORBA. Transaction context traveled between application servers
+as part of the IIOP (_Internet Inter-ORB Protocol_), in the form of a service
+context attached to the remote invocation. OTS defined how that context was
+represented and how transaction managers should interoperate. IIOP carried it.
+
+This arrangement was possible because *the transport understood transactions*.
+A remote call was not merely a message but an invocation within a transactional
+context, and the infrastructure at both ends recognized it as such. Enlistment
+of the remote resource was automatic because the protocol carried the information
+required to perform it.
+
+The costs were substantial. CORBA was complex, its interoperability was achieved
+by considerable effort and its programming model demanded interface definitions
+and generated stubs. As the industry moved towards HTTP and simpler representations,
+these costs became decisive. But it is important to record that the price of the
+simplicity was HTTP lack of capacity to carry transactional semantics.
+
+[#decline-of-app-servers]
+== 5. The Decline of Heavyweight Servers and the Rise of Lighter Frameworks
+
+The reasons for the decline of the traditional application server are well
+documented and only tangentially concerned with transactions. Deployment units
+grew large and start-up times grew long at exactly the moment when elastic
+infrastructure began to reward the opposite. Container images preferred a single
+process to a shared runtime hosting many applications. The operational model of
+the application server, in which several applications share a managed container
+administered by a specialist team, was displaced by one in which each service
+carries its own runtime and is administered by the team that wrote it.
+
+Spring Boot, released in 2014, demonstrated that an embedded server and
+convention-based configuration could deliver most of the productivity of the
+enterprise stack with a fraction of its ceremony. Quarkus, which followed in 2019,
+went further by moving substantial work from run time to build time, producing
+start-up characteristics that make Java a plausible choice for serverless and
+elastically scaled deployments.
+
+Jakarta EE itself, transferred to the Eclipse Foundation in 2017 and subsequently
+renamed, continues to evolve, and both Spring Boot and Quarkus rely on
+substantial parts of its specifications. The change is therefore less a
+repudiation of the enterprise Java model than a redistribution of it. The
+specifications survived, the monolithic container that implemented them did not.
+
+[#what-was-lost]
+== 6. What the Lighter Frameworks Lost
+
+Two changes occurred simultaneously. The first is architectural. The microservice
+architecture style holds that each service should own its data, and that no other
+service should reach into that data directly. This principle is incompatible with
+2PC across services which requires the coordinator to be connected to
+the resource managers. A coordinator that must not touch another service's
+resources cannot enlist them.
+
+The second is a matter of transport. HTTP does not propagate transaction context.
+It doesn't provide an equivalent of the IIOP service context. A REST call is an
+independent interaction whose relationship to the caller's transaction is not
+represented anywhere, unless the application arranges to represent it.
+
+The consequence, which is regularly misunderstood in practice, is that
+annotating a method as transactional and then invoking a remote service from
+within it produces no distributed transaction of any kind.
+If the local transaction rolls back, the remote effect stands. If
+the local transaction commits, nothing establishes that the remote one did, and
+a remote call that returned no answer may have applied its change or may not,
+leaving the caller no basis on which to decide. The divergence does not even
+require the remote service to fail. The arrangement has the
+appearance of a distributed transaction and none of the substance, which is the
+least desirable of the available outcomes, since it fails while presenting the
+appearance of success.
+
+[#saga-pattern]
+== 7. The Saga Pattern, and the Ease of Implementing It Incorrectly
+
+The saga was described by Garcia-Molina and Salem in 1987, in a paper concerned
+with long-lived transactions within a single database. Their observation was that
+a transaction holding locks for a long period is destructive to concurrency, and
+that certain long transactions may be decomposed into a sequence of shorter ones,
+each of which commits independently, with a compensating transaction defined for
+each step. If the sequence cannot be completed, the compensations for the
+completed steps are executed in reverse order.
+
+The saga doesn't provide isolation. This is not a defect of a particular
+implementation but by definition. Intermediate states are visible to other
+observers, because each step has genuinely committed. In exchange, no participant
+holds a lock while waiting for a distant coordinator, and each service retains
+authority over its own data.
+
+The naive implementation, which is very common, executes each step and defines its
+compensation as the arithmetic inverse. Let's consider the example of a money transfer
+service, like the one presented in the associated project. A debit is compensated
+by a credit of the same amount. This is wrong in two distinct ways.
+
+The first defect is the visible intermediate state. Between the debit and its
+compensation, the balance is genuinely reduced. Any concurrent observer, including
+another saga evaluating whether sufficient funds exist, will read that reduced
+value and may act upon information that is about to be invalidated.
+
+The second defect is that *the compensating action can itself fail*. A credit is
+an operation like any other, subject to validation, to constraints, and to the
+account having been closed in the interval. A saga whose compensation fails is in
+a worse condition than one that never began, since it has performed part of an
+operation and it cannot undo it. The system requires human intervention, and the
+humans require an explanation.
+
+The remedy, illustrated in <<lra-implementation,Section 10>>, is to arrange matters so that no
+compensating write is required. If the first step reserves rather than acts, then
+compensation releases the reservation, and a release cannot fail for business
+reasons because it removes an obligation rather than creating one.
+
+[#microprofile-lra]
+== 8. MicroProfile LRA
+
+MicroProfile LRA, where LRA denotes _Long Running Action_, specifies a saga
+coordination protocol for services communicating over HTTP. It is best understood
+as an answer to the two negative effects identified in <<what-was-lost,Section 6>>: it reintroduces a context
+that travels with the call, and it reintroduces a coordinator that drives
+participants to a common outcome. It does not, and cannot, reintroduce atomicity.
+
+The programming model is declarative. A method annotated `@LRA` participates in a
+long-running action, beginning one if required. Context propagates in the
+`Long-Running-Action` HTTP header, which the implementation attaches to outgoing
+calls and interprets on incoming ones. A participant declares its obligations
+through further annotations:
+
+* `@Compensate`, which is invoked if the action is cancelled;
+* `@Complete`, invoked if it is closed successfully;
+* `@Status`, by which the coordinator may enquire what a participant did;
+* `@Forget`, by which a participant may discard state it no longer needs to retain.
+
+Two properties of this protocol are commonly overlooked. The first is that participants
+must be *idempotent*. The coordinator retries. A participant that applies its
+effect a second time corrupts its own data. This is the requirement that appears
+in every specification document and is absent from a remarkable proportion of
+first implementations.
+
+The second is that the coordinator is a *separate process that calls the
+participants back*. As opposed to JTA where the transaction manager is embedded
+in the application, under LRA it is not and the participant must reach the coordinator
+to begin, join and end an action. The coordinator must reach every participant
+to invoke its callbacks. It is entirely possible to construct a deployment in
+which the first direction works as expected while the second does not, and the resulting
+behavior is discussed in <<lra-implementation,Section 10>>.
+
+'''
+
+[#xa-implementation]
+== 9. The XA Implementation in Detail
+
+The use case is deliberately modest: transfer an amount from one account to
+another and record the transfer. Two databases are involved, one holding accounts
+and one holding the transfer log, because a single database would reduce the
+problem to a local transaction and demonstrate nothing.
+
+One component in this arrangement is essential: the Narayana transaction manager.
+Its lineage is running back to the Arjuna research at the University of Newcastle
+and provided two decades of good service as the transaction manager of JBoss and
+WildFly. Its Quarkus extension, used here, brings a JTA implementation embedded
+in the application's own process. It owns the object store, decides the outcome
+and executes the 2PC protocol on the application's behalf. The same project supplies
+the LRA coordinator that <<lra-implementation,section 10>> relies upon, so both implementations in this
+article rely on the same body of code.
+
+=== Configuration
+
+Each datasource is declared as an XA one:
+
+[source,properties]
+----
+quarkus.datasource.accounts.jdbc.transactions=xa
+quarkus.datasource.xfers.jdbc.transactions=xa
+----
+
+That flag is the entire mechanism. The connection pool supplies `XAConnection`
+instances rather than ordinary ones, and each pool enlists an `XAResource` in the
+active transaction upon first use.
+
+=== The transactional method
+
+[source,java]
+----
+@Transactional
+public TransferDto processTransfer(TransferRequest request)
+{
+  Account source = accountRepository.getAccount(request.getSourceAccountId())
+    .orElseThrow(() -> new AccountNotFoundException(request.getSourceAccountId()));
+  Account destination = accountRepository.getAccount(request.getDestinationAccountId())
+    .orElseThrow(() -> new AccountNotFoundException(request.getDestinationAccountId()));
+  if (source.getBalance().compareTo(request.getAmount()) < 0)
+    throw new InsufficientFundsException(source.getId());
+  source.debit(request.getAmount());
+  destination.credit(request.getAmount());
+  Transfer transfer = new Transfer(Common.getRandomId(), source.getId(), destination.getId(),
+        request.getAmount(), request.getCurrency(), TransferStatus.COMPLETED, LocalDateTime.now());
+  transferRepository.createTransfer(transfer);
+  return transfer.toDto();
+}
+----
+
+There is no reference to two-phase commit in this code, and that is the
+observation worth recording. The annotation causes a JTA transaction to begin. The
+two repositories address two different datasources. Each datasource enlists itself.
+When the method returns, Narayana performs the protocol.
+
+=== The protocol as executed
+
+Upon commit the transaction manager calls `prepare` on both branches. Each
+PostgreSQL instance executes `PREPARE TRANSACTION`, writing the changes durably in
+a state from which they can still either be committed or rolled back. If both
+branches vote affirmatively, the transaction manager writes its decision to
+its object store. This is the point at which the outcome becomes irrevocable
+and then the transaction manager calls `commit` on both branches, each of which
+executes `COMMIT PREPARED`.
+
+Two consequences of operational importance follow. PostgreSQL refuses prepared
+transactions unless `max_prepared_transactions` is configured with a positive
+value, its default being zero, so an otherwise correct application fails at the
+first commit. And the transaction manager's object store must be durable, since it
+holds the only record of a decision made but not yet applied. Recovery must be
+enabled so that transactions left in doubt by a failure are resolved when the
+process returns.
+
+=== The architectural cost
+
+The transfer service interacts directly with the `accounts` database. It does not
+ask anything of the account service, it holds the resource manager instead. This
+means that it owns a connection to the `accounts` database and enlists it in its
+own transaction. The transfer service opens that connection, modifies the account
+rows itself through its own persistence layer, and the `XAResource` behind that
+connection becomes a branch of the transaction that the transfer service began.
+The account service plays no part. Its code does not run and it is not informed.
+The commit decision belongs to the transfer service's transaction manager.
+
+This is not an oversight but a requirement. `prepare` and `commit` are operations
+on an `XAResource`, and a service boundary exposes no equivalent of them. HTTP
+offers no way to ask a remote service to make a change durable while leaving its
+outcome open. A coordinator that cannot reach the resource manager cannot enlist
+it. The consequence is that the two services need to share a database, and the
+independence that the service boundary was intended to establish is not present.
+The repository's `docker-compose.yaml` states this fact in one line: `transfer` is
+given its own database, as well as the accounts datasource URL, whereas
+`transfer-lra` is given, in addition to its own database URL, the one of the
+account service.
+
+[#lra-implementation]
+== 10. The LRA Implementation in Detail
+
+The saga implementation exposes an identical REST contract and reaches balances
+only through the account service's HTTP interface. It has no dependency on the
+accounts persistence layer, and that absence is the entire architectural point.
+
+=== Reserve, then confirm
+
+In the LRA implementation and as opposed to the 2PC one, the account service does
+not move money when asked to reserve a debit. It records a `Reservation` in state
+`PENDING` and leaves the balance unchanged. Available funds are computed as the
+balance minus the sum of pending debits, so another possible concurrent saga
+cannot reserve the same money. Upon `@Complete` the reservations are applied;
+upon `@Compensate` they are released.
+
+Accordingly, *because the balance never moved, compensation performs no update
+and, therefore, no persistence operation can fail during compensation.* Hence,
+the second issue identified in <<saga-pattern,Section 7>> is eliminated by construction rather
+than by coding.
+
+=== Idempotency, enforced twice
+
+Reservations are identified, in business terms, by a triple consisting in the action identifier,
+the account and the reservation type. Notice that the triple is not the entity's primary key,
+which is a generated value, so nothing in the object model prevents a second row carrying the
+same triple. And in order to avoid that, it is declared as a unique constraint in the database:
+
+[source,java]
+----
+@Table(name = "RESERVATIONS",
+  uniqueConstraints = @UniqueConstraint(name = "UK_RESERVATION_LRA",
+    columnNames = {"LRA_ID", "ACCOUNT_ID", "RESERVATION_TYPE"}))
+----
+
+The constraint is needed because the account service, when asked to reserve a
+debit, looks for an existing reservation before writing one, which is a
+check-then-act sequence and, therefore, not atomic. Two deliveries of the same
+reserve request can both find nothing and both insert. The constraint avoids that
+and guarantees that the database refuses the 2nd reserve.
+
+Retries could also cause the effect described above. The coordinator waits for
+each callback, but a call that times out or whose reply is lost leaves the
+action unresolved, so it keeps calling again and again. A settlement instruction
+therefore might arrive more than once for a reservation that is already recorded. The
+database constraint cannot help here, since no row is being inserted. Then the guard
+sits one level down, in the service class shown below. As you can see, the two
+callbacks annotated with `@Compensate` and `@Complete` annotations obtain their
+reservations from a single helper, the `pendingFor(...)` method, that selects
+only the `PENDING` reservations, so that the ones already confirmed or already
+released are passed over rather than settled again.
+
+[source,java]
+----
+@ApplicationScoped
+public class AccountLraService
+{
+  ...
+  @Transactional
+  public ParticipantStatus complete(String lraId)
+  {
+    pendingFor(lraId).forEach(this::confirm);
+    return ParticipantStatus.Completed;
+  }
+  ...
+  @Transactional
+  public ParticipantStatus compensate(String lraId)
+  {
+    pendingFor(lraId).forEach(reservation -> reservation.setState(ReservationState.RELEASED));
+    return ParticipantStatus.Compensated;
+  }
+  ...
+  private Stream<Reservation> pendingFor(String lraId)
+  {
+    return reservations.findByLra(lraId).stream()
+     .filter(reservation -> reservation.getState() == ReservationState.PENDING);
+  }
+  ...
+}
+----
+
+[#the-project]
+== 11. The Project
+
+The project that illustrates this article is a Quarkus workshop, available at
+https://github.com/nicolasduminil/quarkus-distributed-tx[`quarkus-distributed-tx`],
+showing a simple money transfer use case in the two ways that we discussed along
+the article:
+
+* *XA / 2PC* (`transfer`, port 8080): a genuine 2PC across two XA
+  datasources, coordinated by Narayana.
+* *Saga / MicroProfile LRA* (`transfer-lra`, port 8090 and `account`, port 8081): a compensation-based
+  consistency example across autonomous services, coordinated by a Narayana LRA coordinator.
+
+Both expose the same `/xfers` REST contract and are driven by the same shared
+test suite (`transfer-tck`), so any difference you observe is a difference in
+transaction strategy and nothing else.
+
+=== Modules
+
+The following modules are part of the workshop project.
+
+[cols="1,4", options="header"]
+|===
+| Module | Role
+
+| `common`
+| Shared library: `Common` utility, the transfer DTOs (`TransferDto`, `TransferRequest`, `TransferResponse`, `TransferStatus`), the application exception hierarchy and the single `ApplicationExceptionMapper` that maps them to HTTP status codes.
+
+| `account-repository`
+| Shared persistence layer for accounts: the `Account` entity, `AccountDto`, the `AccountRepository` interface and its two implementations. Depended on by `account` and by `transfer` — and pointedly *not* by `transfer-lra`.
+
+| `transfer-tck`
+| The REST contract both transfer implementations must satisfy, as an abstract test class. Test tooling is at compile scope so consumers depend on it with `<scope>test</scope>`.
+
+| `account`
+| Account microservice (port 8081). Owns the `accounts` schema. CRUD + debit/credit, *plus* the LRA participant endpoints under `/lra/accounts`.
+
+| `transfer`
+| XA coordinator (port 8080). Two XA datasources (`accounts`, `xfers`). Transfer CRUD plus the 2PC transfer operation.
+
+| `transfer-lra`
+| Saga orchestrator (port 8090). One plain datasource for its own transfer log; reaches balances only through the account service's API.
+|===
+
+Each repository has two implementations: an in-memory one (`DefaultAccountRepository`,
+`DefaultTransferRepository`) and a JPA/Panache one (`AccountRepositoryXA`,
+`TransferRepositoryXA`). Both are `@Alternative`, so neither is enabled by default;
+each application picks the XA pair explicitly through
+`quarkus.arc.selected-alternatives`. Only the XA implementations participate in 2PC —
+the in-memory ones are there to run the services without a database.
+
+All four modules carry the Jandex plugin so their `@Entity`, `@Provider` and CDI bean
+classes are indexed when consumed as external dependencies.
+
+[#endpoints]
+=== Endpoints
+
+Three services expose an HTTP API, each with a Swagger UI at `/q/swagger-ui`. The
+rows marked as callbacks are invoked by the LRA coordinator, not by clients.
+
+[cols="2,1,3,3", options="header"]
+|===
+| Service | Method | Path | Purpose
+
+| `account` (8081) | `GET` | `/accounts` | List the accounts
+| `account` (8081) | `POST` | `/accounts` | Create an account
+| `account` (8081) | `GET` | `+/accounts/{accountId}+` | Read one account
+| `account` (8081) | `PUT` | `+/accounts/{accountId}+` | Update one account
+| `account` (8081) | `DELETE` | `+/accounts/{accountId}+` | Delete one account
+| `account` (8081) | `POST` | `+/accounts/{accountId}/debit+` | Debit, amount in the body
+| `account` (8081) | `POST` | `+/accounts/{accountId}/credit+` | Credit, amount in the body
+| `account` (8081) | `POST` | `+/lra/accounts/{accountId}/debit+` | Reserve a debit, `@LRA(MANDATORY)`
+| `account` (8081) | `POST` | `+/lra/accounts/{accountId}/credit+` | Reserve a credit, `@LRA(MANDATORY)`
+| `account` (8081) | `GET` | `+/lra/accounts/{accountId}/availability+` | Balance, held and available amounts
+| `account` (8081) | `PUT` | `/lra/accounts/complete` | `@Complete` callback
+| `account` (8081) | `PUT` | `/lra/accounts/compensate` | `@Compensate` callback
+| `account` (8081) | `GET` | `/lra/accounts/status` | `@Status` callback
+| `account` (8081) | `DELETE` | `/lra/accounts/forget` | `@Forget` callback
+| `transfer` (8080) | `POST` | `/xfers` | Transfer, in one 2PC transaction
+| `transfer` (8080) | `GET` | `/xfers` | List the transfer log
+| `transfer` (8080) | `GET` | `+/xfers/{transferId}+` | Read one transfer
+| `transfer` (8080) | `PUT` | `+/xfers/{transferId}+` | Update one transfer
+| `transfer` (8080) | `DELETE` | `+/xfers/{transferId}+` | Delete one transfer
+| `transfer-lra` (8090) | `POST` | `/xfers` | Transfer, as a saga, `@LRA(REQUIRED)`
+| `transfer-lra` (8090) | `GET` | `/xfers` | List the transfer log
+| `transfer-lra` (8090) | `GET` | `+/xfers/{transferId}+` | Read one transfer
+| `transfer-lra` (8090) | `PUT` | `+/xfers/{transferId}+` | Update one transfer
+| `transfer-lra` (8090) | `DELETE` | `+/xfers/{transferId}+` | Delete one transfer
+| `transfer-lra` (8090) | `PUT` | `/xfers/lra/complete` | `@Complete` callback
+| `transfer-lra` (8090) | `PUT` | `/xfers/lra/compensate` | `@Compensate` callback
+| `transfer-lra` (8090) | `GET` | `/xfers/lra/status` | `@Status` callback
+| `transfer-lra` (8090) | `DELETE` | `/xfers/lra/forget` | `@Forget` callback
+|===
+
+Two things are worth reading off the table. The two transfer services present the
+same `POST /xfers` contract, taking the same request body of
+`+{sourceAccountId, destinationAccountId, amount, currency}+`, which is what allows
+a single test class to exercise both. And the account service's participant API
+sits under its own path prefix instead of altering the existing endpoints, which
+is why the saga work left the original account tests untouched.
+
+=== Build & test
+
+Integration tests use Quarkus Dev Services (Testcontainers), so a running Docker
+daemon is required. No manual database setup is needed. Each service seeds its own
+data in dev/test profiles, on the behalf of the `import.sql` file for `account` and of the
+`import-accounts.sql` for `transfer`. In the `prod` profile the account service
+owns the `accounts` schema and no generation or seeding happens.
+
+The following command runs the integration tests:
+
+[source,bash]
+----
+mvn clean verify
+----
+
+Here is the list of the integration tests provided with the project:
+
+* `AbstractMoneyTransferContractIT` (transfer-tck): this is an abstract class serving as a superclass for all the integration tests. It defines the shared scenarios: happy
+  path, insufficient funds, unknown account, listing
+  and deletion. Assertions are on deltas, and the balance/count probes are
+  abstract, because the XA service can read the databases directly while the
+  saga service can only get them by calling the API over HTTP. Failure paths assert the response body
+  as well as the status. Both stacks must return the business error rather than
+  transaction plumbing, which a status-only assertion would not catch.
+* `MoneyTransferIT` (transfer): the contract against XA, with repository-based probes.
+* `MoneyTransferSagaIT` (transfer-lra): the contract against LRA, with HTTP probes,
+  plus saga-only assertions about the `COMPENSATED` audit row and released reservations.
+* `AccountResourceIT` (account): account CRUD, debit/credit, 404 on unknown account,
+  and rejection of overdrafts and invalid amounts.
+
+=== Run the full stack
+
+In order to run the full stack, production like, proceed as follows:
+
+[source,bash]
+----
+# Build the container images (container-image.build=true is enabled)
+mvn clean package
+docker compose up -d
+----
+
+`docker-compose.yaml` starts the whole comparison:
+
+[cols="2,1,4", options="header"]
+|===
+| Service | Port | Role
+
+| `accounts-db` | 5432 | Accounts, `max_prepared_transactions=100` for XA
+| `xfers-db` | 5433 | XA transfer log, `max_prepared_transactions=100`
+| `xfers-lra-db` | 5434 | Saga transfer log (no XA needed)
+| `lra-coordinator` | 50000 | `quay.io/jbosstm/lra-coordinator`
+| `account` | 8081 | CRUD + LRA participant
+| `transfer` | 8080 | XA/2PC
+| `transfer-lra` | 8090 | Saga/LRA
+|===
+
+Both transfer services run against the same accounts, so you can drive the same
+transfer through each and compare:
+
+[source,bash]
+----
+BODY='{"sourceAccountId":"ACC1","destinationAccountId":"ACC2","amount":10.00,"currency":"EUR"}'
+curl -s -XPOST -H 'Content-Type: application/json' -d "$BODY" http://localhost:8080/xfers  # XA
+curl -s -XPOST -H 'Content-Type: application/json' -d "$BODY" http://localhost:8090/xfers  # Saga
+curl -s http://localhost:8081/lra/accounts/ACC1/availability                                # reservations
+----
+
+Note `QUARKUS_LRA_BASE_URI` on the two participants: it is the address the
+coordinator uses to call them back, and without it a participant advertises a URL
+that is only meaningful from its own side of the network.
+
+A Swagger interface is also available with each API, as explained at <<endpoints,§11 Endpoints>>.
+Additionally, the smoke test script `test-all.sh` is a very convenient way to make
+sure to cover all the test case possible combinations. Here below is an example
+of how to run it:
+
+[source,bash]
+----
+$ docker compose up -d
+$ ./test-all.sh
+
+=== Account API - http://localhost:8081/accounts ===
+PASS POST /accounts (create ACC90, 1000.00) -> 201
+PASS POST /accounts (create ACC91, 0.00) -> 201
+PASS POST /accounts (create ACC92, 10.00) -> 201
+PASS GET /accounts/ACC90 -> 200
+PASS balance(ACC90) == 1000.00
+PASS GET /accounts (list) -> 200
+PASS PUT /accounts/ACC90 (rename owner) -> 200
+PASS GET /accounts/ACC90 (confirm rename) -> 200
+PASS customerName updated
+PASS POST /accounts/ACC90/credit (50.00) -> 200
+PASS balance(ACC90) == 1050.00
+PASS POST /accounts/ACC90/debit (200.00) -> 200
+PASS balance(ACC90) == 850.00
+
+=== Account API - negative cases ===
+PASS POST credit (-1.00) rejected -> 400
+PASS POST debit (0.00) rejected -> 400
+PASS POST debit (999999.00) insufficient funds -> 400
+PASS GET /accounts/NOSUCH -> 404
+PASS POST credit on unknown account -> 404
+PASS POST credit without Content-Type -> 415
+PASS balance(ACC90) == 850.00
+PASS DELETE /accounts/ACC92 -> 204
+PASS GET deleted account -> 404
+PASS DELETE already-deleted account -> 404
+
+=== Account LRA participant API - http://localhost:8081/lra/accounts ===
+PASS GET /lra/accounts/ACC90/availability -> 200
+PASS availability exposes balance/held/available
+PASS POST /lra/accounts/ACC90/debit without LRA context -> 412
+PASS POST /lra/accounts/ACC90/credit without LRA context -> 412
+PASS balance(ACC90) == 850.00
+
+=== XA Transfer API (2PC) - http://localhost:8080/xfers ===
+PASS POST /xfers (ACC90 -> ACC91, 100.00) -> 200
+PASS transferId returned: raizmjf
+PASS balance(ACC90) == 750.00
+PASS balance(ACC91) == 100.00
+PASS GET /xfers/raizmjf -> 200
+PASS GET /xfers (list) -> 200
+PASS PUT /xfers/raizmjf (currency -> USD) -> 200
+
+=== XA Transfer API - negative cases (nothing must move) ===
+PASS POST /xfers insufficient funds -> 400
+PASS POST /xfers negative amount -> 400
+PASS POST /xfers unknown source -> 404
+PASS POST /xfers unknown destination -> 404
+PASS balance(ACC90) == 750.00
+PASS balance(ACC91) == 100.00
+PASS GET /xfers/NOSUCH -> 404
+PASS DELETE /xfers/raizmjf -> 204
+PASS GET deleted transfer -> 404
+
+=== Saga Transfer API (LRA) - http://localhost:8090/xfers ===
+PASS POST /xfers (ACC90 -> ACC91, 25.00) -> 200
+PASS transferId returned: etmlebm
+PASS balance(ACC90) == 725.00
+PASS balance(ACC91) == 125.00
+PASS GET /xfers/etmlebm -> 200
+PASS GET /xfers (list, includes compensated) -> 200
+PASS @Complete flipped the transfer to COMPLETED
+
+=== Saga Transfer API - cancellation and compensation ===
+PASS POST /xfers insufficient funds (saga cancels) -> 400
+PASS balance(ACC90) == 725.00
+PASS balance(ACC91) == 125.00
+PASS @Compensate logged the cancelled transfer as COMPENSATED
+PASS POST /xfers unknown destination (saga cancels) -> 404
+PASS balance(ACC90) == 725.00
+PASS GET availability after settled sagas -> 200
+PASS held == 0 (no reservation left dangling)
+PASS PUT /xfers/etmlebm (currency -> USD) -> 200
+PASS GET /xfers/NOSUCH -> 404
+PASS DELETE /xfers/etmlebm -> 204
+PASS GET deleted transfer -> 404
+
+=== Saga participant callbacks - @Status and @Forget (transfer-lra) ===
+PASS coordinator started LRA: http://lra-coordinator:8080/lra-coordinator/0_ffffac120002_a03b_6ad35817_1ed
+PASS POST /xfers with an externally started LRA -> 412
+PASS GET /xfers/lra/status (@Status) -> 200
+PASS @Status reports Compensated for the cancelled LRA
+PASS balance(ACC90) moved by 0 (now 725.00)
+PASS DELETE /xfers/lra/forget (@Forget) -> 200
+PASS GET /xfers/lra/status after @Forget -> 404
+PASS @Forget kept the transfer, only dropped its LRA id
+
+=== Account LRA participant API - driving a saga by hand ===
+PASS coordinator started LRA: http://lra-coordinator:8080/lra-coordinator/0_ffffac120002_a03b_6ad35817_1f2
+PASS POST /lra/accounts/ACC90/debit (40.00, in LRA) -> 200
+PASS balance(ACC90) moved by 0 (now 725.00)
+PASS held(ACC90) moved by 40.00 (now 40.00)
+PASS POST /lra/accounts/ACC91/credit (40.00, in LRA) -> 200
+PASS balance(ACC91) moved by 0 (now 125.00)
+PASS coordinator closed the LRA -> 200
+PASS balance(ACC90) moved by -40.00 (now 685.00)
+PASS balance(ACC91) moved by 40.00 (now 165.00)
+PASS held(ACC90) moved by 0 (now 0)
+
+=== Account LRA participant API - cancelling a saga by hand ===
+PASS coordinator started LRA: http://lra-coordinator:8080/lra-coordinator/0_ffffac120002_a03b_6ad35817_1f7
+PASS POST /lra/accounts/ACC90/debit (15.00, in LRA) -> 200
+PASS held(ACC90) moved by 15.00 (now 15.00)
+PASS coordinator cancelled the LRA -> 200
+PASS balance(ACC90) moved by 0 (now 685.00)
+PASS held(ACC90) moved by 0 (now 0)
+
+=== Summary ===
+87 passed, 0 failed
+----
+
+[#comparison]
+== 12. Comparison
+
+The attached GitHub repository contains a multi-module Maven project with two
+implementations. The
+first uses JTA and XA to obtain a two-phase commit, and is contained entirely in
+the `transfer` module. The second uses MicroProfile LRA, and is necessarily
+spread across two modules: `transfer-lra` orchestrates the saga, while `account`
+takes part in it. That difference in shape is not an accident of packaging. A
+JTA coordinator that enlists resource managers directly can live in a single
+module, the `transfer` one, whereas a saga cannot exist unless its participants
+are reachable and callable, hence the necessity for it to live in two modules,
+`transfer-lra` and `account`.
+
+Both implementations satisfy the same test contract. The following differences
+are therefore differences of mechanism and of consequence, not of capability.
+
+[cols="1,2,2", options="header"]
+|===
+| Dimension | XA and two-phase commit | Saga and LRA
+
+| Coordinator | Embedded in the application process | Separate process, must call participants back
+| Data ownership | Coordinator holds the resource managers, so services share a database | Each service retains its own data
+| Isolation | Complete; no intermediate state is observable | Absent by design; a reservation is observable while in flight
+| Failure | Rollback leaves no trace whatsoever | Leaves a record that the operation was attempted and undone
+| Locks | Held between prepare and commit | None held across the action
+| Availability | Participants block if the coordinator fails while in doubt | Participants remain available; completion may occur later
+| Location of difficulty | Infrastructure, written once | Application code, written for each operation
+| Failure of the undo | Not applicable; nothing was committed | Possible, unless reservations are used
+|===
+
+Two entries deserve comment.
+
+The row concerning failure is frequently presented as an advantage of 2PC on the
+grounds that the rollbacks are clean. It may equally be regarded as a loss of
+information. A cancelled saga records that a transfer was attempted and
+subsequently undone, which is an audit trail that a rollback cannot produce
+because the rows were never committed. Whether this constitutes an advantage
+depends entirely on whether the business is required to account for attempts as
+well as for outcomes, and this is a question for the domain rather than for the
+architecture.
+
+The row concerning the location of difficulty is, in my opinion, the
+one most often omitted from comparisons. 2PC is difficult once, in
+infrastructure maintained by specialists. Sagas are difficult repeatedly, in
+application code and this argument is important.
+
+The correct conclusion is not that one approach supersedes the other. It is that
+the choice is determined by whether the resource managers can be co-located under
+a single coordinator. If they can, 2PC provides a stronger guarantee
+for less application code. If they cannot, because the services are genuinely
+independent or the resources do not support XA, then a saga is not the inferior
+option but the only option, and the engineering effort should be directed at
+implementing it correctly rather than at regretting the atomicity that was never
+available.
+
+[#present-and-future]
+== 13. The Present and the Future
+
+Two-phase commit is not disappearing. It remains appropriate wherever resources
+can be co-located, and a significant proportion of enterprise data continues to
+reside in exactly such arrangements. Reports of its obsolescence generally
+originate from contexts in which it was never applicable.
+
+Sagas are becoming ordinary. What is changing is the level of abstraction at which
+they are expressed. Handwritten orchestration is giving way to specified
+protocols such as LRA, to workflow engines that record the state of long-running
+processes durably, and to durable execution platforms in which the compensation
+logic is expressed as ordinary code. The direction of travel is consistent: the difficulty is being moved
+back out of application code and into infrastructure, which is where the industry
+placed it in the first place, some thirty years ago, and where it appears to
+belong.
+
+Two developments merit attention. The first is the growing use of the outbox
+pattern with event streaming, which achieves atomicity between a database change
+and a message by writing both to the same database and publishing asynchronously.
+This is neither 2PC nor a saga in the classical sense, and for many integration
+problems it is a better answer than either. The second is the increasing
+availability of formal verification tools for distributed protocols, which offers
+some prospect that compensation logic might eventually be checked rather than
+merely reviewed.
+
+The underlying tension, however, is not a matter of technology and will not be
+resolved by these developments. Atomicity across independent parties
+requires either that they transfer autonomy to a coordinator or that they accept
+observable intermediate states. The FLP (_Fischer, Lynch and Paterson_) result and its relatives indicate that no
+implementation will escape this choice. What improves is the quality of the tools
+with which each side of the choice may be pursued, and the clarity with which the
+choice is presented to the practitioners.
+
+The most costly systems are not those that chose two-phase commit, nor those that
+chose sagas, but those that believed they had chosen the former while in fact
+operating the latter, without compensations.
+
+'''
+
+[#references]
+== References and Further Reading
+
+* Gray, J. _Notes on Data Base Operating Systems_, 1978.
+* Fischer, M., Lynch, N., Paterson, M. _Impossibility of Distributed Consensus
+  with One Faulty Process_, Journal of the ACM, 1985.
+* Garcia-Molina, H., Salem, K. _Sagas_, ACM SIGMOD, 1987.
+* X/Open. _Distributed Transaction Processing: The XA Specification_.
+* Object Management Group. _Object Transaction Service_.
+* Eclipse MicroProfile. _MicroProfile LRA Specification_.
+* The accompanying source code,
+  https://github.com/nicolasduminil/quarkus-distributed-tx[`quarkus-distributed-tx`],
+  containing both implementations, the shared contract test suite and a Docker
+  Compose deployment that runs the two stacks side by side.
