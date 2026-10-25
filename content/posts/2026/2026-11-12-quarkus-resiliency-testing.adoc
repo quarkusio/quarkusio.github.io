@@ -1,0 +1,451 @@
+---
+layout: post
+title: 'Break your dependencies on purpose: introducing Quarkus Resiliency Testing'
+date: 2026-11-12
+tags: extension testing dev-ui agents
+synopsis: 'An inventory service that hangs, a payment response that disappears, a database that stops answering: turn production failure scenarios into repeatable tests with Quarkus Resiliency Testing.'
+author: geoand
+---
+:imagesdir: /assets/images/posts/quarkus-resiliency-testing
+
+Imagine a customer placing an order.
+Your service reserves stock, charges their card, and stores the result.
+On a normal day, each step takes milliseconds and the customer sees a confirmation.
+
+image::order-journey.svg[alt="Customer order flow through inventory, payments and the database",width=900,align=center]
+
+Now imagine inventory accepts the connection but never answers.
+Or the payment provider charges the card just before the connection breaks.
+Or the database stops responding while your application is holding a connection from its pool.
+
+These failures demand different responses.
+Waiting longer can use up your workers; retrying can charge the customer twice; catching an exception does nothing if the client never throws one.
+A happy-path test tells you little about any of them.
+
+https://github.com/quarkiverse/quarkus-resiliency-testing[Quarkus Resiliency Testing] lets you reproduce these conditions in a `@QuarkusTest`, using your application's real clients and configuration.
+Let's follow that order through four failure scenarios and turn each one into a test.
+The examples are excerpts from the https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders[resilient-orders sample], which includes the endpoints, supporting classes and complete tests.
+
+== Put the failure on the wire
+
+Add the test dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.resiliencytesting</groupId>
+    <artifactId>quarkus-resiliency-testing-junit</artifactId>
+    <version>0.6.0</version>
+    <scope>test</scope>
+</dependency>
+----
+
+With `NetworkFaultsProfile`, the extension discovers supported outbound connections from Quarkus configuration, including Dev Services, and redirects them through proxies inside the test JVM.
+
+image::fault-proxy.svg[alt="A test applies faults to an in-process proxy between the real client and its dependency",width=900,align=center]
+
+The proxy normally relays traffic.
+During a fault, the real client encounters the broken connection and reacts with its own timeouts, retries and exceptions.
+A mock that throws an exception can check a fallback; this also exercises the client configuration that determines whether, and when, that fallback is reached.
+The fault injection needs no separate container or sidecar; dependencies such as the sample's PostgreSQL Dev Service can still need Docker.
+
+== 1. Inventory stops answering
+
+The customer clicks “Place order”, but inventory never responds.
+We want to accept the order as pending instead of leaving the customer waiting indefinitely.
+In this sample, `Reservation.pending` tells the endpoint to return `202` with status `PENDING`; completing the reservation later is a separate application responsibility.
+
+[[reserve-method]]
+[source,java]
+----
+@Timeout(2000) // <1>
+@CircuitBreaker(requestVolumeThreshold = 2, failureRatio = 1.0) // <2>
+@Bulkhead(2) // <3>
+@Fallback(fallbackMethod = "reserveLater") // <4>
+public Reservation reserve(String item) {
+    return inventory.reserve(item);
+}
+
+Reservation reserveLater(String item) {
+    return Reservation.pending(item);
+}
+----
+<1> The inventory service gets two seconds to answer.
+<2> Two failures in a row open the circuit breaker, and the inventory service is left alone for a while.
+<3> At most two calls wait on the inventory service at the same time; more on that below.
+<4> When the call fails, times out, or is refused by the open breaker or the full bulkhead, the order is accepted as pending instead.
+
+The test makes inventory hang, checks the pending response, then checks recovery:
+
+[source,java]
+----
+@QuarkusTest
+@TestProfile(NetworkFaultsProfile.class) // <1>
+class InventoryFailuresTest {
+
+    @Inject
+    Faults faults; // <2>
+
+    @Test
+    void inventoryServiceHangs() {
+        Target inventory = faults.target(InventoryClient.class); // <3>
+        try (var ignored = inventory.hangs()) { // <4>
+            when()
+                    .post("/orders")
+                    .then()
+                    .statusCode(202) // <5>
+                    .body("status", is("PENDING"))
+                    .time(lessThan(3000L));
+        } // <6>
+
+        when()
+                .post("/orders")
+                .then()
+                .statusCode(201) // <7>
+                .body("status", is("CONFIRMED"));
+    }
+}
+----
+<1> Puts a proxy in front of supported outbound connections configured by the application.
+<2> The entry point for applying faults.
+<3> The dependency is named by the bean the application already injects, here the REST Client interface.
+<4> The fault is a single method call: from now on, the inventory service accepts connections and never answers.
+<5> The `@Timeout` fires, and the fallback accepts the order as pending.
+<6> The fault ends with the block: the dependency works again, connection pools are flushed and circuit breakers are reset.
+<7> So the recovery can be asserted in the same test: the next order is confirmed right away.
+
+The time assertion gives the two-second timeout some test overhead.
+Remove the timeout and a slower client timeout can no longer make the test pass merely by eventually reaching the fallback.
+The extension creates the failure; the application still has to handle it.
+
+=== What happens to the next customer?
+
+A timeout bounds one customer's wait.
+It does not limit how many requests can be waiting at once.
+If orders keep arriving while inventory is hung, those calls can occupy the workers that other requests need.
+
+The `@Bulkhead(2)` above limits concurrent calls to inventory to two.
+The third call should take the fallback immediately:
+
+image::inventory-bulkhead.svg[alt="Two inventory calls occupy the bulkhead; a third order takes the fallback and returns 202 PENDING",width=900,align=center]
+
+[source,java]
+----
+Target inventory = faults.target(InventoryClient.class);
+try (var callers = Executors.newFixedThreadPool(2);
+        var ignored = inventory.hangs(Moment.onNextWrite())) { // <1>
+    for (int i = 0; i < 2; i++) {
+        callers.submit(() -> when().post("/orders")); // <2>
+    }
+    inventory.traffic()
+            .awaitHeldConnections(2, Duration.ofSeconds(5)); // <3>
+
+    when()
+            .post("/orders")
+            .then()
+            .statusCode(202)
+            .time(lessThan(500L)); // <4>
+}
+----
+<1> The inventory service stops answering a connection as soon as the application sends a request on it.
+<2> Two orders start, and wait on the inventory service: the bulkhead is full.
+<3> Waits until the proxy holds both requests, rather than for a fixed time, so the third request starts only after both calls are held.
+<4> The third order does not wait: the bulkhead rejects the call at once, and the fallback accepts the order as pending.
+
+*Catches:* the missing bulkhead: the third order waits for the full two-second timeout as well.
+Under real load, every one of those waits holds a worker thread.
+
+== 2. The payment went through, but its answer did not
+
+Inventory has recovered, and the customer pays.
+The payment provider records the charge and starts sending its response.
+Then the connection breaks.
+Our service sees a failure, but the money has already moved.
+
+image::payment-retry.svg[alt="A payment response is lost; retrying with the same idempotency key returns the original charge",width=900,align=center]
+
+A retry can recover the request, provided the provider supports idempotency and every attempt carries the same key.
+Generate that key before entering the retried method:
+
+[source,java]
+----
+// OrderResource
+@POST
+@Path("/{id}/payment")
+public String pay(@PathParam("id") String id) {
+    String idempotencyKey = UUID.randomUUID().toString(); // <1>
+    return payments.charge(idempotencyKey, id);
+}
+
+// PaymentService
+@Retry(maxRetries = 2, delay = 200) // <2>
+public String charge(String idempotencyKey, String orderId) {
+    return payments.charge(idempotencyKey, orderId);
+}
+----
+<1> One key per payment, generated before the first attempt.
+<2> Every attempt receives the same key, and sends it as the `Idempotency-Key` header.
+
+In the sample, a stand-in payment provider honours the keys like a real one, and records every charge, so the test can count them.
+The test loses the answer to the first payment, and checks what matters to the customer:
+
+[source,java]
+----
+@Inject
+PaymentLedger ledger; // <1>
+
+@Test
+void responseLostAfterThePaymentWentThrough() {
+    Target payments = faults.target(PaymentClient.class);
+    try (var ignored = payments.http().forFirst(1)
+            .diesMidRequest(Moment.Http.afterHeaders())) { // <2>
+        when()
+                .post("/orders/42/payment")
+                .then()
+                .statusCode(200); // <3>
+    }
+
+    var attempts = payments.traffic().httpRequests(); // <4>
+    assertEquals(2, attempts.size());
+    assertEquals(200, attempts.get(0).responseStatus()); // <5>
+    assertEquals(1, ledger.chargesFor("42")); // <6>
+}
+----
+<1> The charges recorded by the stand-in payment provider.
+<2> The first payment reaches the provider, which charges the card, but the connection dies right after the response headers: the application never sees the answer.
+<3> The `@Retry` sends the payment again, and the caller sees a success.
+<4> Every request that went through the proxy, with its headers and the status it was answered with.
+<5> The first attempt had succeeded: the retry came after a payment that went through.
+<6> The customer was charged once.
+
+*Catches:* the two classic mistakes.
+With the key generated inside the retried method, each attempt carries a different key, and the customer is charged twice.
+Without the retry, the card is charged but the customer is told the payment failed.
+
+For retries of the incoming payment request itself, the key also needs to survive across requests; the example above covers retries within one request.
+
+== 3. The database stops cooperating
+
+=== A query that never returns
+
+The customer now opens their order history.
+The endpoint catches persistence failures and returns a `503` so the caller can try later:
+
+[source,java]
+----
+@GET
+public Response list() {
+    try {
+        return Response.ok(orderRepository.listAll()).build();
+    } catch (PersistenceException e) {
+        return Response.status(503).entity("orders unavailable").build();
+    }
+}
+----
+
+Here `orderRepository` is the sample's injected `Order.Repository`; the extension resolves that repository to its datasource.
+
+But a database that _hangs_ does not necessarily produce an exception.
+The PostgreSQL JDBC driver waits forever for an answer by default, so the application needs a timeout of its own, or, as HikariCP's https://github.com/brettwooldridge/HikariCP/wiki/Rapid-Recovery[Rapid Recovery] guide puts it, "it is imperative that the application configures the driver-level TCP socket timeout":
+
+[source,properties]
+----
+quarkus.datasource.jdbc.additional-jdbc-properties.socketTimeout=3
+----
+
+The test makes the database stop answering:
+
+[source,java]
+----
+try (var ignored = faults.target(Order.Repository.class).hangs()) {
+    when()
+            .get("/orders")
+            .then()
+            .statusCode(503);
+}
+----
+
+*Catches:* the missing `socketTimeout`: the request never comes back.
+In the test, it is REST Assured, the client calling the application, that eventually gives up, after the 30 seconds Quarkus allows it in tests.
+Without an effective timeout, the blocking JDBC call keeps its worker thread and pooled connection while it waits for the database.
+
+The failure can spread beyond this request: every blocked query holds a pooled connection, leaving fewer for the next customer.
+You can test the exhausted state directly too, without generating a burst of traffic:
+
+[source,java]
+----
+try (var ignored = faults.pool(DataSource.class).exhausted()) {
+    when().get("/orders").then()
+            .statusCode(503)
+            .header("Retry-After", "1");
+}
+when().get("/orders").then().statusCode(200);
+----
+
+This separate https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/pool-exhausted-500[pool-exhausted-500 sample] uses an exception mapper to translate the pool's acquisition timeout into `503` with `Retry-After`.
+Remove the mapper and the request returns `500` instead.
+Pool exhaustion tests do not need `NetworkFaultsProfile`.
+They check behavior when capacity runs out; measuring throughput still needs a load test.
+
+=== The database is back, but its connections are not
+
+The database restarts, and the dashboard turns green again.
+The customer refreshes their order history, yet the first request still fails: the application has reused a connection that died during the restart.
+A fresh connection would work.
+
+Reproduce that distinction by opening a connection, dropping existing connections, and making another request:
+
+[source,java]
+----
+when().get("/orders").then().statusCode(200);
+faults.target(Order.Repository.class).dropConnections();
+when().get("/orders").then().statusCode(200);
+----
+
+`dropConnections()` is a one-off interruption; new connections can succeed immediately.
+The sample configures Agroal to validate connections before reuse when their last validation is more than a millisecond old:
+
+[source,properties]
+----
+quarkus.datasource.jdbc.foreground-validation-interval=PT0.001S
+----
+
+That aggressive interval makes the sample's recovery behavior explicit; choose a production interval with the cost of validation in mind.
+The test asks whether the next customer can use the recovered database, not merely whether the database is reachable.
+
+=== What if the connection breaks during a write?
+
+Reading history is one thing; losing a connection while saving a new order is another.
+Does the customer receive a failure response even though a row was left behind?
+The sample saves the order in a transaction and maps a failure to `503`.
+Check both the response and the stored state:
+
+[source,java]
+----
+int before = orderCount();
+try (var ignored = faults.target(Order.Repository.class).diesMidRequest()) {
+    when().post("/orders").then().statusCode(503);
+}
+assertEquals(before, orderCount(), "failed write left no order");
+when().post("/orders").then().statusCode(201);
+----
+
+`orderCount()` lists orders through `GET /orders` and counts them.
+This fault cuts the connection when the database starts responding; in this scenario the transaction does not commit.
+The final request checks recovery after the fault ends.
+Like the payment example, losing the acknowledgement of a _commit_ would be a different case: a connection error alone cannot prove that nothing was saved.
+
+== 4. The order is saved. Who tells shipping?
+
+There is one more dependency in the order's journey.
+The shipping service learns about orders through Kafka.
+A database row alone will not get a parcel dispatched: if publishing the event fails, the customer could see an order that shipping never hears about.
+
+The sample deliberately couples order acceptance to Kafka availability.
+It writes the row, waits for Kafka to acknowledge the event, and only then commits the database transaction:
+
+image::order-event.svg[alt="The sample writes an uncommitted order, waits for Kafka acknowledgement, and commits on success; a send failure rolls the database transaction back",width=900,align=center]
+
+[source,java]
+----
+@Transactional
+public Order place(String item, String status) {
+    Order order = new Order();
+    order.item = item;
+    order.placedAt = Instant.now();
+    order.status = status;
+    orders.persistAndFlush(order);
+    events.sendAndAwait(order.id);
+    return order;
+}
+----
+
+Here `events` is a `MutinyEmitter<Long>` for the `order-events` channel.
+Make Kafka unavailable and check that this request fails without leaving an order behind:
+
+[source,java]
+----
+int before = orderCount();
+try (var ignored = faults.target(MutinyEmitter.class).unavailable()) {
+    when().post("/orders").then().statusCode(503);
+}
+assertEquals(before, orderCount(), "failed publish rolled back the order");
+when().post("/orders").then().statusCode(201);
+----
+
+The extension targets the emitter's Kafka connection, including discovered brokers.
+Switching to fire-and-forget publishing would let the transaction commit before the send fails, breaking this test.
+The sample also bounds the producer's waits so the customer is not left waiting through a prolonged outage:
+
+[source,properties]
+----
+mp.messaging.outgoing.order-events.max.block.ms=3000
+mp.messaging.outgoing.order-events.request.timeout.ms=2000
+mp.messaging.outgoing.order-events.delivery.timeout.ms=3000
+----
+
+There is still a gap: Kafka can accept the event and the database commit can then fail.
+A lost Kafka acknowledgement can also leave the application uncertain whether the event arrived.
+`@Transactional` does not make these two systems one transaction.
+
+If orders must be accepted while Kafka is down, the https://microservices.io/patterns/data/transactional-outbox.html[transactional outbox] changes the design: save the order and an event record in the same database transaction, then publish the event separately.
+That changes the test too: during the outage, assert that the order and outbox record are saved; after recovery, assert that the event reaches shipping.
+The relay may publish duplicates, so shipping must handle them idempotently.
+The sample above tests synchronous publishing; those outbox assertions would belong to an application using that design.
+
+== What else is waiting to fail?
+
+We have checked the customer response, the stored order, and what happens when its event cannot be published.
+But some failures happen before a connection is established, or when the application writes a local file.
+You can test those failures too:
+
+* *The customer requests an invoice, but the disk is full. Does your service report the failure and recover when space is available?* `faults.directory(path).diskFull()` makes supported Java file writes under that directory fail with “No space left on device”, without filling the disk.
+* *Inventory is healthy, but its hostname no longer resolves. Does checkout handle that failure too?* `faults.target(InventoryClient.class).unresolvable()` makes new connection attempts fail with `UnknownHostException`. Drop existing connections first so the next request encounters the fault.
+
+The https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/guide-disk-and-dns.html[disk and DNS guide] has complete tests and explains their scope.
+Then there are the failures that emerge as your service grows:
+
+* *Your LLM provider says “slow down”. Does your service send even more requests?* A client retry combined with `@Retry` can multiply calls. Inject a `429` and count the attempts that actually reach the provider.
+* *A stream stops after three events. Does your customer get an explanation or a broken connection?* Cut it at that exact point and test the recovery path.
+* *Your database pool is full. Does Kubernetes restart an otherwise healthy pod?* Exhaust the pool and check whether liveness still answers.
+
+The https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders[resilient-orders sample] covers the retry and streaming scenarios; the https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/samples.html[sample catalog] includes overload and health-check failures.
+Pick the question you are least sure how your service would answer: that is a good next test.
+
+== Make sure the test exercised the failure
+
+A test can apply a fault to the wrong dependency and still get its expected response.
+The extension guards against this: if no connection goes through the target proxy while the fault is active, it fails the test and identifies the target to investigate.
+That guard complements your assertions; you still need to check the outcome that matters, such as one charge, a bounded wait, or recovery.
+
+== Explore it in dev mode
+
+You can also investigate a failure before writing its regression test.
+Enable the Dev UI integration:
+
+[source,properties]
+----
+%dev.quarkus.resiliency-testing.enabled=true
+----
+
+The *Resiliency Testing* card lets you apply faults and inspect the requests they affected.
+Hang inventory, place an order, and watch what the customer sees.
+Then turn that observation into an assertion.
+
+image::dev-ui-demo.gif[alt="The Resiliency Testing Dev UI applying a hang, an HTTP 503 and a delay to the inventory service",width=900,align=center]
+
+For AI-assisted test writing, the extension also exposes Dev MCP tools, a test-writing guide and an inventory of guarded methods.
+Fault application through these tools is opt-in in the Dev UI.
+The https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/index.html[documentation] covers setup and the wider API, including Redis, Kafka, LangChain4j, streaming failures and worker-pool exhaustion.
+
+== Try one failure in your service
+
+The extension requires Quarkus 4 and Java 21.
+Start with one dependency and one question: if it stops answering, what should the customer see, and how soon?
+Apply the fault, assert that behavior, and check recovery after the block closes.
+
+There are limits: HTTP-level faults require plaintext HTTP/1.x, `connectTimeout()` is Linux-only, and `@QuarkusIntegrationTest` is not yet supported.
+See the https://github.com/quarkiverse/quarkus-resiliency-testing#known-limitations[known limitations] for details, including Redis and MongoDB topology restrictions.
+
+The https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders[complete sample] includes more scenarios, from retry amplification to a database connection lost mid-transaction.
+If a test exposes a bug, or a failure you need is missing, tell us on https://github.com/quarkiverse/quarkus-resiliency-testing/issues[GitHub] or https://quarkusio.zulipchat.com/[Zulip].
