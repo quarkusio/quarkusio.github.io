@@ -410,7 +410,6 @@ public class main implements Callable<Integer> {
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         options.setIndent(2);
         options.setIndicatorIndent(0);
-        
         options.setWidth(Integer.MAX_VALUE);
 
         Yaml yaml = new Yaml(new WorkshopsRepresenter(options), options);
