@@ -196,7 +196,8 @@ public class LinkCrawlerTest extends BrowserTest {
             "/extensions",
             "/benchmarks",
             "/quarkus-workshops",
-            "/quarkus-workshop-langchain4j"
+            "/quarkus-workshop-langchain4j",
+            "/almanac"
     );
 
     // URLs that should never be crawled. AsciiDoc auto-links URL literals in
