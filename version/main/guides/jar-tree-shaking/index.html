@@ -2153,6 +2153,7 @@
 <li data-level="2"><a href="#root-collection">Root collection</a></li>
 <li data-level="2"><a href="#bfs-reachability">BFS reachability</a></li>
 <li data-level="2"><a href="#class-loading-chain-analysis">Class-loading chain analysis</a></li>
+<li data-level="2"><a href="#module-level-tree-shaking">Module-level tree-shaking</a></li>
 </ul>
 </li>
 <li data-level="1"><a href="#excluding-artifacts-from-tree-shaking">Excluding artifacts from tree-shaking</a></li>
@@ -2285,6 +2286,18 @@ The algorithm runs in several stages:</p>
                                      ▼
                     ┌───────────────────────────────────┐
                     │  Compute removals, produce JAR    │
+                    └────────────────┬──────────────────┘
+                                     │
+                       modular packaging active?
+                           ╱                ╲
+                         yes                 no ──► done
+                          │
+                          ▼
+                    ┌───────────────────────────────────┐
+                    │  Module-level tree-shaking        │
+                    │  • Remove class-dead modules      │
+                    │  • Clean stale requires/provides  │
+                    │  • Recompute JDK module set       │
                     └───────────────────────────────────┘</code></pre>
 </div>
 </div>
@@ -2376,6 +2389,54 @@ Because the class name strings are computed dynamically, the BFS over bytecode r
 The tree-shaker identifies <code>BouncyCastleProvider</code> as the entry point, instantiates it in the recording class loader, and captures all dynamically loaded algorithm classes.</p>
 </div>
 </div>
+<div class="sect2">
+<h3 id="module-level-tree-shaking"><a class="anchor" href="#module-level-tree-shaking"></a>Module-level tree-shaking</h3>
+<div class="paragraph">
+<p>When a Quarkus modular packaging extension is present (for example, <code>quarkus-jlink</code>), tree-shaking also operates at the module level.
+After the class-level analysis determines which classes are reachable, the module tree-shaker evaluates each module in the application&#8217;s module model:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A module is <strong>class-dead</strong> if it contains <code>.class</code> entries but none of them are in the reachable set. Class-dead modules are removed entirely from the packaged application.</p>
+</li>
+<li>
+<p>A module with no <code>.class</code> entries at all (a resource-only JAR) is kept alive — it may provide configuration files, native libraries, or other resources needed at runtime.</p>
+</li>
+<li>
+<p>A module with an empty content tree (no content to contribute) is treated as dead.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>After dead modules are removed, surviving modules are cleaned up:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>requires</code> directives pointing to removed modules are dropped.</p>
+</li>
+<li>
+<p>Auto-dependency groups whose entries all point to removed modules are dropped.</p>
+</li>
+<li>
+<p>Service provider entries (<code>provides &#8230;&#8203; with &#8230;&#8203;</code>) whose implementation classes are not in the reachable set are removed.</p>
+</li>
+<li>
+<p>Unreachable classes are removed from the module, while non-class resources (for example, resource bundles) are always kept.
+Packages left with no content are removed from the module descriptor, together with any <code>add-exports</code> or <code>add-opens</code> of those packages declared by other modules.</p>
+</li>
+<li>
+<p>The set of JDK modules required by the application is recomputed from surviving modules only, which can reduce the size of a <code>jlink</code> image.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The module tree-shaker also performs a graph reachability analysis — a BFS from root modules (the application module and boot modules) through the dependency graph.
+Modules that are not reachable from any root but still contain reachable classes are <strong>not</strong> removed, since they may be accessed via reflection, service loading, or from automatic modules without explicit <code>requires</code> directives.
+A warning is logged for such modules to help diagnose missing dependency declarations.</p>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -2413,6 +2474,9 @@ The tree-shaker identifies <code>BouncyCastleProvider</code> as the entry point,
 </li>
 <li>
 <p>The <code>classes</code> level only removes class files. Other resources (such as configuration files, property files, and <code>META-INF</code> entries) are preserved. Dependencies from which all classes have been removed are still included in the final JAR, since they may contain resources required at runtime.</p>
+</li>
+<li>
+<p>Module-level tree-shaking (removing entire modules) is only performed when a modular packaging extension (for example, <code>quarkus-jlink</code>) is present. Otherwise, only class-level removal applies.</p>
 </li>
 </ul>
 </div>
