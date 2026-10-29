@@ -2181,16 +2181,18 @@
     <div class="guide-toc-wrapper hide-tablet">
       <div class="toc"><nav class="roq-toc" aria-label="Table of contents">
 <ul>
-<li data-level="1"><a href="#use-the-load-shedding-extension">1. Use the Load Shedding extension</a></li>
+<li data-level="1"><a href="#use-the-load-shedding-extension">1. Use the load shedding extension</a></li>
 <li data-level="1"><a href="#the-load-shedding-algorithm">2. The load shedding algorithm</a>
 <ul>
 <li data-level="2"><a href="#overload-detection">2.1. Overload detection</a></li>
-<li data-level="2"><a href="#priority-load-shedding">2.2. Priority load shedding</a></li>
+<li data-level="2"><a href="#prioritization">2.2. Prioritization</a></li>
 </ul>
 </li>
-<li data-level="1"><a href="#limitations">3. Limitations</a></li>
-<li data-level="1"><a href="#configuration-reference">4. Configuration reference</a></li>
-<li data-level="1"><a href="#further-reading">5. Further reading</a></li>
+<li data-level="1"><a href="#metrics">3. Metrics</a></li>
+<li data-level="1"><a href="#limitations">4. Limitations</a></li>
+<li data-level="1"><a href="#how-rejected-requests-look">5. How rejected requests look</a></li>
+<li data-level="1"><a href="#configuration-reference">6. Configuration reference</a></li>
+<li data-level="1"><a href="#further-reading">7. Further reading</a></li>
 </ul>
 </nav>
 </div>
@@ -2234,7 +2236,7 @@ You should consider using it if your application runs in a dynamic environment w
 </div>
 </div>
 <div class="sect1">
-<h2 id="use-the-load-shedding-extension"><a class="anchor" href="#use-the-load-shedding-extension"></a>1. Use the Load Shedding extension</h2>
+<h2 id="use-the-load-shedding-extension"><a class="anchor" href="#use-the-load-shedding-extension"></a>1. Use the load shedding extension</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>To use the load shedding extension, you need to add the <code>io.quarkus:quarkus-load-shedding</code> extension to your project:</p>
@@ -2264,6 +2266,21 @@ Pure load shedding rejects all requests when overload is detected.
 Priority load shedding only rejects a fraction of requests even if overload is detected, based on application-defined criteria.
 By default, priority load shedding is enabled.
 It can be disabled by setting <code>quarkus.load-shedding.priority.enabled</code> to <code>false.</code></p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+Pure load shedding rejects <em>all</em> requests while the application is overloaded, including requests to the non-application endpoints such as health checks.
+An orchestrator that probes those endpoints may conclude that the application is dead and restart it.
+Request priority, described below, is the only mechanism that can exempt them.
+If you disable priority load shedding, consider also exposing the management endpoints on the <a href="/version/main/guides/management-interface-reference/">separate management interface</a>, which is not subject to load shedding.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>There are 2 ways of customizing priority load shedding:</p>
@@ -2295,14 +2312,14 @@ It can be disabled by setting <code>quarkus.load-shedding.priority.enabled</code
 <p>overload detection</p>
 </li>
 <li>
-<p>priority load shedding (optional)</p>
+<p>prioritization (optional)</p>
 </li>
 </ul>
 </div>
 <div class="sect2">
 <h3 id="overload-detection"><a class="anchor" href="#overload-detection"></a>2.1. Overload detection</h3>
 <div class="paragraph">
-<p>To detect whether the current service is overloaded, an adaptation of TCP Vegas is used.</p>
+<p>To detect whether the current service is overloaded, an adaptation of the Vegas algorithm (known from TCP) is used.</p>
 </div>
 <div class="paragraph">
 <p>This algorithm starts with a configurable limit of in-flight requests, by default 100.
@@ -2311,34 +2328,45 @@ If the current number of concurrent in-flight requests reaches the limit, overlo
 <div class="paragraph">
 <p>That is not very interesting, but the algorithm dynamically adjusts the limit based on the size of the request queue.
 If the queue is short, more requests can be handled and the limit increases; if the queue is long, fewer requests can be handled and the limit decreases.
-The limit cannot be increased indefinitely; there&#8217;s a configurable maximum, by default 1000.</p>
+The limit cannot increase or decrease indefinitely; there&#8217;s a configurable minimum, by default 20, and configurable maximum, by default 1000.</p>
 </div>
 <div class="paragraph">
 <p>There&#8217;s no actual queue of requests that we could monitor, though, so the algorithm estimates the current length of a request queue based on previously seen response times.
 The longer recent requests take, compared to the recent lowest response time, the longer the queue is supposed to be.</p>
 </div>
-</div>
-<div class="sect2">
-<h3 id="priority-load-shedding"><a class="anchor" href="#priority-load-shedding"></a>2.2. Priority load shedding</h3>
-<div class="paragraph">
-<p>If an overload situation is signalled, priority load shedding is invoked.</p>
-</div>
-<div class="paragraph">
-<p>If priority load shedding is disabled, there&#8217;s nothing to do and all requests are rejected immediately.
-However, by default, priority load shedding is enabled, which means a request is only rejected if the current CPU load is high enough.</p>
-</div>
-<div class="admonitionblock note">
+<div class="admonitionblock caution">
 <table>
 <tr>
 <td class="icon">
-<i class="fa icon-note" title="Note"></i>
+<i class="fa icon-caution" title="Caution"></i>
 </td>
 <td class="content">
-Priority load shedding is currently always based on CPU load.
-Other mechanisms are possible (such as network utilization), but currently not implemented.
+We know the Vegas algorithm is not the best choice in environments where response times vary.
+We are working on replacing it with another algorithm, or maybe supporting a small set of algorithms you can select from.
 </td>
 </tr>
 </table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="prioritization"><a class="anchor" href="#prioritization"></a>2.2. Prioritization</h3>
+<div class="paragraph">
+<p>If an overload situation is signalled, prioritization is invoked.</p>
+</div>
+<div class="paragraph">
+<p>If prioritization is disabled, all requests beyond the current limit are rejected immediately.
+However, by default, prioritization is enabled, which means a request is only rejected if the overload is deep enough.</p>
+</div>
+<div class="paragraph">
+<p>The overload depth is expressed as a number between 0.0 and 1.0.
+It is 0.0 when the number of current requests is at the current limit.
+When the number of current requests exceeds the current limit, the result scales smoothly using the right half of a sigmoid curve (hyperbolic tangent).
+This provides maximum initial steepness to aggressively shed lower-priority requests immediately upon crossing the limit, while smoothly flattening out near 1.0 to provide a broad runway for higher-priority traffic.
+When the limit is below the maximum limit, the overload depth reaches 1.0 when the number of current requests reaches the maximum limit.
+When the limit is at the maximum limit, the overload depth reaches 1.0 when the number of current requests reaches 130% of the maximum limit, leaving a 30% safety buffer for the most important requests.</p>
+</div>
+<div class="paragraph">
+<p>The more requests are admitted past the limit, the deeper the overload and the more requests are rejected, until the application settles at a level of concurrency it can sustain.</p>
 </div>
 <div class="paragraph">
 <p>To determine whether a request should be rejected, 2 attributes are considered:</p>
@@ -2359,31 +2387,37 @@ Other mechanisms are possible (such as network utilization), but currently not i
 <div class="paragraph">
 <p>After both priority and cohort are assigned to a request, a request group number is computed.
 The group number is smaller for higher priority requests and higher for lower priority requests.
-If the group number is higher that the current CPU load, the request is rejected, otherwise it is allowed even in an overload situation.</p>
+If the group number is lower than a threshold derived from the overload depth, the request is accepted, otherwise it is rejected.</p>
 </div>
-<div class="admonitionblock note">
-<table>
-<tr>
-<td class="icon">
-<i class="fa icon-note" title="Note"></i>
-</td>
-<td class="content">
-The group number is actually not compared to the CPU load directly; instead, it is compared to a function of CPU load.
-The function is <code>(1 - load^3) * 640</code>, where <code>load</code> is the CPU load as a number between 0.0 and 1.0, and 640 is a number of requests group as mentioned above.
-</td>
-</tr>
-</table>
+<div class="paragraph">
+<p>The threshold is derived as <code>(1 - overload^3) * 640</code>, where <code>overload</code> is the overload depth (described above) and 640 is the number of request groups (also described above).
+The cubic curve is chosen deliberately, because it is flat near 0, so that a slight excess over the concurrency limit only rejects the least important requests.</p>
 </div>
 <div class="sect3">
 <h4 id="customizing-request-priority"><a class="anchor" href="#customizing-request-priority"></a>2.2.1. Customizing request priority</h4>
 <div class="paragraph">
 <p>Priority is assigned by a <code>io.quarkus.load.shedding.RequestPrioritizer</code>.
 There is 5 statically defined priorities in the <code>io.quarkus.load.shedding.RequestPriority</code> enum: <code>CRITICAL</code>, <code>IMPORTANT</code>, <code>NORMAL</code>, <code>BACKGROUND</code> and <code>DEGRADED</code>.
-By default, if no request prioritizer applies, the priority is assumed to be <code>NORMAL</code>.</p>
+By default, if no request prioritizer applies, the priority is assumed to be <code>NORMAL</code>.
+Further, there&#8217;s a special priority level called <code>NEVER</code>, which is exempt from load shedding entirely.</p>
 </div>
 <div class="paragraph">
-<p>There is one default prioritizer which assigns the priority of <code>CRITICAL</code> to requests to the non-application endpoints.
+<p>There is one default prioritizer which assigns the priority of <code>NEVER</code> to requests to the non-application endpoints.
 It declares no <code>@Priority</code>.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+The <code>NEVER</code> priority must be used sparingly.
+A request should only be assigned <code>NEVER</code> if it is part of the operational control plane (health checks, in-memory metrics scraping, etc.), where failures would trigger cascading failures, AND if it satisfies strict execution bounds.
+The request should execute in sub-millisecond time, only read pre-aggregated values from memory, perform no disk or network I/O, and require no thread offload.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>It is possible to define custom implementations of the <code>RequestPrioritizer</code> interface.
@@ -2397,12 +2431,28 @@ If no implementation is an alternative, all implementations are retained and are
 <h4 id="customizing-request-cohort"><a class="anchor" href="#customizing-request-cohort"></a>2.2.2. Customizing request cohort</h4>
 <div class="paragraph">
 <p>Cohort is assigned by a <code>io.quarkus.load.shedding.RequestClassifier</code>.
-There is 128 statically defined cohorts, with the lowest number being 1 and highest number being 128.
-The classifier should return a number in this interval; if it does not, the number is adjusted automatically.</p>
+There are 128 statically defined cohorts, with the lowest number being 0 and the highest number being 127.
+The classifier should return a number in this interval; if it doesn&#8217;t, the result is clamped by a simple bit mask.
+This puts requirements on the returned value that are described in the <code>RequestClassifier</code> javadoc.</p>
 </div>
 <div class="paragraph">
 <p>There is one default classifier which assigns a cohort based on a hash of the remote IP address and current time, such that an IP address changes its cohort roughly every hour.
 It declares no <code>@Priority</code>.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+If the application is deployed behind a reverse proxy, an ingress or a load balancer, the remote IP address is the address of that intermediary and is therefore identical for all clients.
+All requests then land in a single cohort, the cohort dimension collapses and shedding degenerates to all-or-nothing within each priority level.
+To avoid this, either set <code>quarkus.http.proxy.proxy-address-forwarding</code> to <code>true</code>, in which case the remote address is taken from the <code>Forwarded</code> or <code>X-Forwarded-For</code> header and the default classifier works as intended, or implement a custom classifier.
+A custom classifier can also use a better key than the IP address if the application has one, such as a tenant or account identifier.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>It is possible to define custom implementations of the <code>RequestClassifier</code> interface.
@@ -2416,7 +2466,68 @@ If no implementation is an alternative, all implementations are retained and are
 </div>
 </div>
 <div class="sect1">
-<h2 id="limitations"><a class="anchor" href="#limitations"></a>3. Limitations</h2>
+<h2 id="metrics"><a class="anchor" href="#metrics"></a>3. Metrics</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>If the <a href="/version/main/guides/telemetry-micrometer/">Micrometer extension</a> is present, this extension publishes the following metrics:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 33.3333%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Name</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.shed.requests</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">counter</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of requests rejected by load shedding.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.current.requests</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of requests currently in flight, as counted by the overload detector.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.current.limit</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">The request limit the overload detector has currently adapted to; reaching it signals an overload.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.overload.status</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the application is currently overloaded: <code>1</code> if it is, <code>0</code> if it is not.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.overload.depth</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">How deep the overload currently is, as a number between 0.0 and 1.0.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>load.shedding.overload.duration</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">gauge</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">How long the current overload has lasted, or <code>0</code> if the application is not overloaded.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>The overload status is hysteretic, so it cannot be derived from the number of current requests and the current limit; that is why it is published on its own.</p>
+</div>
+<div class="paragraph">
+<p>Publishing the meters can be turned off by setting <code>quarkus.load-shedding.metrics.enabled</code> to <code>false</code>.
+No meters are published if load shedding itself is disabled, because nothing would ever update them.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="limitations"><a class="anchor" href="#limitations"></a>4. Limitations</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>The load shedding extension currently only applies to HTTP requests, and is heavily skewed towards request/response network interactions.
@@ -2430,7 +2541,29 @@ Improvements may be necessary.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>4. Configuration reference</h2>
+<h2 id="how-rejected-requests-look"><a class="anchor" href="#how-rejected-requests-look"></a>5. How rejected requests look</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>An HTTP request is rejected with the <code>503 Service Unavailable</code> status code and a <code>Retry-After</code> header.</p>
+</div>
+<div class="paragraph">
+<p>The connection is deliberately left open.
+Closing it would force the client through a new TCP and TLS handshake, which is expensive and invisible to this load shedding mechanism.</p>
+</div>
+<div class="paragraph">
+<p>The <code>Retry-After</code> value is derived from how long the overload has already lasted.
+The application cannot know when an overload will end, but it does know how long the overload has lasted.
+This is used as a proxy: a brief spike is likely over shortly, while an overload that has been going on for minutes is likely to keep going for a while.
+A client rejected 2 seconds into an overload is therefore told to come back in a few seconds, while a client rejected 5 minutes in is told to stay away for longer.</p>
+</div>
+<div class="paragraph">
+<p>The value is capped by <code>quarkus.load-shedding.max-retry-after</code> (120 seconds by default) and is never shorter than 1 second, which is the granularity of the header.
+It is also jittered, so that clients rejected in the same instant are not advised to come back in the same instant.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="configuration-reference"><a class="anchor" href="#configuration-reference"></a>6. Configuration reference</h2>
 <div class="sectionbody">
 <div class="paragraph configuration-legend">
 <p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> Configuration property fixed at build time - All other configuration properties are overridable at runtime <input type="search" id="config-search-1" placeholder="FILTER CONFIGURATION" disabled></p>
@@ -2449,16 +2582,19 @@ Improvements may be necessary.</p>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
-<p><a id="quarkus-load-shedding_quarkus-load-shedding-enabled"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-enabled"><code>quarkus.load-shedding.enabled</code></a></span>
-<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.enabled' title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-load-shedding_quarkus-load-shedding-metrics-enabled"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-metrics-enabled"><code>quarkus.load-shedding.metrics.enabled</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.metrics.enabled' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 <div id="conf-collapsible-desc-1" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>Whether load shedding should be enabled. Currently, this only applies to incoming HTTP requests.</p>
+<p>Whether metrics about load shedding should be published.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-1">QUARKUS_LOAD_SHEDDING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-1" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Only takes effect if a metrics extension is present.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-1">QUARKUS_LOAD_SHEDDING_METRICS_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-1" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2470,16 +2606,64 @@ Improvements may be necessary.</p>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-load-shedding_quarkus-load-shedding-enabled"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-enabled"><code>quarkus.load-shedding.enabled</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.enabled' title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+<div id="conf-collapsible-desc-2" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>Whether load shedding should be enabled. Currently, this only applies to incoming HTTP requests.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-2">QUARKUS_LOAD_SHEDDING_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-2" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc odd">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-load-shedding_quarkus-load-shedding-min-limit"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-min-limit"><code>quarkus.load-shedding.min-limit</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.min-limit' title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+<div id="conf-collapsible-desc-3" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The minimum number of concurrent requests allowed.</p>
+</div>
+<div class="paragraph">
+<p>Must be at least 1 and less than or equal to <code>max-limit</code>; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-3">QUARKUS_LOAD_SHEDDING_MIN_LIMIT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-3" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock">int</p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>20</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-max-limit"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-max-limit"><code>quarkus.load-shedding.max-limit</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.max-limit' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-2" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>The maximum number of concurrent requests allowed.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-2">QUARKUS_LOAD_SHEDDING_MAX_LIMIT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-2" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Must be greater than or equal to <code>min-limit</code>; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-4">QUARKUS_LOAD_SHEDDING_MAX_LIMIT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2494,13 +2678,16 @@ Improvements may be necessary.</p>
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-alpha-factor"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-alpha-factor"><code>quarkus.load-shedding.alpha-factor</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.alpha-factor' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-3" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>The <code>alpha</code> factor of the Vegas overload detection algorithm.</p>
+<p>The <code>alpha</code> factor of the Vegas overload detection algorithm. The algorithm grows the limit while the estimated request queue is shorter than this factor times <code>log10(current limit) &#43; 1</code>.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-3">QUARKUS_LOAD_SHEDDING_ALPHA_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-3" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Must be at least 1; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-5">QUARKUS_LOAD_SHEDDING_ALPHA_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2515,13 +2702,16 @@ Improvements may be necessary.</p>
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-beta-factor"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-beta-factor"><code>quarkus.load-shedding.beta-factor</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.beta-factor' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-4" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>The <code>beta</code> factor of the Vegas overload detection algorithm.</p>
+<p>The <code>beta</code> factor of the Vegas overload detection algorithm. The algorithm shrinks the limit once the estimated request queue is longer than this factor times <code>log10(current limit) &#43; 1</code>, and holds the limit steady in between.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-4">QUARKUS_LOAD_SHEDDING_BETA_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-4" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Must be greater than the <code>alpha</code> factor; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-6">QUARKUS_LOAD_SHEDDING_BETA_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2536,13 +2726,16 @@ Improvements may be necessary.</p>
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-probe-factor"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-probe-factor"><code>quarkus.load-shedding.probe-factor</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.probe-factor' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
-<p>The probe factor of the Vegas overload detection algorithm.</p>
+<p>The probe factor of the Vegas overload detection algorithm. It controls how often the algorithm discards the lowest request time it has seen and measures against a fresh one; the higher the factor, the rarer that is.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5">QUARKUS_LOAD_SHEDDING_PROBE_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Must be positive; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-7">QUARKUS_LOAD_SHEDDING_PROBE_FACTOR</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2557,13 +2750,16 @@ Improvements may be necessary.</p>
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-initial-limit"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-initial-limit"><code>quarkus.load-shedding.initial-limit</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.initial-limit' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-8" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>The initial limit of concurrent requests allowed.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6">QUARKUS_LOAD_SHEDDING_INITIAL_LIMIT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Must be greater than or equal to <code>min-limit</code> and less than or equal to <code>max-limit</code>; the application fails to start otherwise.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-8">QUARKUS_LOAD_SHEDDING_INITIAL_LIMIT</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2575,16 +2771,40 @@ Improvements may be necessary.</p>
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><a id="quarkus-load-shedding_quarkus-load-shedding-max-retry-after"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-max-retry-after"><code>quarkus.load-shedding.max-retry-after</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.max-retry-after' title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+<div id="conf-collapsible-desc-9" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The upper bound on the <code>Retry-After</code> response header sent with a rejected request.</p>
+</div>
+<div class="paragraph">
+<p>The value actually sent is derived from how long the overload has already lasted, so no lower bound is configurable. This is only a safety measure against telling clients to stay away hours, if the overload has been going on for long.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-9">QUARKUS_LOAD_SHEDDING_MAX_RETRY_AFTER</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-9" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-load-shedding_quarkus-load-shedding"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>120S</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-load-shedding_quarkus-load-shedding-priority-enabled"></a> <span class="property-path"><a href="#quarkus-load-shedding_quarkus-load-shedding-priority-enabled"><code>quarkus.load-shedding.priority.enabled</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.load-shedding.priority.enabled' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-10" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Whether priority load shedding should be enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7">QUARKUS_LOAD_SHEDDING_PRIORITY_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-10">QUARKUS_LOAD_SHEDDING_PRIORITY_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-10" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -2596,10 +2816,52 @@ Improvements may be necessary.</p>
 </tr>
 </tbody>
 </table>
+<div id="duration-note-anchor-quarkus-load-shedding_quarkus-load-shedding" class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="title">About the Duration format</div>
+<div class="paragraph">
+<p>To write duration values, use the standard <code>java.time.Duration</code> format.
+See the <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)">Duration#parse() Java API documentation</a> for more information.</p>
+</div>
+<div class="paragraph">
+<p>You can also use a simplified format, starting with a number:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If the value is only a number, it represents time in seconds.</p>
+</li>
+<li>
+<p>If the value is a number followed by <code>ms</code>, it represents time in milliseconds.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>In other cases, the simplified format is translated to the <code>java.time.Duration</code> format for parsing:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>If the value is a number followed by <code>h</code>, <code>m</code>, or <code>s</code>, it is prefixed with <code>PT</code>.</p>
+</li>
+<li>
+<p>If the value is a number followed by <code>d</code>, it is prefixed with <code>P</code>.</p>
+</li>
+</ul>
+</div>
+</td>
+</tr>
+</table>
+</div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="further-reading"><a class="anchor" href="#further-reading"></a>5. Further reading</h2>
+<h2 id="further-reading"><a class="anchor" href="#further-reading"></a>7. Further reading</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Netflix Technology Blog:</p>
