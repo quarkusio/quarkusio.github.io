@@ -14,6 +14,10 @@ import com.microsoft.playwright.options.ColorScheme;
 
 public class ColorModeTest extends BrowserTest {
 
+    public static final String DARK_ARIA_LABEL = "Color scheme: dark; next: system preferences";
+    public static final String LIGHT_ARIA_LABEL = "Color scheme: light; next: dark";
+    public static final String SYSTEM_ARIA_LABEL = "Color scheme: system preferences; next: light";
+
     @Override
     @BeforeEach
     void createContext() {
@@ -39,25 +43,25 @@ public class ColorModeTest extends BrowserTest {
         toggle.waitFor();
 
         // Initial state: no localStorage, defaults to "system"
-        assertEquals("system", toggle.getAttribute("aria-label"));
+        assertEquals(SYSTEM_ARIA_LABEL, toggle.getAttribute("aria-label"));
 
         // Click once: system -> light
         toggle.click();
-        assertEquals("light", toggle.getAttribute("aria-label"));
+        assertEquals(LIGHT_ARIA_LABEL, toggle.getAttribute("aria-label"));
         assertFalse((Boolean) page.evaluate(
                 "() => document.documentElement.classList.contains('dark')"),
                 "Expected no 'dark' class on <html> in light mode");
 
         // Click again: light -> dark
         toggle.click();
-        assertEquals("dark", toggle.getAttribute("aria-label"));
+        assertEquals(DARK_ARIA_LABEL, toggle.getAttribute("aria-label"));
         assertTrue((Boolean) page.evaluate(
                 "() => document.documentElement.classList.contains('dark')"),
                 "Expected 'dark' class on <html> in dark mode");
 
         // Click again: dark -> system
         toggle.click();
-        assertEquals("system", toggle.getAttribute("aria-label"));
+        assertEquals(SYSTEM_ARIA_LABEL, toggle.getAttribute("aria-label"));
     }
 
     @Test
@@ -69,7 +73,7 @@ public class ColorModeTest extends BrowserTest {
         // Click twice to reach dark mode (system -> light -> dark)
         toggle.click();
         toggle.click();
-        assertEquals("dark", toggle.getAttribute("aria-label"));
+        assertEquals(DARK_ARIA_LABEL, toggle.getAttribute("aria-label"));
         assertTrue((Boolean) page.evaluate(
                 "() => document.documentElement.classList.contains('dark')"),
                 "Expected 'dark' class on <html> in dark mode");
@@ -81,6 +85,6 @@ public class ColorModeTest extends BrowserTest {
         assertTrue((Boolean) page.evaluate(
                 "() => document.documentElement.classList.contains('dark')"),
                 "Expected 'dark' class to persist after reload");
-        assertEquals("dark", toggle.getAttribute("aria-label"));
+        assertEquals(DARK_ARIA_LABEL, toggle.getAttribute("aria-label"));
     }
 }
