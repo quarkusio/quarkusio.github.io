@@ -25,6 +25,7 @@ Keeps `_data/releases.yaml` patch versions current by fetching from the GitHub A
 - `link` - Blog post link
 - `rhbq_eol`, `ibm_eol`, `herodevs_eol` - Commercial EOL dates (herodevs_eol can be a date or string like "nes")
 - `upcoming` - For releases not yet published
+- `planned_date` - Planned release date of an upcoming release (set from milestones when predicted; `release_date` is only for published releases)
 
 ## Running locally
 

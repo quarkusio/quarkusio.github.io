@@ -128,4 +128,95 @@ public class ReleasesPageTest extends BrowserTest {
         assertTrue(link.count() >= 1,
                 "Enterprise Support header should link to the support page");
     }
+
+    // The timeline tests check structure and invariants, not specific versions or dates,
+    // so they keep passing as releases.yaml moves on.
+
+    @Test
+    void timelineSupportViewIsRendered() {
+        page.navigate(baseUrl + "/releases/");
+        assertEquals(1, page.locator(".tl[data-view=support] svg.tl-plot").count());
+        assertTrue(page.locator("#tl-support .tl-row").count() >= 2,
+                "Support view should have at least the stream lane and one release row");
+        assertTrue(page.locator("#tl-support .tl-seg--community").count() >= 1);
+    }
+
+    @Test
+    void timelineLtsRowsHaveCommunitySegment() {
+        page.navigate(baseUrl + "/releases/");
+        Locator lts = page.locator("#tl-support .tl-row[data-lts]");
+        assertTrue(lts.count() >= 1);
+        for (int i = 0; i < lts.count(); i++) {
+            assertTrue(lts.nth(i).locator(".tl-seg--community").count() >= 1,
+                    "LTS row should have a community segment");
+        }
+    }
+
+    @Test
+    void timelineFullViewIsCompactButReachesFurtherBack() {
+        page.navigate(baseUrl + "/releases/");
+        int supportStart = Integer.parseInt(page.locator("#tl-support").getAttribute("data-range-start").substring(0, 4));
+        int allStart = Integer.parseInt(page.locator("#tl-all").getAttribute("data-range-start").substring(0, 4));
+        assertTrue(allStart <= supportStart);
+        int rows = page.locator("#tl-all .tl-row").count();
+        int tableRows = page.locator("tr.release-row").count();
+        assertTrue(rows < tableRows, "Full view (" + rows + " rows) should be more compact than one row per release ("
+                + tableRows + ")");
+    }
+
+    @Test
+    void timelineTodayLineIsPositioned() {
+        page.navigate(baseUrl + "/releases/");
+        String x1 = page.locator("#tl-support .tl-today").getAttribute("x1");
+        assertNotNull(x1);
+        assertTrue(x1.endsWith("%"));
+        Double.parseDouble(x1.substring(0, x1.length() - 1));
+    }
+
+    @Test
+    void timelineTooltipShowsOnHoverAndHighlightsTableRow() {
+        page.navigate(baseUrl + "/releases/");
+        Locator seg = page.locator("#tl-support .tl-row[data-lts] .tl-seg--community").first();
+        String version = seg.getAttribute("data-version");
+        seg.hover();
+        Locator tooltip = page.locator(".tl-tooltip");
+        assertTrue(tooltip.isVisible());
+        assertTrue(tooltip.textContent().contains("Released"));
+        assertEquals(1, page.locator("tr.release-row[data-version='" + version + "'].is-highlighted").count(),
+                "Matching table row should be highlighted");
+    }
+
+    @Test
+    void timelineToggleSwitchesViews() {
+        page.navigate(baseUrl + "/releases/");
+        page.locator("[data-timeline-toggle=all]").click();
+        assertTrue(page.locator("#tl-all").isVisible());
+        assertFalse(page.locator("#tl-support").isVisible());
+        assertEquals("true", page.locator("[data-timeline-toggle=all]").getAttribute("aria-pressed"));
+    }
+
+    @Test
+    void timelineHasNoHorizontalPageScroll() {
+        page.setViewportSize(400, 800);
+        page.navigate(baseUrl + "/releases/");
+        Object overflow = page.evaluate("() => document.documentElement.scrollWidth > document.documentElement.clientWidth");
+        assertEquals(false, overflow);
+    }
+
+    @Test
+    void timelineHasNoNativeTooltipWhenJsRuns() {
+        page.navigate(baseUrl + "/releases/");
+        assertEquals(0, page.locator(".tl .tl-seg > title").count());
+        String label = page.locator("#tl-support .tl-seg").first().getAttribute("aria-label");
+        assertTrue(label != null && !label.isBlank(), "Segments should keep an aria-label");
+    }
+
+    @Test
+    void upcomingReleaseShowsPlannedDateOrDashInTable() {
+        page.navigate(baseUrl + "/releases/");
+        Locator upcoming = page.locator("tr.release-upcoming");
+        org.junit.jupiter.api.Assumptions.assumeTrue(upcoming.count() > 0, "No upcoming release in the data");
+        String text = upcoming.first().locator("td").nth(1).textContent().trim();
+        assertTrue(text.matches("—|\\d{2} [A-Z][a-z]{2} \\d{4}\\s*\\(planned\\)"), "Unexpected released cell: " + text);
+    }
 }
