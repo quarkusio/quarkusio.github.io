@@ -42,22 +42,37 @@ jobs:
       run: |
         base="https://quarkus-website-pr-${PR_ID}-preview.surge.sh"
         links=""
-        # changed-pages.txt is written by the build job and holds the scope on the first line
-        # and the comma separated changed pages on the second
+        # changed-pages.txt is written by the build job and holds the outcome of comparing with
+        # the live site (skip, partial or full) on the first line, the comma separated changed pages
+        # on the second, how many pages changed on the third, whether infra files changed on the fourth,
+        # and why the comparison failed, if it did, on the fifth
         if [ -f changed-pages.txt ]; then
-          { read -r mode; IFS=',' read -ra paths; } < changed-pages.txt
+          { read -r mode; IFS=',' read -ra paths; read -r count || true; read -r infra || true; read -r reason || true; } < changed-pages.txt
           rm -f changed-pages.txt
+          [[ $count =~ ^[0-9]+$ ]] || count=""
+          [ "$infra" = "true" ] && links=$'\n'"🏗️ This PR changes the site infrastructure (build, configuration, Java sources or templates), so any page could be affected."
           case "$mode" in
             skip)
-              links=$'\n'"🤔 It looks like nothing changed compared to the live site."
+              links+=$'\n'"🤔 It looks like nothing changed compared to the live site."
               ;;
             full)
-              links=$'\n'"🌊 Many pages changed, so they are not listed individually."
+              if [ -n "$count" ]; then
+                links+=$'\n'"🌊 Many pages changed (${count}), so they are not listed individually."
+              else
+                # the artifact comes from the PR, so map the reason code rather than echoing it
+                case "$reason" in
+                  fetch-failed) why="the gh-pages branch holding the live site could not be fetched" ;;
+                  checkout-failed) why="the live site could not be checked out from the gh-pages branch" ;;
+                  compare-failed) why="comparing the built pages with the live site failed" ;;
+                  *) why="the build did not record why" ;;
+                esac
+                links+=$'\n'"🌫️ Changed pages are not listed because the build could not compare the site with the live site: ${why}."
+              fi
               ;;
             partial)
               # deep links are only listed when fewer than 5 pages changed
               if [ "${#paths[@]}" -ge 5 ]; then
-                links=$'\n'"🌊 Many pages changed (${#paths[@]}), so they are not listed individually."
+                links+=$'\n'"🌊 Many pages changed (${#paths[@]}), so they are not listed individually."
               else
                 list=""
                 for p in "${paths[@]}"; do
@@ -65,7 +80,7 @@ jobs:
                   [[ $p =~ ^/[A-Za-z0-9_./-]*$ ]] || continue
                   list+="- ${base}${p}"$'\n'
                 done
-                [ -n "$list" ] && links=$'\n'"👀 Changed pages:"$'\n\n'"${list}"
+                [ -n "$list" ] && links+=$'\n'"👀 Changed pages:"$'\n\n'"${list}"
               fi
               ;;
           esac

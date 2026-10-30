@@ -100,17 +100,31 @@ jobs:
         run: |
           # Reuse the earlier infra-change detection (covers build.yml, pom.xml,
           # config/, src/, templates/) instead of a separate git diff.
-          if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
-            echo "mode=full" >> $GITHUB_OUTPUT
+          # Infra changes always get a full link check, but the site is still compared
+          # below so the preview can report how many pages actually changed.
+          INFRA="${{ steps.infra.outputs.include_versions }}"
+          if [ "$INFRA" = "true" ]; then
+            echo "infra=true" >> $GITHUB_OUTPUT
             echo "Infrastructure files changed, running full link check"
-            exit 0
           fi
+
+          # pages is the outcome of comparing with the live site (skip, partial or full),
+          # mode is the link check scope, which is always full for infra changes
+          scope() {
+            echo "pages=$1" >> $GITHUB_OUTPUT
+            if [ "$INFRA" = "true" ]; then
+              echo "mode=full" >> $GITHUB_OUTPUT
+            else
+              echo "mode=$1" >> $GITHUB_OUTPUT
+            fi
+          }
 
           # Compare the built site to what is currently deployed on gh-pages.
           # Use --filter=blob:none so only tree objects are fetched initially,
           # then sparse-checkout to materialise just *.html files for rsync.
           git fetch origin gh-pages --filter=blob:none 2>/dev/null || {
-            echo "mode=full" >> $GITHUB_OUTPUT
+            scope full
+            echo "reason=fetch-failed" >> $GITHUB_OUTPUT
             echo "Could not fetch gh-pages, running full link check"
             exit 0
           }
@@ -134,7 +148,8 @@ jobs:
           echo "Comparing the built site with gh-pages commit $DEPLOYED (branch point $BASE_COMMIT)"
 
           git worktree add --detach /tmp/gh-pages "$DEPLOYED" 2>/dev/null || {
-            echo "mode=full" >> $GITHUB_OUTPUT
+            scope full
+            echo "reason=checkout-failed" >> $GITHUB_OUTPUT
             echo "Could not check out gh-pages, running full link check"
             exit 0
           }
@@ -144,7 +159,8 @@ jobs:
           RSYNC_OUT=$(rsync -rcn --out-format='%n' \
             --include='*/' --include='*.html' --exclude='*' \
             target/roq/ /tmp/gh-pages/ 2>/dev/null) || {
-            echo "mode=full" >> $GITHUB_OUTPUT
+            scope full
+            echo "reason=compare-failed" >> $GITHUB_OUTPUT
             echo "Site comparison failed, running full link check"
             git worktree remove /tmp/gh-pages 2>/dev/null || true
             exit 0
@@ -158,21 +174,22 @@ jobs:
           git worktree remove /tmp/gh-pages 2>/dev/null || true
 
           if [ -z "$CHANGED" ]; then
-            echo "mode=skip" >> $GITHUB_OUTPUT
-            echo "No HTML files changed, skipping link crawl"
+            scope skip
+            echo "No HTML files changed compared to the live site"
             exit 0
           fi
 
           COUNT=$(echo "$CHANGED" | wc -l | tr -d ' ')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "$COUNT changed HTML file(s)"
           echo "$CHANGED" | sed 's|/[^/]*$||' | sort | uniq -c | sort -rn | head -20
 
           if [ "$COUNT" -gt 200 ]; then
-            echo "mode=full" >> $GITHUB_OUTPUT
+            scope full
             echo "More than 200 files changed, running full link check"
           else
             PATHS=$(echo "$CHANGED" | sed 's|index\.html$||; s|^|/|' | tr '\n' ',' | sed 's/,$//')
-            echo "mode=partial" >> $GITHUB_OUTPUT
+            scope partial
             echo "paths=$PATHS" >> $GITHUB_OUTPUT
             echo "Targeted check: $PATHS"
           fi
@@ -296,11 +313,14 @@ jobs:
       # the first line is the scope (skip, full or partial), the second the comma separated pages
       - name: Store changed pages
         env:
-          SCOPE_MODE: ${{ steps.link_scope.outputs.mode }}
+          PAGES_MODE: ${{ steps.link_scope.outputs.pages }}
           CHANGED_PATHS: ${{ steps.link_scope.outputs.paths }}
+          CHANGED_COUNT: ${{ steps.link_scope.outputs.count }}
+          INFRA: ${{ steps.link_scope.outputs.infra }}
+          REASON: ${{ steps.link_scope.outputs.reason }}
         run: |
-          if [ -n "$SCOPE_MODE" ]; then
-            printf '%s\n%s\n' "$SCOPE_MODE" "$CHANGED_PATHS" > ./target/roq/changed-pages.txt
+          if [ -n "$PAGES_MODE" ]; then
+            printf '%s\n%s\n%s\n%s\n%s\n' "$PAGES_MODE" "$CHANGED_PATHS" "$CHANGED_COUNT" "$INFRA" "$REASON" > ./target/roq/changed-pages.txt
           fi
 
       - name: Reduce the size of the website to be compatible with surge
