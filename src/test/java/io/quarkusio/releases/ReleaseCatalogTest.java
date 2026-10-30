@@ -8,6 +8,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
 class ReleaseCatalogTest {
 
@@ -34,7 +35,7 @@ class ReleaseCatalogTest {
     /** Binds like Roq does: a plain mapper, snake_case keys onto the Releases record. */
     static ReleaseCatalog catalogOf(String json) {
         try {
-            return new ReleaseCatalog(new ObjectMapper().readValue(json, Releases.class));
+            return new ReleaseCatalog(new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE).readValue(json, Releases.class));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
