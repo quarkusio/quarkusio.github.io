@@ -147,6 +147,7 @@ public class main implements Callable<Integer> {
         workshop.url = (String) workshopMap.get("url");
         workshop.title = (String) workshopMap.get("title");
         workshop.thumbnail = (String) workshopMap.get("thumbnail");
+        workshop.thumbnailDark = (String) workshopMap.get("thumbnail_dark");
         workshop.description = (String) workshopMap.get("description");
         workshop.src = (String) workshopMap.get("src");
         workshop.comment = (String) workshopMap.get("comment");
@@ -445,6 +446,9 @@ public class main implements Callable<Integer> {
         if (workshop.thumbnail != null) {
             map.put("thumbnail", new QuotedScalar(workshop.thumbnail));
         }
+        if (workshop.thumbnailDark != null) {
+            map.put("thumbnail_dark", new QuotedScalar(workshop.thumbnailDark));
+        }
         if (workshop.description != null) {
             // Description is unquoted in original
             map.put("description", workshop.description);
@@ -480,6 +484,7 @@ public class main implements Callable<Integer> {
         public String url;
         public String title;
         public String thumbnail;
+        public String thumbnailDark;
         public String description;
         public String src;
         public int stars;
