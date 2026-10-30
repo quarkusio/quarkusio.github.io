@@ -177,6 +177,7 @@ public class main implements Callable<Integer> {
 
         // Parse dates
         release.releaseDate = parseDate(releaseMap.get("release_date"));
+        release.plannedDate = parseDate(releaseMap.get("planned_date"));
         release.eolDate = parseDate(releaseMap.get("eol_date"));
         release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
         release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
@@ -606,8 +607,9 @@ public class main implements Callable<Integer> {
             // Find the next higher version (previous index since sorted latest-first)
             if (i > 0) {
                 Release nextRelease = processedReleases.get(i - 1);
-                if (nextRelease.releaseDate != null) {
-                    release.eolDate = nextRelease.releaseDate;
+                LocalDate nextDate = nextRelease.releaseDate != null ? nextRelease.releaseDate : nextRelease.plannedDate;
+                if (nextDate != null) {
+                    release.eolDate = nextDate;
                 }
             }
         }
@@ -691,10 +693,10 @@ public class main implements Callable<Integer> {
         release.lts = false;  // Default to non-LTS for upcoming releases
         release.upcoming = true;
 
-        // Set estimated release date if available
+        // Set planned release date if available (release_date is only for published releases)
         if (upcoming.dueDate != null) {
             try {
-                release.releaseDate = LocalDate.parse(upcoming.dueDate.split("T")[0]);
+                release.plannedDate = LocalDate.parse(upcoming.dueDate.split("T")[0]);
             } catch (Exception e) {
                 Log.debugf("Failed to parse due date for upcoming release %s: %s", upcoming.version, e.getMessage());
             }
@@ -903,6 +905,10 @@ public class main implements Callable<Integer> {
             map.put("release_date", new DateScalar(toDateStr(release.releaseDate)));
         }
 
+        if (release.plannedDate != null) {
+            map.put("planned_date", new DateScalar(toDateStr(release.plannedDate)));
+        }
+
         if (release.eolDate != null) {
             map.put("eol_date", new DateScalar(toDateStr(release.eolDate)));
         } else if (release.hasExplicitEolDate) {
@@ -957,6 +963,7 @@ public class main implements Callable<Integer> {
     public static class Release {
         public String version;
         public LocalDate releaseDate;
+        public LocalDate plannedDate;  // upcoming releases only
         public LocalDate eolDate;
         public boolean hasExplicitEolDate;
         public Boolean lts;
