@@ -24,7 +24,7 @@ import io.quarkusio.timeline.TimelineBuilder;
 public class ReleaseTimelineFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
-    static final int UPCOMING_WEEKS = 6;
+    static final int UPCOMING_WEEKS = 4;
 
     private final ReleaseCatalog catalog;
 
@@ -78,7 +78,6 @@ public class ReleaseTimelineFactory {
     private Timeline build(String id, int startYear, LocalDate today) {
         TimeScale scale = new TimeScale(LocalDate.of(startYear, 1, 1), LocalDate.of(endYear(today), 12, 31));
         TimelineBuilder b = newBuilder(id, scale);
-        addUpcoming(b, today);
         addStreamLane(b, today);
         for (Release r : catalog.all()) {
             if (!r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes())) {
@@ -110,7 +109,7 @@ public class ReleaseTimelineFactory {
      * the future, otherwise today. An LTS runs for the policy's LTS support duration (12 months);
      * anything else is a short placeholder, since a non-LTS lasts only until the next minor.
      */
-    private void addUpcoming(TimelineBuilder b, LocalDate today) {
+    private void addUpcoming(TimelineBuilder b, LocalDate today, TimelineBuilder.RowBuilder row) {
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
         for (Release r : catalog.all()) {
             if (!r.upcoming()) {
@@ -125,12 +124,10 @@ public class ReleaseTimelineFactory {
             if (ltsLength) {
                 lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration());
             }
-            var row = b.row("upcoming-" + r.version(), r.version()).data("version", r.version());
             if (r.lts()) {
                 row.badge("LTS").data("lts", "true");
             }
-            row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version())
-                    .add();
+            row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
         }
     }
 
@@ -145,6 +142,8 @@ public class ReleaseTimelineFactory {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today),
                     "Quarkus " + r.version(), communityLines(r), r.version());
         }
+        addUpcoming(b, today, row);
+
         row.add();
     }
 

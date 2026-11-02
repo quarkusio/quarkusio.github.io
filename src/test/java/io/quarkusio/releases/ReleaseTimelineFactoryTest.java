@@ -45,6 +45,7 @@ class ReleaseTimelineFactoryTest {
             """;
 
     static final ObjectMapper MAPPER = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+    public static final int WEEKS_TO_ADD = 4;
 
     /** Binds like Roq does (plain mapper, snake_case naming strategy): snake_case keys onto the Releases record. */
     static ReleaseCatalog catalogOf(String json) {
@@ -70,7 +71,7 @@ class ReleaseTimelineFactoryTest {
     void supportViewRowOrder() {
         Timeline t = factory.supportView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("upcoming-4.0.0", "stream", "3.40", "3.33", "3.20"), ids);
+        assertEquals(List.of("stream", "3.40", "3.33", "3.20"), ids);
         assertEquals(LocalDate.of(2025, 1, 1), t.scale().start());
         assertEquals(LocalDate.of(2028, 12, 31), t.scale().end());
     }
@@ -93,17 +94,17 @@ class ReleaseTimelineFactoryTest {
     }
 
     @Test
-    void upcomingRowIsOneDashedSegment() {
-        TimelineRow r = row(factory.supportView(TODAY), "upcoming-4.0.0");
-        assertEquals(List.of("upcoming"), kinds(r));
-        assertEquals(TODAY.plusWeeks(6), r.segments().get(0).end());
+    void upcomingRowIsOneDashedSegmentAtEnd() {
+        TimelineRow r = row(factory.supportView(TODAY), "stream");
+        assertEquals("upcoming", kinds(r).getLast());
+        assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), r.segments().getLast().end());
     }
 
     @Test
     void streamLaneTilesWithoutGaps() {
         TimelineRow stream = row(factory.supportView(TODAY), "stream");
         List<TimelineSegment> segs = stream.segments();
-        assertEquals(3, segs.size());
+        assertEquals(WEEKS_TO_ADD, segs.size());
         // 3.38 -> 3.39 tile exactly; 3.39 ends at the LTS 3.40, 3.50 starts later
         assertEquals(segs.get(0).end(), segs.get(1).start());
         assertTrue(segs.get(2).openEnded());
@@ -122,7 +123,7 @@ class ReleaseTimelineFactoryTest {
     void fullViewCoversWholeHistoryWithCompactRows() {
         Timeline t = factory.fullView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("upcoming-4.0.0", "stream", "3.40", "3.33", "3.20", "2.16"), ids);
+        assertEquals(List.of("stream", "3.40", "3.33", "3.20", "2.16"), ids);
         assertEquals(LocalDate.of(2019, 1, 1), t.scale().start());
         // 0.2 is a non-LTS minor, so it lives in the stream lane
         assertEquals(LocalDate.of(2019, 3, 1), row(t, "stream").segments().get(0).start());
@@ -153,7 +154,7 @@ class ReleaseTimelineFactoryTest {
     void upcomingStartsOnPlannedDateWhenKnown() {
         var catalog = catalogOf("""
                 {"releases": [{"version": "4.0.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
-        TimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "upcoming-4.0.0")
+        TimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream")
                 .segments().get(0);
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
         assertTrue(seg.tooltip().contains("25 Nov 2026"));
@@ -183,7 +184,7 @@ class ReleaseTimelineFactoryTest {
                  "releases": [
                    {"version": "4.0.0", "lts": true, "upcoming": true, "planned_date": "2026-11-25"},
                    {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true}]}""");
-        TimelineRow r = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "upcoming-4.0.0");
+        TimelineRow r = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream");
         assertEquals(List.of("LTS"), r.badges());
         assertEquals("true", r.data().get("lts"));
         TimelineSegment seg = r.segments().get(0);
@@ -194,9 +195,9 @@ class ReleaseTimelineFactoryTest {
 
     @Test
     void upcomingNonLtsKeepsShortPlaceholderAndNoBadge() {
-        TimelineRow r = row(factory.supportView(TODAY), "upcoming-4.0.0");
+        TimelineRow r = row(factory.supportView(TODAY), "stream");
         assertTrue(r.badges().isEmpty());
-        assertEquals(r.segments().get(0).start().plusWeeks(6), r.segments().get(0).end());
+        assertEquals(r.segments().getLast().start().plusWeeks(WEEKS_TO_ADD), r.segments().getLast().end());
     }
 
     @Test
