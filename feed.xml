@@ -5,7 +5,7 @@
         <title>Quarkus - Supersonic Subatomic Java</title>
         <link>https://quarkus.io</link>
         <description>Quarkus is a Java framework for building fast, efficient, cloud-native applications. It is Kubernetes-native, supports JVM and native executable deployments, provides live reload and delightful developer tooling, integrates with Jakarta and MicroProfile standards, and offers extensions for databases, messaging, security, observability and AI.</description>
-        <lastBuildDate>Mon, 02 Nov 2026 12:18:26 +0000</lastBuildDate>
+        <lastBuildDate>Mon, 02 Nov 2026 17:42:13 +0000</lastBuildDate>
         <item>
             <title>Introducing the Quarkus Almanac</title>
             <link>
@@ -1492,6 +1492,602 @@ That is the Quarkus pitch, and on this project it held up.&lt;/p&gt;
                 https://quarkus.io/blog/ai-root-cause-analysis-deep-dive/
             </guid>
             <author>Ales Justin</author>
+        </item>
+        <item>
+            <title>Extending Your Quarkus Application with Apache Camel</title>
+            <link>
+                https://quarkus.io/blog/extending-quarkus-with-camel/
+            </link>
+            <description>
+                &lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_introduction&quot;&gt;Introduction&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You built a standard Quarkus application: REST endpoints, a service layer, a database. Then you are given a new requirement: &quot;When an order is placed, send an event to Kafka so the analytics team can track it.&quot; A week later another one: &quot;Also notify the partner loyalty system via their REST API and make sure to handle it properly when their API is down.&quot; And another one: &quot;The partner is going to start sending us CSV order files.&quot;&amp;#8230;&amp;#8203;&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Each of these requirements is an integration task, and Quarkus already gives you building blocks for all of them: Reactive Messaging for Kafka, the REST client with fault tolerance for the loyalty API, a scheduled job for file polling.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;But you could also hand all three to Apache Camel, which covers them with a single model. Retry with backoff, error policies, JSON and CSV conversion, file polling that moves handled files aside: each one is a built-in step you declare on a route, a line at a time, in the same vocabulary whichever system you are talking to.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And it runs inside the application you already have. &lt;a href=&quot;https://camel.apache.org/camel-quarkus/next/&quot;&gt;Camel Quarkus&lt;/a&gt; packages over 300 of Camel&amp;#8217;s &lt;a href=&quot;https://camel.apache.org/components/next/&quot;&gt;components&lt;/a&gt; as Quarkus extensions, as natural to use as any other CDI bean.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In this post we start from a working Quarkus REST application and progressively extend it with three integration capabilities using Camel. You&amp;#8217;ll see exactly what changes in your existing code and what stays untouched.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_the_starting_point&quot;&gt;The starting point&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Here&amp;#8217;s what we&amp;#8217;re starting with: a simple order management REST API.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-to-camel-quarkus/01-starting-point.svg&quot; alt=&quot;Simple order management REST API&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Path(&quot;/api/orders&quot;)
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class OrderResource {
+
+    @Inject
+    OrderRepository repository;
+
+    @GET
+    public List&amp;lt;Order&amp;gt; list() {
+        return repository.listAll();
+    }
+
+    @POST
+    public Response create(Order order) {
+        repository.add(order);
+        return Response.status(Response.Status.CREATED).entity(order).build();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;Order&lt;/code&gt; is a POJO with four fields (&lt;code&gt;id&lt;/code&gt;, &lt;code&gt;customer&lt;/code&gt;, &lt;code&gt;type&lt;/code&gt;, &lt;code&gt;amount&lt;/code&gt;), a no-arg constructor and an all-args one. &lt;code&gt;OrderRepository&lt;/code&gt; is an &lt;code&gt;@ApplicationScoped&lt;/code&gt; CDI bean that stores orders in memory.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Start it up and make sure it works:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;mvn quarkus:dev&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;# Create an order
+curl -s -X POST http://localhost:8080/api/orders \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;id&quot;:&quot;ORD-001&quot;,&quot;customer&quot;:&quot;Acme Corp&quot;,&quot;type&quot;:&quot;priority&quot;,&quot;amount&quot;:1500.00}&#39;
+
+# List orders
+curl -s http://localhost:8080/api/orders&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You should get:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-json hljs&quot; data-lang=&quot;json&quot;&gt;[
+    {
+        &quot;id&quot;: &quot;ORD-001&quot;,
+        &quot;customer&quot;: &quot;Acme Corp&quot;,
+        &quot;type&quot;: &quot;priority&quot;,
+        &quot;amount&quot;: 1500.0
+    }
+]&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now let&amp;#8217;s extend it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_adding_camel_to_the_project&quot;&gt;Adding Camel to the project&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-to-camel-quarkus/camel-quarkus.webp&quot; alt=&quot;Camel Quarkus&quot; width=&quot;50%&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Add the Camel Quarkus extensions we&amp;#8217;ll need:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;quarkus ext add camel-quarkus-kafka camel-quarkus-jackson \
+    camel-quarkus-http camel-quarkus-file camel-quarkus-bean \
+    camel-quarkus-direct camel-quarkus-csv&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you don&amp;#8217;t have the &lt;a href=&quot;https://quarkus.io/guides/cli-tooling&quot;&gt;Quarkus CLI&lt;/a&gt; you can add directly in your &lt;code&gt;pom.xml&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;the &lt;code&gt;quarkus-camel-bom&lt;/code&gt; to &lt;code&gt;&amp;lt;dependencyManagement&amp;gt;&lt;/code&gt; so versions are managed:&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;&amp;lt;dependencyManagement&amp;gt;
+...
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;io.quarkus.platform&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;quarkus-camel-bom&amp;lt;/artifactId&amp;gt;
+      &amp;lt;version&amp;gt;${quarkus.platform.version}&amp;lt;/version&amp;gt;
+      &amp;lt;type&amp;gt;pom&amp;lt;/type&amp;gt;
+      &amp;lt;scope&amp;gt;import&amp;lt;/scope&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+...
+&amp;lt;/dependencyManagement&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;the dependencies:&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-direct&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-bean&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-file&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-kafka&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-http&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-jackson&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;
+  &amp;lt;dependency&amp;gt;
+      &amp;lt;groupId&amp;gt;org.apache.camel.quarkus&amp;lt;/groupId&amp;gt;
+      &amp;lt;artifactId&amp;gt;camel-quarkus-csv&amp;lt;/artifactId&amp;gt;
+  &amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you have Podman or Docker running, Quarkus Dev Services will start a Kafka broker automatically. Camel Quarkus extensions are built like any other Quarkus extension, so dev mode, Dev Services, configuration and native image all work the way you already expect.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Camel routes are CDI beans that extend &lt;code&gt;RouteBuilder&lt;/code&gt;. Quarkus discovers them like any other bean:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class MyRoutes extends RouteBuilder {
+    @Override
+    public void configure() {
+        // routes go here
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;At this point, nothing has changed in your existing code. Your REST endpoints, services, and beans are unaffected.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_sending_order_events_to_kafka&quot;&gt;Sending order events to Kafka&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;The first requirement:&lt;/strong&gt; every time an order is placed, publish an event to a Kafka topic so downstream systems (analytics, warehouse, notifications) can react to it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-to-camel-quarkus/02-kafka.svg&quot; alt=&quot;Sending order events to Kafka&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Using Camel, the change to your existing code is two lines:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Path(&quot;/api/orders&quot;)
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class OrderResource {
+
+    @Inject
+    OrderRepository repository;
+
+    @Inject
+    ProducerTemplate producerTemplate;
+
+    @GET
+    public List&amp;lt;Order&amp;gt; list() {
+        return repository.listAll();
+    }
+
+    @POST
+    public Response create(Order order) {
+        repository.add(order);
+        producerTemplate.sendBody(&quot;direct:order-placed&quot;, order);
+        return Response.status(Response.Status.CREATED).entity(order).build();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;ProducerTemplate&lt;/code&gt; is Camel&amp;#8217;s bridge from your existing code into a Camel route. A &lt;em&gt;route&lt;/em&gt; in Camel is a processing pipeline: it starts from an input (a URI like &lt;code&gt;direct:&lt;/code&gt;, &lt;code&gt;kafka:&lt;/code&gt;, or &lt;code&gt;file:&lt;/code&gt;), applies a chain of steps (transformation, filtering, logging) and then sends the result to one or more outputs. Think of it as a method chain that wires I/O and processing together in one place. In Camel Quarkus, &lt;code&gt;ProducerTemplate&lt;/code&gt; is automatically available as a CDI bean. You just need to &lt;code&gt;@Inject&lt;/code&gt; it. The &lt;code&gt;sendBody&lt;/code&gt; call pushes the order object into the &lt;code&gt;direct:order-placed&lt;/code&gt; endpoint, which is the entry point of your Camel route.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Here&amp;#8217;s that Camel route we need to add:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class OrderEventRoute extends RouteBuilder {
+
+    @Override
+    public void configure() {
+        from(&quot;direct:order-placed&quot;)
+            .routeId(&quot;order-event&quot;)
+            .marshal().json()
+            .to(&quot;kafka:order-events&quot;)
+            .log(&quot;Order event sent to Kafka&quot;);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The Camel route does three steps: receive the order, serialize it to JSON, send it to Kafka.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;And the Kafka configuration to add in &lt;code&gt;application.properties&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;quarkus.kafka.devservices.provider=strimzi
+camel.component.kafka.brokers=${kafka.bootstrap.servers:localhost:9092}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Dev Services injects the broker address it started into &lt;code&gt;kafka.bootstrap.servers&lt;/code&gt;, and &lt;code&gt;camel.component.kafka.brokers&lt;/code&gt; passes it on to the Camel Kafka component, falling back to &lt;code&gt;localhost:9092&lt;/code&gt; against an external broker.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Try it&lt;/strong&gt;, create an order and watch the console:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;curl -s -X POST http://localhost:8080/api/orders \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;id&quot;:&quot;ORD-002&quot;,&quot;customer&quot;:&quot;Daily Planet&quot;,&quot;type&quot;:&quot;standard&quot;,&quot;amount&quot;:250.00}&#39;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the logs:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-none hljs&quot;&gt;... OrderEventRoute ... Order event sent to Kafka&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Your order is persisted &lt;em&gt;and&lt;/em&gt; published to Kafka.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Extensions used:&lt;/strong&gt; &lt;code&gt;camel-quarkus-kafka&lt;/code&gt;, &lt;code&gt;camel-quarkus-jackson&lt;/code&gt;, &lt;code&gt;camel-quarkus-direct&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_notifying_the_loyalty_system&quot;&gt;Notifying the loyalty system&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;The second requirement:&lt;/strong&gt; also call the partner&amp;#8217;s loyalty API over HTTP so customers earn points when they place an order. The partner&amp;#8217;s API is unreliable, so you need to handle retries with backoff.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-to-camel-quarkus/03-loyalty.svg&quot; alt=&quot;Notifying the loyalty system&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The order event Camel route already handles the Kafka step. Let&amp;#8217;s add the loyalty notification: three more lines in the same route, plus an error policy:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class OrderEventRoute extends RouteBuilder {
+
+    @ConfigProperty(name = &quot;loyalty.api.url&quot;)
+    String loyaltyApiUrl;
+
+    @Override
+    public void configure() {
+        onException(Exception.class)
+            .maximumRedeliveries(3)
+            .redeliveryDelay(1000)
+            .useExponentialBackOff()
+            .backOffMultiplier(2)
+            .handled(true)
+            .log(LoggingLevel.ERROR,
+                    &quot;Order event processing failed: ${exception.message}&quot;);
+
+        from(&quot;direct:order-placed&quot;)
+            .routeId(&quot;order-event&quot;)
+            .marshal().json()
+            .to(&quot;kafka:order-events&quot;)
+            .log(&quot;Order event sent to Kafka&quot;)
+            .setHeader(&quot;Content-Type&quot;, constant(&quot;application/json&quot;))
+            .to(&quot;http://&quot; + loyaltyApiUrl + &quot;/api/loyalty/notify&quot;)
+            .log(&quot;Loyalty service notified&quot;);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The body is still the JSON produced by &lt;code&gt;marshal().json()&lt;/code&gt; for Kafka, so &lt;code&gt;setHeader&lt;/code&gt; tags the outgoing request as &lt;code&gt;application/json&lt;/code&gt; for the partner API.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;onException&lt;/code&gt; block retries any failed step up to 3 times with exponential backoff (1s, 2s, 4s). If the loyalty API returns a 500 or the connection times out, Camel retries automatically. &lt;code&gt;handled(true)&lt;/code&gt; means that if all attempts fail, the error is logged and the route moves on. The order is still safely persisted, since that happened before the Camel call. Note that the policy covers every step in the route, the Kafka send included, not just the HTTP call.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The route injects the partner&amp;#8217;s host from configuration with &lt;code&gt;@ConfigProperty&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;# Loyalty API (mock endpoint running inside this app)
+loyalty.api.url=localhost:${quarkus.http.port}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;admonitionblock note&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td class=&quot;icon&quot;&gt;
+&lt;i class=&quot;fa icon-note&quot; title=&quot;Note&quot;&gt;&lt;/i&gt;
+&lt;/td&gt;
+&lt;td class=&quot;content&quot;&gt;
+The companion project includes a &lt;code&gt;MockLoyaltyResource&lt;/code&gt; that simulates the partner API inside the same application, and &lt;code&gt;loyalty.api.url&lt;/code&gt; points at it by default. In a real deployment, point the property at the partner&amp;#8217;s host instead.
+&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If you want to integrate another external service later, you can add one more &lt;code&gt;.to(&quot;http://&amp;#8230;&amp;#8203;&quot;)&lt;/code&gt; line.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Try it&lt;/strong&gt;, create another order and watch both integrations fire:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;curl -s -X POST http://localhost:8080/api/orders \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;id&quot;:&quot;ORD-003&quot;,&quot;customer&quot;:&quot;Stark Industries&quot;,&quot;type&quot;:&quot;priority&quot;,&quot;amount&quot;:8900.00}&#39;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the logs:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-none hljs&quot;&gt;... OrderEventRoute ... Order event sent to Kafka
+... OrderEventRoute ... Loyalty service notified&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The two integrations are triggered from a single &lt;code&gt;sendBody&lt;/code&gt; call.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Extension used:&lt;/strong&gt; &lt;code&gt;camel-quarkus-http&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_ingesting_files_from_a_partner&quot;&gt;Ingesting files from a partner&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;The third requirement:&lt;/strong&gt; a partner drops CSV order files into a directory. The application should parse each file, ingest the orders, and move the original to a &lt;code&gt;done&lt;/code&gt; directory. The failed files go to a &lt;code&gt;failed&lt;/code&gt; directory.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-to-camel-quarkus/04-file-ingestion.svg&quot; alt=&quot;Ingesting files from a partner&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;File ingestion has a lot of small details: polling, partial writes, moving handled files aside, keeping failures separate.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The whole thing is one self-contained route:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+public class FileProcessingRoute extends RouteBuilder {
+
+    @Override
+    public void configure() {
+        CsvDataFormat csv = new CsvDataFormat();
+        csv.setSkipHeaderRecord(true);
+
+        from(&quot;file:orders/incoming?include=.*\\.csv&quot;
+                + &quot;&amp;amp;move=../done&amp;amp;moveFailed=../failed&quot;
+                + &quot;&amp;amp;readLock=changed&quot;)
+            .routeId(&quot;file-ingestion&quot;)
+            .log(&quot;Processing file: ${header.CamelFileName}&quot;)
+            .unmarshal(csv)
+            .split(body())
+                .bean(&quot;orderConverter&quot;)
+                .bean(&quot;orderRepository&quot;, &quot;add&quot;)
+            .end()
+            .log(&quot;File processed: ${header.CamelFileName}&quot;);
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The consumer polls the directory; &lt;code&gt;readLock&lt;/code&gt;, &lt;code&gt;move&lt;/code&gt; and &lt;code&gt;moveFailed&lt;/code&gt; on the URI cover the other three. Camel&amp;#8217;s built-in &lt;code&gt;CsvDataFormat&lt;/code&gt; parses the file content into rows, skipping the header. After &lt;code&gt;split(body())&lt;/code&gt;, each exchange carries one row as a &lt;code&gt;List&amp;lt;String&amp;gt;&lt;/code&gt;. &lt;code&gt;orderConverter&lt;/code&gt; is a small bean that maps each row to an &lt;code&gt;Order&lt;/code&gt;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@ApplicationScoped
+@Named(&quot;orderConverter&quot;)
+@RegisterForReflection
+public class OrderConverter {
+
+    public Order fromCsvRow(List&amp;lt;String&amp;gt; row) {
+        return new Order(
+                row.get(0).trim(),
+                row.get(1).trim(),
+                row.get(2).trim(),
+                new BigDecimal(row.get(3).trim()));
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;orderRepository&lt;/code&gt; is your existing CDI bean, referenced by name. For Camel to look up the bean by name, add &lt;code&gt;@Named(&quot;orderRepository&quot;)&lt;/code&gt; to &lt;code&gt;OrderRepository&lt;/code&gt;. Since &lt;code&gt;.bean(&quot;name&quot;)&lt;/code&gt; resolves the method reflectively, also add &lt;code&gt;@RegisterForReflection&lt;/code&gt; so the lookup keeps working in native mode.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Try it&lt;/strong&gt;, from the directory where you started &lt;code&gt;mvn quarkus:dev&lt;/code&gt;, drop a CSV file and verify:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;mkdir -p orders/incoming
+cat &amp;gt; orders/incoming/orders.csv &amp;lt;&amp;lt; &#39;EOF&#39;
+id,customer,type,amount
+ORD-010,Acme Corp,priority,1500.00
+ORD-011,Wayne Enterprises,standard,250.00
+ORD-012,Stark Industries,priority,8900.00
+EOF&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the logs:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-none hljs&quot;&gt;... FileProcessingRoute ... Processing file: orders.csv
+... FileProcessingRoute ... File processed: orders.csv&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-shell hljs&quot; data-lang=&quot;shell&quot;&gt;curl -s http://localhost:8080/api/orders&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You&amp;#8217;ll see the orders from the CSV file alongside any you created via the REST API. The original file has been moved to &lt;code&gt;orders/done/&lt;/code&gt;. A malformed file would go to &lt;code&gt;orders/failed/&lt;/code&gt; instead.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Extensions used:&lt;/strong&gt; &lt;code&gt;camel-quarkus-file&lt;/code&gt;, &lt;code&gt;camel-quarkus-csv&lt;/code&gt;, &lt;code&gt;camel-quarkus-bean&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_how_the_two_fit_together&quot;&gt;How the two fit together&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the code you already had, this is all that changed:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;olist arabic&quot;&gt;
+&lt;ol class=&quot;arabic&quot;&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;@Inject ProducerTemplate producerTemplate&lt;/code&gt; in &lt;code&gt;OrderResource&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;producerTemplate.sendBody(&quot;direct:order-placed&quot;, order)&lt;/code&gt; in &lt;code&gt;OrderResource&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;@Named(&quot;orderRepository&quot;)&lt;/code&gt; and &lt;code&gt;@RegisterForReflection&lt;/code&gt; on &lt;code&gt;OrderRepository&lt;/code&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Everything else is new classes sitting alongside the old ones.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Beyond that, the two sides share one runtime. Any bean annotated &lt;code&gt;@Named&lt;/code&gt; or &lt;code&gt;@Identifier&lt;/code&gt; is reachable from a route with &lt;code&gt;.bean(&quot;beanName&quot;)&lt;/code&gt;, or by type with &lt;code&gt;.bean(MyService.class)&lt;/code&gt;. Your JAX-RS endpoints keep being served by Quarkus HTTP, and routes using &lt;code&gt;platform-http&lt;/code&gt; can share that same server. Camel settings go in the same &lt;code&gt;application.properties&lt;/code&gt; under the &lt;code&gt;camel.*&lt;/code&gt; namespace, and &lt;code&gt;quarkus dev&lt;/code&gt; hot-reloads a route like any other class.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the end, the goal of this blog post was to show that Camel is easy to pick up and integrates seamlessly with Quarkus. Additionally it gets more valuable as the number of systems you integrate with grows. For a single Kafka topic, Reactive Messaging is enough. By the third integration, having the Camel route model and DSL is what makes the difference.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_going_further&quot;&gt;Going further&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This post covered three patterns, but the 300+ components available as Camel Quarkus extensions cover databases, cloud services, messaging systems, SaaS APIs, and protocols from FTP to AS2. Each follows the same model: add the &lt;code&gt;camel-quarkus-*&lt;/code&gt; extension, use its URI in a route.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Camel implements the &lt;a href=&quot;https://camel.apache.org/components/next/eips/enterprise-integration-patterns.html&quot;&gt;Enterprise Integration Patterns&lt;/a&gt;. Here are a few that would naturally extend this example:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Content-Based Router:&lt;/strong&gt; use &lt;code&gt;.choice().when()&lt;/code&gt; to route priority orders to a fast-track queue and standard orders to the normal flow.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Wire Tap:&lt;/strong&gt; use &lt;code&gt;.wireTap(&quot;seda:audit&quot;)&lt;/code&gt; to send a copy of the order event to an audit log without slowing down the main route.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Throttle:&lt;/strong&gt; use &lt;code&gt;.throttle(10)&lt;/code&gt; to rate-limit calls to the partner loyalty API.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Dead Letter Channel:&lt;/strong&gt; replace the &lt;code&gt;onException&lt;/code&gt; log-and-swallow with &lt;code&gt;errorHandler(deadLetterChannel(&quot;file:orders/errors&quot;))&lt;/code&gt; to persist failed order events to disk for later inspection or reprocessing.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;More protocols:&lt;/strong&gt; need to call a SOAP service, send to an AMQP broker, or drop files on an SFTP server? Each has a Camel Quarkus extension.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;To explore more:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://camel.apache.org/camel-quarkus/latest/&quot;&gt;Camel Quarkus documentation&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/apache/camel-quarkus-examples&quot;&gt;Camel Quarkus examples on GitHub&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The companion sample project for this post is available on &lt;a href=&quot;https://github.com/apache/camel-quarkus-examples/tree/main/quarkus-to-camel-quarkus&quot;&gt;GitHub&lt;/a&gt;. It has two modules: &lt;code&gt;quarkus-orders&lt;/code&gt; (the starting point) and &lt;code&gt;camel-quarkus-orders&lt;/code&gt; (the result). Clone it, then &lt;code&gt;cd camel-quarkus-orders &amp;amp;&amp;amp; mvn quarkus:dev&lt;/code&gt; to see both routes in action.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Fri, 23 Oct 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/extending-quarkus-with-camel/
+            </guid>
+            <author>Gaelle Fournier</author>
         </item>
         <item>
             <title>AI Root Cause Analysis: LLM-Powered Root-Cause Analysis for Distributed Systems</title>
@@ -73212,31 +73808,6 @@ They demonstrate the new features in action and will hopefully inspire you with 
                 https://quarkus.io/blog/quarkus-3-1-2-final-released/
             </guid>
             <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
-        </item>
-        <item>
-            <title>Quarkus Newsletter #33 - June</title>
-            <link>
-                https://quarkus.io/blog/quarkus-newsletter-33/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Check out the June Newsletter. Read &quot;A Guide to the Quarkus 3 Azure Functions Extension: Bootstrap Java Microservices with Ease&quot; by Daniel Oh &amp;amp; Erik Costlow and to learn how Quarkus integrates Java microservices into Azure Functions with an improved developer experience. Check out &quot;Quarkus: Java revisited!&quot; by Willem Meints to go through the steps of creating a new Quarkus project, exploring its extensions and building business logic with Domain Driven Design (DDD) principles. See how to design and perform contract testing on Kubernetes with Microcks, with &quot;Contract Testing on Kubernetes with Microcks&quot; by Piotr Minkowski. Learn how to use Ansible to build and deploy a Quarkus application in the article &quot;Automate your Quarkus deployment using Ansible&quot; by Pelisse Romain. See how to integrate Keycloak’s RBAC capabilities into cloud-native microservices for security with a step-by-step tutorial by Daniel Oh. Learn why the Ministry of Economy and Finance (MEF) of Uruguay chose Quarkus to create a scalable reference architecture that enables SIIF to evolve as part of the modernization process with a great user story by Fabricio Gregorio.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Check out &lt;a href=&quot;https://quarkus.io/newsletter/33/&quot;&gt;Newsletter #33: June&lt;/a&gt;!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;Want to get newsletters in your inbox? &lt;a href=&quot;https://quarkus.io/newsletter&quot;&gt;Sign up for the newsletter&lt;/a&gt; using the on page form.&lt;/p&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Tue, 13 Jun 2023 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-newsletter-33/
-            </guid>
-            <author>James Cobb (https://twitter.com/insectengine)</author>
         </item>
     </channel>
 </rss>
