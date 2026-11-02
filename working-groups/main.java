@@ -326,6 +326,40 @@ public class main implements Callable<Integer> {
             return lastUpdateBody.replaceAll("\n", "\n        ").trim();
         }
 
+        public String getLastUpdateYaml() {
+            String body = getLastUpdate().body();
+            if (!body.contains(": [") && !body.contains(": {")) {
+                return "|\n        " + getIndentedLastUpdate();
+            }
+
+            body = body.replace("\r\n", "\n").replace('\r', '\n').trim() + "\n";
+            StringBuilder quoted = new StringBuilder("\"");
+            for (int i = 0; i < body.length(); i++) {
+                char c = body.charAt(i);
+                switch (c) {
+                    case '\\' -> quoted.append("\\\\");
+                    case '"' -> quoted.append("\\\"");
+                    case '\n' -> quoted.append("\\n");
+                    case '\t' -> quoted.append("\\t");
+                    case ':' -> {
+                        if (body.startsWith(": [", i) || body.startsWith(": {", i)) {
+                            quoted.append("\\x3a");
+                        } else {
+                            quoted.append(c);
+                        }
+                    }
+                    default -> {
+                        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+                            quoted.append(String.format("\\x%02x", (int) c));
+                        } else {
+                            quoted.append(c);
+                        }
+                    }
+                }
+            }
+            return quoted.append('"').toString();
+        }
+
         public boolean isCompleted() {
             var last = getLastUpdate();
             return last != null && last.status().equals("COMPLETE");
