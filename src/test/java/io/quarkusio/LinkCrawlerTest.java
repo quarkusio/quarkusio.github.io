@@ -494,7 +494,7 @@ public class LinkCrawlerTest extends BrowserTest {
         });
 
         if (!resultsFile.isEmpty()) {
-            writeResultsJson(reportable, uncheckable, oldContent, resultsFile);
+            writeResultsJson(reportable, uncheckable, oldContent, brokenFragments, resultsFile);
         }
 
         if (!rateLimited.isEmpty()) {
@@ -1234,6 +1234,12 @@ public class LinkCrawlerTest extends BrowserTest {
                 continue;
             }
 
+            // Skip hash routes (e.g. #/compare/3.34.0/3.35.0) used by single-page
+            // apps such as the almanac; they are client-side paths, not element ids
+            if (link.fragment.startsWith("/")) {
+                continue;
+            }
+
             Set<String> ids = pageIds.get(link.url);
             if (ids == null) {
                 // Not seen during the crawl — fetch it once and cache the ids.
@@ -1581,6 +1587,7 @@ public class LinkCrawlerTest extends BrowserTest {
     private static void writeResultsJson(Map<String, BrokenLink> reportable,
                                           Map<String, BrokenLink> uncheckable,
                                           Map<String, BrokenLink> oldContent,
+                                          Map<String, FragmentLink> brokenFragments,
                                           String path) {
         Map<String, Object> output = new java.util.LinkedHashMap<>();
 
@@ -1593,12 +1600,16 @@ public class LinkCrawlerTest extends BrowserTest {
         // Old content links (informational only - from old blogs/newsletters)
         output.put("oldContent", convertToList(oldContent));
 
+        // Fragment anchors missing from a page that loads fine (will raise defects and fail CI)
+        output.put("brokenFragments", convertFragmentsToList(brokenFragments));
+
         // Summary counts
         Map<String, Integer> summary = new java.util.LinkedHashMap<>();
         summary.put("reportableCount", reportable.size());
         summary.put("uncheckableCount", uncheckable.size());
         summary.put("oldContentCount", oldContent.size());
         summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldContent.size());
+        summary.put("brokenFragmentCount", brokenFragments.size());
         output.put("summary", summary);
 
         try {
@@ -1607,7 +1618,8 @@ public class LinkCrawlerTest extends BrowserTest {
                 Files.createDirectories(filePath.getParent());
             }
             new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(filePath.toFile(), output);
-            System.out.println("Wrote results to " + path + " (" + summary.get("totalBrokenLinks") + " total broken links)");
+            System.out.println("Wrote results to " + path + " (" + summary.get("totalBrokenLinks") + " total broken links, "
+                    + brokenFragments.size() + " broken fragment anchors)");
         } catch (IOException e) {
             System.err.println("Warning: could not write results file: " + e.getMessage());
         }
@@ -1623,6 +1635,22 @@ public class LinkCrawlerTest extends BrowserTest {
                     map.put("url", entry.getKey());
                     map.put("status", entry.getValue().status());
                     map.put("statusText", entry.getValue().statusText());
+                    map.put("referrer", entry.getValue().referrer());
+                    return map;
+                })
+                .toList();
+    }
+
+    // The url is the full link (page#fragment), so the issue raised for it names the exact anchor
+    private static List<Map<String, Object>> convertFragmentsToList(Map<String, FragmentLink> fragments) {
+        List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(fragments.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        return sorted.stream()
+                .map(entry -> {
+                    Map<String, Object> map = new java.util.LinkedHashMap<>();
+                    map.put("url", entry.getKey());
+                    map.put("fragment", entry.getValue().fragment());
                     map.put("referrer", entry.getValue().referrer());
                     return map;
                 })

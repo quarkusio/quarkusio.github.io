@@ -6,6 +6,7 @@
 //DEPS info.picocli:picocli:4.2.0
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.kohsuke.github.GHIssue;
 import org.kohsuke.github.GHRepository;
@@ -22,6 +23,7 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 @Command(name = "report", mixinStandardHelpOptions = true,
@@ -30,6 +32,11 @@ class Report implements Runnable {
 
     private static final String EYECATCHER = "QuarkusWebsiteDeadLinkHelper";
     private static final int MAX_LINKS = 75;
+
+    private static final String CRAWLER_TEST_URL =
+            "https://github.com/quarkusio/quarkusio.github.io/blob/develop/src/test/java/io/quarkusio/LinkCrawlerTest.java";
+    private static final String WORKFLOW_URL =
+            "https://github.com/quarkusio/quarkusio.github.io/blob/develop/.github/workflows/check-external-links.yml";
 
     // Matched as substrings, so these also cover the triage/ prefixed variants
     private static final List<String> DO_NOT_REOPEN_LABELS = List.of("wontfix", "invalid");
@@ -139,8 +146,10 @@ class Report implements Runnable {
 
     private void processDeadLink(GitHub github, DeadLink link) {
         try {
-            System.out.println(String.format("Found a dead link: %s (status %d on %s)",
-                    link.url, link.status, getPublicReferrer(link)));
+            System.out.println(String.format("Found a %s: %s (%son %s)",
+                    link.kind().toLowerCase(), link.url,
+                    link.pointsAtFragment() ? "" : "status " + link.status + " ",
+                    getPublicReferrer(link)));
 
             String targetRepo = getTargetRepo(link);
             final GHRepository repository = github.getRepository(targetRepo);
@@ -162,26 +171,8 @@ class Report implements Runnable {
                 return;
             }
 
-            String title = String.format("Dead link: %s", link.url);
-            String body = String.format("""
-                    Dead link: %s
-
-                    Status: %d (%s)
-                    The problem link was found on %s
-
-                    This issue was auto-created by the dead link checker.
-
-                    ### What to do
-
-                    - **If the link is genuinely broken:** fix or remove it in the source page.
-                    - **If the link works in a browser but is flagged here:** the site may be blocking automated requests. \
-                    Add it to the `DO_NOT_CHECK` list in [`LinkCrawlerTest.java`](https://github.com/quarkusio/quarkusio.github.io/blob/develop/src/test/java/io/quarkusio/LinkCrawlerTest.java) \
-                    or to `exclude-urls` in the [`check-external-links.yml`](https://github.com/quarkusio/quarkusio.github.io/blob/develop/.github/workflows/check-external-links.yml) workflow. \
-                    Closing this issue with a `%s` label will stop it being reopened on the next run.
-
-                     --- %s --- Do not remove this line or the dead link helper will not be able to manage this issue
-                     """, link.url, link.status, link.statusText, getPublicReferrer(link),
-                    DO_NOT_REOPEN_LABELS.get(0), EYECATCHER);
+            String title = String.format("%s: %s", link.kind(), link.url);
+            String body = issueBody(link);
 
             if (!dryRun) {
                 var issueBuilder = repository.createIssue(title)
@@ -200,6 +191,44 @@ class Report implements Runnable {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    private String issueBody(DeadLink link) {
+        String problem;
+        String whatToDo;
+        if (link.pointsAtFragment()) {
+            problem = String.format("The page loads, but has no element with id `%s`.", link.fragment);
+            whatToDo = String.format("""
+                    - **If the anchor was renamed or removed:** update the link in the source page to point at the right section.
+                    - **If the anchor should exist:** restore the id in the target page.
+                    - **If the anchor is expected to be missing:** add it to the known-broken fragment lists in \
+                    [`LinkCrawlerTest.java`](%s).""", CRAWLER_TEST_URL);
+        } else {
+            problem = String.format("Status: %d (%s)", link.status, link.statusText);
+            whatToDo = String.format("""
+                    - **If the link is genuinely broken:** fix or remove it in the source page.
+                    - **If the link works in a browser but is flagged here:** the site may be blocking automated requests. \
+                    Add it to the `DO_NOT_CHECK` list in [`LinkCrawlerTest.java`](%s) \
+                    or to `exclude-urls` in the [`check-external-links.yml`](%s) workflow.""",
+                    CRAWLER_TEST_URL, WORKFLOW_URL);
+        }
+
+        return String.format("""
+                %s: %s
+
+                %s
+                The problem link was found on %s
+
+                This issue was auto-created by the dead link checker.
+
+                ### What to do
+
+                %s \
+                Closing this issue with a `%s` label will stop it being reopened on the next run.
+
+                 --- %s --- Do not remove this line or the dead link helper will not be able to manage this issue
+                 """, link.kind(), link.url, problem, getPublicReferrer(link), whatToDo,
+                DO_NOT_REOPEN_LABELS.get(0), EYECATCHER);
     }
 
     // Github's issue search tokenises punctuation, so a quoted url can match an issue for a
@@ -234,10 +263,13 @@ class Report implements Runnable {
             return;
         }
 
+        final String problem = link.pointsAtFragment()
+                ? String.format("The anchor #%s is missing again.", link.fragment())
+                : String.format("This link is dead again, with status %d (%s).", link.status(), link.statusText());
         final String comment = String.format("""
-                This link is dead again, with status %d (%s).
+                %s
                 * Link to latest CI run: https://github.com/%s/actions/runs/%s""",
-                link.status(), link.statusText(), siteIssueRepo, runId);
+                problem, siteIssueRepo, runId);
 
         if (!dryRun) {
             issue.reopen();
@@ -293,10 +325,12 @@ class Report implements Runnable {
             var root = mapper.readTree(content);
             if (root.has("reportable")) {
                 // New format with separate categories - only process reportable links
-                return mapper.readValue(
-                    root.get("reportable").toString(),
-                    new TypeReference<List<DeadLink>>() {}
-                );
+                // and broken fragment anchors
+                List<DeadLink> links = new ArrayList<>(readLinks(mapper, root.get("reportable")));
+                if (root.has("brokenFragments")) {
+                    links.addAll(readLinks(mapper, root.get("brokenFragments")));
+                }
+                return links;
             }
         } catch (Exception e) {
             // Fall through to old format
@@ -307,15 +341,29 @@ class Report implements Runnable {
         });
     }
 
+    private static List<DeadLink> readLinks(ObjectMapper mapper, JsonNode node) throws IOException {
+        return mapper.readValue(node.toString(), new TypeReference<List<DeadLink>>() {});
+    }
+
     public static void main(String... args) {
         int exitCode = new CommandLine(new Report()).execute(args);
         System.exit(exitCode);
     }
 
+    // For a broken fragment anchor, fragment holds the missing id and status is unused
     record DeadLink(
             String url,
             int status,
             String statusText,
-            String referrer) {
+            String referrer,
+            String fragment) {
+
+        boolean pointsAtFragment() {
+            return fragment != null;
+        }
+
+        String kind() {
+            return pointsAtFragment() ? "Broken anchor" : "Dead link";
+        }
     }
 }
