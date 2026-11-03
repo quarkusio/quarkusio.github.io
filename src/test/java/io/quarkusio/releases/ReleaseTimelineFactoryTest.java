@@ -173,7 +173,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void streamLaneHasShortLabelForNarrowScreens() {
         TimelineRow stream = row(factory.supportView(TODAY), "stream");
-        assertEquals("Non-LTS releases", stream.label());
+        assertEquals("Non-LTS stream", stream.label());
         assertEquals("Non-LTS", stream.shortLabel());
     }
 

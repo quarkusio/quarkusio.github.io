@@ -133,7 +133,7 @@ public class ReleaseTimelineFactory {
 
     /** Non-LTS minors laid end to end; each is supported until the next one ships. */
     private void addStreamLane(TimelineBuilder b, LocalDate today) {
-        var row = b.row("stream", "Non-LTS releases").shortLabel("Non-LTS");
+        var row = b.row("stream", "Non-LTS stream").shortLabel("Non-LTS");
         List<Release> stream = catalog.all().stream()
                 .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
                 .sorted(Comparator.comparing(Release::releaseDate))
