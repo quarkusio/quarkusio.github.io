@@ -12,8 +12,6 @@ public record Timeline(String id, TimeScale scale, List<TimelineRow> rows,
     public static final int FOOT_H = 26;
     /** Visible height of main-lane bars (e.g. community). */
     public static final int MAIN_H = 12;
-    /** Height of extra-lane bars including their border; always less than MAIN_H, and 2 * LANE_H > MAIN_H. */
-    public static final int LANE_H = 8;
     public static final int LANE_GAP = 2;
     /** Main bars are drawn this much taller, because their background-coloured stroke eats it. */
     public static final int MAIN_STROKE = 2;

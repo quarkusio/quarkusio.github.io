@@ -78,10 +78,18 @@ public class ReleaseTimelineFactory {
     private Timeline build(String id, int startYear, LocalDate today) {
         TimeScale scale = new TimeScale(LocalDate.of(startYear, 1, 1), LocalDate.of(endYear(today), 12, 31));
         TimelineBuilder b = newBuilder(id, scale);
-        addStreamLane(b, today);
-        for (Release r : catalog.all()) {
-            if (!r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes())) {
-                addReleaseRow(b, r, today);
+        List<Release> shown = catalog.all().stream()
+                .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes()))
+                .toList();
+        // the non-LTS stream is the second row, after the first release row
+        int streamAfter = Math.min(1, shown.size());
+        if (streamAfter == 0) {
+            addStreamLane(b, today);
+        }
+        for (int i = 0; i < shown.size(); i++) {
+            addReleaseRow(b, shown.get(i), today);
+            if (i == streamAfter - 1) {
+                addStreamLane(b, today);
             }
         }
         return b.build();

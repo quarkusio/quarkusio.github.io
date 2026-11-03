@@ -58,7 +58,6 @@ public final class TimelineBuilder {
         private final List<String> lanes = new ArrayList<>();
         private String href;
         private String shortLabel;
-
         private RowBuilder(String id, String label) {
             this.id = id;
             this.label = label;
@@ -147,7 +146,8 @@ public final class TimelineBuilder {
             if (!segments.isEmpty() || keepEmptyRows) {
                 int[] slot = packSlots();
                 int n = java.util.Arrays.stream(slot).max().orElse(0);
-                int stack = n == 0 ? 0 : n * Timeline.LANE_H + (n - 1) * Timeline.LANE_GAP;
+                int laneH = Timeline.MAIN_H;
+                int stack = n == 0 ? 0 : n * laneH + (n - 1) * Timeline.LANE_GAP;
                 int band = Math.max(Timeline.MAIN_H, stack);
                 int top = Timeline.ROW_PAD / 2;
                 List<TimelineSegment> placed = segments.stream().map(sg -> {
@@ -157,14 +157,15 @@ public final class TimelineBuilder {
                         h = Timeline.MAIN_H + Timeline.MAIN_STROKE;
                         y = top + (band - Timeline.MAIN_H) / 2 - Timeline.MAIN_STROKE / 2;
                     } else {
-                        h = Timeline.LANE_H;
-                        y = top + (band - stack) / 2 + (slot[sg.lane()] - 1) * (Timeline.LANE_H + Timeline.LANE_GAP);
+                        h = laneH;
+                        y = top + (band - stack) / 2 + (slot[sg.lane()] - 1) * (laneH + Timeline.LANE_GAP);
                     }
                     return new TimelineSegment(sg.kind(), sg.variant(), sg.lane(), sg.start(), sg.end(),
                             sg.openEnded(), sg.href(), sg.title(), sg.details(), sg.ref(), sg.xPct(), sg.wPct(), y, h);
                 }).toList();
                 rows.add(new TimelineRow(id, label, List.copyOf(badges), href, placed,
-                        java.util.Collections.unmodifiableMap(data), List.copyOf(lanes), band + Timeline.ROW_PAD, shortLabel));
+                        java.util.Collections.unmodifiableMap(data), List.copyOf(lanes), band + Timeline.ROW_PAD,
+                        shortLabel));
             }
             return TimelineBuilder.this;
         }

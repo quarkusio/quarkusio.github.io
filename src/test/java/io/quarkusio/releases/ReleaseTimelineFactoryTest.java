@@ -71,7 +71,7 @@ class ReleaseTimelineFactoryTest {
     void supportViewRowOrder() {
         Timeline t = factory.supportView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("stream", "3.40", "3.33", "3.20"), ids);
+        assertEquals(List.of("3.40", "stream", "3.33", "3.20"), ids);
         assertEquals(LocalDate.of(2025, 1, 1), t.scale().start());
         assertEquals(LocalDate.of(2028, 12, 31), t.scale().end());
     }
@@ -123,7 +123,7 @@ class ReleaseTimelineFactoryTest {
     void fullViewCoversWholeHistoryWithCompactRows() {
         Timeline t = factory.fullView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("stream", "3.40", "3.33", "3.20", "2.16"), ids);
+        assertEquals(List.of("3.40", "stream", "3.33", "3.20", "2.16"), ids);
         assertEquals(LocalDate.of(2019, 1, 1), t.scale().start());
         // 0.2 is a non-LTS minor, so it lives in the stream lane
         assertEquals(LocalDate.of(2019, 3, 1), row(t, "stream").segments().get(0).start());
