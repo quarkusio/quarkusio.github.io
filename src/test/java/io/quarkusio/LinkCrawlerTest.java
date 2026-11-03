@@ -1608,7 +1608,7 @@ public class LinkCrawlerTest extends BrowserTest {
         summary.put("reportableCount", reportable.size());
         summary.put("uncheckableCount", uncheckable.size());
         summary.put("oldContentCount", oldContent.size());
-        summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldContent.size());
+summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldContent.size()+brokenFragments.size());
         summary.put("brokenFragmentCount", brokenFragments.size());
         output.put("summary", summary);
 
