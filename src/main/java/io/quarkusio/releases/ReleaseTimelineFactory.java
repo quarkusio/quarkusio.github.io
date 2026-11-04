@@ -95,10 +95,20 @@ public class ReleaseTimelineFactory {
         return b.build();
     }
 
+    /** Covers every support end and every upcoming bar, so planned releases are not cropped. */
     private int endYear(LocalDate today) {
-        return catalog.all().stream().map(Release::supportEnd).filter(d -> d != null)
-                .map(LocalDate::getYear).max(Integer::compare).map(y -> Math.max(y, today.getYear()))
-                .orElse(today.getYear());
+        Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
+        int supportEnds = catalog.all().stream().map(Release::supportEnd).filter(d -> d != null)
+                .map(LocalDate::getYear).max(Integer::compare).orElse(today.getYear());
+        int upcomingEnds = catalog.all().stream().filter(Release::upcoming)
+                .map(r -> upcomingStart(r, today))
+                .map(start -> start.plusWeeks(UPCOMING_WEEKS).getYear())
+                .max(Integer::compare).orElse(today.getYear());
+        int upcomingLtsEnds = lts == null ? today.getYear() : catalog.all().stream()
+                .filter(r -> r.upcoming() && r.lts())
+                .map(r -> upcomingStart(r, today).plus(lts).getYear())
+                .max(Integer::compare).orElse(today.getYear());
+        return Math.max(Math.max(supportEnds, upcomingEnds), Math.max(upcomingLtsEnds, today.getYear()));
     }
 
     private TimelineBuilder newBuilder(String id, TimeScale scale) {
@@ -114,19 +124,35 @@ public class ReleaseTimelineFactory {
 
     /**
      * Only drawn for releases flagged upcoming. Starts on the planned_date when the data has one in
-     * the future, otherwise today. An LTS runs for the policy's LTS support duration (12 months);
-     * anything else is a short placeholder, since a non-LTS lasts only until the next minor.
+     * the future, otherwise today. An LTS runs for the policy's LTS support duration (12 months),
+     * clipped to the start of the next upcoming release but never to less than the default bar length.
+     * A non-LTS is supported only until the next minor, so when another upcoming release follows,
+     * its bar ends where that one starts; the last one is a short placeholder.
      */
     private void addUpcoming(TimelineBuilder b, LocalDate today, TimelineBuilder.RowBuilder row) {
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
-        for (Release r : catalog.all()) {
-            if (!r.upcoming()) {
-                continue;
-            }
-            boolean planned = r.plannedDate() != null && r.plannedDate().isAfter(today);
-            LocalDate start = planned ? r.plannedDate() : today;
+        List<Release> upcoming = catalog.all().stream()
+                .filter(Release::upcoming)
+                .sorted(Comparator.comparing((Release r) -> upcomingStart(r, today))
+                        .thenComparing(r -> r.version()))
+                .toList();
+        for (int i = 0; i < upcoming.size(); i++) {
+            Release r = upcoming.get(i);
+            boolean planned = isPlanned(r, today);
+            LocalDate start = upcomingStart(r, today);
             boolean ltsLength = r.lts() && lts != null;
-            LocalDate end = ltsLength ? start.plus(lts) : start.plusWeeks(UPCOMING_WEEKS);
+            LocalDate nextStart = i + 1 < upcoming.size() ? upcomingStart(upcoming.get(i + 1), today) : null;
+            LocalDate end;
+            if (ltsLength) {
+                end = start.plus(lts);
+                if (nextStart != null && nextStart.isBefore(end)) {
+                    // Clip to where the next release starts, but keep at least the default bar length visible
+                    LocalDate minEnd = start.plusWeeks(UPCOMING_WEEKS);
+                    end = nextStart.isAfter(minEnd) ? nextStart : minEnd;
+                }
+            } else {
+                end = nextStart != null && nextStart.isAfter(start) ? nextStart : start.plusWeeks(UPCOMING_WEEKS);
+            }
             List<String> lines = new ArrayList<>();
             lines.add(planned ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
             if (ltsLength) {
@@ -137,6 +163,14 @@ public class ReleaseTimelineFactory {
             }
             row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
         }
+    }
+
+    private static boolean isPlanned(Release r, LocalDate today) {
+        return r.plannedDate() != null && r.plannedDate().isAfter(today);
+    }
+
+    private static LocalDate upcomingStart(Release r, LocalDate today) {
+        return isPlanned(r, today) ? r.plannedDate() : today;
     }
 
     /** Non-LTS minors laid end to end; each is supported until the next one ships. */
