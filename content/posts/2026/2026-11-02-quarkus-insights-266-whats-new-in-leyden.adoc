@@ -1,0 +1,122 @@
+---
+layout: post
+title: 'Quarkus Insights #266: What''s new in Leyden?'
+date: 2026-11-02
+tags: quarkus-insights, leyden
+synopsis: 'Maria Arias de Reyna Dominguez joins hosts Eric Deandrea and Holly Cummins to share the latest on Project Leyden, covering ahead-of-time code compilation in the AOT cache, benchmark results on Quarkus, the production trade-offs of shipping a cache, iterative AOT training, and the analyzer tool for inspecting cache contents.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/P6mLyHzNLQ4[watch the video] for the full story.
+
+== Quarkus Insights #266: What's new in Leyden?
+
+Java gets faster the longer it runs, but what if an application could start out already warmed up? That is the goal of https://openjdk.org/projects/leyden/[Project Leyden], and a lot has changed since Maria Arias de Reyna Dominguez last appeared on the show roughly a year ago. In episode 266, Maria, a committer on the https://openjdk.org/[OpenJDK] project who works on Leyden at IBM, joins hosts Eric Deandrea and Holly Cummins to explain how the AOT cache works, what the newly merged ahead-of-time code compilation adds, what it takes to use the cache in production, and why the Leyden team wants feedback from real users now.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/P6mLyHzNLQ4" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+== Quarkus News
+
+Holly noted that the finish line for Quarkus 4 is in sight, and encouraged everyone to try Quarkus 4 Beta 2 if they have not already. The Quarkus:Dev conference call for papers is coming soon, so start thinking about the stories and projects you would like to share.
+
+== A Quick Recap: Why Leyden Exists
+
+Project Leyden is one of several OpenJDK projects improving the Java language, the JVM, or the wider ecosystem, alongside efforts such as https://openjdk.org/projects/valhalla/[Project Valhalla]. Leyden targets startup and warm-up time.
+
+Maria explained the underlying trade-off. A natively compiled C or C++ binary runs the same code from start to finish. Java instead ships bytecode that the JVM interprets, profiles, and recompiles repeatedly. Along the way it learns runtime-only facts, such as which branches are hot, which code is never used, and exactly which CPU instructions the hardware supports. That is why long-running Java applications can end up faster than ahead-of-time compiled code, but it also means the application is slowest right when it starts.
+
+Leyden's approach is a three-step workflow:
+
+1. Run the application in a **training run** to reach peak performance and collect runtime information.
+2. Store what was learned in an **AOT cache**.
+3. Start the real **production run** with the cache, so the JVM has that information from the first request.
+
+=== What Was Already in the Cache
+
+Last year's work already delivered roughly a 50 to 60 percent improvement in startup and time to first response. The cache stores the class metadata model (including class hierarchy and field relationships), method counters and profiling data, class, method, and compile training data, and the adapter handlers that convert method signatures and arguments to hardware-specific native calling conventions.
+
+Maria also made a useful distinction between the two metrics teams usually measure. Time until the port is open mostly depends on the framework, while time until responses arrive quickly depends on application warm-up, which is where the cache has the most impact.
+
+== JEP 544: Ahead-of-Time Code Compilation
+
+The big new addition is https://openjdk.org/jeps/544[JEP 544], available from JDK 28, which stores compiled native code in the cache in addition to profiling data. Maria explained that this was harder than simply saving machine code, because memory addresses differ on every load and pointers must be translated. The change was ready by summer but had to wait while the large Valhalla pull request was merged, since every new commit to the main source tree broke it.
+
+To show why this matters, Maria walked through JVM tiered compilation:
+
+* **Tier 0, the interpreter:** Translates bytecode instruction by instruction without optimizing, which is why the JVM is slowest at the start.
+* **Tiers 1 to 3:** Method counters trigger compilation with C1 at increasing levels of profiling. If the C2 compiler queue is busy, a method may go to tier 2 instead of tier 3, and trivial methods with no loops or branches stop at tier 1.
+* **Tier 4:** Fully optimized C2 code with peak performance, which most one-time methods such as startup logic never need.
+
+Cached code does not freeze behavior. If a method behaves differently in production than it did during training, the JVM still recompiles it. Maria used a "Black Friday" branch as an example: when that branch is finally taken, the JVM deoptimizes and recompiles accordingly. Code loaded later is also compiled dynamically as usual. Code compilation in the cache is currently supported on two architectures, and the team chose not to hold the JEP back while waiting for more.
+
+== Benchmarks on Quarkus
+
+Maria showed the official normalized chart from the JEP, which compares frameworks against their own baseline without a cache. She stressed that it does not rank frameworks against each other. Holly added that Quarkus appeared to gain less in the chart simply because it already does so much work ahead of time, and the data shown was also from an older Quarkus version.
+
+For her own tests, Maria used a REST benchmark project from a colleague, with 25,000 requests and a rate limit of 5,000, running a basic Quarkus REST endpoint and a variant backed by https://hibernate.org/orm/[Hibernate]. She was upfront that these were laptop numbers with Slack and streaming software running, and recommended real servers for real measurements. The shape of the results was still clear:
+
+* **Time to port open** was slightly slower with the cache, but Maria argued it does not matter if responses arrive much sooner.
+* **Without a cache**, per-request latency started around 60 milliseconds and reached peak performance after about 1,000 requests.
+* **With the AOT cache and code compilation**, requests started around 20 milliseconds and reached peak performance after about 400 requests.
+* **The more complex Hibernate application** took longer to warm up overall, but it also showed the biggest gains from the cache.
+* **Compared with the previous cache without code**, startup latency in the Hibernate case roughly halved, from around 200 milliseconds to 100.
+
+Eric and Holly highlighted the practical consequence: the improvement requires no code changes, no different arguments, and the same training run. Upgrading the JDK is enough, which makes a performance case for moving to newer Java versions in addition to the security case. Faster warm-up can also mean fewer instances when scaling out under load, which saves real money in the cloud.
+
+== Using the Cache with Quarkus
+
+Maria said Quarkus has been the framework most involved with Leyden, and that its early feedback helped the team find problems sooner. Several practical points came up:
+
+* **Custom class loaders are a problem.** The JVM needs predictable class loading to trust the cache, and it cannot verify that a custom class loader behaves identically in training and production. Work on supporting them is in progress through an open pull request.
+* **Quarkus AOT jar packaging** uses a class loader that works well with Leyden, so the Quarkus team had to rethink its packaging names. Holly described how the old "fast jar" format ended up slower than the regular jar once the cache was involved.
+* **Where to train.** Canary deployments let you train on real production traffic, while Quarkus can also generate the cache from integration tests, which has the side benefit of rewarding good test coverage. Maria recommended the https://quarkus.io/guides/aot[Quarkus AOT guide] as a quick read.
+
+== Trade-offs in Production
+
+Eric asked what developers give up in exchange for the speedup. Maria covered the main costs:
+
+* **Size.** The cache grows with the application, so container images get larger. She mentioned a talk by Netflix, an early adopter, describing how they split the cache into pieces and reassemble them at deployment time. Shared storage is another option.
+* **Hardware specificity.** Compiled code may use instructions from a particular CPU, so training should target a lower common instruction set if the cache will run on different chips.
+* **Pipelines.** The hardest part for early adopters has been adapting delivery pipelines. A new cache is needed whenever the application changes, and caches are not bit-for-bit reproducible, which clashes with GitOps expectations. Eric and Holly noted that even careful environment pinning would likely not make them identical.
+* **Trade CPU and RAM for storage.** If storage and bandwidth cost more than compute for you, the cache may not be worth it. Staging environments can simply skip it.
+
+Maria also pointed out that a missing or corrupted cache does not stop the application by default. It runs without the cache unless you explicitly ask the JVM to fail in that case.
+
+== Iterative AOT Training
+
+A feature merged just days before the episode addresses one of the biggest complaints, which is that a good training run is hard to get. With iterative AOT training, the cache is no longer a static asset. A production instance can read the existing cache and write an improved version back. A basic cache is still recommended to avoid a cold start, but real-world usage can now refine it over time, and startup behavior can be trained across many instances.
+
+== Agents and the Analyzer
+
+Java agents are an open question. Because they modify bytecode, the JVM cannot guarantee they will do so the same way in training and production, so classes modified by an agent are currently excluded from the cache. The https://opentelemetry.io/[OpenTelemetry] Java agent has been adapted to work with Leyden. Maria noted the impact is limited when an instrumented entry point simply delegates to an unmodified class that does the real work.
+
+For diagnosing problems, Maria maintains an analyzer tool that inspects the contents of a cache, flags content that should or should not be there, and can compare two caches, for example one generated from a canary deployment and one from integration tests. She had planned a live demo of the analyzer, but loading a cache with millions of assets on a laptop running streaming software did not cooperate. A smaller demo with a CPU-heavy benchmark app did show the improvement from adding the training and production flags.
+
+== Security Questions
+
+An audience question asked about injection attacks through the cache. Maria explained that the JVM checks the cache for consistency, but a malicious cache with valid checksums is possible in theory, just as a jar file can be tampered with. The advice is to verify the integrity of caches the same way you verify downloaded jars. Holly and Maria also noted that a cache from a stranger would not match your hardware configuration anyway.
+
+== A Call for Feedback
+
+Maria's closing message was direct. The group of companies investing in Leyden will eventually move on to other projects, so now is the time to try it, report pipeline difficulties, and share use cases that do not work. Feedback can go to the public Leyden developer mailing list on the OpenJDK site, which is open to everyone.
+
+== Key Takeaways
+
+1. **Warm up from the first request:** Leyden's AOT cache applies runtime learnings from a training run to production starts.
+2. **Ahead-of-time code compilation:** JEP 544 adds compiled native code to the cache, available from JDK 28 on supported architectures.
+3. **Still adaptive:** The JVM recompiles cached code if production behavior differs from training.
+4. **Real gains:** In Maria's tests, latency on a basic Quarkus REST endpoint started at about 20 milliseconds instead of 60 and reached peak performance in 400 requests instead of 1,000.
+5. **A free upgrade:** Teams already using the cache benefit from the new compilation support by upgrading the JDK.
+6. **Avoid custom class loaders:** The cache needs predictable class loading, which is why Quarkus AOT jar packaging matters.
+7. **Plan your training:** Integration tests or canary deployments are the two recommended ways to generate a representative cache.
+8. **Budget for the trade-offs:** Expect larger images, hardware-specific considerations, and pipeline changes.
+9. **Iterative training:** Caches can now be refined from production instances instead of staying static.
+10. **Test it now:** The Leyden team is actively asking for real-world feedback while the project is still staffed.
+
+== Conclusion
+
+Leyden has moved from reducing startup work to storing compiled code itself, and the early numbers on Quarkus show why the effort is worth following. The trade-offs are real, especially around pipelines and cache size, but most of them are manageable with a good training strategy. Next week, Quarkus Insights returns with Sanne Grinovero to talk about incaspawn, a tool that gives AI agents their own sandboxes so they can run safely in YOLO mode.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel] and join the discussion on the https://mail.openjdk.org/mailman/listinfo/leyden-dev[Leyden developer mailing list].
