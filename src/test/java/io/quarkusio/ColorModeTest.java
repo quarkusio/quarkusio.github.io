@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,6 +13,7 @@ import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.options.ColorScheme;
 
+@QuarkusTest
 public class ColorModeTest extends BrowserTest {
 
     public static final String DARK_ARIA_LABEL = "Color scheme: dark; next: system preferences";

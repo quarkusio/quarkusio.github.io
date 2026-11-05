@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrender
 import static io.quarkusio.UnrenderedMarkupDetector.findUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class BlogPageTest extends BrowserTest {
 
     private static final String BLOG_PATH = "/blog/";
