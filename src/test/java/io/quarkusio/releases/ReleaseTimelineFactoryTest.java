@@ -178,14 +178,14 @@ class ReleaseTimelineFactoryTest {
     }
 
     @Test
-    void upcomingLtsGetsBadgeAndLtsLengthBar() {
+    void upcomingLtsGetsLtsLengthBarAndDataButNoBadge() {
         var catalog = catalogOf("""
                 {"policy": {"lts_support_duration": "12 months"},
                  "releases": [
                    {"version": "4.0.0", "lts": true, "upcoming": true, "planned_date": "2026-11-25"},
                    {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true}]}""");
         TimelineRow r = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream");
-        assertEquals(List.of("LTS"), r.badges());
+        assertTrue(r.badges().isEmpty());
         assertEquals("true", r.data().get("lts"));
         TimelineSegment seg = r.segments().get(0);
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
