@@ -2,8 +2,7 @@ package io.quarkusio.releases;
 
 import java.time.Period;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.Locale;
 
 import io.quarkiverse.roq.data.runtime.annotations.DataMapping;
 
@@ -17,19 +16,56 @@ import io.quarkiverse.roq.data.runtime.annotations.DataMapping;
 public record Releases(Policy policy, SupportProviders supportProviders, List<EolSupport> eolSupport,
         List<Entry> releases) {
 
-    public record Policy(String ltsCadence, String ltsSupportDuration, String nonLtsSupportDuration,
+    public record Policy(SupportPeriod ltsCadence, SupportPeriod ltsSupportDuration, String nonLtsSupportDuration, SupportPeriod releaseCadence,
             String ltsDescription, String eolDescription) {
 
-        private static final Pattern DURATION = Pattern.compile("\\s*(\\d+)\\s+(month|year)s?\\s*", Pattern.CASE_INSENSITIVE);
+        public Policy {
+            // Ad-hoc variable replacement, for this field only
+            ltsDescription = ltsDescription == null ? null
+                    : ltsDescription.replace("{lts_cadence}", ltsCadence == null ? "" : ltsCadence.label())
+                            .replace("{lts_support_duration}", ltsSupportDuration == null ? "" : ltsSupportDuration.label())
+                            .replace("{release_cadence}", releaseCadence == null ? "" : releaseCadence.label());
+        }
 
-        /** ltsSupportDuration as a Period (e.g. "12 months"), or null if it is not of that form. */
+        /** The gap between LTS releases, or null when not set. */
+        public Period ltsCadencePeriod() {
+            return ltsCadence == null ? null : ltsCadence.period();
+        }
+
+        /** The LTS support length as a Period, or null when not set. */
         public Period ltsSupportPeriod() {
-            Matcher m = ltsSupportDuration == null ? null : DURATION.matcher(ltsSupportDuration);
-            if (m == null || !m.matches()) {
-                return null;
+            return ltsSupportDuration == null ? null : ltsSupportDuration.period();
+        }
+
+        /** The gap between minor releases, or null when not set. */
+        public Period releaseCadencePeriod() {
+            return releaseCadence == null ? null : releaseCadence.period();
+        }
+    }
+
+    /** A length of time in whole weeks or months, e.g. {@code {amount: 4, unit: weeks}}. */
+    public record SupportPeriod(int amount, String unit) {
+
+        public SupportPeriod {
+            unit = unit == null ? "months" : unit.toLowerCase(Locale.ROOT);
+            if (!unit.equals("weeks") && !unit.equals("months")) {
+                throw new IllegalArgumentException("Unsupported support period unit '" + unit + "', use weeks or months");
             }
-            int n = Integer.parseInt(m.group(1));
-            return m.group(2).equalsIgnoreCase("year") ? Period.ofYears(n) : Period.ofMonths(n);
+        }
+
+        public Period period() {
+            return unit.equals("weeks") ? Period.ofWeeks(amount) : Period.ofMonths(amount);
+        }
+
+        @Override
+        public String toString() {
+            return label();
+        }
+
+        /** E.g. "12 months", "1 month". */
+        public String label() {
+            String singular = unit.substring(0, unit.length() - 1);
+            return amount + " " + (amount == 1 ? singular : unit);
         }
     }
 

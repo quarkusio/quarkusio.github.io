@@ -16,7 +16,7 @@ class ReleaseCatalogTest {
 
     static final String DATA = """
             {
-              "policy": {"lts_support_duration": "12 months"},
+              "policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
               "support_providers": {"ibm": {"name": "IBM", "url": "https://ibm.example"}},
               "releases": [
                 {"version": "4.0.0", "lts": false, "upcoming": true},
@@ -45,7 +45,7 @@ class ReleaseCatalogTest {
 
     @Test
     void bindsPolicyAndProviders() {
-        assertEquals("12 months", catalog.policy().ltsSupportDuration());
+        assertEquals("12 months", catalog.policy().ltsSupportDuration().label());
         assertEquals("https://ibm.example", catalog.providers().ibm().url());
     }
 

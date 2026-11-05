@@ -180,7 +180,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void upcomingLtsGetsBadgeAndLtsLengthBar() {
         var catalog = catalogOf("""
-                {"policy": {"lts_support_duration": "12 months"},
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
                    {"version": "4.0.0", "lts": true, "upcoming": true, "planned_date": "2026-11-25"},
                    {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true}]}""");
@@ -203,7 +203,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void nonLtsUpcomingBarEndsWhereTheNextUpcomingStarts() {
         var catalog = catalogOf("""
-                {"policy": {"lts_support_duration": "12 months"},
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
                    {"version": "4.2", "lts": false, "upcoming": true, "planned_date": "2027-02-24"},
                    {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
@@ -221,7 +221,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void upcomingLtsKeepsLtsLengthAndShortensTheNonLtsBeforeIt() {
         var catalog = catalogOf("""
-                {"policy": {"lts_support_duration": "12 months"},
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"},
                    {"version": "4.2", "lts": false, "upcoming": true, "planned_date": "2027-02-24"}]}""");
@@ -234,7 +234,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void upcomingLtsIsClippedByALaterUpcomingButKeepsAtLeastTheDefaultLength() {
         var catalog = catalogOf("""
-                {"policy": {"lts_support_duration": "12 months"},
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
                    {"version": "4.5", "lts": false, "upcoming": true, "planned_date": "2027-04-20"},
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-04-01"},
@@ -245,7 +245,7 @@ class ReleaseTimelineFactoryTest {
         assertEquals(LocalDate.of(2027, 3, 31).plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
 
         var roomy = catalogOf("""
-                {"policy": {"lts_support_duration": "12 months"},
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-06-30"},
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
@@ -266,10 +266,34 @@ class ReleaseTimelineFactoryTest {
     }
 
     @Test
-    void policyDurationParsing() {
-        assertEquals(java.time.Period.ofMonths(12), new Releases.Policy(null, "12 months", null, null, null).ltsSupportPeriod());
-        assertEquals(java.time.Period.ofYears(1), new Releases.Policy(null, "1 year", null, null, null).ltsSupportPeriod());
-        assertNull(new Releases.Policy(null, "until the next minor", null, null, null).ltsSupportPeriod());
-        assertNull(new Releases.Policy(null, null, null, null, null).ltsSupportPeriod());
+    void supportPeriods() {
+        var months = new Releases.SupportPeriod(12, "months");
+        var weeks = new Releases.SupportPeriod(4, "Weeks");
+        assertEquals(java.time.Period.ofMonths(12), months.period());
+        assertEquals(java.time.Period.ofWeeks(4), weeks.period());
+        assertEquals("12 months", months.label());
+        assertEquals("1 month", new Releases.SupportPeriod(1, "months").label());
+        assertEquals("4 weeks", weeks.label());
+        assertThrows(IllegalArgumentException.class, () -> new Releases.SupportPeriod(1, "years"));
+        assertNull(new Releases.Policy(null, null, null, null, null, null).ltsSupportPeriod());
+        assertNull(new Releases.Policy(null, null, null, null, null, null).releaseCadencePeriod());
+        assertNull(new Releases.Policy(null, null, null, null, null, null).ltsCadencePeriod());
+    }
+
+    @Test
+    void ltsDescriptionFillsInPolicyValues() {
+        var policy = new Releases.Policy(new Releases.SupportPeriod(6, "months"), new Releases.SupportPeriod(12, "months"),
+                null, new Releases.SupportPeriod(4, "weeks"),
+                "LTS every {lts_cadence} gets {lts_support_duration}, minors every {release_cadence}.", null);
+        assertEquals("LTS every 6 months gets 12 months, minors every 4 weeks.", policy.ltsDescription());
+    }
+
+    @Test
+    void releaseCadenceSizesTheDefaultUpcomingBar() {
+        var catalog = catalogOf("""
+                {"policy": {"release_cadence": {"amount": 2, "unit": "months"}},
+                 "releases": [{"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
+        TimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments().get(0);
+        assertEquals(LocalDate.of(2027, 1, 25), seg.end());
     }
 }

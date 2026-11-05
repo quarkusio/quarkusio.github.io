@@ -24,7 +24,8 @@ import io.quarkusio.timeline.TimelineBuilder;
 public class ReleaseTimelineFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
-    static final int UPCOMING_WEEKS = 4;
+    /** Used for the default upcoming bar when the policy has no release_cadence. */
+    static final Period DEFAULT_CADENCE = Period.ofWeeks(4);
 
     private final ReleaseCatalog catalog;
 
@@ -95,6 +96,12 @@ public class ReleaseTimelineFactory {
         return b.build();
     }
 
+    /** The default length of an upcoming bar: the policy's release cadence. */
+    private Period cadence() {
+        Period p = catalog.policy() == null ? null : catalog.policy().releaseCadencePeriod();
+        return p == null ? DEFAULT_CADENCE : p;
+    }
+
     /** Covers every support end and every upcoming bar, so planned releases are not cropped. */
     private int endYear(LocalDate today) {
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
@@ -102,7 +109,7 @@ public class ReleaseTimelineFactory {
                 .map(LocalDate::getYear).max(Integer::compare).orElse(today.getYear());
         int upcomingEnds = catalog.all().stream().filter(Release::upcoming)
                 .map(r -> upcomingStart(r, today))
-                .map(start -> start.plusWeeks(UPCOMING_WEEKS).getYear())
+                .map(start -> start.plus(cadence()).getYear())
                 .max(Integer::compare).orElse(today.getYear());
         int upcomingLtsEnds = lts == null ? today.getYear() : catalog.all().stream()
                 .filter(r -> r.upcoming() && r.lts())
@@ -124,7 +131,7 @@ public class ReleaseTimelineFactory {
 
     /**
      * Only drawn for releases flagged upcoming. Starts on the planned_date when the data has one in
-     * the future, otherwise today. An LTS runs for the policy's LTS support duration (12 months),
+     * the future, otherwise today. An LTS runs for the policy's LTS support duration,
      * clipped to the start of the next upcoming release but never to less than the default bar length.
      * A non-LTS is supported only until the next minor, so when another upcoming release follows,
      * its bar ends where that one starts; the last one is a short placeholder.
@@ -147,16 +154,16 @@ public class ReleaseTimelineFactory {
                 end = start.plus(lts);
                 if (nextStart != null && nextStart.isBefore(end)) {
                     // Clip to where the next release starts, but keep at least the default bar length visible
-                    LocalDate minEnd = start.plusWeeks(UPCOMING_WEEKS);
+                    LocalDate minEnd = start.plus(cadence());
                     end = nextStart.isAfter(minEnd) ? nextStart : minEnd;
                 }
             } else {
-                end = nextStart != null && nextStart.isAfter(start) ? nextStart : start.plusWeeks(UPCOMING_WEEKS);
+                end = nextStart != null && nextStart.isAfter(start) ? nextStart : start.plus(cadence());
             }
             List<String> lines = new ArrayList<>();
             lines.add(planned ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
             if (ltsLength) {
-                lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration());
+                lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration().label());
             }
             if (r.lts()) {
                 row.badge("LTS").data("lts", "true");
