@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import com.microsoft.playwright.Locator;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +11,7 @@ import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrender
 import static io.quarkusio.UnrenderedMarkupDetector.findUnresolvedPlaceholders;
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class WorkingGroupsPageTest extends BrowserTest {
 
     public static final String WORKING_GROUPS_PATH = "/working-groups/";

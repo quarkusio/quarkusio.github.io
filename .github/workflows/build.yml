@@ -67,22 +67,24 @@ jobs:
             echo "include_versions=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn -B test-compile exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+
       - name: Build with Maven
         run: |
           export QUARKUS_ROQ_GENERATOR_BATCH=true
           # unlike production, the preview shows future-dated posts so reviewers can check them
           export SITE_FUTURE=true
+          PROFILE_ARG=""
           if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
             export QUARKUS_PROFILE=only-latest-guides
+            # QUARKUS_PROFILE does not reach @QuarkusTest, so the tests get the profile separately
+            PROFILE_ARG="-Dquarkus.test.profile=test,only-latest-guides"
           fi
-          mvn -B package quarkus:run -DskipTests
-
-      - name: Compile tests
-        run: mvn -B test-compile
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+          mvn -B package quarkus:run $PROFILE_ARG
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
       - uses: jbangdev/setup-jbang@main
 
@@ -91,8 +93,10 @@ jobs:
           jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
           jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 &
 
+      # Tests that start their own site (@RoqAndRoll) generate it in-process. They do not need the
+      # numbered guide versions, which would need most of the default heap to generate.
       - name: Run smoke tests
-        run: mvn -B test -Dtest.url=http://localhost:8090
+        run: mvn -B test -Pfullsite -Dquarkus.test.profile=test,only-latest-guides
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
@@ -226,7 +230,11 @@ jobs:
           if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
             EXCLUDE_ARG=""
           fi
-          mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
+          PROFILE_ARG=""
+          if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
+            PROFILE_ARG="-Dquarkus.test.profile=test,only-latest-guides"
+          fi
+          mvn -B test -Pe2e $PROFILE_ARG \
             -Dtest.crawl.check-external=false \
             $EXCLUDE_ARG \
             $CHANGED_PATHS_ARG

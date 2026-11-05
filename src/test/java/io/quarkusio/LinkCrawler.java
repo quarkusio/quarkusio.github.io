@@ -9,11 +9,6 @@ import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.Route;
 import com.microsoft.playwright.options.WaitUntilState;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
 
 import java.io.IOException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,9 +40,34 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
-@Tag("e2e")
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class LinkCrawlerTest extends BrowserTest {
+/**
+ * Crawls a served site, checking its links, images and fragment anchors. Used by the link
+ * crawler tests, which differ in where the site comes from.
+ */
+final class LinkCrawler implements AutoCloseable {
+
+    private final Playwright playwright;
+    private final Browser browser;
+    private final String baseUrl;
+
+    /** @param siteUrl the root URL of the site to crawl, with or without a trailing slash */
+    LinkCrawler(String siteUrl) {
+        String url = siteUrl;
+        if (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        baseUrl = url;
+        playwright = Playwright.create();
+        browser = playwright.chromium().launch(
+                new BrowserType.LaunchOptions().setHeadless(true));
+    }
+
+    @Override
+    public void close() {
+        browser.close();
+        playwright.close();
+    }
+
 
     private static final int DEFAULT_MAX_PAGES = Integer.MAX_VALUE;
     private static final int DEFAULT_THREADS = 16;
@@ -225,16 +245,6 @@ public class LinkCrawlerTest extends BrowserTest {
 
     private CrawlResults crawlResults;
 
-    @BeforeEach
-    @Override
-    void createContext() {
-    }
-
-    @AfterEach
-    @Override
-    void closeContext() {
-    }
-
     private synchronized CrawlResults getCrawlResults() throws InterruptedException {
         if (crawlResults != null) {
             return crawlResults;
@@ -243,7 +253,6 @@ public class LinkCrawlerTest extends BrowserTest {
         return crawlResults;
     }
 
-    @Test
     void crawlAndCheckLinks() throws InterruptedException {
         CrawlResults results = getCrawlResults();
 
@@ -302,7 +311,7 @@ public class LinkCrawlerTest extends BrowserTest {
     }
 
     // Check if a broken link is from old content (old newsletter or blog post)
-    private static boolean isFromOldContent(String referrer, Map<String, java.time.LocalDate> publishDates) {
+    private boolean isFromOldContent(String referrer, Map<String, java.time.LocalDate> publishDates) {
         if (referrer == null) {
             return false;
         }
@@ -337,11 +346,11 @@ public class LinkCrawlerTest extends BrowserTest {
         return false;
     }
 
-    private static String stripHost(String url) {
+    private String stripHost(String url) {
         return url.startsWith(baseUrl) ? url.substring(baseUrl.length()) : url;
     }
 
-    private static String normalizePath(String url) {
+    private String normalizePath(String url) {
         String path = stripHost(url);
         if (path.length() > 1 && path.endsWith("/")) {
             path = path.substring(0, path.length() - 1);
@@ -349,7 +358,6 @@ public class LinkCrawlerTest extends BrowserTest {
         return path;
     }
 
-    @Test
     void crawlAndCheckImages() throws InterruptedException {
         CrawlResults results = getCrawlResults();
 
@@ -360,7 +368,6 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
-    @Test
     void crawlAndCheckFragmentAnchors() throws InterruptedException {
         CrawlResults results = getCrawlResults();
 
@@ -1413,7 +1420,7 @@ public class LinkCrawlerTest extends BrowserTest {
      * Extract the publish date from a blog post or newsletter page and store it in the map.
      * The date is extracted from the page's metadata or structure.
      */
-    private static void extractPublishDate(Page page, String normalizedUrl, Map<String, java.time.LocalDate> publishDates) {
+    private void extractPublishDate(Page page, String normalizedUrl, Map<String, java.time.LocalDate> publishDates) {
         String path = stripHost(normalizedUrl);
 
         // Check if it's a blog post or newsletter
@@ -1474,7 +1481,7 @@ public class LinkCrawlerTest extends BrowserTest {
         }
     }
 
-    private static boolean isOldBlogPost(String path, Map<String, java.time.LocalDate> publishDates) {
+    private boolean isOldBlogPost(String path, Map<String, java.time.LocalDate> publishDates) {
         Integer cutoffMonths = getDatedContentCutoffMonths();
         if (cutoffMonths == null) {
             return false; // No cutoff configured, check all blog posts
