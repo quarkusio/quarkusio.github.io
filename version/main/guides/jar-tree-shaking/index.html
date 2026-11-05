@@ -2164,6 +2164,11 @@
 <li data-level="2"><a href="#module-level-tree-shaking">Module-level tree-shaking</a></li>
 </ul>
 </li>
+<li data-level="1"><a href="#native-builds">Native builds</a>
+<ul>
+<li data-level="2"><a href="#graalvm-substitutions">GraalVM substitutions</a></li>
+</ul>
+</li>
 <li data-level="1"><a href="#excluding-artifacts-from-tree-shaking">Excluding artifacts from tree-shaking</a></li>
 <li data-level="1"><a href="#limitations">Limitations</a></li>
 <li data-level="1"><a href="#troubleshooting">Troubleshooting</a></li>
@@ -2313,7 +2318,10 @@ The algorithm runs in several stages:</p>
 <h3 id="root-collection"><a class="anchor" href="#root-collection"></a>Root collection</h3>
 <div class="paragraph">
 <p>The analysis starts by collecting root classes — classes that must be preserved regardless of bytecode references.
-Roots include: the application main class, all generated classes, classes registered for reflection or JNI access, service provider implementations, runtime-initialized classes, classes referenced in <code>META-INF/native-image</code> configuration files, and classes containing GraalVM substitution annotations (<code>@TargetClass</code>, <code>@Substitute</code>).</p>
+Roots include the application main class, all generated classes, classes registered for reflection or JNI access (by extensions or in <code>reflect-config.json</code> and <code>jni-config.json</code> files under <code>META-INF/native-image</code>), and service provider implementations.</p>
+</div>
+<div class="paragraph">
+<p>Building a native executable adds more roots, see <a href="#native-builds">Native builds</a>.</p>
 </div>
 </div>
 <div class="sect2">
@@ -2342,7 +2350,7 @@ The BFS recognizes the following patterns:</p>
 </dd>
 <dt class="hdlist1">Reflection, JNI, and service provider registrations</dt>
 <dd>
-<p>Classes registered by extensions for reflection (<code>ReflectiveClassBuildItem</code>, <code>ReflectiveFieldBuildItem</code>, <code>ReflectiveMethodBuildItem</code>), JNI runtime access (<code>JniRuntimeAccessBuildItem</code>, <code>JniRuntimeAccessFieldBuildItem</code>, <code>JniRuntimeAccessMethodBuildItem</code>), and service providers (<code>ServiceProviderBuildItem</code>) are treated as root classes. Weak reflective registrations are excluded — they are only preserved if bytecode analysis independently reaches them. Conditional registrations (<code>ReflectiveClassConditionBuildItem</code>) are evaluated to a fixed point: a conditionally registered class becomes a root only when its condition type is reachable.</p>
+<p>Classes registered by extensions for reflection (<code>ReflectiveClassBuildItem</code>, <code>ReflectiveFieldBuildItem</code>, <code>ReflectiveMethodBuildItem</code>), JNI runtime access (<code>JniRuntimeAccessBuildItem</code>, <code>JniRuntimeAccessFieldBuildItem</code>, <code>JniRuntimeAccessMethodBuildItem</code>), and service providers (<code>ServiceProviderBuildItem</code>) are treated as root classes, see <a href="#root-collection">Root collection</a>. Weak reflective registrations are excluded — they are only preserved if bytecode analysis independently reaches them. Conditional registrations (<code>ReflectiveClassConditionBuildItem</code>) are evaluated to a fixed point: a conditionally registered class becomes a root only when its condition type is reachable.</p>
 </dd>
 <dt class="hdlist1">String constants</dt>
 <dd>
@@ -2443,6 +2451,68 @@ Packages left with no content are removed from the module descriptor, together w
 <p>The module tree-shaker also performs a graph reachability analysis — a BFS from root modules (the application module and boot modules) through the dependency graph.
 Modules that are not reachable from any root but still contain reachable classes are <strong>not</strong> removed, since they may be accessed via reflection, service loading, or from automatic modules without explicit <code>requires</code> directives.
 A warning is logged for such modules to help diagnose missing dependency declarations.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="native-builds"><a class="anchor" href="#native-builds"></a>Native builds</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>When tree-shaking is enabled for a native build, it applies to the JARs passed to <code>native-image</code>, including those produced with <code>quarkus.native.sources-only=true</code>.
+<code>native-image</code> performs its own reachability analysis and only includes reachable code in the executable, so tree-shaking the JARs is not expected to make the native executable smaller.</p>
+</div>
+<div class="paragraph">
+<p>In addition to the <a href="#root-collection">roots of all builds</a>, the tree-shaker keeps the following classes when building a native executable:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>GraalVM Features: <code>--features</code> arguments in <code>native-image.properties</code> files and Features registered by extensions. <code>native-image</code> loads them.</p>
+</li>
+<li>
+<p>Classes named in class initialization settings: <code>--initialize-at-run-time</code> and <code>--initialize-at-build-time</code> arguments in <code>native-image.properties</code> files, and runtime-initialized classes registered by extensions.
+These settings don&#8217;t make <code>native-image</code> include a class, but the tree-shaker currently keeps the classes they name.</p>
+</li>
+<li>
+<p>Security providers registered by extensions, which <code>native-image</code> fails to build without.</p>
+</li>
+<li>
+<p>Classes referenced by classes that extensions generate only for <code>native-image</code>, such as generated GraalVM Features.</p>
+</li>
+<li>
+<p>Classes referenced by predefined classes, i.e. classes defined at runtime from bytecode listed in <code>predefined-classes-config.json</code>.</p>
+</li>
+<li>
+<p>GraalVM substitutions, as described below.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>These roots are not considered for JVM builds, so a JVM build may remove classes that a native build of the same application keeps.</p>
+</div>
+<div class="sect2">
+<h3 id="graalvm-substitutions"><a class="anchor" href="#graalvm-substitutions"></a>GraalVM substitutions</h3>
+<div class="paragraph">
+<p><code>native-image</code> discovers substitution classes (<code>@TargetClass</code>), in dependencies or in the application, by scanning the class path, and fails if a substitution&#8217;s target class is missing.
+So a substitution class is kept when its target class is kept, and its target class is kept when the substitution class is kept:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A substitution whose target is always present (a JDK or GraalVM class, an application class, or a class of an artifact excluded from tree-shaking) is always kept.</p>
+</li>
+<li>
+<p>A substitution whose target is not on the class path at all is removed.</p>
+</li>
+<li>
+<p>Substitutions whose target is computed by a <code>classNameProvider</code>, and other classes using GraalVM substitution annotations, are always kept.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>For a target given as an <code>innerClass</code>, <code>native-image</code> looks it up among the declared classes of the enclosing classes.
+So when such a substitution is kept, the enclosing classes and all their member classes are kept loadable: together with their superclasses and interfaces, but without the classes only their code references.</p>
 </div>
 </div>
 </div>
