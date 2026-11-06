@@ -45,7 +45,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - Whether this is an LTS release (published releases)
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq_eol`, `ibm_eol`, `herodevs_eol` - Commercial EOL dates (herodevs_eol can be a date or string like "nes")
+- `rhbq`, `ibm`, `herodevs` - Per-provider blocks with `release_date` and `eol_date` (herodevs `eol_date` can be a date or string like "nes")
 - `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
 
 ## Tests

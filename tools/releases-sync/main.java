@@ -45,6 +45,8 @@ import java.util.stream.Collectors;
 @CommandLine.Command(name = "sync-releases", mixinStandardHelpOptions = true)
 public class main implements Callable<Integer> {
 
+    private static final List<String> PROVIDERS = List.of("rhbq", "ibm", "herodevs");
+
     @ConfigProperty(name = "GITHUB_TOKEN")
     String token;
 
@@ -186,21 +188,28 @@ public class main implements Callable<Integer> {
         release.eolDate = parseDate(releaseMap.get("eol_date"));
         release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
         release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
-        release.rhbqEol = parseDate(releaseMap.get("rhbq_eol"));
-        release.ibmEol = parseDate(releaseMap.get("ibm_eol"));
 
-        // Parse herodevs_eol - can be a date or string like "nes"
-        Object herodevsEolValue = releaseMap.get("herodevs_eol");
-        if (herodevsEolValue instanceof String) {
-            String strValue = (String) herodevsEolValue;
-            // Try to parse as date first, if it fails keep as string
-            try {
-                release.herodevsEol = LocalDate.parse(strValue);
-            } catch (Exception e) {
-                release.herodevsEol = strValue;  // Keep as string (e.g., "nes")
+        // Parse per-provider blocks (rhbq, ibm, herodevs), each with release_date / eol_date.
+        // eol_date for herodevs can be a date or a string like "nes".
+        for (String provider : PROVIDERS) {
+            Object block = releaseMap.get(provider);
+            if (block instanceof Map<?, ?> blockMap) {
+                Map<String, Object> parsed = new LinkedHashMap<>();
+                for (String key : List.of("release_date", "eol_date")) {
+                    Object value = blockMap.get(key);
+                    if (value instanceof String strValue) {
+                        // Try to parse as date first, if it fails keep as string (e.g., "nes")
+                        try {
+                            parsed.put(key, LocalDate.parse(strValue));
+                        } catch (Exception e) {
+                            parsed.put(key, strValue);
+                        }
+                    } else if (value != null) {
+                        parsed.put(key, parseDate(value));
+                    }
+                }
+                release.providers.put(provider, parsed);
             }
-        } else {
-            release.herodevsEol = parseDate(herodevsEolValue);
         }
 
         return release;
@@ -732,9 +741,7 @@ public class main implements Callable<Integer> {
             release.eolDate = existing.eolDate;
             release.hasExplicitEolDate = existing.hasExplicitEolDate;
             release.link = existing.link;
-            release.rhbqEol = existing.rhbqEol;
-            release.ibmEol = existing.ibmEol;
-            release.herodevsEol = existing.herodevsEol;
+            release.providers = existing.providers;
         } else {
             release.lts = false;
         }
@@ -992,20 +999,14 @@ public class main implements Callable<Integer> {
             map.put("link", release.link);
         }
 
-        if (release.rhbqEol != null) {
-            map.put("rhbq_eol", new DateScalar(toDateStr(release.rhbqEol)));
-        }
-
-        if (release.ibmEol != null) {
-            map.put("ibm_eol", new DateScalar(toDateStr(release.ibmEol)));
-        }
-
-        if (release.herodevsEol != null) {
-            if (release.herodevsEol instanceof LocalDate) {
-                map.put("herodevs_eol", new DateScalar(toDateStr((LocalDate) release.herodevsEol)));
-            } else if (release.herodevsEol instanceof String) {
-                map.put("herodevs_eol", release.herodevsEol);  // Keep as string (e.g., "nes")
+        for (Map.Entry<String, Map<String, Object>> provider : release.providers.entrySet()) {
+            Map<String, Object> block = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> field : provider.getValue().entrySet()) {
+                Object value = field.getValue();
+                // Dates are written as plain YAML dates, other values (e.g., "nes") are kept as strings
+                block.put(field.getKey(), value instanceof LocalDate date ? new DateScalar(toDateStr(date)) : value);
             }
+            map.put(provider.getKey(), block);
         }
 
         return map;
@@ -1029,9 +1030,8 @@ public class main implements Callable<Integer> {
         public String latestPatch;
         public LocalDate latestPatchDate;
         public String link;
-        public LocalDate rhbqEol;
-        public LocalDate ibmEol;
-        public Object herodevsEol;  // Can be a date or string like "nes"
+        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date
+        public Map<String, Map<String, Object>> providers = new LinkedHashMap<>();
         public Boolean upcoming;
         public Boolean proposal;  // Upcoming release marked "(Proposal)" in the wiki
     }
