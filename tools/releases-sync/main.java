@@ -3,8 +3,15 @@
 //DEPS io.quarkus.platform:quarkus-bom:3.36.3@pom
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-config-yaml
+//DEPS io.quarkus:quarkus-rest-client
+//DEPS io.quarkus:quarkus-smallrye-fault-tolerance
+//Q:CONFIG quarkus.rest-client.connect-timeout=10000
+//Q:CONFIG quarkus.rest-client.read-timeout=30000
 //DEPS org.yaml:snakeyaml:2.2
+//DEPS org.apache.maven:maven-artifact:3.9.9
 //SOURCES WikiReleasePlanning.java
+//SOURCES EnterpriseReleaseDates.java
+//SOURCES MavenRepositories.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
@@ -13,6 +20,7 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
 import jakarta.json.JsonValue;
+import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -49,6 +57,9 @@ public class main implements Callable<Integer> {
 
     @ConfigProperty(name = "GITHUB_TOKEN")
     String token;
+
+    @Inject
+    MavenRepositories mavenRepositories;
 
     @ConfigProperty(name = "RELEASES_ORG", defaultValue = "quarkusio")
     String org;
@@ -109,6 +120,9 @@ public class main implements Callable<Integer> {
 
             // Process and merge data
             ReleaseData updatedData = processReleases(existingData, githubReleases, upcomingReleases, wikiUpcoming);
+            applyEnterpriseReleaseDates(updatedData, "rhbq", mavenRepositories::rhbqDates);
+            applyEnterpriseReleaseDates(updatedData, "ibm", mavenRepositories::ibmDates);
+            validateEnterpriseReleaseDates(updatedData);
             Log.infof("🔄 Processed into %d release entries", updatedData.releases.size());
 
             // Generate YAML output
@@ -334,6 +348,62 @@ public class main implements Callable<Integer> {
             return release;
         }
         return null;
+    }
+
+    /**
+     * Fills in the provider's release_date for published releases that don't have one yet. A date, once
+     * known, is never looked up again, so a normal run with nothing new makes no requests to the provider.
+     * A provider that can't be reached just leaves the gaps for the next run.
+     */
+    private void applyEnterpriseReleaseDates(ReleaseData data, String provider,
+                                             java.util.function.Function<Set<String>, Map<String, LocalDate>> lookup) {
+        Set<String> wanted = data.releases.stream()
+                .filter(r -> !Boolean.TRUE.equals(r.upcoming))
+                .filter(r -> r.providers.get(provider) == null || r.providers.get(provider).get("release_date") == null)
+                .map(r -> r.version)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, LocalDate> dates = lookup.apply(wanted);
+        Log.infof("Looked for %d %s release dates, found %d", wanted.size(), provider, dates.size());
+        for (Release release : data.releases) {
+            LocalDate date = dates.get(release.version);
+            if (date == null || !wanted.contains(release.version)) {
+                continue;
+            }
+            Optional<String> problem = EnterpriseReleaseDates.checkNotBeforeCommunity(
+                    provider, release.version, release.releaseDate, date);
+            if (problem.isPresent()) {
+                Log.warnf("Ignoring scraped date: %s", problem.get());
+                continue;
+            }
+            Map<String, Object> block = new LinkedHashMap<>();
+            block.put("release_date", date);  // first, so the YAML reads release_date then eol_date
+            Map<String, Object> existing = release.providers.get(provider);
+            if (existing != null) {
+                existing.forEach(block::putIfAbsent);
+            }
+            release.providers.put(provider, block);
+        }
+    }
+
+    /**
+     * Fails the run, before anything is written, if any enterprise release_date (scraped or hand-edited)
+     * is earlier than the community release_date of the same minor.
+     */
+    private void validateEnterpriseReleaseDates(ReleaseData data) {
+        List<String> problems = new ArrayList<>();
+        for (Release release : data.releases) {
+            release.providers.forEach((provider, block) -> {
+                if (block.get("release_date") instanceof LocalDate date) {
+                    EnterpriseReleaseDates.checkNotBeforeCommunity(provider, release.version, release.releaseDate, date)
+                            .ifPresent(problems::add);
+                }
+            });
+        }
+        problems.forEach(problem -> Log.errorf("Inconsistent release dates: %s", problem));
+        if (!problems.isEmpty()) {
+            throw new IllegalStateException(problems.size() + " enterprise release date(s) are before the community "
+                    + "release date; first: " + problems.get(0));
+        }
     }
 
     private List<UpcomingRelease> fetchWikiUpcoming(List<GitHubRelease> githubReleases) {
@@ -692,6 +762,11 @@ public class main implements Callable<Integer> {
         return VERSION_PATTERN.matcher(version).find();
     }
 
+    // The leading numbers are read with a regex rather than Maven's DefaultArtifactVersion, because that
+    // only understands x.y.z[-qualifier]. Quarkus also uses a fourth number for some patch releases
+    // (e.g. "3.40.1.1"), which it can't parse: it reports 0.0.0 with the whole string as the qualifier.
+    // ComparableVersion (see compareVersions) handles such versions fine for ordering, but doesn't expose
+    // the individual numbers.
     private String getMinorVersion(String version) {
         Matcher matcher = VERSION_PATTERN.matcher(version);
         if (matcher.find()) {
@@ -701,24 +776,7 @@ public class main implements Callable<Integer> {
     }
 
     private int compareVersions(String v1, String v2) {
-        Matcher m1 = VERSION_PATTERN.matcher(v1);
-        Matcher m2 = VERSION_PATTERN.matcher(v2);
-        String clean1 = m1.find() ? v1.substring(m1.start(), m1.end()) : v1;
-        String clean2 = m2.find() ? v2.substring(m2.start(), m2.end()) : v2;
-
-        String[] parts1 = clean1.split("\\.");
-        String[] parts2 = clean2.split("\\.");
-
-        int maxLength = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < maxLength; i++) {
-            int part1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int part2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-
-            if (part1 != part2) {
-                return Integer.compare(part1, part2);
-            }
-        }
-        return 0;
+        return new ComparableVersion(v1).compareTo(new ComparableVersion(v2));
     }
 
     private Release createProcessedRelease(String minorVersion, GitHubRelease earliest, GitHubRelease latest, Release existing) {
