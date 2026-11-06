@@ -2,7 +2,7 @@ package io.quarkusio.releases;
 
 import java.time.LocalDate;
 
-/** herodevs_eol in the data is either a date or the string "nes" (never-ending support). */
+/** herodevs eol_date in the data is either a date or the string "nes" (never-ending support). */
 public record HeroDevsEol(LocalDate date) {
 
     public static final HeroDevsEol NES = new HeroDevsEol(null);

@@ -15,8 +15,12 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
     public static Release from(Releases.Entry e) {
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
                 e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
-                date(e.rhbqEol()), date(e.ibmEol()),
-                e.herodevsEol() == null ? null : HeroDevsEol.parse(e.herodevsEol()));
+                date(eolDate(e.rhbq())), date(eolDate(e.ibm())),
+                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())));
+    }
+
+    private static String eolDate(Releases.ProviderDates dates) {
+        return dates == null ? null : dates.eolDate();
     }
 
     private static LocalDate date(String value) {

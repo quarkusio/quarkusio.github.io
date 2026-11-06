@@ -78,9 +78,13 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     public record EolSupport(String name, String url, String description) {
     }
 
-    /** One release as written in the YAML: dates are yyyy-MM-dd strings, herodevs_eol may be "nes". */
+    /** One provider's release and eol dates: yyyy-MM-dd string or "nes". */
+    public record ProviderDates(String releaseDate, String eolDate) {
+    }
+
+    /** One release as written in the YAML: dates are yyyy-MM-dd strings. */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, String latestPatch, String latestPatchDate, String link, String rhbqEol,
-            String ibmEol, String herodevsEol) {
+            boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
+            ProviderDates rhbq, ProviderDates ibm, ProviderDates herodevs) {
     }
 }
