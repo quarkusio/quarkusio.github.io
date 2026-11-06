@@ -33,6 +33,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `latest_patch` - Latest patch version
 - `latest_patch_date` - Date of latest patch
 - `release_date` - Date of first release in this minor (published releases only)
+- `rhbq.release_date`, `ibm.release_date` - When the minor first appeared in the Red Hat / IBM Maven repository (publish date of the earliest micro build of `quarkus-bom`, not an announced GA date). The provider block is created if the repository has the minor; its `eol_date` stays hand-edited. A date, once set, is never looked up or overwritten, so routine runs make no requests to these servers (the IBM one is rate limited). When a lookup is needed it uses Quarkus REST Client interfaces (`MavenRepositories`) with SmallRye Fault Tolerance: requests are sequential and paced, transient failures (429, 5xx, I/O errors) are retried twice with exponential backoff, and a circuit breaker then stops all further requests to that server for the run; the gaps are filled by a later run. An enterprise `release_date` earlier than the community one is impossible: a scraped one is ignored with a warning, and the run fails before writing if any (including hand-edited) date is inconsistent
 - `planned_date` - For upcoming releases: the planned Platform release date from the wiki
 - `upcoming` - Set for releases listed as upcoming in the wiki; removed once the release is published
 - `lts` - For upcoming releases only, taken from the wiki heading
@@ -45,7 +46,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - Whether this is an LTS release (published releases)
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq`, `ibm`, `herodevs` - Per-provider blocks with `release_date` and `eol_date` (herodevs `eol_date` can be a date or string like "nes")
+- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `eol_date` is hand-edited (herodevs `eol_date` can be a date or string like "nes")
 - `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
 
 ## Tests
@@ -55,6 +56,7 @@ The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page
 
 ```bash
 cd tools/releases-sync && jbang WikiReleasePlanningTest.java
+jbang EnterpriseReleaseDatesTest.java
 ```
 
 ## Running locally
