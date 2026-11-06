@@ -166,7 +166,8 @@ public class ReleaseTimelineFactory {
                 lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration().label());
             }
             if (r.lts()) {
-                row.badge("LTS").data("lts", "true");
+                // data only: a visible LTS badge would mislabel the non-LTS stream row
+                row.data("lts", "true");
             }
             row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
         }
