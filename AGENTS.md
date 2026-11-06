@@ -38,7 +38,8 @@ Requires Java 21+. Site is served at http://localhost:8042.
 ## Running Tests
 
 ```sh
-./mvnw test
+./mvnw test                          # unit tests and tests that start the app
+./mvnw test -Pfullsite                       # slower tests that need the full site
 ```
 
 ## Blog Post Conventions
