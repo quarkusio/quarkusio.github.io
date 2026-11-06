@@ -215,18 +215,20 @@ public class ReleaseTimelineFactory {
         row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
                 communityLines(r), r.version());
         if (r.eolDate() != null) {
-            if (later(r.rhbqEol(), r.eolDate())) {
+            if (enterpriseBar(r, r.rhbqReleaseDate(), r.rhbqEol())) {
                 int lane = row.lane("Red Hat");
-                row.segment("enterprise", "rhbq", lane, r.eolDate(), r.rhbqEol(), catalog.providerUrl("rhbq"),
+                LocalDate from = enterpriseStart(r, r.rhbqReleaseDate());
+                row.segment("enterprise", "rhbq", lane, from, r.rhbqEol(), catalog.providerUrl("rhbq"),
                         name + ": Red Hat build of Quarkus",
-                        List.of("Red Hat support until " + DATE.format(r.rhbqEol())), r.version());
+                        enterpriseLines("Red Hat", r.rhbqReleaseDate(), r.rhbqEol()), r.version());
             }
             if (r.ibmEol() != null) {
                 int lane = row.lane("IBM");
-                if (r.ibmEol().isAfter(r.eolDate())) {
-                    row.segment("enterprise", "ibm", lane, r.eolDate(), r.ibmEol(), catalog.providerUrl("ibm"),
+                if (enterpriseBar(r, r.ibmReleaseDate(), r.ibmEol())) {
+                    LocalDate from = enterpriseStart(r, r.ibmReleaseDate());
+                    row.segment("enterprise", "ibm", lane, from, r.ibmEol(), catalog.providerUrl("ibm"),
                             name + ": IBM Enterprise Build of Quarkus",
-                            List.of("IBM support until " + DATE.format(r.ibmEol())), r.version());
+                            enterpriseLines("IBM", r.ibmReleaseDate(), r.ibmEol()), r.version());
                 }
                 LocalDate from = r.ibmEol().isAfter(r.eolDate()) ? r.ibmEol() : r.eolDate();
                 row.segment("nes", "ibm", lane, from, null, catalog.providerUrl("ibm"),
@@ -248,8 +250,33 @@ public class ReleaseTimelineFactory {
         row.add();
     }
 
-    private static boolean later(LocalDate d, LocalDate than) {
-        return d != null && d.isAfter(than);
+    /**
+     * Whether a vendor's bar adds anything to the community bar above it. With a vendor release date the bar
+     * runs from that date to the vendor's end, layered under the community bar, and is dropped only when it
+     * would be identical to it (same start and end). Without one, as before, the bar only covers the time
+     * after community maintenance and is dropped unless the vendor supports the release for longer.
+     */
+    private static boolean enterpriseBar(Release r, LocalDate vendorRelease, LocalDate vendorEnd) {
+        if (vendorEnd == null) {
+            return false;
+        }
+        if (vendorRelease == null) {
+            return vendorEnd.isAfter(r.eolDate());
+        }
+        return !(vendorRelease.equals(r.releaseDate()) && vendorEnd.equals(r.eolDate()));
+    }
+
+    private static LocalDate enterpriseStart(Release r, LocalDate vendorRelease) {
+        return vendorRelease != null ? vendorRelease : r.eolDate();
+    }
+
+    private static List<String> enterpriseLines(String vendor, LocalDate release, LocalDate end) {
+        List<String> lines = new ArrayList<>();
+        if (release != null) {
+            lines.add(vendor + " release " + DATE.format(release));
+        }
+        lines.add(vendor + " support until " + DATE.format(end));
+        return lines;
     }
 
     private String communityHref(Release r, LocalDate today) {

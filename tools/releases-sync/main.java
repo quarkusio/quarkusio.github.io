@@ -4,6 +4,7 @@
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-config-yaml
 //DEPS org.yaml:snakeyaml:2.2
+//SOURCES WikiReleasePlanning.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
@@ -43,6 +44,8 @@ import java.util.stream.Collectors;
 
 @CommandLine.Command(name = "sync-releases", mixinStandardHelpOptions = true)
 public class main implements Callable<Integer> {
+
+    private static final List<String> PROVIDERS = List.of("rhbq", "ibm", "herodevs");
 
     @ConfigProperty(name = "GITHUB_TOKEN")
     String token;
@@ -101,8 +104,11 @@ public class main implements Callable<Integer> {
                 }
             }
 
+            // The release planning wiki is authoritative for upcoming releases
+            List<UpcomingRelease> wikiUpcoming = predictUpcoming ? fetchWikiUpcoming(githubReleases) : List.of();
+
             // Process and merge data
-            ReleaseData updatedData = processReleases(existingData, githubReleases, upcomingReleases);
+            ReleaseData updatedData = processReleases(existingData, githubReleases, upcomingReleases, wikiUpcoming);
             Log.infof("🔄 Processed into %d release entries", updatedData.releases.size());
 
             // Generate YAML output
@@ -172,6 +178,7 @@ public class main implements Callable<Integer> {
         release.version = (String) releaseMap.get("version");
         release.lts = (Boolean) releaseMap.getOrDefault("lts", false);
         release.upcoming = (Boolean) releaseMap.get("upcoming");
+        release.proposal = (Boolean) releaseMap.get("proposal");
         release.latestPatch = (String) releaseMap.get("latest_patch");
         release.link = (String) releaseMap.get("link");
 
@@ -181,21 +188,28 @@ public class main implements Callable<Integer> {
         release.eolDate = parseDate(releaseMap.get("eol_date"));
         release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
         release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
-        release.rhbqEol = parseDate(releaseMap.get("rhbq_eol"));
-        release.ibmEol = parseDate(releaseMap.get("ibm_eol"));
 
-        // Parse herodevs_eol - can be a date or string like "nes"
-        Object herodevsEolValue = releaseMap.get("herodevs_eol");
-        if (herodevsEolValue instanceof String) {
-            String strValue = (String) herodevsEolValue;
-            // Try to parse as date first, if it fails keep as string
-            try {
-                release.herodevsEol = LocalDate.parse(strValue);
-            } catch (Exception e) {
-                release.herodevsEol = strValue;  // Keep as string (e.g., "nes")
+        // Parse per-provider blocks (rhbq, ibm, herodevs), each with release_date / eol_date.
+        // eol_date for herodevs can be a date or a string like "nes".
+        for (String provider : PROVIDERS) {
+            Object block = releaseMap.get(provider);
+            if (block instanceof Map<?, ?> blockMap) {
+                Map<String, Object> parsed = new LinkedHashMap<>();
+                for (String key : List.of("release_date", "eol_date")) {
+                    Object value = blockMap.get(key);
+                    if (value instanceof String strValue) {
+                        // Try to parse as date first, if it fails keep as string (e.g., "nes")
+                        try {
+                            parsed.put(key, LocalDate.parse(strValue));
+                        } catch (Exception e) {
+                            parsed.put(key, strValue);
+                        }
+                    } else if (value != null) {
+                        parsed.put(key, parseDate(value));
+                    }
+                }
+                release.providers.put(provider, parsed);
             }
-        } else {
-            release.herodevsEol = parseDate(herodevsEolValue);
         }
 
         return release;
@@ -320,6 +334,42 @@ public class main implements Callable<Integer> {
             return release;
         }
         return null;
+    }
+
+    private List<UpcomingRelease> fetchWikiUpcoming(List<GitHubRelease> githubReleases) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(WikiReleasePlanning.WIKI_URL))
+                    .header("User-Agent", "Quarkus-Website-Release-Sync/1.0")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                Log.warnf("Failed to fetch release planning wiki: HTTP %d", response.statusCode());
+                return List.of();
+            }
+
+            Set<String> published = githubReleases.stream()
+                    .map(r -> getMinorVersion(r.tagName))
+                    .collect(Collectors.toSet());
+            List<WikiReleasePlanning.PlannedRelease> planned = WikiReleasePlanning.parse(response.body(), version -> {
+                // Old releases have no Platform date; only a release that isn't published yet matters
+                if (!published.contains(version)) {
+                    Log.warnf("Release planning wiki lists %s but no Platform release date could be parsed; "
+                            + "keeping any existing entry for it", version);
+                }
+            });
+            List<UpcomingRelease> upcoming = WikiReleasePlanning
+                    .upcoming(planned, LocalDate.now(ZoneOffset.UTC))
+                    .stream()
+                    .map(r -> new UpcomingRelease(r.version(), "wiki", r.platformDate().toString(), r.lts(), r.proposal()))
+                    .collect(Collectors.toList());
+            Log.infof("Found %d upcoming releases in the release planning wiki", upcoming.size());
+            return upcoming;
+        } catch (Exception e) {
+            Log.warnf("Failed to read release planning wiki: %s", e.getMessage());
+            return List.of();
+        }
     }
 
     private List<UpcomingRelease> predictUpcomingReleases(List<GitHubRelease> existingReleases,
@@ -520,7 +570,8 @@ public class main implements Callable<Integer> {
         return milestone;
     }
 
-    private ReleaseData processReleases(ReleaseData existingData, List<GitHubRelease> githubReleases, List<UpcomingRelease> upcomingReleases) {
+    private ReleaseData processReleases(ReleaseData existingData, List<GitHubRelease> githubReleases,
+                                         List<UpcomingRelease> upcomingReleases, List<UpcomingRelease> wikiUpcoming) {
         // Group GitHub releases by minor version
         Map<String, List<GitHubRelease>> releasesByMinor = githubReleases.stream()
                 .filter(r -> r.tagName != null && isValidVersion(r.tagName))
@@ -549,32 +600,45 @@ public class main implements Callable<Integer> {
             processedReleases.add(processedRelease);
         }
 
-        // Handle existing upcoming releases with smart logic
+        // Upcoming releases from the planning wiki replace the existing entry for the same version
+        List<UpcomingRelease> wikiPending = wikiUpcoming.stream()
+                .filter(u -> !releasesByMinor.containsKey(u.version))
+                .collect(Collectors.toList());
+        Set<String> wikiVersions = wikiPending.stream().map(u -> u.version).collect(Collectors.toSet());
+
+        // Other existing upcoming releases are kept as manually curated (e.g. the wiki date couldn't be parsed)
         Set<String> manualUpcomingVersions = new HashSet<>();
         for (Release existing : existingData.releases) {
-            if (Boolean.TRUE.equals(existing.upcoming)) {
-                if (releasesByMinor.containsKey(existing.version)) {
-                    // Upcoming release now exists - auto-update it to actual release
-                    Log.infof("🔄 Auto-updating upcoming release %s to actual release (now published)", existing.version);
-                    // The actual release is already processed above, so we don't add the upcoming version
-                } else {
-                    // Keep existing upcoming release and mark as manually curated
-                    processedReleases.add(existing);
-                    manualUpcomingVersions.add(existing.version);
-                    Log.infof("✋ Preserving manually curated upcoming release: %s", existing.version);
-                }
+            // Compare by minor version so a hand-edited "4.0.0" is covered by the wiki's "4.0"
+            String existingMinor = getMinorVersion(existing.version);
+            if (!Boolean.TRUE.equals(existing.upcoming) || wikiVersions.contains(existingMinor)) {
+                continue;
+            }
+            if (releasesByMinor.containsKey(existingMinor)) {
+                // Upcoming release now exists - auto-update it to actual release
+                Log.infof("🔄 Auto-updating upcoming release %s to actual release (now published)", existing.version);
+                // The actual release is already processed above, so we don't add the upcoming version
+            } else {
+                processedReleases.add(existing);
+                manualUpcomingVersions.add(existing.version);
+                Log.infof("✋ Preserving manually curated upcoming release: %s", existing.version);
             }
         }
 
-        // Find latest released version to filter out stale predictions
-        String latestReleasedVersion = processedReleases.stream()
-                .filter(r -> !Boolean.TRUE.equals(r.upcoming))
-                .map(r -> r.version)
-                .max(this::compareVersions)
-                .orElse(null);
+        for (UpcomingRelease wiki : wikiPending) {
+            processedReleases.add(createUpcomingRelease(wiki));
+            Log.infof("🆕 Added upcoming release from wiki: %s (%s)", wiki.version, wiki.dueDate);
+        }
 
-        // Add the single next upcoming release if no manual upcoming releases exist
-        if (manualUpcomingVersions.isEmpty()) {
+        // Nothing upcoming in the wiki or curated by hand: fall back to predicting the next release
+        if (wikiPending.isEmpty() && manualUpcomingVersions.isEmpty()) {
+            // Find latest released version to filter out stale predictions
+            String latestReleasedVersion = processedReleases.stream()
+                    .filter(r -> !Boolean.TRUE.equals(r.upcoming))
+                    .map(r -> r.version)
+                    .max(this::compareVersions)
+                    .orElse(null);
+
             UpcomingRelease nextUpcoming = upcomingReleases.stream()
                     .filter(u -> latestReleasedVersion == null || compareVersions(u.version, latestReleasedVersion) > 0)
                     .filter(u -> !releasesByMinor.containsKey(u.version))
@@ -586,7 +650,7 @@ public class main implements Callable<Integer> {
                 processedReleases.add(upcomingRelease);
                 Log.infof("🆕 Added predicted upcoming release: %s (source: %s)", nextUpcoming.version, nextUpcoming.source);
             }
-        } else {
+        } else if (wikiPending.isEmpty()) {
             Log.infof("📝 Skipping prediction - manual upcoming releases found: %s", manualUpcomingVersions);
         }
 
@@ -677,9 +741,7 @@ public class main implements Callable<Integer> {
             release.eolDate = existing.eolDate;
             release.hasExplicitEolDate = existing.hasExplicitEolDate;
             release.link = existing.link;
-            release.rhbqEol = existing.rhbqEol;
-            release.ibmEol = existing.ibmEol;
-            release.herodevsEol = existing.herodevsEol;
+            release.providers = existing.providers;
         } else {
             release.lts = false;
         }
@@ -690,8 +752,9 @@ public class main implements Callable<Integer> {
     private Release createUpcomingRelease(UpcomingRelease upcoming) {
         Release release = new Release();
         release.version = upcoming.version;
-        release.lts = false;  // Default to non-LTS for upcoming releases
+        release.lts = upcoming.lts;
         release.upcoming = true;
+        release.proposal = upcoming.proposal ? true : null;
 
         // Set planned release date if available (release_date is only for published releases)
         if (upcoming.dueDate != null) {
@@ -919,6 +982,9 @@ public class main implements Callable<Integer> {
 
         if (Boolean.TRUE.equals(release.upcoming)) {
             map.put("upcoming", true);
+            if (Boolean.TRUE.equals(release.proposal)) {
+                map.put("proposal", true);
+            }
         }
 
         if (release.latestPatch != null) {
@@ -933,20 +999,14 @@ public class main implements Callable<Integer> {
             map.put("link", release.link);
         }
 
-        if (release.rhbqEol != null) {
-            map.put("rhbq_eol", new DateScalar(toDateStr(release.rhbqEol)));
-        }
-
-        if (release.ibmEol != null) {
-            map.put("ibm_eol", new DateScalar(toDateStr(release.ibmEol)));
-        }
-
-        if (release.herodevsEol != null) {
-            if (release.herodevsEol instanceof LocalDate) {
-                map.put("herodevs_eol", new DateScalar(toDateStr((LocalDate) release.herodevsEol)));
-            } else if (release.herodevsEol instanceof String) {
-                map.put("herodevs_eol", release.herodevsEol);  // Keep as string (e.g., "nes")
+        for (Map.Entry<String, Map<String, Object>> provider : release.providers.entrySet()) {
+            Map<String, Object> block = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> field : provider.getValue().entrySet()) {
+                Object value = field.getValue();
+                // Dates are written as plain YAML dates, other values (e.g., "nes") are kept as strings
+                block.put(field.getKey(), value instanceof LocalDate date ? new DateScalar(toDateStr(date)) : value);
             }
+            map.put(provider.getKey(), block);
         }
 
         return map;
@@ -970,10 +1030,10 @@ public class main implements Callable<Integer> {
         public String latestPatch;
         public LocalDate latestPatchDate;
         public String link;
-        public LocalDate rhbqEol;
-        public LocalDate ibmEol;
-        public Object herodevsEol;  // Can be a date or string like "nes"
+        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date
+        public Map<String, Map<String, Object>> providers = new LinkedHashMap<>();
         public Boolean upcoming;
+        public Boolean proposal;  // Upcoming release marked "(Proposal)" in the wiki
     }
 
     public static class GitHubRelease {
@@ -985,13 +1045,21 @@ public class main implements Callable<Integer> {
 
     public static class UpcomingRelease {
         public String version;
-        public String source;  // "milestone", "prerelease", "cadence"
+        public String source;  // "wiki", "milestone", "prerelease", "cadence"
         public String dueDate; // ISO date string, can be null
+        public boolean lts;    // Only known for "wiki" releases
+        public boolean proposal; // Only known for "wiki" releases
 
         public UpcomingRelease(String version, String source, String dueDate) {
+            this(version, source, dueDate, false, false);
+        }
+
+        public UpcomingRelease(String version, String source, String dueDate, boolean lts, boolean proposal) {
             this.version = version;
             this.source = source;
             this.dueDate = dueDate;
+            this.lts = lts;
+            this.proposal = proposal;
         }
 
         @Override
