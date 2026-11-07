@@ -12,6 +12,9 @@ public final class TimelineBuilder {
     /** Minimum visible bar width, as percent of the range. */
     public static final double MIN_WIDTH_PCT = 0.15;
 
+    /** Slots reserved for lanes that overlap the main bar in time, see {@link RowBuilder#add()}. */
+    private static final int MIN_SLOTS_BEHIND_MAIN = 2;
+
     private final String id;
     private final TimeScale scale;
     private final List<TimelineRow> rows = new ArrayList<>();
@@ -142,10 +145,36 @@ public final class TimelineBuilder {
             return slot;
         }
 
+        /** True if any lane segment is in the same time span as a main-lane one. */
+        private boolean lanesOverlapMain() {
+            for (TimelineSegment lane : segments) {
+                if (lane.lane() == 0) {
+                    continue;
+                }
+                for (TimelineSegment main : segments) {
+                    if (main.lane() == 0 && overlaps(lane, main)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static boolean overlaps(TimelineSegment a, TimelineSegment b) {
+            LocalDate aEnd = a.end() == null ? LocalDate.MAX : a.end();
+            LocalDate bEnd = b.end() == null ? LocalDate.MAX : b.end();
+            return a.start().isBefore(bEnd) && b.start().isBefore(aEnd);
+        }
+
         public TimelineBuilder add() {
             if (!segments.isEmpty() || keepEmptyRows) {
                 int[] slot = packSlots();
                 int n = java.util.Arrays.stream(slot).max().orElse(0);
+                // Lanes running alongside the main bar are drawn behind it, peeking out above and below. Always
+                // reserve two slots so a single lane sits where the first of two would, and shows the same amount.
+                if (n > 0 && lanesOverlapMain()) {
+                    n = Math.max(n, MIN_SLOTS_BEHIND_MAIN);
+                }
                 int laneH = Timeline.MAIN_H;
                 int stack = n == 0 ? 0 : n * laneH + (n - 1) * Timeline.LANE_GAP;
                 int band = Math.max(Timeline.MAIN_H, stack);

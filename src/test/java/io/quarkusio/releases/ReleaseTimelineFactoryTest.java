@@ -33,12 +33,12 @@ class ReleaseTimelineFactoryTest {
                 {"version": "3.39", "release_date": "2026-08-26", "eol_date": "2026-09-30", "lts": false},
                 {"version": "3.38", "release_date": "2026-07-22", "eol_date": "2026-08-26", "lts": false},
                 {"version": "3.33", "release_date": "2026-03-25", "eol_date": "2027-03-25", "lts": true,
-                 "rhbq_eol": "2028-06-30", "ibm_eol": "2028-06-30"},
+                 "rhbq": {"eol_date": "2028-06-30"}, "ibm": {"eol_date": "2028-06-30"}},
                 {"version": "3.20", "release_date": "2025-03-26", "eol_date": "2026-03-28", "lts": true,
-                 "rhbq_eol": "2027-06-30", "herodevs_eol": "nes"},
+                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"eol_date": "nes"}},
                 {"version": "3.50", "release_date": "2026-10-01", "lts": false},
                 {"version": "2.16", "release_date": "2023-01-01", "eol_date": "2023-06-01", "lts": true,
-                 "rhbq_eol": "2023-07-01"},
+                 "rhbq": {"eol_date": "2023-07-01"}},
                 {"version": "0.2", "release_date": "2019-03-01", "eol_date": "2019-03-08", "lts": false}
               ]
             }
@@ -114,8 +114,37 @@ class ReleaseTimelineFactoryTest {
     void enterpriseSegmentOnlyWhenLaterThanCommunity() {
         var catalog = catalogOf("""
                 {"releases": [{"version": "3.1", "release_date": "2026-01-01", "eol_date": "2027-01-01",
-                  "lts": true, "rhbq_eol": "2026-12-01"}]}""");
+                  "lts": true, "rhbq": {"eol_date": "2026-12-01"}}]}""");
         Timeline t = new ReleaseTimelineFactory(catalog).supportView(TODAY);
+        assertEquals(List.of("community"), kinds(row(t, "3.1")));
+    }
+
+    private static Timeline timelineWithRhbq(String rhbq) {
+        var catalog = catalogOf("""
+                {"releases": [{"version": "3.1", "release_date": "2026-01-01", "eol_date": "2027-01-01",
+                  "lts": true, "rhbq": %s}]}""".formatted(rhbq));
+        return new ReleaseTimelineFactory(catalog).supportView(TODAY);
+    }
+
+    @Test
+    void vendorBarRunsFromVendorReleaseDate() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-03-01\", \"eol_date\": \"2027-06-01\"}");
+        assertEquals(List.of("community", "enterprise"), kinds(row(t, "3.1")));
+        TimelineSegment rhbq = row(t, "3.1").segments().get(1);
+        assertEquals(LocalDate.of(2026, 3, 1), rhbq.start());
+        assertEquals(LocalDate.of(2027, 6, 1), rhbq.end());
+        assertTrue(rhbq.details().contains("Red Hat release 01 Mar 2026"));
+    }
+
+    @Test
+    void vendorBarIsKeptWhenItEndsWithinCommunityMaintenance() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-03-01\", \"eol_date\": \"2026-12-01\"}");
+        assertEquals(List.of("community", "enterprise"), kinds(row(t, "3.1")));
+    }
+
+    @Test
+    void vendorBarIsDroppedWhenInlineWithCommunityBar() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-01-01\", \"eol_date\": \"2027-01-01\"}");
         assertEquals(List.of("community"), kinds(row(t, "3.1")));
     }
 

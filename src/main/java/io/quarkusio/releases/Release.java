@@ -10,13 +10,23 @@ import java.util.Objects;
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
         boolean lts, boolean upcoming, String latestPatch, LocalDate latestPatchDate, String link,
-        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol) {
+        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol,
+        LocalDate rhbqReleaseDate, LocalDate ibmReleaseDate) {
 
     public static Release from(Releases.Entry e) {
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
                 e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
-                date(e.rhbqEol()), date(e.ibmEol()),
-                e.herodevsEol() == null ? null : HeroDevsEol.parse(e.herodevsEol()));
+                date(eolDate(e.rhbq())), date(eolDate(e.ibm())),
+                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())),
+                date(releaseDate(e.rhbq())), date(releaseDate(e.ibm())));
+    }
+
+    private static String releaseDate(Releases.ProviderDates dates) {
+        return dates == null ? null : dates.releaseDate();
+    }
+
+    private static String eolDate(Releases.ProviderDates dates) {
+        return dates == null ? null : dates.eolDate();
     }
 
     private static LocalDate date(String value) {
