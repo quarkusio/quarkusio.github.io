@@ -1,0 +1,1601 @@
+---
+layout: post
+title: 'Reactive Messaging on Quarkus'
+date: 2026-11-09
+tags: kafka messaging virtual-threads
+synopsis: 'From channels to virtual threads, with SmallRye and Kafka.'
+author: nicolasduminil
+---
+:imagesdir: /assets/images/posts/reactive-messaging-on-quarkus
+ifdef::env-github,env-browser,env-vscode,env-idea[:imagesdir: ../../../public/assets/images/posts/reactive-messaging-on-quarkus]
+
+== Abstract
+
+This article studies MicroProfile Reactive Messaging and its SmallRye implementation
+through a single application developed in four successive stages. The application
+polls stock quotes, classifies each price movement, and publishes the result,
+first inside one Java virtual machine, then across three services communicating
+through Apache Kafka, and finally toward a fourth service consuming the signals
+on virtual threads. The article
+recalls the specification, describes the contribution of SmallRye, compares the
+reactive style with virtual threads, shows the sequence diagram and code of each
+Maven module, and analyzes the unit and integration tests.
+
+== 1. Introduction
+
+Asynchronous programming on the Java platform suffers from an abundance of opinions.
+One school holds that reactive pipelines are the only respectable way of waiting
+for a network, while another, encouraged by the arrival of virtual threads,
+announces that reactive programming has lost its reason to exist. Both positions
+share the advantage of being simple to state and the disadvantage of being rarely
+accompanied by numbers.
+
+This article adopts a more modest method. It takes one concrete problem and
+implements it several times. The problem is deliberately ordinary. A program
+obtains the price of a stock from the https://finnhub.io[Finnhub] REST API, compares it
+with the previously observed price, derives a signal whose direction is `UP`,
+`DOWN` or `FLAT`, and makes this signal available to its consumers.
+
+The project is organized in four stages, each of which isolates one idea:
+
+[cols=",,,",options="header",]
+|===
+|Stage |Modules |What travels |Where the channels reside
+|1 |`finhub-simple` |bare `Quote` payloads |in memory, one JVM
+|2 |`finhub-msg` |`Message++<++Quote++>++` envelopes |in memory, one JVM
+|3 |`finhub-kafka/++*++` |JSON over Kafka topics |three JVMs and a broker
+|4 |`finhub-kafka-alert` |JSON over Kafka topics, consumed on virtual threads |a fourth JVM and the same broker
+|===
+
+The software versions used throughout are Java 21.0.3, Quarkus 3.40.1.1, SmallRye Reactive Messaging
+4.37.0, Mutiny 3.3.0, MicroProfile Reactive Messaging 3.0 and Kafka clients 4.2.1.
+
+The full code source of the project can be found https://github.com/nicolasduminil/reactive-messaging[here].
+
+== 2. MicroProfile Reactive Messaging
+
+MicroProfile Reactive Messaging is a https://microprofile.io/specifications/reactive-messaging/[Eclipse MicroProfile] specification
+aiming at connecting microservices in an asynchronous and event driven manner,
+based on the https://www.reactive-streams.org/[Reactive Streams] principles.
+
+A chain of synchronous calls couples services in time. When the last service of
+the chain is slow, every preceding service waits, and when it is unavailable,
+the failure travels backwards to the initial caller. The specification states
+its ambition as delivering a way to build systems of microservices that promotes
+both location transparency and temporal decoupling. In plain terms, a component
+should ignore where its collaborators reside, and should also be able to continue
+working when they are momentarily occupied.
+
+The first version of the specification appeared in July 2019, version 2.0.1 in
+September 2021 and version 3.0 in 2022.
+
+=== 2.1 The fundamental concepts
+
+The model rests on four concepts:
+
+[arabic]
+. A channel is a named, opaque destination. It may be internal to the application or mapped to an
+external destination by a connector.
+. A message is an envelope that wraps a payload and carries two asynchronous operations, namely the
+acknowledgment and the negative acknowledgment.
+. A connector is an extension that manages communication with a specific technology, such as Kafka or AMQP.
+. A reactive component is a CDI bean whose methods are annotated with `@Incoming`, `@Outgoing`, or both.
+
+The communication between components uses Reactive Streams, so that back pressure
+belongs to the implementation and remains invisible in ordinary application code.
+The elegance of the model lies in the fact that the wiring is established by name.
+The following method constitutes a complete processor, which consumes a channel
+and feeds another one.
+
+[source,java]
+----
+@Incoming("quotes")
+@Outgoing("signals")
+public PriceSignal evaluate(Quote quote)
+{
+  return evaluator.evaluate(quote);
+}
+----
+
+Nothing in this method reveals whether `quotes` is a list in memory or a Kafka
+topic on another continent. This property of the mentioned method will be
+experimentally demonstrated through the project since it migrates between stages
+with its body unchanged.
+
+=== 2.2 Acknowledgment and its defaults
+
+The specification defines four acknowledgment strategies:
+
+[arabic]
+. `MANUAL`, where the application code invokes `Message.ack()` and the implementation applies nothing
+implicitly.
+. `PRE++_++PROCESSING`, where the message is acknowledged before the method is executed.
+. `POST++_++PROCESSING`, where the message is acknowledged after the method completes or, when data is
+emitted, once that data is itself acknowledged.
+. `NONE`, where the implementation does not acknowledge the incoming message.
+
+The default depends on the method signature, which constitutes the least intuitive
+aspect of the specification. A payload signature such as `void method(...)` defaults
+to `POST++_++PROCESSING`, and an exception thrown by such a method results in a
+negative acknowledgment carrying that exception as its reason. A signature such as
+`Message++<++...++>++ method(Message++<++...++>++)` defaults to `MANUAL`, and an exception thrown
+there does not produce a negative acknowledgment automatically. A developer who
+changes a parameter from a payload to a `Message` has therefore changed the error
+handling of the method, without any visible indication other than a line in the
+specification that very few people read twice.
+
+=== 2.3 Deployment time validation
+
+The specification requires a `DeploymentException` at startup when the topology
+is invalid. Only one method may be annotated with `@Outgoing` for a given channel,
+and a channel without an upstream or a downstream is rejected.
+
+It is equally important to note what the specification omits. It defines no
+delivery guarantee, because that depends upon the broker and the connector. Its
+behavior is defined only for the `@ApplicationScoped` and `@Dependent` scopes.
+Most practical questions concerning partitions, commits or poison messages thus
+find their answers in the implementation, as shown in the next section.
+
+== 3. The SmallRye implementation
+
+SmallRye Reactive Messaging is the implementation used by Quarkus. Its contribution
+comprises three parts.
+
+=== 3.1 Mutiny as the programming model
+
+The specification is expressed in terms of Reactive Streams publishers. SmallRye
+also accepts the two types of https://smallrye.io/smallrye-mutiny/[Mutiny], namely `Uni`, which represents
+at most one asynchronous item, and `Multi`, which represents a stream.
+A producer may consequently be expressed as follows.
+
+[source,java]
+----
+@Outgoing("quotes")
+public Multi<Quote> quotes()
+{
+  return source.stream();
+}
+----
+
+=== 3.2 Extensions beyond the specification
+
+SmallRye relaxes certain constraints through explicit annotations and attributes.
+Among these, `@Merge` allows an incoming method to accept several upstreams, and
+`@Broadcast` allows one producer to feed several consumers. The Kafka connector
+also has a `broadcast` attribute for the same purpose. An application using these
+features gains flexibility and loses portability, which is the customary exchange
+rate in this domain.
+
+=== 3.3 The Kafka connector
+
+The connector supplies the semantics that the specification deliberately left
+open. Three behaviors influenced this project directly:
+
+[arabic]
+. The default commit strategy is `throttled`, which commits the offset following the latest acknowledged
+message in sequence and guarantees at least once delivery even with asynchronous processing.
+. The `failure-strategy` attribute governs the treatment of a negative acknowledgment, with the values
+`fail`, `ignore`, `dead-letter-queue` and `delayed-retry-topic`, the first being the default. This
+project uses `ignore` in section 5.5 and `dead-letter-queue` in section 5.6.
+. The `fail-on-deserialization-failure` attribute, whose default is `true`, governs a record that cannot
+be deserialized. When it is set to `false`, a `null` value is forwarded.
+
+=== 3.4 The integration with Quarkus
+
+Quarkus adds Dev Services, which start a real broker automatically during tests
+by means of Testcontainers, and determines the thread on which each method executes
+according to its signature.
+
+== 4. The reactive style and the virtual thread style
+
+Both styles answer the same question, which is how a server can serve many
+concurrent requests that spend most of their time waiting for the network, while
+a platform thread remains an expensive resource.
+
+The reactive answer avoids waiting altogether. A small number of event loop threads
+execute short callbacks, and the code is expressed as a pipeline of transformations.
+The answer of virtual threads, finalized in Java 21 by JEP 444, renders the waiting
+inexpensive. The code blocks in the most traditional manner, but what blocks is a
+lightweight thread that the JVM parks, releasing its carrier thread for other work.
+
+The two are alternatives, and they do not form a progression in which the second
+supersedes the first. In a messaging application, the comparison takes a particular
+form. The first three stages of this project never block, and their methods run
+in the reactive manner. The fourth stage must block for each message, and it does so
+on virtual threads, as section 5.6 shows.
+
+[cols=",,",options="header",]
+|===
+|Criterion |Mutiny |`@RunOnVirtualThread`
+|Thread serving a message |an event loop, which must remain unblocked |one virtual thread per message
+|Code style |a composed pipeline, each step being a callback |sequential statements and ordinary control flow
+|Error handling |failure operators in the pipeline |`try` and `catch`
+|Back pressure |a part of the model, as in section 5.5 |absent by default, to be provided explicitly
+|Streams |natural, through `Multi` |requires additional constructions
+|Order of the messages |preserved by default |abandoned, as section 5.6 demonstrates
+|Principal hazard |a blocking call stalls every request on that event loop |a `synchronized` block around I/O pins the carrier on JDK 21
+|===
+
+Two remarks qualify this table. First, on a method containing one step only, neither
+style exhibits a readability advantage worthy of the name. The difference becomes
+perceptible with branching, loops and error handling.
+Second, the pinning hazard depends on the Java version. JEP 491, delivered in
+JDK 24, allows virtual threads to hold monitors independently of their carriers,
+which removes pinning caused by `synchronized`. The pinning through native code
+remains however possible. As this project runs on Java 21, the hazard applies
+in full and section 6 tests it accordingly.
+
+== 5. The Maven modules
+
+The project comprises a parent POM and the modules described below, each owing
+its existence to a precise reason. The associated sequence diagrams were written
+in PlantUML, and their sources accompany the project.
+
+=== 5.1 `finhub-common`, the shared library
+
+This module contains the Finnhub client, the domain types and the evaluation logic.
+Since it's a shared module, as its name implies, it doesn't declare any channel
+or binding.
+
+The `client` package contains `FinnhubClient`, a MicroProfile REST client,
+together with its associated DTO, `FinnhubQuote`.
+
+[source,java]
+----
+@RegisterRestClient(configKey = "finnhub")
+public interface FinnhubClient
+{
+  @GET
+  @Path("/quote")
+  Uni<FinnhubQuote> quote(@QueryParam("symbol") String symbol, @QueryParam("token") String token);
+}
+----
+
+A MicroProfile REST client, as implemented by Quarkus, isn't a class, as you
+might expect, but an interface. Its implementation class is dynamically generated
+by Quarkus at build time. As for the associated DTO, `FinnhubQuote`, it's
+a very simple one, having only two properties: `current` holding the stock's
+current price, and `previousClose` which retains the stock's price at the last
+market close.
+
+The package `domain` defines, as its name implies, all our business objects,
+like `Quote`, `Direction`, `QuoteMessage` and `PriceSignal`. They are all simple
+records, except `QuoteMessage`, which is a class implementing `Message++<++Quote++>++`,
+and `Direction`, which is an `enum` having the values `UP`, `DOWN` or
+`FLAT`, to tell whether the associated stock's price is on an upward, downward or stable
+trend. Such a price fluctuation is signaled by sending a message of `PriceSignal`
+type, also a very simple record having as its properties the stock's symbol, its
+new price and the delta expressed as an absolute value and as a percentage.
+
+The class `QuoteMessage`, which listing is reproduced below, deserves a particular
+remark, because its simplicity conceals a trap into which a developer might duly fall.
+
+[source,java]
+----
+public class QuoteMessage implements Message<Quote>
+{
+   private static final CompletionStage<Void> SETTLED = CompletableFuture.completedFuture(null);
+
+   private final Quote payload;
+
+   public QuoteMessage(Quote payload)
+   {
+      this.payload = payload;
+   }
+
+   @Override
+   public Quote getPayload()
+   {
+      return payload;
+   }
+
+   @Override
+   public Supplier<CompletionStage<Void>> getAck()
+   {
+      return () ->
+      {
+         Log.infof("Acknowledgment for %s", payload);
+         return SETTLED;
+      };
+   }
+
+   @Override
+   public Function<Throwable, CompletionStage<Void>> getNack()
+   {
+      return reason ->
+      {
+         Log.infof("Negative acknowledgment for %s, the reason is %s", payload, reason);
+         return SETTLED;
+      };
+   }
+}
+----
+
+This class implements
+`Message++<++Quote++>++` and overrides `getAck()` and `getNack()` in order to log each
+settlement. One could be tempted to complete the acknowledgment callback by
+delegating to `Message.super.ack()`, with the apparently reasonable intention of
+performing the default action. The default `ack()` is, however, specified as
+invoking the supplier returned by `getAck()`, so the callback calls itself until
+the stack overflows. A settlement callback must therefore complete the stage on
+its own, and `QuoteMessageTest`, in this same module, demonstrates it.
+
+[source,java]
+----
+class QuoteMessageTest
+{
+  private static final Quote QUOTE =
+    new Quote("AAPL", new BigDecimal("261.74"), new BigDecimal("259.71"));
+
+  @Test
+  void getPayload_quoteGiven_returnsSameQuote()
+  {
+    assertThat(new QuoteMessage(QUOTE).getPayload()).isSameAs(QUOTE);
+  }
+
+  @Test
+  void ack_defaultCallback_completesWithoutRecursion()
+  {
+    assertThat(new QuoteMessage(QUOTE).ack().toCompletableFuture()).isCompleted();
+  }
+
+  @Test
+  void nack_reasonGiven_completesWithoutRecursion()
+  {
+    assertThat(new QuoteMessage(QUOTE)
+      .nack(new IllegalStateException("downstream refused the quote"))
+      .toCompletableFuture()).isCompleted();
+  }
+
+  @Test
+  void nack_nullReason_throwsIllegalArgument()
+  {
+    assertThatThrownBy(() -> new QuoteMessage(QUOTE).nack(null))
+      .isInstanceOf(IllegalArgumentException.class);
+  }
+}
+----
+
+The `feed` package is responsible for the acquisition of the quotes, and it
+contains two types. `FinnhubConfig` is a type-safe configuration mapping,
+under the `finnhub` prefix the stock's symbol, the API token to be
+used with the FinnHub public API and the polling interval. `QuoteSource` is a
+CDI bean that produces quotes as a reactive stream. It uses the configuration
+described by `FinnubConfig`. The modules that publish quotes, namely `finhub-simple`,
+`finhub-msg` and `finhub-kafka-feed`, consume this stream in an origin agnostic
+way.
+
+[source,java]
+----
+@ConfigMapping(prefix = "finnhub")
+public interface FinnhubConfig
+{
+  @WithDefault("AAPL")
+  String symbol();
+
+  Optional<String> token();
+
+  @WithDefault("15")
+  long intervalSeconds();
+}
+----
+
+The interface `FinnhubConfig`, shown in the listing above ,
+deserves a remark. The module `finnhub-common` to which it belongs carries a
+Jandex index that allows Quarkus to discover the beans and the properties inside
+it. Consequently, the `FinnhubConfig` mapping is validated at the startup of
+every module depending on `finhub-common`, including the Kafka processor and
+the Kafka logger. But neither of them defines
+any `finnhub.++*++` property. If this interface's methods were mandatory then these
+two services wouldn't start. For this reason, each member of `FinnhubConfig` is
+either optional or has a default value.
+
+The `signal` package contains two beans. `PriceMovementEvaluator` transforms a
+`Quote` into a `PriceSignal`, whereas `PriceSignalLogger` records the outcome
+as a line of text, whose arrow informs the reader of the direction of the market.
+These beans are consumed by the components in the `finhub-pipeline` package and
+by the Kafka services.
+
+None of the classes in these two packages carries a Reactive Messaging
+annotation, and this constitutes the essential property of the module. The
+business logic is ignorant of the channels that transport its data, which allows
+each of the consumer modules to wire the mentioned beans in a different topology.
+
+The following listing presents the `PriceEvaluator` class. The first
+quote of a symbol is compared with the previous market close, and each subsequent
+quote is compared with the last price observed for that symbol. Since an
+application scoped bean is shared among threads, these prices are held in a
+`ConcurrentHashMap`, whose atomic `put` operation returns the former price while
+storing the new one. A reference price of zero produces a percentage of zero,
+which spares the application a division by zero.
+
+[source,java]
+----
+@ApplicationScoped
+public class PriceMovementEvaluator
+{
+   private final Map<String, BigDecimal> lastPrices = new ConcurrentHashMap<>();
+
+   public PriceSignal evaluate(Quote quote)
+   {
+      BigDecimal lastPrice = lastPrices.put(quote.symbol(), quote.price());
+      BigDecimal reference = lastPrice != null ? lastPrice : quote.previousClose();
+      BigDecimal change = quote.price().subtract(reference);
+      BigDecimal changePercent = reference.signum() != 0
+              ? change.movePointRight(2).divide(reference, 2, RoundingMode.HALF_UP)
+              : BigDecimal.ZERO;
+      return new PriceSignal(quote.symbol(), quote.price(), direction(change), change, changePercent);
+   }
+
+   private static Direction direction(BigDecimal change)
+   {
+      int sign = change.signum();
+      if (sign > 0) return Direction.UP;
+      if (sign < 0) return Direction.DOWN;
+      return Direction.FLAT;
+   }
+}
+----
+
+`QuoteSource` expresses the polling as a stream that outlives its failures.
+
+[source,java]
+----
+@ApplicationScoped
+@UnlessBuildProfile("test")
+public class QuoteSource
+{
+   private final FinnhubClient finnhub;
+   private final FinnhubConfig config;
+
+   public QuoteSource(@RestClient FinnhubClient finnhub, FinnhubConfig config)
+   {
+      this.finnhub = finnhub;
+      this.config = config;
+   }
+
+   public Multi<Quote> stream()
+   {
+      String symbol = config.symbol();
+      return finnhub.quote(symbol, config.token().orElse(""))
+              .map(quote -> new Quote(symbol, quote.current(), quote.previousClose()))
+              .onFailure().invoke(err -> Log.warnf("Finnhub fetch failed for %s: %s", symbol, err.getMessage()))
+              .onFailure().recoverWithNull()
+              .repeat().withDelay(Duration.ofSeconds(config.intervalSeconds())).indefinitely();
+   }
+}
+----
+
+Please notice the Quarkus annotation `@UnlessBuildProfile("test")` which avoids +
+to call the FinnHub public API during tests, a precaution appreciated by free
+tier users. The sequence diagram below tries to summarize the interaction between
+the `finhub-common` package's classes and interfaces.
+
+image::01-common-quote-source.png[Sequence diagram of the polling stream,width=100%]
+
+=== 5.2 `finhub-pipeline`, the topology inside one JVM
+
+This module consists in a single class, `QuotePipeline` which holds the Eclipse
+MicroProfile channels bindings. Its `evaluate(...)` method defines an input
+channel named `quotes` on which evaluation operations are requested. This method
+is invoked anytime that a new quote evaluation is requested and, in turn, it
+forwards the request to the `PriceMovementEvaluator.evaluate(...)` method, in
+the `finnhub-common` module, which returns a `PriceSignal` instance, showing the
+associated stock's fluctuation.
+
+This module is shared by `finhub-simple` and `finhub-msg` which provide the
+concrete producers required for the current messaging topology
+which, in this case, resides in memory. Should we have some other different cases needing,
+for example, AMQP instead of Kafka, their implementation would have been greatly
+simplified because of having had isolated in a common component the abstracted
+message exchanging process.
+
+[source,java]
+----
+@ApplicationScoped
+public class QuotePipeline
+{
+  private final PriceMovementEvaluator evaluator;
+  private final PriceSignalLogger logger;
+
+  public QuotePipeline(PriceMovementEvaluator evaluator, PriceSignalLogger logger)
+  {
+    this.evaluator = evaluator;
+    this.logger = logger;
+  }
+
+  @Incoming("quotes")
+  @Outgoing("signals")
+  public PriceSignal evaluate(Quote quote)
+  {
+    return evaluator.evaluate(quote);
+  }
+
+  @Incoming("signals")
+  public void onSignal(PriceSignal signal)
+  {
+    logger.log(signal);
+  }
+}
+----
+
+With no connector configured, SmallRye connects each `@Outgoing` to the corresponding `@Incoming` inside the
+JVM. Both methods use payload signatures, which yields `POST++_++PROCESSING` and automatic negative acknowledgment
+in case of failure, as section 2.3 described.
+
+image::02-pipeline.png[Sequence diagram of the in-process topology,width=100%]
+
+=== 5.3 `finhub-simple`, bare payloads
+
+This package contains our first application. It consists in one class, `QuoteFeed`,
+the quote producer. It demonstrates the minimal form of the model, in which the
+exchange is represented by raw `Quote` instances inside framework automatically
+created envelopes.
+
+[source,java]
+----
+@ApplicationScoped
+@UnlessBuildProfile("test")
+public class QuoteFeed
+{
+  private final QuoteSource source;
+
+  public QuoteFeed(QuoteSource source)
+  {
+    this.source = source;
+  }
+
+  @Outgoing("quotes")
+  public Multi<Quote> quotes()
+  {
+    return source.stream();
+  }
+}
+----
+
+We already explained the role of the `@UnlessBuildProfile("test")` annotation here
+but, for the records, it removes the producer during tests. Then deterministic
+quotes are sent directly into the channel by means of the in-memory connector,
+without requiring neither a network nor a token. Which allows us to write the
+following unit test:
+
+[source,java]
+----
+@QuarkusTest
+class QuotePipelineTest
+{
+  @Inject
+  @Any
+  InMemoryConnector connector;
+
+  @Inject
+  PriceSignalLogger logger;
+
+  @Test
+  void evaluate_validQuotes_acknowledgesAndLogsSignal()
+  {
+    InMemorySource<Message<Quote>> quotes = connector.source("quotes");
+
+    CompletableFuture<Void> risingAck = new CompletableFuture<>();
+    quotes.send(quoteMessage("261.74", "259.71", risingAck));
+    await().atMost(Duration.ofSeconds(5)).until(risingAck::isDone);
+    awaitSignal(Direction.UP, "261.74");
+
+    CompletableFuture<Void> fallingAck = new CompletableFuture<>();
+    quotes.send(quoteMessage("260.00", "259.71", fallingAck));
+    await().atMost(Duration.ofSeconds(5)).until(fallingAck::isDone);
+    awaitSignal(Direction.DOWN, "260.00");
+  }
+  ...
+}
+----
+
+The listing above shows two assertions: a positive and a negative one.
+As you can see, the logic is simple: a `Message++<++Quote++>++` instance is created and
+sent via the SmallRye in-memory connector to the `QuotePipeline.evaluate(...)`
+method. Then, the positive case waits during maximum 5 seconds for the `ack`
+signal returned by the associated callback instance of `CompletableFuture++<++Void++>++`
+named here `risingAck`. Once the `ack` received, we assert that the associated
+`PriceSignall` instance has its `direction` property set to `Direction.UP`.
+The negative case is similar.
+
+image::03-simple.png[Sequence diagram of bare payloads,width=100%]
+
+=== 5.4 `finhub-msg`, explicit envelopes
+
+The second application differs from the first in one line, since the producer
+maps each quote to a `QuoteMessage`. The purpose is to make the settlement of
+a message visible.
+
+[source,java]
+----
+@ApplicationScoped
+@UnlessBuildProfile("test")
+public class QuoteFeedWithMsg
+{
+   private final QuoteSource source;
+
+   public QuoteFeedWithMsg(QuoteSource source)
+   {
+      this.source = source;
+   }
+
+   @Outgoing("quotes")
+   public Multi<Message<Quote>> quotes()
+   {
+      return source.stream().map(QuoteMessage::new);
+   }
+}
+----
+
+The class `QuoteMessage` in the listing above is the one defined in the `finhub-common`
+module. And the unit test is almost the same:
+
+[source,java]
+----
+@QuarkusTest
+class QuoteMessagePipelineTest
+{
+  @Inject
+  @Any
+  InMemoryConnector connector;
+
+  @Inject
+  PriceSignalLogger logger;
+
+  @Test
+  void evaluate_validMessages_acknowledgesAndLogsSignal()
+  {
+    InMemorySource<Message<Quote>> quotes = connector.source("quotes");
+
+    RecordingQuoteMessage rising = message("261.74", "259.71");
+    quotes.send(rising);
+    await().atMost(Duration.ofSeconds(5)).until(rising.acknowledged::isDone);
+    awaitSignal(Direction.UP, "261.74");
+
+    RecordingQuoteMessage falling = message("260.00", "259.71");
+    quotes.send(falling);
+    await().atMost(Duration.ofSeconds(5)).until(falling.acknowledged::isDone);
+    awaitSignal(Direction.DOWN, "260.00");
+  }
+  ...
+}
+----
+
+The private nested class `RecordingQuoteMessage` extends `QuoteMessage` in order
+to observe the settlement of each message, as the following method shows.
+
+[source,java]
+----
+    @Override
+    public Supplier<CompletionStage<Void>> getAck()
+    {
+      Supplier<CompletionStage<Void>> delegate = super.getAck();
+      return () -> delegate.get().thenRun(() -> acknowledged.complete(null));
+    }
+----
+
+The method obtains the callback defined by `QuoteMessage` through `super.getAck()`,
+executes it, and subsequently completes the future `acknowledged`, upon which the
+test waits. The production behavior therefore remains in place, and the test
+merely observes its outcome.
+
+image::04-msg.png[Sequence diagram of envelope settlement,width=100%]
+
+=== 5.5 `finhub-kafka`, three services and a broker
+
+The module `finhub-kafka` is itself a multi-module project and, with it, we're
+moving on to serious matters as introduces real distribution. It aggregates three
+sides of the topology: the feed, the processor and the logger.
+
+The feed publishes the quotes. Its application class is nearly identical to the
+one in the `finhub-msg` module and the transition from the in-memory connector
+to the Kafka one is pure configuration.
+
+[source,properties]
+----
+mp.messaging.outgoing.quotes.connector=smallrye-kafka
+mp.messaging.outgoing.quotes.value.serializer=io.quarkus.kafka.client.serialization.JsonbSerializer
+----
+
+image::05-kafka-feed.png[Sequence diagram of the Kafka feed,width=100%]
+
+The processor contains the method `QuoteProcessor` already examined in section
+2.2, unchanged. Its configuration, on the contrary, is different as shown below:
+
+[source,properties]
+----
+mp.messaging.incoming.quotes.fail-on-deserialization-failure=false
+mp.messaging.incoming.quotes.failure-strategy=ignore
+----
+
+This configuration carries a cost that the reader should consider. The `ignore`
+strategy applies to every processing failure on the channel, and a defect in the
+processor would thereafter produce warnings instead of halting the service. A
+workshop can accept this arrangement, while a system handling valuable data would
+be better served by the `dead-letter-queue` strategy.
+
+image::06-kafka-processor.png[Sequence diagram of the Kafka processor,width=100%]
+
+The logger consumes the signals, and it also hosts the `/api/v1/signals` endpoint.
+Its deployment artifacts are generated by the `quarkus-minikube` extension, while
+the `Kafka`, `KafkaNodePool` and `KafkaTopic` classes of Strimzi are handwritten
+because the generator cannot produce third party custom resources.
+
+The manifests declare one partition per topic, and the evaluator keeps its history
+in memory. Both choices are adequate for a workshop and would deserve reconsideration
+elsewhere.
+
+The logger publishes each signal to HTTP clients through SSE (_Server Sent Events_).
+
+[source,java]
+----
+@Path("/api/v1/signals")
+public class SignalStreamResource
+{
+   private final SignalLogger signalLogger;
+
+   public SignalStreamResource(SignalLogger signalLogger)
+   {
+      this.signalLogger = signalLogger;
+   }
+
+   @GET
+   @Path("/stream")
+   @Produces(MediaType.SERVER_SENT_EVENTS)
+   @RestStreamElementType(MediaType.APPLICATION_JSON)
+   public Multi<PriceSignal> stream()
+   {
+      return signalLogger.signals();
+   }
+}
+----
+
+The `PriceSignal` instances published as SSE are consumed in `SignalLogger`:
+
+[source,java]
+----
+@ApplicationScoped
+public class SignalLogger
+{
+  private final PriceSignalLogger logger;
+  private final BroadcastProcessor<PriceSignal> broadcast = BroadcastProcessor.create();
+
+  public SignalLogger(PriceSignalLogger logger)
+  {
+    this.logger = logger;
+  }
+
+  @Incoming("signals")
+  public void onSignal(PriceSignal signal)
+  {
+    logger.log(signal);
+    broadcast.onNext(signal);
+  }
+
+  public Multi<PriceSignal> signals()
+  {
+    return broadcast.onOverflow().drop();
+  }
+}
+----
+
+Notice that injecting the `signals()` method above with `@Channel("signals")`,
+as it would probably have been the most natural, didn't work. Malformed records
+were arriving as null payloads which couldn't be represented in a stream.
+Furthermore, the logging and the offset commits should remain independent of the
+consumers presence and speed. The module therefore distributes the signals through
+a `BroadcastProcessor`, after the logging.
+
+The call to `onOverflow().drop()` is essential rather than decorative, since
+`BroadcastProcessor` terminates a subscriber having no outstanding demand with
+a `BackPressureFailure`. Reactive back pressure is thus not a benefit received
+automatically but a decision to be taken, and the decision taken here is that a
+slow client misses signals and remains connected, on the grounds that a newer
+price supersedes an older one. The stream is also hot, so a client receives only
+what is published after its connection, as is expected to occur to any consumer
+arriving late at a lecture.
+
+The sequence diagrams resumes all that.
+
+image::07-kafka-logger.png[Sequence diagram of the logger and its stream,width=100%]
+
+=== 5.6 `finhub-kafka-alert`, consuming on virtual threads
+
+The services examined so far have no use for virtual threads. The processor computes
+and the logger writes a line, so neither of them ever waits for anything, and
+annotating their methods would constitute an elaborate means of achieving nothing. A
+virtual thread becomes useful at the precise moment when a consumer must block, and
+this last stage therefore introduces a consumer that does. For each signal
+indicating a movement, it notifies an external system by calling a webhook through
+a blocking REST client.
+
+[source,java]
+----
+@ApplicationScoped
+public class SignalAlerter
+{
+  private final AlertClient client;
+
+  public SignalAlerter(@RestClient AlertClient client)
+  {
+    this.client = client;
+  }
+
+  @Incoming("signals")
+  @RunOnVirtualThread
+  @Blocking("alerts")
+  public void alert(PriceSignal signal)
+  {
+    if (signal.direction() != Direction.FLAT)
+      client.send(signal);
+  }
+}
+----
+
+The `AlertClient` is reproduced in the listing below:
+
+[source,java]
+----
+@RegisterRestClient(configKey = "alert")
+public interface AlertClient
+{
+  @POST
+  void send(PriceSignal signal);
+}
+----
+
+This service consumes the existing `signals` topic under a consumer group of its own,
+and the other services required no modification whatsoever. The logger remains
+unaware of the existence of its new colleague, which is the temporal decoupling of
+section 2.1 observed in practice.
+
+Virtual threads appear here beside the Mutiny of the preceding stages, so a precise
+distinction is required before going further.
+Section 4 presented the two styles as alternative solutions to the same problem.
+While this is true from the point of view of the manner in which a message spends
+its waiting time, as mechanisms, however, they belong to different categories.
+Mutiny is a library for composing asynchronous operations. A `Uni` is a lazy
+description of what must happen, it executes nothing before a subscriber appears,
+and its steps run on whichever thread subscribes to it or delivers its item.
+A virtual thread, by contrast, is a unit of execution provided by the JVM, and
+it knows nothing of the operations it carries. The first concerns the composition
+of the work, and the second concerns what executes it.
+
+The annotation `@RunOnVirtualThread` directs each message to a new virtual thread,
+whose code calls the blocking client in the most traditional manner. While this call
+waits for the answer, the JVM parks the virtual thread and releases its carrier, an
+ordinary platform thread that may then execute another virtual thread. When the answer
+arrives, the virtual thread resumes at the following statement. The annotation
+`@Blocking("alerts")` associates the method with a named worker, whose only purpose
+here is to carry the concurrency limit shown in the following configuration.
+
+[source,properties]
+----
+mp.messaging.incoming.signals.failure-strategy=dead-letter-queue
+mp.messaging.incoming.signals.dead-letter-queue.value.serializer=io.quarkus.kafka.client.serialization.JsonbSerializer
+smallrye.messaging.worker.alerts.max-concurrency=${ALERT_MAX_CONCURRENCY:32}
+quarkus.rest-client.alert.connection-pool-size=${ALERT_POOL:${ALERT_MAX_CONCURRENCY:32}}
+quarkus.rest-client.alert.url=${ALERT_URL:http://localhost:9000/alerts}
+----
+
+image::08-kafka-alert.png[Sequence diagram of the alert consumer,width=100%]
+
+This arrangement has three consequences.
+
+The first consequence is that the application must now limit its concurrency explicitly.
+
+Virtual threads remove the bound that a
+worker pool used to impose, and a webhook, like any dependency, has a limited capacity.
+The Quarkus default is a limit of 1024 concurrent virtual threads for such methods. This
+service lowers it to 32 through the property
+`smallrye.messaging.worker.alerts.max-concurrency`, a value that the environment variable
+`ALERT++_++MAX++_++CONCURRENCY` can override. The connection pool of the REST client receives the
+same size of 32. The following table reports the publication of bursts of signals toward a
+webhook answering after a fixed delay. Its values are chosen in order to expose each limit in
+turn, since a burst smaller than a limit cannot reveal this limit. Most rows thus use 64 signals,
+twice the configured limit, and a connection pool of 4096 serves to remove the pool from the
+measurement.
+
+[cols=",,,,,,",options="header",]
+|===
+|Consumer annotations |Maximum of concurrent virtual threads |Connection pool |Signals |Webhook delay |Peak of concurrent calls |Total duration
+|`@Blocking` |not applicable, sequential processing on a worker thread |4096 |64 |500 ms |1 |32.39 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |4 |4096 |64 |500 ms |4 |8.19 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |8 |4096 |64 |500 ms |8 |4.14 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |32 |4096 |64 |500 ms |32 |1.13 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |32 |32 |64 |500 ms |32 |1.13 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |32 |8 |64 |500 ms |8 |4.12 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |1024 |50 |200 |500 ms |50 |2.17 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |1024 |50 |512 |500 ms |not logged, since 12 alerts fail |not logged
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |1024 |50, with a timeout of 9 s |512 |500 ms |50 |5.66 s
+|`@RunOnVirtualThread`, `@Blocking("alerts")` |1024 |4096 |2048 |2 s |1024 |5.01 s
+|`@RunOnVirtualThread` |1024, the default |4096 |2048 |2 s |1024 |5.01 s
+|===
+
+The data in the table above should be read as follows: for example, the 1st line
+is saying that a consumer annotated with `@Blocking`, consumes 64 signals in
+32.39s, with a webhook delay of 500 ms and an HTTP connection pool is of 4096.
+
+These figures come from single runs on one machine, and they do not constitute a
+performance claim. Their interest lies in the shape. The durations follow from the batches of
+concurrent calls. With a limit of 4, the 64 signals form 16 successive batches of 500 ms,
+hence approximately 8 s, whereas a limit of 32 requires 2 batches and sequential processing
+requires 64.
+
+The peak is the lowest of the limits in force. With a pool of 8, the peak falls to 8 although
+the service permits 32 virtual threads, and no error discloses this reduction. The value of
+50 in the table is the default size of the pool, which a run omitting the property established
+with a peak of exactly 50.
+
+The 8th line of the table shows 12 failures. This is expected as the limit of
+1024 permits all 512 calls to start at once, whereas the pool serves only 50 of
+them, and the remaining 462 wait for a free connection. This wait does not extend
+indefinitely. A call awaiting a connection remains subject to the property
+`quarkus.rest-client.alert.read-timeout`, set here to 5 s. Since each call occupies
+its connection for 500 ms, successive groups of 50 calls obtain a connection at
+0 s, at 0.5 s, and so on until 4.5 s, which amounts to 10 groups and 500 calls.
+The next group would obtain its connection at 5 s, the moment when the timeout
+expires. The 12 remaining calls consequently fail with the message `The timeout of 5000 ms has been exceeded when getting a connection`, a calculation that agrees
+exactly with the 12 observed failures.
+
+The following row confirms this cause, since the same burst with a timeout of 9 s delivers all
+512 alerts, with the same peak of 50, in 5.66 s. The failed alerts are not lost, because the
+failure strategy routes them to the dead letter topic, as the class `SignalAlerterPoolTest` verifies
+for this kind of failure. They have nevertheless not reached the webhook. This configuration of 1024
+over 50 is deliberately defective, and it justifies the choice made by the service, in which a pool
+of the same size as the limit leaves no call waiting for a connection.
+
+The last two rows require a delay of 2 s, because the calls start at a rate of approximately
+1,000 per second. With a delay of 500 ms, the first calls end before the last ones begin, and
+the peak stops at 860 for reasons unrelated to any limit. With a sufficient delay, the default of
+1024 proves to be exact.
+
+The reader may reproduce these measurements without modifying any file, since the test obtains
+its values from the configuration. The environment variables `ALERT++_++MAX++_++CONCURRENCY` and
+`ALERT++_++POOL` set the limit and the pool, with default values of 32 and 4096 in the test profile,
+whereas `ALERT++_++BURST` and `ALERT++_++DELAY++_++MS` set the size of the burst and the delay, with default
+values of 64 and 500. The following command reproduces the measurement of a limit of 1024, and the
+test logs the values used, the peak and the duration.
+
+[source,bash]
+----
+ALERT_MAX_CONCURRENCY=1024 ALERT_BURST=2048 ALERT_DELAY_MS=2000 \
+  mvn test -pl finhub-kafka/finhub-kafka-alert -am \
+  -Dtest='SignalAlerterTest#alert_burst_overlapsWithinConcurrencyLimit' \
+  -Dsurefire.failIfNoSpecifiedTests=false
+----
+
+The test reports its measurement in a single line of log, such as the following one, which the
+other messages of the build tend to bury.
+
+....
+Burst of 2048 signals, limit 1024, pool 4096, delay 2000 ms: peak of 1024 concurrent calls, 4867 ms
+....
+
+Appending `++|++ grep "Burst of"` to the command displays this line alone, at the cost of hiding the
+rest of the output, including the diagnosis of a failure. The line also remains in the report of
+the test after the build, from which the following command extracts it.
+
+[source,shell]
+----
+grep -o "Burst of[^&<]*" \
+  finhub-kafka/finhub-kafka-alert/target/surefire-reports/TEST-fr.simplex_software.workshop.reactive_messaging.kafka.alert.SignalAlerterTest.xml
+----
+
+The test expects the peak to equal the lowest of the limit, the pool and the burst. The burst of
+512 signals with a timeout of 5 s consequently causes the test to fail, since 12 alerts never reach
+the webhook, and the test logs its figures only after the arrival of every expected alert. The timeout
+of 9 s results from the environment variable `QUARKUS++_++REST++_++CLIENT++_++ALERT++_++READ++_++TIMEOUT=9000`. The
+first and the last rows alone require a modification of the source code, because they result from
+different annotations.
+
+The second consequence, which is the price of the first, is that the alerts lose
+the order of the topic.
+
+The Quarkus
+documentation states that `@RunOnVirtualThread` "enforces concurrent message processing
+without preserving the order". An execution against a real broker
+confirmed this on its very first attempt, since an alert for `MSFT` reached the webhook
+before the alert for `AAPL` that had been published before it, from a topic with a single
+partition. Kafka guarantees the order of the records up to their delivery to the consumer, and the
+consumer alone determines what becomes of this order afterward. Concurrent processing abandons
+it, which this service can tolerate because each alert stands alone. The class `QuoteProcessor`
+of section 5.5 could not tolerate it, because its evaluator compares each quote with the previous
+one. This is the reason why it processes its quotes sequentially and carries no
+`@RunOnVirtualThread`. With this annotation, it would derive perfectly formatted and entirely
+wrong signals. A receiver of these alerts must equally rely on the
+content of each one rather than on its position.
+
+As recommended by the section 5.5, this service uses the `dead-letter-queue`
+strategy. Which allows us to notice a third consequence of the concurrent
+processing: a failed alert or a malformed record reaches the dead letter topic
+without stopping the consumer. Accordingly, a webhook that answers with an error
+produces a negative acknowledgment and the signal is thereby retained on the
+topic `dead-letter-topic-signals`.
+
+Concurrent processing also obliges the connector to acknowledge out of order,
+and the `throttled` strategy commits only the offsets acknowledged in sequence.
+One detail was observed in this context. When the last record of the topic
+`signals` is one whose processing failed, its consumer group reports a lag of 1,
+although the record has been processed. The commit occurs as soon as a further
+record of `signals` has been processed and a restart at that point delivered
+no alert twice. The delivery nevertheless remains at least once, so that a webhook
+may receive the same alert twice. In our tests, WireMock which is our webhook,
+simply records each request and thus accepts such a duplicate as a further alert.
+A real receiver would have to discard the duplicate somehow.
+
+==== The organization of the tests
+
+Each test places itself at both ends of the service, which stays unchanged in
+the middle. On the input side, the test publishes signals to the topic `signals`.
+On the output side, it replaces the external recipient of the alerts by a WireMock
+server, which answers each request and keeps a journal of all the received ones.
+Between the two, the service performs its ordinary work, reading each record,
+calling the webhook on a virtual thread and acknowledging the record.
+
+A test proceeds in four stages. It first prepares the webhook, by clearing its
+journal, by restoring a default answer with the status 204, and, when required,
+by programming a delay or an error for the symbol that this test uses. It then
+publishes its signals, each bearing the same symbol, which isolates them from
+the ones used by other tests. The service consumes these records and calls the
+webhook, and every failed record is copied to the topic `dead-letter-topic-signals`.
+The test finally examines the two places where results can appear, namely the
+journal of WireMock and the dead letter topic. The following sequence diagram
+traces this course.
+
+image::09-kafka-alert-tests.png[Sequence diagram of the course of a test,width=100%]
+
+There are five test classes, as shown in the table below, having in total more
+than 300 lines of code. This might seem disproportionate for a use case requiring
+much less than that but this apparent complexity comes from the necessity to
+observe three properties:
+
+* the kind of thread that performs each call;
+* the number of calls in progress at the same moment;
+* the fate of the records that fail.
+
+Each of the following classes contributes to one of these observations.
+
+[cols=",",options="header",]
+|===
+|Class |Responsibility
+|`WireMockWebhook` |Starts the simulated webhook and supplies its URL to the application
+|`CallerThreadFilter` |Reports to the webhook the kind of thread making each call
+|`AlertBurst` |Gathers the operations shared by the two test classes
+|`SignalAlerterTest` |Verifies the service with its own configuration, in 7 tests
+|`SignalAlerterPoolTest` |Verifies the service with a pool smaller than the limit, in 2 tests
+|===
+
+The tests are annotated with the Quarkus annotation `@QuarkusTest` which starts
+the application inside the test JVM, Dev Services starts a Kafka broker in a
+container, and the class `KafkaCompanion` publishes and reads records in the
+manner of any external producer or consumer. A record therefore traverses the
+real Kafka connector, the real deserializer, a real virtual thread, and the real
+REST client, which emits a real HTTP request. Only the recipient of this request
+is simulated, by the following class.
+
+[source,java]
+----
+public class WireMockWebhook implements QuarkusTestResourceLifecycleManager
+{
+  static WireMockServer SERVER;
+
+  @Override
+  public Map<String, String> start()
+  {
+    SERVER = new WireMockServer(WireMockConfiguration.options().dynamicPort()
+      .asynchronousResponseEnabled(true).asynchronousResponseThreads(8).containerThreads(64).jettyAcceptQueueSize(4096));
+    SERVER.start();
+    return Map.of("quarkus.rest-client.alert.url", SERVER.baseUrl());
+  }
+}
+----
+
+Quarkus invokes the method `start()` before starting the application, and the
+map that it returns supplies configuration properties, which here direct the
+REST client toward the simulated server.
+
+All the tests share one topic and one webhook. Each test therefore publishes
+signals bearing its own symbol, such as `FLAT` or `SLOW`, and the method
+`AlertBurst.alerts(symbol)` retains only the requests concerning this symbol.
+Before each test, the method `resetWebhook()` clears the request journal of
+WireMock and restores a default answer with the status 204. Each test has its
+signals associated to a given symbol, leaving the other signals unaffected,
+which allows for their separation.
+
+The test provides a filter of the REST client allowing to determine the kind of
+thread who emitted the request received by the webhook.
+
+[source,java]
+----
+@Provider
+public class CallerThreadFilter implements ClientRequestFilter
+{
+  static final String HEADER = "X-Test-Caller-Thread";
+
+  @Override
+  public void filter(ClientRequestContext request)
+  {
+    request.getHeaders().putSingle(HEADER, Thread.currentThread().isVirtual() ? "virtual" : "platform");
+  }
+}
+----
+
+Being annotated with `@Provider`, the filter applies to the REST client without
+any registration, and it executes on the thread making the call. It adds a header
+stating the nature of this thread, and the test then verifies the value of this
+header among the requests received by WireMock. This only happens during the test
+phase, the deployed service sends no such header.
+
+The test `alert++_++signal++_++callsWebhookOnVirtualThreadWithoutPinning` combines this
+filter with a non-pinning verification. If a virtual thread becomes pinned further
+to `synchronized` block with Java 21, yet `Thread.currentThread().isVirtual()`
+still returns `true`, so that the filter cannot reveal the difference. The
+annotation `@ShouldNotPin`, in the listing below, covers this case. Together
+with `@VirtualThreadUnit` on the class, it observes the execution of the test
+and makes it fail when a virtual thread has been pinned.
+
+[source,java]
+----
+@QuarkusTest
+@VirtualThreadUnit
+@WithTestResource(KafkaCompanionResource.class)
+@WithTestResource(WireMockWebhook.class)
+class SignalAlerterTest
+{
+  ...
+
+  @Test
+  @ShouldNotPin
+  void alert_signal_callsWebhookOnVirtualThreadWithoutPinning()
+  {
+    publish("THREAD", Direction.UP);
+
+    awaitAlerts("THREAD", 1);
+
+    SERVER.verify(postedFor("THREAD").withHeader(CallerThreadFilter.HEADER, equalTo("virtual")));
+  }
+  ...
+}
+----
+
+WireMock records the arrival time of each request, and the programmed delay gives
+the duration of each call, so that the interval occupied by every call can be
+derived after the fact. The class `AlertBurst` organizes this measurement in
+four steps, which are the following:
+
+[arabic]
+. The method `publishDelayed(...)` programs the delay for a symbol and publishes the burst as one batch.
+. The method `awaitStarts(...)` waits until the expected number of requests has arrived, and it returns their sorted arrival times.
+. The method `peakOverlap(...)` computes the peak.
+. The method `awaitCompletion(...)` waits for the end of the last calls, which would otherwise fail during the shutdown of the application.
+
+[source,java]
+----
+  static int peakOverlap(List<Long> starts, int delayMs)
+  {
+    int peak = 0;
+    for (int first = 0, last = 0; last < starts.size(); last++)
+    {
+      while (starts.get(first) + delayMs <= starts.get(last))
+        first++;
+      peak = Math.max(peak, last - first + 1);
+    }
+    return peak;
+  }
+----
+
+The method examines the arrival times in ascending order, and the index `last`
+designates the call that has just started. The index `first` advances beyond
+the calls already finished at this moment, that is, those whose start increased
+by the delay does not exceed the current instant. The calls between the two indexes
+are thus in progress simultaneously, and the largest such number constitutes
+the peak.
+
+The tests open a consumer on the topic `dead-letter-topic-signals` through
+`KafkaCompanion`, and they search this topic for the expected content. The
+following table gives what each test of the module verifies.
+
+[cols=",",options="header",]
+|===
+|Test |Verifies
+|`alert++_++upOrDownSignal++_++postsToWebhook` |A signal `UP` and a signal `DOWN` each reach the webhook with their content
+|`alert++_++flatSignal++_++sendsNothing` |A signal `FLAT` produces no request, while a following signal does
+|`alert++_++signal++_++callsWebhookOnVirtualThreadWithoutPinning` |The call runs on a virtual thread, without pinning
+|`alert++_++burst++_++overlapsWithinConcurrencyLimit` |The peak equals the lowest of the limit, the pool and the burst
+|`alert++_++slowEarlierSignal++_++completesAfterLaterOne` |A later signal starts its call before the end of the slow call of an earlier signal
+|`alert++_++webhookFailure++_++routesToDeadLetterTopic` |A signal refused by the webhook reaches the dead letter topic, and the next one is processed
+|`alert++_++malformedRecord++_++routesToDeadLetterTopicAndProcessesNext` |A malformed record reaches the dead letter topic with its content, and the next signal is processed
+|`alert++_++poolBelowLimit++_++capsConcurrencyWithoutFailure` |A pool of 8 under a limit of 32 yields a peak of exactly 8
+|`alert++_++connectionWaitExceedsTimeout++_++routesToDeadLetterTopic` |A call waiting too long for a connection reaches the dead letter topic
+|===
+
+Proving an absence demands some care. The signal `FLAT` is the only one for which
+the service sends nothing, and its test must therefore establish that no request
+occurs. The test publishes `FLAT` followed by a second signal, and waits for the
+alert of this second signal. With sequential processing, this arrival would prove
+that `FLAT` had already been processed without any request. With concurrent
+processing, the second signal may be completed first, and its arrival proves
+nothing about whether `FLAT` has been processed or not. The test consequently
+verifies that no request concerning `FLAT` appears during a further period of
+500 ms. This period constitutes a reasonable margin rather than a proof, since
+no test can establish an absence beyond the time it observes.
+
+The class `SignalAlerterPoolTest` exists separately because its two tests require
+another configuration, which a profile provides.
+
+[source,java]
+----
+  public static class SmallPool implements QuarkusTestProfile
+  {
+    @Override
+    public Map<String, String> getConfigOverrides()
+    {
+      return Map.of("smallrye.messaging.worker.alerts.max-concurrency", String.valueOf(LIMIT),
+        "quarkus.rest-client.alert.connection-pool-size", String.valueOf(POOL));
+    }
+  }
+----
+
+The second of its tests calculates its burst in order to exhaust the waiting period of 5 s.
+
+[source,java]
+----
+  @Test
+  void alert_connectionWaitExceedsTimeout_routesToDeadLetterTopic()
+  {
+    try (ConsumerTask<String, String> deadLetters = companion.consumeStrings().fromTopics("dead-letter-topic-signals"))
+    {
+      publishDelayed(companion, "STARVED", LIMIT, 2000);
+
+      await().atMost(Duration.ofSeconds(30)).until(() -> alerts("STARVED").size() + starved(deadLetters) == LIMIT);
+
+      assertThat(starved(deadLetters)).isPositive();
+    }
+    awaitCompletion(alerts("STARVED").stream().map(event -> event.getRequest().getLoggedDate().getTime()).sorted().toList(), 2000);
+  }
+----
+
+Running the application with 32 signals, a pool of 8 and a delay of 2 s, the
+groups of 8 calls should obtain a connection at 0 s, at 2 s and at 4 s, and the
+fourth group would obtain its own at 6 s, beyond the timeout. Then the logs would
+accordingly report 8 failed calls, leaving 24 delivered alerts. But the test
+nevertheless avoids asserting the exact figures above, since they depend on the
+speed of the machine. It verifies instead two conditions, namely that every signal
+has reached either the webhook or the dead letter topic, and that at least one
+has reached the dead letter topic. The consumer opens before the publication,
+so that no dead letter escapes it.
+
+The central test of the class `SignalAlerterTest` applies these operations, and
+it is the one that produced the table of this section.
+
+[source,java]
+----
+  @Test
+  void alert_burst_overlapsWithinConcurrencyLimit()
+  {
+    int expected = Math.min(Math.min(limit, pool), burst);
+
+    publishDelayed(companion, "BURST", burst, delayMs);
+    List<Long> starts = awaitStarts("BURST", burst, delayMs, expected);
+
+    int peak = peakOverlap(starts, delayMs);
+    LOG.infof("Burst of %d signals, limit %d, pool %d, delay %d ms: peak of %d concurrent calls, %d ms",
+      burst, limit, pool, delayMs, peak, starts.getLast() + delayMs - starts.getFirst());
+    awaitCompletion(starts, delayMs);
+
+    assertThat(peak).isEqualTo(expected);
+  }
+----
+
+== 6. Analysis of the test results
+
+The complete build executes 35 tests, all of which pass, with no test skipped.
+The durations below come from a single run and include the startup of the
+application, of the broker where applicable, and of the instrumentation for
+pinning detection.
+
+[cols=",,,,",options="header",]
+|===
+|Test class |Module |Infrastructure |Tests |Duration
+|`FinnhubQuoteTest` |`finhub-common` |none |2 |0.1 s
+|`QuoteSourceTest` |`finhub-common` |none |1 |1.0 s
+|`PriceMovementEvaluatorTest` |`finhub-common` |none |5 |below 0.1 s
+|`QuoteMessageTest` |`finhub-common` |none |4 |below 0.1 s
+|`QuotePipelineTest` |`finhub-simple` |in-memory connector |2 |1.3 s
+|`QuoteMessagePipelineTest` |`finhub-msg` |in-memory connector |2 |1.3 s
+|`QuoteFeedToKafkaTest` |`finhub-kafka-feed` |Kafka by Dev Services |1 |2.5 s
+|`QuoteProcessorTest` |`finhub-kafka-processor` |Kafka by Dev Services |2 |2.9 s
+|`SignalLoggerTest` |`finhub-kafka-logger` |Kafka by Dev Services |2 |3.8 s
+|`SignalStreamResourceTest` |`finhub-kafka-logger` |Kafka by Dev Services |5 |5.8 s
+|`SignalAlerterTest` |`finhub-kafka-alert` |Kafka by Dev Services, WireMock |7 |12.1 s
+|`SignalAlerterPoolTest` |`finhub-kafka-alert` |Kafka by Dev Services, WireMock |2 |14.2 s
+|===
+
+The Kafka tests use a real broker and exchange real JSON, so that each module is
+verified through its actual contract. The classes `SignalAlerterTest` and
+`SignalAlerterPoolTest` take the longest, because several of their tests wait
+deliberately for a slow webhook.
+
+A test that has never failes proves little, therefore each significant one has
+been challenged in the following manner. A bug was deliberately introduced
+temporarily into the code that the test protects, the test was executed in
+order to verify that it failed, and the code was subsequently restored. This
+was performed by hand, which offers considerably less rigor than a mutation testing
+tool, yet it yielded very valuable results:
+
+[cols=",",options="header",]
+|===
+|Deliberate damage |Result
+|Remove the failure settings of the logger |the malformed record test fails
+|Remove `onOverflow().drop()` |the test without demand fails
+|Remove `@RunOnVirtualThread` from the alert consumer |five tests fail, among them the thread, the overlap and the ordering assertions
+|Replace both annotations with a plain `@Blocking` |the same five tests fail, with a peak of 1 and a duration of 32.39 s
+|Add `synchronized` around the webhook call |`@ShouldNotPin` fails, and the peak falls to 1
+|Remove `@Blocking("alerts")` |the limit assertion fails, with a peak of 64
+|Remove the failure strategy |seven tests fail, since the first failure stops the channel
+|Remove the dead letter serializer |the application refuses to start
+|===
+
+== 7. Running the project
+
+This section describes how to build the project, execute its tests, and run its applications,
+first on a single machine and then on a Kubernetes cluster provided by minikube. All the commands
+are executed from the root of the repository, unless stated otherwise.
+
+=== 7.1 Prerequisites
+
+The project requires the following tools:
+
+[arabic]
+. JDK 21 and Maven 3.9 or later, for the build.
+. Docker, since Dev Services starts a Kafka broker in a container for every test of the Kafka modules.
+. A free Finnhub API key, obtained from finnhub.io, for the applications that fetch real quotes.
+. minikube, kubectl and Helm, solely for the deployment on Kubernetes.
+
+The applications reading Finnhub, namely `finhub-simple`, `finhub-msg` and `finhub-kafka-feed`,
+obtain the key from the environment variable `FINNHUB++_++TOKEN`. Without it they start nevertheless,
+and each request fails authentication, is logged, and is skipped. The variables `FINNHUB++_++SYMBOL` and
+`FINNHUB++_++INTERVAL` select the followed symbol, `AAPL` by default, and the interval between two
+requests, 15 seconds by default.
+
+=== 7.2 Building and testing
+
+A single command builds every module and executes the 35 tests.
+
+[source,shell]
+----
+mvn verify
+----
+
+The log of this build contains errors and warnings, several with a stack trace, although every
+test succeeds. They result from the negative tests, which send a quote without a price, a malformed
+record, an alert refused by the webhook or a burst exceeding the connection pool, and which verify
+precisely that the service logs the failure, rejects the message and continues. The Kafka clients
+add a few warnings `UNKNOWN++_++TOPIC++_++OR++_++PARTITION`, which the broker resolves by creating each topic at
+its first use. The verdict of the build therefore lies in the final counts of the tests and in the
+line `BUILD SUCCESS`, and not in the presence of errors in the log.
+
+Quarkus permits setting the level of each logging category through its configuration. The Maven
+profile `quiet` supplies such a configuration, the file `.mvn/quiet-logging.properties`, which turns
+off the four categories emitting these messages, and the build then logs neither error nor warning while executing the same 35 tests.
+Omitting the profile restores the messages. This silence applies to every message of these
+categories, including a genuine error, so that it suits a demonstration rather than an investigation.
+
+[source,shell]
+----
+mvn verify -Pquiet
+----
+
+The tests of one module are executed by naming this module, together with the modules on which it
+depends.
+
+[source,shell]
+----
+mvn test -pl finhub-kafka/finhub-kafka-alert -am
+----
+
+The measurements of the table of section 5.6 are reproduced by executing the burst test alone,
+with environment variables setting the concurrency limit, the size of the connection pool, the
+size of the burst and the delay of the webhook. The following command reproduces, for instance,
+the measurement of a limit of 1024.
+
+[source,shell]
+----
+ALERT_MAX_CONCURRENCY=1024 ALERT_BURST=2048 ALERT_DELAY_MS=2000 \
+  mvn test -pl finhub-kafka/finhub-kafka-alert -am \
+  -Dtest='SignalAlerterTest#alert_burst_overlapsWithinConcurrencyLimit' \
+  -Dsurefire.failIfNoSpecifiedTests=false
+----
+
+The test reports its measurement in a single line of log, such as the following one, which the
+other messages of the build tend to bury.
+
+....
+Burst of 2048 signals, limit 1024, pool 4096, delay 2000 ms: peak of 1024 concurrent calls, 4867 ms
+....
+
+Appending `++|++ grep "Burst of"` to the command displays this line alone, at the cost of hiding the
+rest of the output, including the diagnosis of a failure. The line also remains in the report of
+the test after the build, from which the following command extracts it.
+
+[source,shell]
+----
+grep -o "Burst of[^&<]*" \
+  finhub-kafka/finhub-kafka-alert/target/surefire-reports/TEST-fr.simplex_software.workshop.reactive_messaging.kafka.alert.SignalAlerterTest.xml
+----
+
+The variable `ALERT++_++POOL` sets the size of the connection pool in the same manner.
+
+The CircleCI pipeline of the directory `.circleci` executes the same
+`mvn verify` on a machine executor, which provides the Docker daemon that the tests require.
+
+=== 7.3 Running the stages on one machine
+
+The first two stages run in the development mode of Quarkus, which recompiles the code at each
+modification.
+
+[source,shell]
+----
+FINNHUB_TOKEN=<your-key> mvn -pl finhub-simple -am quarkus:dev
+----
+
+Replacing `finhub-simple` by `finhub-msg` runs the variant using envelopes. Each poll produces one
+line of log, such as `AAPL 261.74 USD ▲ {plus}2.03 ({plus}0.78%)`.
+
+The services of stage 3 must share one broker. In development mode each of them would start its
+own broker through Dev Services. In the `prod` profile they run instead against a broker started
+beforehand, each one on its own HTTP port. The variable `KAFKA++_++BOOTSTRAP++_++SERVERS`, whose default value
+is `localhost:9092`, designates this broker. The script `run-all.sh` performs the whole sequence.
+
+[source,shell]
+----
+./finhub-kafka/run-all.sh
+----
+
+The script operates identically from any directory. It first obtains the variable `FINNHUB++_++TOKEN`,
+which the feed requires, from the environment or else from the file `finhub-kafka/.env`, the same
+file that the deployment on minikube uses, and it stops when neither provides it. It then starts a
+Kafka broker in a container named `kafka`, replacing any previous one, builds the project without
+executing the tests, and starts the logger, the processor and the feed on the ports 8080, 8081 and
+8082. The script remains in the foreground until these three applications end, and it records
+their process identifiers in the file `finhub-kafka/.run-all.pids`, which Git ignores.
+
+Two manners of stopping exist. Pressing Ctrl{plus}C in the terminal of the script stops the three
+applications, which a script must request explicitly, since the commands it launches in the
+background ignore this key, and the broker then remains available for a further execution. The
+script `stop-all.sh`, executed from any terminal, stops the three recorded applications and removes
+the broker as well.
+
+[source,shell]
+----
+./finhub-kafka/stop-all.sh
+----
+
+The logger, on port 8080, publishes the signals as server sent events, which a client receives as
+follows.
+
+[source,shell]
+----
+curl -N http://localhost:8080/api/v1/signals/stream
+----
+
+The feed polls Finnhub every 15 seconds, so that the first signal may take as long to appear. When
+the market is closed, the price remains constant, and the stream consequently delivers signals
+`FLAT` with a change of zero, such as the following one.
+
+....
+data:{"change":0.00,"changePercent":0.00,"direction":"FLAT","price":342.37,"symbol":"AAPL"}
+....
+
+The alert service joins these three on port 8083, started separately, and neither Ctrl{plus}C in the
+terminal of `run-all.sh` nor `stop-all.sh` concerns it, so that it is stopped by Ctrl{plus}C in its own terminal. It requires a webhook accepting `POST` requests
+at the address given by `ALERT++_++URL`, and any HTTP server fulfilling this condition is suitable. In
+its absence, every alert fails and reaches the topic `dead-letter-topic-signals`, which constitutes
+a demonstration of a kind as well.
+
+[source,shell]
+----
+ALERT_URL=http://localhost:9000/alerts java -Dquarkus.profile=prod -Dquarkus.http.port=8083 \
+  -jar finhub-kafka/finhub-kafka-alert/target/quarkus-app/quarkus-run.jar
+----
+
+=== 7.4 Running stage 3 on minikube
+
+The deployment on minikube involves three steps. The images are first built inside the Docker
+daemon of minikube, which spares the use of a registry. The Finnhub key is then written into the
+file `finhub-kafka/.env`, which Git ignores. The script `install-strimzi.sh` finally installs
+everything else.
+
+[source,shell]
+----
+minikube start
+eval $(minikube docker-env)
+mvn package -Dquarkus.container-image.build=true
+
+cd finhub-kafka
+echo 'FINNHUB_TOKEN=<your-key>' > .env
+./install-strimzi.sh
+----
+
+The script performs its operations in an order that matters, as follows:
+
+[arabic]
+. It verifies that the file `.env` exists, that each module has generated its manifest, and that each image is present in the daemon of minikube. An image built in the daemon of the host would otherwise leave its pod in the state `ImagePullBackOff`, and the script prints the remedy instead.
+. It creates the secret `finnhub` from the file `.env`, so that the key appears in no manifest, and the namespaces `strimzi` and `kafka`.
+. It installs the Strimzi operator with Helm, waiting for its completion, so that the custom resource definitions exist before the following step uses them.
+. It applies the cluster, the topics and the graphical interface of the directory `k8s`.
+. It waits until the cluster is ready, since the applications would otherwise start against a broker that does not yet listen.
+. It applies the manifests of the feed, the processor and the logger.
+
+Every operation creates or updates its resource, so that the script may be executed again without harm.
+The manifests of the applications are generated by the extension `quarkus-minikube` from the
+properties `quarkus.kubernetes.++*++`, each service receiving a fixed node port between 30081 and 30083.
+The resources of Strimzi in `k8s` are written by hand, since the extension cannot generate custom
+resources of a third party. The script deploys no alert service, because the cluster contains no
+webhook to call. The signals and the topics are then observed as follows.
+
+[source,shell]
+----
+kubectl logs -f deploy/finhub-kafka-logger
+minikube service kafka-ui -n kafka --url
+minikube service finhub-kafka-logger --url
+----
+
+The first command shows the log of the `finhub-kafka-logger` service. The second gives the address of the graphical
+interface, a NodePort service on port 30080, which displays the topics, their records and the lag
+of each consumer group. The third gives the address of the logger, to which the path
+`/api/v1/signals/stream` gives access to the stream of signals.
+
+The script `uninstall.sh` removes the whole installation.
+
+[source,shell]
+----
+./uninstall.sh
+----
+
+The commands of `uninstall.sh` likewise follow a necessary order, since a different order would block the removal. The topic operator places a finalizer on every topic, so the topics must
+be deleted while the operator still runs, and the script consequently removes the applications, the
+secret, the interface, the topics and the cluster before uninstalling the operator. It finally deletes
+the namespaces and the custom resource definitions, which the chart installs without owning them, so
+that a further installation starts from a clean cluster.
+
+== 8. Conclusions
+
+The MicroProfile Reactive Messaging specification fulfils its central promise.
+The same processor method ran in memory and over Kafka with its body unchanged,
+and the transition consisted of configuration. Its abstraction ends, however,
+in case of failures, where the semantics of specific connectors become unavoidable.
+
+Regarding the choice between the two discussed styles, the evidence collected
+here supports the following recommendations:
+
+[arabic]
+. Prefer Reactive Messaging for streams and for temporal decoupling between services. This question is largely
+independent of the concurrency model, since virtual threads offer no replacement for a broker.
+. Prefer Mutiny for continuous streams with explicit back pressure.
+. Prefer virtual threads for a consumer that must perform a blocking call, on the condition that the order of processing
+is immaterial. Retain sequential processing wherever a message depends on the previous one.
+. Whichever style is chosen, declare a concurrency limit, assert the thread in the tests, and
+check the pinning hazard if running on a version earlier than JDK 24.
+
+The most durable conclusion concerns method rather than technology. Almost every
+significant finding of this work, namely the behavior of malformed records, the
+necessity of an explicit overflow policy, the loss of order and the exactness of
+the concurrency limit, emerged from an experiment. The MicroProfile Reactive
+Messaging specification, as well as its implementation by Quarkus, emerged from
+this examination with their reputations intact.
+
+== References
+
+[arabic]
+. Eclipse MicroProfile, https://download.eclipse.org/microprofile/microprofile-reactive-messaging-3.0/microprofile-reactive-messaging-spec-3.0.html[MicroProfile Reactive Messaging Specification 3.0].
+. MicroProfile, https://microprofile.io/specifications/reactive-messaging[Reactive Messaging], release history.
+. SmallRye, https://smallrye.io/smallrye-reactive-messaging/latest/kafka/receiving-kafka-records/[Receiving Kafka Records].
+. SmallRye, https://smallrye.io/smallrye-mutiny/[Mutiny documentation].
+. Quarkus, https://quarkus.io/guides/messaging-virtual-threads[Virtual Threads Support for Messaging Applications].
+. OpenJDK, https://openjdk.org/jeps/444[JEP 444&#44; Virtual Threads].
+. OpenJDK, https://openjdk.org/jeps/491[JEP 491&#44; Synchronize Virtual Threads without Pinning].
+. https://www.amazon.fr/Reactive-Systems-Java-Event-driven-Architecture/dp/1492091723?th=1[Reactive Systems in Java by Clément Escoffier and Ken Finnigan&#44; O'Reilly 2021]
+. The accompanying source code, https://github.com/nicolasduminil/reactive-messaging[`reactive-messaging`].
