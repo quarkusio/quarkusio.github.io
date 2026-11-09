@@ -1,5 +1,0 @@
----
-layout: documentation
-title: Guides
-link: /version/3.33.4-emergency/guides/
----
