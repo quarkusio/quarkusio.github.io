@@ -80,7 +80,7 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
 
     /** One release as written in the YAML: dates are yyyy-MM-dd strings, herodevs_eol may be "nes". */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, String latestPatch, String latestPatchDate, String link, String rhbqEol,
-            String ibmEol, String herodevsEol) {
+            boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
+            String rhbqEol, String ibmEol, String herodevsEol) {
     }
 }
