@@ -1,10 +1,14 @@
 package io.quarkusio.timeline;
 
+import static io.quarkusio.releases.ReleaseKind.MAJOR;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.LocalDate;
 import java.util.List;
 
+import io.quarkusio.charts.timeline.TimeScale;
+import io.quarkusio.charts.timeline.gantt.GanttTimelineBuilder;
+import io.quarkusio.releases.ReleaseKind;
 import org.junit.jupiter.api.Test;
 
 class TimelineBuilderTest {
@@ -13,7 +17,7 @@ class TimelineBuilderTest {
 
     @Test
     void openEndedSegmentReachesRangeEnd() {
-        var tl = new TimelineBuilder("t", scale).row("a", "a")
+        var tl = new GanttTimelineBuilder("t", scale).row("a", "a")
                 .segment("community", LocalDate.of(2025, 1, 1), null, null, "t", List.of(), null).add().build();
         var seg = tl.rows().get(0).segments().get(0);
         assertTrue(seg.openEnded());
@@ -24,7 +28,7 @@ class TimelineBuilderTest {
 
     @Test
     void clampsSegmentStartingBeforeRange() {
-        var tl = new TimelineBuilder("t", scale).row("a", "a")
+        var tl = new GanttTimelineBuilder("t", scale).row("a", "a")
                 .segment("community", LocalDate.of(2020, 1, 1), LocalDate.of(2024, 7, 1), null, "t", List.of(), null)
                 .add().build();
         assertEquals("0.000", tl.rows().get(0).segments().get(0).xPct());
@@ -33,10 +37,10 @@ class TimelineBuilderTest {
     @Test
     void dropsRowsWithNoVisibleSegmentUnlessKept() {
         LocalDate old = LocalDate.of(2020, 1, 1);
-        var dropped = new TimelineBuilder("t", scale).row("a", "a")
+        var dropped = new GanttTimelineBuilder("t", scale).row("a", "a")
                 .segment("community", old, old.plusDays(5), null, "t", List.of(), null).add().build();
         assertTrue(dropped.rows().isEmpty());
-        var kept = new TimelineBuilder("t", scale).keepEmptyRows(true).row("a", "a")
+        var kept = new GanttTimelineBuilder("t", scale).keepEmptyRows(true).row("a", "a")
                 .segment("community", old, old.plusDays(5), null, "t", List.of(), null).add().build();
         assertEquals(1, kept.rows().size());
     }
@@ -44,16 +48,16 @@ class TimelineBuilderTest {
     @Test
     void shortSegmentGetsMinimumWidth() {
         LocalDate d = LocalDate.of(2024, 6, 1);
-        var tl = new TimelineBuilder("t", scale).row("a", "a")
+        var tl = new GanttTimelineBuilder("t", scale).row("a", "a")
                 .segment("community", d, d, null, "t", List.of(), null).add().build();
         assertEquals("0.150", tl.rows().get(0).segments().get(0).wPct());
     }
 
     @Test
     void markersOutsideRangeAreDropped() {
-        var tl = new TimelineBuilder("t", scale)
-                .marker(LocalDate.of(2020, 1, 1), "old", "major")
-                .marker(LocalDate.of(2024, 7, 1), "in", "major").build();
+        var tl = new GanttTimelineBuilder("t", scale)
+                .marker(LocalDate.of(2020, 1, 1), "old", MAJOR)
+                .marker(LocalDate.of(2024, 7, 1), "in", MAJOR).build();
         assertEquals(1, tl.markers().size());
     }
 }

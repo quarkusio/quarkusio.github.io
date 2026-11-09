@@ -11,9 +11,9 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
-import io.quarkusio.timeline.Timeline;
-import io.quarkusio.timeline.TimelineRow;
-import io.quarkusio.timeline.TimelineSegment;
+import io.quarkusio.charts.timeline.Timeline;
+import io.quarkusio.charts.timeline.gantt.TimelineRow;
+import io.quarkusio.charts.timeline.gantt.GanttTimelineSegment;
 
 class ReleaseTimelineFactoryTest {
 
@@ -60,7 +60,7 @@ class ReleaseTimelineFactoryTest {
     final ReleaseTimelineFactory factory = new ReleaseTimelineFactory(catalog);
 
     static List<String> kinds(TimelineRow row) {
-        return row.segments().stream().map(TimelineSegment::kind).collect(Collectors.toList());
+        return row.segments().stream().map(GanttTimelineSegment::kind).collect(Collectors.toList());
     }
 
     static TimelineRow row(Timeline t, String id) {
@@ -83,7 +83,7 @@ class ReleaseTimelineFactoryTest {
         // community, Red Hat, then IBM enterprise followed by IBM never-ending
         assertEquals(List.of("community", "enterprise", "enterprise", "nes"), kinds(row(t, "3.33")));
         assertEquals(List.of("Red Hat", "IBM"), row(t, "3.33").lanes());
-        TimelineSegment ibmNes = row(t, "3.33").segments().get(3);
+        GanttTimelineSegment ibmNes = row(t, "3.33").segments().get(3);
         assertTrue(ibmNes.openEnded());
         assertEquals("ibm", ibmNes.variant());
         assertEquals(LocalDate.of(2028, 6, 30), ibmNes.start());
@@ -103,7 +103,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void streamLaneTilesWithoutGaps() {
         TimelineRow stream = row(factory.supportView(TODAY), "stream");
-        List<TimelineSegment> segs = stream.segments();
+        List<GanttTimelineSegment> segs = stream.segments();
         assertEquals(WEEKS_TO_ADD, segs.size());
         // 3.38 -> 3.39 tile exactly; 3.39 ends at the LTS 3.40, 3.50 starts later
         assertEquals(segs.get(0).end(), segs.get(1).start());
@@ -132,7 +132,7 @@ class ReleaseTimelineFactoryTest {
 
     @Test
     void tooltipLinesCarryDates() {
-        TimelineSegment seg = row(factory.supportView(TODAY), "3.33").segments().get(0);
+        GanttTimelineSegment seg = row(factory.supportView(TODAY), "3.33").segments().get(0);
         assertTrue(seg.tooltip().contains("Released 25 Mar 2026"));
         assertTrue(row(factory.supportView(TODAY), "3.33").segments().get(1).tooltip()
                 .contains("Red Hat support until 30 Jun 2028"));
@@ -154,7 +154,7 @@ class ReleaseTimelineFactoryTest {
     void upcomingStartsOnPlannedDateWhenKnown() {
         var catalog = catalogOf("""
                 {"releases": [{"version": "4.0.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
-        TimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream")
+        GanttTimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream")
                 .segments().get(0);
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
         assertTrue(seg.tooltip().contains("25 Nov 2026"));
@@ -165,9 +165,9 @@ class ReleaseTimelineFactoryTest {
         var catalog = catalogOf("""
                 {"releases": [{"version": "3.1", "release_date": "2026-01-01", "eol_date": "2027-01-01", "lts": true}]}""");
         var factory = new ReleaseTimelineFactory(catalog);
-        assertTrue(factory.legend().stream().noneMatch(i -> i.kind().equals("upcoming")));
+        assertTrue(factory.legend().stream().noneMatch(i -> i.key().equals("upcoming")));
         assertTrue(factory.supportView(TODAY).rows().stream().noneMatch(r -> r.id().startsWith("upcoming")));
-        assertTrue(this.factory.legend().stream().anyMatch(i -> i.kind().equals("upcoming")));
+        assertTrue(this.factory.legend().stream().anyMatch(i -> i.key().equals("upcoming")));
     }
 
     @Test
@@ -187,7 +187,7 @@ class ReleaseTimelineFactoryTest {
         TimelineRow r = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream");
         assertTrue(r.badges().isEmpty());
         assertEquals("true", r.data().get("lts"));
-        TimelineSegment seg = r.segments().get(0);
+        GanttTimelineSegment seg = r.segments().get(0);
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
         assertEquals(LocalDate.of(2027, 11, 25), seg.end());
         assertTrue(seg.tooltip().contains("12 months"));
@@ -208,7 +208,7 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.2", "lts": false, "upcoming": true, "planned_date": "2027-02-24"},
                    {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
                    {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
-        List<TimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         assertEquals(3, segs.size());
         // 4.0 -> 4.1 -> 4.2 tile exactly; only the last keeps the default length
         assertEquals(LocalDate.of(2026, 11, 25), segs.get(0).start());
@@ -225,7 +225,7 @@ class ReleaseTimelineFactoryTest {
                  "releases": [
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"},
                    {"version": "4.2", "lts": false, "upcoming": true, "planned_date": "2027-02-24"}]}""");
-        List<TimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         assertEquals(LocalDate.of(2027, 3, 31), segs.get(0).end());
         assertEquals(LocalDate.of(2027, 3, 31), segs.get(1).start());
         assertEquals(LocalDate.of(2028, 3, 31), segs.get(1).end());
@@ -239,7 +239,7 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.5", "lts": false, "upcoming": true, "planned_date": "2027-04-20"},
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-04-01"},
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
-        List<TimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         // 4.4 starts only a day after the LTS: clipping stops at the default bar length
         assertEquals(LocalDate.of(2027, 3, 31), segs.get(0).start());
         assertEquals(LocalDate.of(2027, 3, 31).plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
@@ -249,7 +249,7 @@ class ReleaseTimelineFactoryTest {
                  "releases": [
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-06-30"},
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
-        List<TimelineSegment> clipped = row(new ReleaseTimelineFactory(roomy).supportView(TODAY), "stream").segments();
+        List<GanttTimelineSegment> clipped = row(new ReleaseTimelineFactory(roomy).supportView(TODAY), "stream").segments();
         assertEquals(LocalDate.of(2027, 6, 30), clipped.get(0).end());
     }
 
@@ -259,7 +259,7 @@ class ReleaseTimelineFactoryTest {
                 {"releases": [
                    {"version": "4.1", "lts": false, "upcoming": true},
                    {"version": "4.0", "lts": false, "upcoming": true}]}""");
-        List<TimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         // Neither has a planned date, so both start today and there is no later start to end at
         assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
         assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.get(1).end());
@@ -293,7 +293,7 @@ class ReleaseTimelineFactoryTest {
         var catalog = catalogOf("""
                 {"policy": {"release_cadence": {"amount": 2, "unit": "months"}},
                  "releases": [{"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
-        TimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments().get(0);
+        GanttTimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments().get(0);
         assertEquals(LocalDate.of(2027, 1, 25), seg.end());
     }
 }
