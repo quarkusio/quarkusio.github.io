@@ -23,11 +23,11 @@ class ReleaseCatalogTest {
                 {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true},
                 {"version": "3.39", "release_date": "2026-08-26", "eol_date": "2026-09-30", "lts": false},
                 {"version": "3.33", "release_date": "2026-03-25", "eol_date": "2027-03-25", "lts": true,
-                 "rhbq_eol": "2028-06-30", "ibm_eol": "2028-06-30"},
+                 "rhbq": {"eol_date": "2028-06-30"}, "ibm": {"eol_date": "2028-06-30"}},
                 {"version": "3.20", "release_date": "2025-03-26", "eol_date": "2026-03-28", "lts": true,
-                 "rhbq_eol": "2027-06-30", "herodevs_eol": "nes"},
+                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"eol_date": "nes"}},
                 {"version": "2.16", "release_date": "2023-01-01", "eol_date": "2023-06-01", "lts": true,
-                 "herodevs_eol": "2030-01-01"}
+                 "herodevs": {"eol_date": "2030-01-01"}}
               ]
             }
             """;
