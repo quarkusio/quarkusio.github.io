@@ -7,16 +7,22 @@ import java.util.Objects;
 /**
  * One entry of _data/releases.yaml. Dates are null when unknown or open-ended.
  * An upcoming release has no release date, only an optional planned date.
+ * plannedEndDate is not in the data file: {@link ReleaseCatalog} derives it for upcoming releases.
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
         boolean lts, boolean upcoming, String latestPatch, LocalDate latestPatchDate, String link,
-        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol) {
+        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol, LocalDate plannedEndDate) {
 
     public static Release from(Releases.Entry e) {
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
                 e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
                 date(eolDate(e.rhbq())), date(eolDate(e.ibm())),
-                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())));
+                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())), null);
+    }
+
+    public Release withPlannedEndDate(LocalDate end) {
+        return new Release(version, releaseDate, plannedDate, eolDate, lts, upcoming, latestPatch, latestPatchDate,
+                link, rhbqEol, ibmEol, herodevsEol, end);
     }
 
     private static String eolDate(Releases.ProviderDates dates) {

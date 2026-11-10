@@ -32,10 +32,18 @@ class ReleaseCatalogTest {
             }
             """;
 
-    /** Binds like Roq does: a plain mapper, snake_case keys onto the Releases record. */
+    static ReleaseCatalog catalogOf(String json, int maxUpcoming) {
+        return new ReleaseCatalog(parse(json), maxUpcoming);
+    }
+
     static ReleaseCatalog catalogOf(String json) {
+        return new ReleaseCatalog(parse(json));
+    }
+
+    /** Binds like Roq does: a plain mapper, snake_case keys onto the Releases record. */
+    static Releases parse(String json) {
         try {
-            return new ReleaseCatalog(new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE).readValue(json, Releases.class));
+            return new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE).readValue(json, Releases.class);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -57,6 +65,46 @@ class ReleaseCatalogTest {
         assertTrue(catalog.all().get(4).herodevsEol().isNes());
         assertEquals(LocalDate.of(2030, 1, 1), catalog.all().get(5).herodevsEol().date());
         assertFalse(catalog.all().get(1).hasNes());
+    }
+
+    @Test
+    void listedKeepsOnlyTheNextUpcoming() {
+        var c = catalogOf("""
+                {"releases": [
+                  {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
+                  {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"},
+                  {"version": "3.40", "lts": true, "release_date": "2026-09-30"}]}""");
+        assertEquals(List.of("4.0", "3.40"), c.listed().stream().map(Release::version).toList());
+    }
+
+    @Test
+    void maxUpcomingControlsHowManyAreListed() {
+        String json = """
+                {"releases": [
+                  {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
+                  {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"},
+                  {"version": "3.40", "lts": true, "release_date": "2026-09-30"}]}""";
+        assertEquals(List.of("3.40"), versions(catalogOf(json, 0).listed()));
+        assertEquals(List.of("4.1", "4.0", "3.40"), versions(catalogOf(json, 2).listed()));
+    }
+
+    @Test
+    void upcomingReleasesGetAPlannedEndDateFromTheNextOneEvenWhenHidden() {
+        var c = catalogOf("""
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
+                 "releases": [
+                  {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"},
+                  {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
+                  {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"},
+                  {"version": "3.40", "lts": true, "release_date": "2026-09-30"}]}""");
+        assertEquals(java.time.LocalDate.of(2027, 1, 27), c.visibleUpcoming().get(0).plannedEndDate());
+        var lts = c.upcoming().stream().filter(r -> r.version().equals("4.3")).findFirst().orElseThrow();
+        assertEquals(java.time.LocalDate.of(2028, 3, 31), lts.plannedEndDate());
+        assertEquals(null, c.latest().orElseThrow().plannedEndDate());
+    }
+
+    static List<String> versions(List<Release> releases) {
+        return releases.stream().map(Release::version).toList();
     }
 
     @Test

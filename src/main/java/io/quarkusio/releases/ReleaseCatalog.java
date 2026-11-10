@@ -2,6 +2,8 @@ package io.quarkusio.releases;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,13 +19,26 @@ import jakarta.inject.Named;
 @Named("releaseCatalog")
 public class ReleaseCatalog {
 
+    static final int DEFAULT_MAX_UPCOMING = 1;
+    static final Period DEFAULT_CADENCE = Period.ofWeeks(4);
+
     private final Releases data;
     private final List<Release> releases;
+    private final int maxUpcoming;
 
     @Inject
+    public ReleaseCatalog(Releases data, ReleasesConfig config) {
+        this(data, config.maxUpcoming());
+    }
+
     public ReleaseCatalog(Releases data) {
+        this(data, DEFAULT_MAX_UPCOMING);
+    }
+
+    public ReleaseCatalog(Releases data, int maxUpcoming) {
         this.data = data;
-        this.releases = data.releases().stream().map(Release::from).toList();
+        this.maxUpcoming = maxUpcoming;
+        this.releases = enrichUpcoming(data.releases().stream().map(Release::from).toList(), data.policy());
     }
 
     public Releases.Policy policy() {
@@ -34,9 +49,70 @@ public class ReleaseCatalog {
         return data.supportProviders();
     }
 
+    /**
+     * Derives plannedEndDate for the upcoming releases that have a planned date, from all of them
+     * (not only the visible ones, so hiding later releases does not change the ones that remain).
+     * A non-LTS is supported only until the next minor, so it ends where the next dated upcoming release starts.
+     * An LTS runs for the policy's LTS support duration, clipped to that start but never to less than
+     * the release cadence. Without a next release a non-LTS has no end date, and the caller picks a default length.
+     */
+    private static List<Release> enrichUpcoming(List<Release> all, Releases.Policy policy) {
+        Period ltsPeriod = policy == null ? null : policy.ltsSupportPeriod();
+        Period cadence = cadence(policy);
+        List<Release> dated = all.stream().filter(r -> r.upcoming() && r.plannedDate() != null)
+                .sorted(Comparator.comparing(Release::plannedDate).thenComparing(Release::version))
+                .toList();
+        return all.stream().map(r -> {
+            if (!dated.contains(r)) {
+                return r;
+            }
+            LocalDate start = r.plannedDate();
+            LocalDate next = dated.stream().map(Release::plannedDate).filter(d -> d.isAfter(start))
+                    .findFirst().orElse(null);
+            LocalDate end = next;
+            if (r.lts() && ltsPeriod != null) {
+                end = start.plus(ltsPeriod);
+                if (next != null && next.isBefore(end)) {
+                    LocalDate minEnd = start.plus(cadence);
+                    end = next.isAfter(minEnd) ? next : minEnd;
+                }
+            }
+            return r.withPlannedEndDate(end);
+        }).toList();
+    }
+
+    /** The default length of an upcoming bar: the policy's release cadence. */
+    public Period cadence() {
+        return cadence(data.policy());
+    }
+
+    private static Period cadence(Releases.Policy policy) {
+        Period p = policy == null ? null : policy.releaseCadencePeriod();
+        return p == null ? DEFAULT_CADENCE : p;
+    }
+
     /** All releases, newest first, as listed in the data file. */
     public List<Release> all() {
         return releases;
+    }
+
+    /** Every upcoming release, soonest first; undated ones come last. */
+    public List<Release> upcoming() {
+        return all().stream().filter(Release::upcoming)
+                .sorted(Comparator.comparing(Release::plannedDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(Release::version))
+                .toList();
+    }
+
+    /** The soonest upcoming releases, at most quarkusio.releases.max-upcoming. */
+    public List<Release> visibleUpcoming() {
+        return upcoming().stream().limit(maxUpcoming).toList();
+    }
+
+    /** All releases, but with only the visible upcoming ones; what the releases table lists. */
+    public List<Release> listed() {
+        List<Release> visible = visibleUpcoming();
+        return all().stream().filter(r -> !r.upcoming() || visible.contains(r)).toList();
     }
 
     /** Newest release that is out (not upcoming). */
