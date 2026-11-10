@@ -1,80 +1,67 @@
 package io.quarkusio;
 
-import com.microsoft.playwright.Response;
+import io.quarkiverse.roq.testing.RoqAndRoll;
+import io.quarkus.test.junit.QuarkusTest;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
-import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
-import static org.junit.jupiter.api.Assertions.*;
+import static io.restassured.RestAssured.get;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.emptyString;
+import static org.hamcrest.Matchers.startsWith;
 
-public class SmokePageTest extends BrowserTest {
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "/",
-            "/about/",
-            "/blog/",
-            "/guides/",
-            "/get-started/",
-            "/support/",
-            "/newsletter/",
-            "/community/",
-            "/events/",
-            "/userstories/",
-            "/releases/",
-            "/eol/",
-            "/security/"
-    })
-    void criticalPageReturns200(String path) {
-        Response response = page.navigate(baseUrl + path);
-        assertNotNull(response, "No response for " + path);
-        assertEquals(200, response.status(),
-                "Expected 200 for " + path + " but got " + response.status());
-    }
+/**
+ * Checks the files the generator writes and how a static server serves them. The pages
+ * themselves are rendered and inspected in {@link CorePageSenseTest}.
+ * <p>
+ * This should be the only {@code @RoqAndRoll} class in the normal test run: each one generates the whole site
+ * again in the same JVM, and any more than one OOMs.
+ */
+@QuarkusTest
+@RoqAndRoll
+@Tag("fullsite")
+public class SmokePageTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
             "/",
-            "/about/",
             "/blog/",
             "/guides/",
             "/get-started/",
-            "/support/"
+            "/releases/"
     })
-    void criticalPageHasValidTitle(String path) {
-        page.navigate(baseUrl + path);
-        String title = page.title();
-        assertFalse(title == null || title.isBlank(),
-                "Page title should not be null or empty for " + path);
-        String lowerTitle = title.toLowerCase();
-        assertFalse(lowerTitle.contains("undefined"),
-                "Page title should not contain 'undefined' for " + path + ", got: " + title);
-        assertFalse(lowerTitle.contains("null"),
-                "Page title should not contain 'null' for " + path + ", got: " + title);
-        assertFalse(lowerTitle.contains("error"),
-                "Page title should not contain 'error' for " + path + ", got: " + title);
-        assertFalse(lowerTitle.contains("exception"),
-                "Page title should not contain 'Exception' for " + path + ", got: " + title);
+    void criticalPageIsGenerated(String path) {
+        get(path).then().statusCode(200).contentType(containsString("text/html"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/feed.xml",
+            "/sitemap.xml",
+            "/llms.txt",
+            "/robots.txt",
+            "/favicon.ico"
+    })
+    void nonPageFileIsGenerated(String path) {
+        get(path).then().statusCode(200).body(not(emptyString()));
+    }
+
+    // The Bluesky domain verification file, copied from public/
+    @Test
+    void atprotoDidIsGenerated() {
+        get("/.well-known/atproto-did").then().statusCode(200).body(startsWith("did:"));
     }
 
     @Test
-    void homepageDoesNotContainUnrenderedMarkup() {
-        page.navigate(baseUrl + "/");
-        assertDoesNotContainUnrenderedMarkup(page, "Homepage");
+    void notFoundPageIsGenerated() {
+        get("/404.html").then().statusCode(200).body(containsString("You have found nowhere"));
     }
 
     @Test
-    void homepageDoesNotContainRawHtmlTags() {
-        page.navigate(baseUrl + "/");
-        assertDoesNotContainRawHtml(page, "Homepage");
-    }
-
-    @Test
-    void notFoundPageReturns404() {
-        Response response = page.navigate(baseUrl + "/this-path-does-not-exist-xyz/");
-        assertNotNull(response, "No response for nonexistent path");
-        assertEquals(404, response.status());
+    void unknownPathReturns404() {
+        get("/this-path-does-not-exist-xyz/").then().statusCode(404);
     }
 }

@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.io.StringReader;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,6 +21,7 @@ import org.xml.sax.InputSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class RssFeedTest extends BrowserTest {
 
     @Override

@@ -1,11 +1,13 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 
 import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainRawHtml;
 import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class AuthorPageTest extends BrowserTest {
 
     @Test

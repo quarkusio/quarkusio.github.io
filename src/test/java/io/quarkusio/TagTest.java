@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class TagTest extends BrowserTest {
 
     private static final String BLOG_PATH = "/blog/";
