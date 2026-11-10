@@ -380,6 +380,8 @@ public class LinkCrawlerTest extends BrowserTest {
         List<String> excludePaths = parseExcludePaths(System.getProperty("test.crawl.exclude-paths", ""));
         List<String> excludeUrls = parseExcludePaths(System.getProperty("test.crawl.exclude-urls", ""));
         List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
+        List<String> startPaths = parseExcludePaths(System.getProperty("test.crawl.start-paths", ""));
+        List<String> includePaths = parseExcludePaths(System.getProperty("test.crawl.include-paths", ""));
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
         LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
@@ -400,6 +402,7 @@ public class LinkCrawlerTest extends BrowserTest {
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
+        Set<String> startUrls = ConcurrentHashMap.newKeySet();
         AtomicInteger pendingWork = new AtomicInteger();
         if (!changedPaths.isEmpty()) {
             System.out.println("Incremental mode: checking " + changedPaths.size() + " changed page(s)");
@@ -410,8 +413,13 @@ public class LinkCrawlerTest extends BrowserTest {
                 queue.add(url);
             }
         } else {
-            pendingWork.incrementAndGet();
-            queue.add(normalize(baseUrl + "/"));
+            // Without start paths, crawl from the site root
+            for (String path : startPaths.isEmpty() ? List.of("/") : startPaths) {
+                String url = normalize(baseUrl + path);
+                startUrls.add(url);
+                pendingWork.incrementAndGet();
+                queue.add(url);
+            }
         }
 
         var done = new AtomicBoolean(false);
@@ -429,8 +437,8 @@ public class LinkCrawlerTest extends BrowserTest {
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
                             checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, crawledCount, maxPages,
-                            checkInternal, checkExternal, excludePaths, excludeUrls, seedUrls,
-                            pendingWork, done);
+                            checkInternal, checkExternal, excludePaths, includePaths, excludeUrls, seedUrls,
+                            startUrls, pendingWork, done);
 
                     ctx.close();
                     br.close();
@@ -638,8 +646,10 @@ public class LinkCrawlerTest extends BrowserTest {
                           boolean checkInternal,
                           boolean checkExternal,
                           List<String> excludePaths,
+                          List<String> includePaths,
                           List<String> excludeUrls,
                           Set<String> seedUrls,
+                          Set<String> startUrls,
                           AtomicInteger pendingWork,
                           AtomicBoolean done) {
         boolean incrementalMode = !seedUrls.isEmpty();
@@ -700,6 +710,13 @@ public class LinkCrawlerTest extends BrowserTest {
             if (incrementalMode && !seedUrls.contains(currentUrl)) {
                 continue;
             }
+
+                // Pages outside the include list are visited only to verify their
+                // status; links are followed only from included pages and the
+                // start pages.
+                if (!startUrls.contains(normalizedUrl) && !isIncluded(normalizedUrl, includePaths)) {
+                    continue;
+                }
 
                 // Use the browser's actual URL (after redirects) as the base for
                 // resolving relative URLs — e.g. /newsletter/18 redirects to
@@ -1355,6 +1372,20 @@ public class LinkCrawlerTest extends BrowserTest {
                 .map(String::strip)
                 .filter(s -> !s.isEmpty())
                 .toList();
+    }
+
+    // An empty include list means everything is included
+    private boolean isIncluded(String url, List<String> includePaths) {
+        if (includePaths.isEmpty()) {
+            return true;
+        }
+        String path = stripHost(url);
+        for (String included : includePaths) {
+            if (path.startsWith(included)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isExcluded(String url, List<String> excludePaths) {
