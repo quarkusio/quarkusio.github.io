@@ -146,7 +146,14 @@ public class ReleasesPageTest extends BrowserTest {
         page.navigate(baseUrl + "/releases/");
         Locator lts = page.locator("#tl-support .tl-row[data-lts]");
         assertTrue(lts.count() >= 1);
+        String rangeStart = page.locator("#tl-support").getAttribute("data-range-start");
         for (int i = 0; i < lts.count(); i++) {
+            // A long-EOL LTS kept visible only by vendor/NES support has its community period
+            // entirely before the view's range, so there is nothing to draw.
+            String eol = lts.nth(i).getAttribute("data-eol");
+            if (eol != null && eol.compareTo(rangeStart) < 0) {
+                continue;
+            }
             assertTrue(lts.nth(i).locator(".tl-seg--community").count() >= 1,
                     "LTS row should have a community segment");
         }
