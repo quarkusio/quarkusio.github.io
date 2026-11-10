@@ -50,3 +50,6 @@ Requires Java 21+. Site is served at http://localhost:8042.
 - Tags: lowercase, space-separated
 - Permalink pattern: `/blog/:Name/` (configured in `config/application.properties`)
 - Images: store in `assets/images/posts/<slug>/`, reference with `:imagesdir:`
+- Links to future-dated posts must be conditional, or they 404 until the
+  target publishes — see "Linking to a Future-Dated Post" in
+  `.agents/skills/building-blog/SKILL.md`
