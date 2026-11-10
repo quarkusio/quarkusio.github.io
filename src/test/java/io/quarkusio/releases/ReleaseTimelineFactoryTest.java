@@ -201,7 +201,7 @@ class ReleaseTimelineFactoryTest {
     }
 
     @Test
-    void nonLtsUpcomingBarEndsWhereTheNextUpcomingStarts() {
+    void onlyTheSoonestUpcomingReleaseIsDrawn() {
         var catalog = catalogOf("""
                 {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
@@ -209,37 +209,32 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
                    {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
-        assertEquals(3, segs.size());
-        // 4.0 -> 4.1 -> 4.2 tile exactly; only the last keeps the default length
+        assertEquals(1, segs.size());
         assertEquals(LocalDate.of(2026, 11, 25), segs.get(0).start());
+        // the hidden 4.1 still decides where 4.0 ends
         assertEquals(LocalDate.of(2027, 1, 27), segs.get(0).end());
-        assertEquals(LocalDate.of(2027, 1, 27), segs.get(1).start());
-        assertEquals(LocalDate.of(2027, 2, 24), segs.get(1).end());
-        assertEquals(LocalDate.of(2027, 2, 24).plusWeeks(WEEKS_TO_ADD), segs.get(2).end());
     }
 
     @Test
-    void upcomingLtsKeepsLtsLengthAndShortensTheNonLtsBeforeIt() {
-        var catalog = catalogOf("""
-                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
-                 "releases": [
-                   {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"},
-                   {"version": "4.2", "lts": false, "upcoming": true, "planned_date": "2027-02-24"}]}""");
+    void maxUpcomingShowsMoreAndNonLtsBarsEndWhereTheNextStarts() {
+        var catalog = new ReleaseCatalog(ReleaseCatalogTest.parse("""
+                {"releases": [
+                   {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
+                   {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}"""), 2);
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
-        assertEquals(LocalDate.of(2027, 3, 31), segs.get(0).end());
-        assertEquals(LocalDate.of(2027, 3, 31), segs.get(1).start());
-        assertEquals(LocalDate.of(2028, 3, 31), segs.get(1).end());
+        assertEquals(2, segs.size());
+        assertEquals(LocalDate.of(2027, 1, 27), segs.get(0).end());
     }
 
     @Test
-    void upcomingLtsIsClippedByALaterUpcomingButKeepsAtLeastTheDefaultLength() {
+    void soonestUpcomingLtsIsClippedByAHiddenLaterUpcomingButKeepsAtLeastTheDefaultLength() {
         var catalog = catalogOf("""
                 {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [
-                   {"version": "4.5", "lts": false, "upcoming": true, "planned_date": "2027-04-20"},
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-04-01"},
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        assertEquals(1, segs.size());
         // 4.4 starts only a day after the LTS: clipping stops at the default bar length
         assertEquals(LocalDate.of(2027, 3, 31), segs.get(0).start());
         assertEquals(LocalDate.of(2027, 3, 31).plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
@@ -254,15 +249,23 @@ class ReleaseTimelineFactoryTest {
     }
 
     @Test
-    void upcomingWithoutDistinctStartsFallsBackToDefaultLength() {
+    void soonestUpcomingLtsKeepsLtsLengthWhenNothingFollows() {
+        var catalog = catalogOf("""
+                {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
+                 "releases": [{"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+        assertEquals(LocalDate.of(2028, 3, 31), segs.get(0).end());
+    }
+
+    @Test
+    void upcomingWithoutPlannedDateStartsToday() {
         var catalog = catalogOf("""
                 {"releases": [
                    {"version": "4.1", "lts": false, "upcoming": true},
                    {"version": "4.0", "lts": false, "upcoming": true}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
-        // Neither has a planned date, so both start today and there is no later start to end at
+        assertEquals(1, segs.size());
         assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
-        assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.get(1).end());
     }
 
     @Test

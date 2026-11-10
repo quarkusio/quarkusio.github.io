@@ -29,7 +29,6 @@ public class ReleaseTimelineFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
     /** Used for the default upcoming bar when the policy has no release_cadence. */
-    static final Period DEFAULT_CADENCE = Period.ofWeeks(4);
 
     private final ReleaseCatalog catalog;
 
@@ -102,24 +101,17 @@ public class ReleaseTimelineFactory {
 
     /** The default length of an upcoming bar: the policy's release cadence. */
     private Period cadence() {
-        Period p = catalog.policy() == null ? null : catalog.policy().releaseCadencePeriod();
-        return p == null ? DEFAULT_CADENCE : p;
+        return catalog.cadence();
     }
 
-    /** Covers every support end and every upcoming bar, so planned releases are not cropped. */
+    /** Covers every support end and every visible upcoming bar, so planned releases are not cropped. */
     private int endYear(LocalDate today) {
-        Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
         int supportEnds = catalog.all().stream().map(Release::supportEnd).filter(d -> d != null)
                 .map(LocalDate::getYear).max(Integer::compare).orElse(today.getYear());
-        int upcomingEnds = catalog.all().stream().filter(Release::upcoming)
-                .map(r -> upcomingStart(r, today))
-                .map(start -> start.plus(cadence()).getYear())
+        int upcomingEnds = catalog.visibleUpcoming().stream()
+                .map(r -> upcomingEnd(r, today).getYear())
                 .max(Integer::compare).orElse(today.getYear());
-        int upcomingLtsEnds = lts == null ? today.getYear() : catalog.all().stream()
-                .filter(r -> r.upcoming() && r.lts())
-                .map(r -> upcomingStart(r, today).plus(lts).getYear())
-                .max(Integer::compare).orElse(today.getYear());
-        return Math.max(Math.max(supportEnds, upcomingEnds), Math.max(upcomingLtsEnds, today.getYear()));
+        return Math.max(Math.max(supportEnds, upcomingEnds), today.getYear());
     }
 
     private GanttTimelineBuilder newBuilder(String id, TimeScale scale) {
@@ -134,46 +126,31 @@ public class ReleaseTimelineFactory {
     }
 
     /**
-     * Only drawn for releases flagged upcoming. Starts on the planned_date when the data has one in
-     * the future, otherwise today. An LTS runs for the policy's LTS support duration,
-     * clipped to the start of the next upcoming release but never to less than the default bar length.
-     * A non-LTS is supported only until the next minor, so when another upcoming release follows,
-     * its bar ends where that one starts; the last one is a short placeholder.
+     * Ends at the release's derived plannedEndDate. Without one, or if that is not after the start,
+     * an LTS gets the policy's LTS duration and anything else the default bar length.
      */
-    private void addUpcoming(GanttTimelineBuilder b, LocalDate today, GanttTimelineBuilder.RowBuilder row) {
+    private LocalDate upcomingEnd(Release r, LocalDate today) {
+        LocalDate start = upcomingStart(r, today);
+        if (r.plannedEndDate() != null && r.plannedEndDate().isAfter(start)) {
+            return r.plannedEndDate();
+        }
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
-        List<Release> upcoming = catalog.all().stream()
-                .filter(Release::upcoming)
-                .sorted(Comparator.comparing((Release r) -> upcomingStart(r, today))
-                        .thenComparing(r -> r.version()))
-                .toList();
-        for (int i = 0; i < upcoming.size(); i++) {
-            Release r = upcoming.get(i);
-            boolean planned = isPlanned(r, today);
-            LocalDate start = upcomingStart(r, today);
-            boolean ltsLength = r.lts() && lts != null;
-            LocalDate nextStart = i + 1 < upcoming.size() ? upcomingStart(upcoming.get(i + 1), today) : null;
-            LocalDate end;
-            if (ltsLength) {
-                end = start.plus(lts);
-                if (nextStart != null && nextStart.isBefore(end)) {
-                    // Clip to where the next release starts, but keep at least the default bar length visible
-                    LocalDate minEnd = start.plus(cadence());
-                    end = nextStart.isAfter(minEnd) ? nextStart : minEnd;
-                }
-            } else {
-                end = nextStart != null && nextStart.isAfter(start) ? nextStart : start.plus(cadence());
-            }
+        return start.plus(r.lts() && lts != null ? lts : cadence());
+    }
+
+    private void addUpcoming(LocalDate today, GanttTimelineBuilder.RowBuilder row) {
+        boolean ltsLength = catalog.policy() != null && catalog.policy().ltsSupportPeriod() != null;
+        for (Release r : catalog.visibleUpcoming()) {
             List<String> lines = new ArrayList<>();
-            lines.add(planned ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
-            if (ltsLength) {
+            lines.add(isPlanned(r, today) ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
+            if (r.lts() && ltsLength) {
                 lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration().label());
             }
             if (r.lts()) {
                 // data only: a visible LTS badge would mislabel the non-LTS stream row
                 row.data("lts", "true");
             }
-            row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
+            row.segment("upcoming", upcomingStart(r, today), upcomingEnd(r, today), null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
         }
     }
 
@@ -196,7 +173,7 @@ public class ReleaseTimelineFactory {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today),
                     "Quarkus " + r.version(), communityLines(r), r.version());
         }
-        addUpcoming(b, today, row);
+        addUpcoming(today, row);
 
         row.add();
     }
