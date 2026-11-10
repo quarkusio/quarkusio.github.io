@@ -1,4 +1,4 @@
-package io.quarkusio.timeline;
+package io.quarkusio.charts.timeline.gantt;
 
 import java.util.List;
 import java.util.Map;
@@ -11,5 +11,5 @@ import java.util.Map;
  * attributes on the row.
  */
 public record TimelineRow(String id, String label, List<String> badges, String href,
-        List<TimelineSegment> segments, Map<String, String> data, List<String> lanes, int height, String shortLabel) {
+                          List<GanttTimelineSegment> segments, Map<String, String> data, List<String> lanes, int height, String shortLabel) {
 }

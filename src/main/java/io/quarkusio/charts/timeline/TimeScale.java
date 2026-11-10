@@ -1,4 +1,4 @@
-package io.quarkusio.timeline;
+package io.quarkusio.charts.timeline;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;

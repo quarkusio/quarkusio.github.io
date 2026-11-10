@@ -1,8 +1,11 @@
-package io.quarkusio.timeline;
+package io.quarkusio.charts.timeline;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+
+import io.quarkusio.charts.timeline.gantt.GanttTimelineSegment;
+import io.quarkusio.charts.timeline.gantt.TimelineRow;
 
 public record Timeline(String id, TimeScale scale, List<TimelineRow> rows,
         List<TimelineMarker> markers, List<LegendItem> legend) {
@@ -33,7 +36,7 @@ public record Timeline(String id, TimeScale scale, List<TimelineRow> rows,
 
     /** Distinct segment variants, used to define one pattern and gradient each. */
     public List<String> variants() {
-        return rows.stream().flatMap(r -> r.segments().stream()).map(TimelineSegment::variant)
+        return rows.stream().flatMap(r -> r.segments().stream()).map(GanttTimelineSegment::variant)
                 .filter(v -> v != null).distinct().toList();
     }
 

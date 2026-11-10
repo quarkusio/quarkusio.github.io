@@ -13,10 +13,14 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
-import io.quarkusio.timeline.LegendItem;
-import io.quarkusio.timeline.TimeScale;
-import io.quarkusio.timeline.Timeline;
-import io.quarkusio.timeline.TimelineBuilder;
+import io.quarkusio.charts.timeline.LegendItem;
+import io.quarkusio.charts.timeline.TimeScale;
+import io.quarkusio.charts.timeline.Timeline;
+import io.quarkusio.charts.timeline.gantt.GanttTimelineBuilder;
+
+import static io.quarkusio.charts.timeline.LegendGroup.PROVIDER;
+import static io.quarkusio.charts.timeline.LegendGroup.RELEASE_KIND;
+import static io.quarkusio.releases.ReleaseKind.MAJOR;
 
 /** Builds the two release support timelines shown on /releases/. */
 @ApplicationScoped
@@ -36,18 +40,18 @@ public class ReleaseTimelineFactory {
 
     public List<LegendItem> legend() {
         List<LegendItem> items = new ArrayList<>(List.of(
-                new LegendItem("community", "Community maintenance",
+                new LegendItem(RELEASE_KIND, "community", "Community maintenance",
                         "Solid bar: bug fixes and security patches from the Quarkus community."),
-                new LegendItem("enterprise", "Enterprise support",
+                new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
                         "Bordered bar: paid support with an end date, from Red Hat and IBM."),
-                new LegendItem("nes", "Never-ending support",
+                new LegendItem(RELEASE_KIND,"nes", "Never-ending support",
                         "Fading bar: paid patches with no end date, from IBM and HeroDevs.")));
         if (catalog.all().stream().anyMatch(Release::upcoming)) {
-            items.add(new LegendItem("upcoming", "Upcoming", "Planned release."));
+            items.add(new LegendItem(RELEASE_KIND, "upcoming", "Upcoming", "Planned release."));
         }
-        items.add(new LegendItem("prov-rhbq", "Red Hat", "Red Hat build of Quarkus"));
-        items.add(new LegendItem("prov-ibm", "IBM", "IBM Enterprise Build of Quarkus"));
-        items.add(new LegendItem("prov-herodevs", "HeroDevs", "HeroDevs Never-Ending Support"));
+        items.add(new LegendItem(PROVIDER, "rhbq", "Red Hat", "Red Hat build of Quarkus"));
+        items.add(new LegendItem(PROVIDER,"ibm", "IBM", "IBM Enterprise Build of Quarkus"));
+        items.add(new LegendItem(PROVIDER,"herodevs", "HeroDevs", "HeroDevs Never-Ending Support"));
         return items;
     }
 
@@ -78,7 +82,7 @@ public class ReleaseTimelineFactory {
 
     private Timeline build(String id, int startYear, LocalDate today) {
         TimeScale scale = new TimeScale(LocalDate.of(startYear, 1, 1), LocalDate.of(endYear(today), 12, 31));
-        TimelineBuilder b = newBuilder(id, scale);
+        GanttTimelineBuilder b = newBuilder(id, scale);
         List<Release> shown = catalog.all().stream()
                 .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes()))
                 .toList();
@@ -118,13 +122,13 @@ public class ReleaseTimelineFactory {
         return Math.max(Math.max(supportEnds, upcomingEnds), Math.max(upcomingLtsEnds, today.getYear()));
     }
 
-    private TimelineBuilder newBuilder(String id, TimeScale scale) {
-        TimelineBuilder b = new TimelineBuilder(id, scale);
+    private GanttTimelineBuilder newBuilder(String id, TimeScale scale) {
+        GanttTimelineBuilder b = new GanttTimelineBuilder(id, scale);
         for (Release major : catalog.majors()) {
-            b.marker(major.releaseDate(), "Quarkus " + major.version().replaceAll("\\.0$", ""), "major");
+            b.marker(major.releaseDate(), "Quarkus " + major.version().replaceAll("\\.0$", ""), MAJOR);
         }
         for (LegendItem item : legend()) {
-            b.legend(item.kind(), item.label(), item.description());
+            b.legend(item);
         }
         return b;
     }
@@ -136,7 +140,7 @@ public class ReleaseTimelineFactory {
      * A non-LTS is supported only until the next minor, so when another upcoming release follows,
      * its bar ends where that one starts; the last one is a short placeholder.
      */
-    private void addUpcoming(TimelineBuilder b, LocalDate today, TimelineBuilder.RowBuilder row) {
+    private void addUpcoming(GanttTimelineBuilder b, LocalDate today, GanttTimelineBuilder.RowBuilder row) {
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
         List<Release> upcoming = catalog.all().stream()
                 .filter(Release::upcoming)
@@ -182,7 +186,7 @@ public class ReleaseTimelineFactory {
     }
 
     /** Non-LTS minors laid end to end; each is supported until the next one ships. */
-    private void addStreamLane(TimelineBuilder b, LocalDate today) {
+    private void addStreamLane(GanttTimelineBuilder b, LocalDate today) {
         var row = b.row("stream", "Non-LTS stream").shortLabel("Non-LTS");
         List<Release> stream = catalog.all().stream()
                 .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
@@ -197,7 +201,7 @@ public class ReleaseTimelineFactory {
         row.add();
     }
 
-    private void addReleaseRow(TimelineBuilder b, Release r, LocalDate today) {
+    private void addReleaseRow(GanttTimelineBuilder b, Release r, LocalDate today) {
         var row = b.row(r.version(), r.version())
                 .href(r.link())
                 .data("version", r.version());

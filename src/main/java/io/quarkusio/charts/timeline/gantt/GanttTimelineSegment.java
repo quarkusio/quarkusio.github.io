@@ -1,4 +1,4 @@
-package io.quarkusio.timeline;
+package io.quarkusio.charts.timeline.gantt;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -8,9 +8,9 @@ import java.util.List;
  * colour, rendered as tl-prov--{variant}. lane is 0 for the main lane; y and h are the bar geometry in pixels, set when the row is built. ref optionally ties
  * the segment to an item elsewhere on the page (rendered as data-version).
  */
-public record TimelineSegment(String kind, String variant, int lane, LocalDate start, LocalDate end,
-        boolean openEnded, String href, String title, List<String> details, String ref,
-        String xPct, String wPct, int y, int h) {
+public record GanttTimelineSegment(String kind, String variant, int lane, LocalDate start, LocalDate end,
+                                   boolean openEnded, String href, String title, List<String> details, String ref,
+                                   String xPct, String wPct, int y, int h) {
 
     /** Lines joined for the native SVG <title>. */
     public String summary() {
