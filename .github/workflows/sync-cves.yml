@@ -1,0 +1,125 @@
+name: Sync CVEs
+
+on:
+  schedule:
+    - cron: '07 1 * * *' # daily at 01:07 UTC
+  pull_request:
+    paths:
+      - 'tools/cves-sync/**'
+      - '.github/workflows/sync-cves.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sync:
+    if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name != 'pull_request'
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.generate-token.outputs.token || github.token }}
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: jbangdev/setup-jbang@main
+
+      # The cve-util cache (Quarkus platform BOMs, OSV records, GitHub advisory ETags) is what makes
+      # a run fast: a cold run downloads ~40 MB and makes ~1,200 requests, a warm one a few dozen.
+      # Everything in it is validated by the tool before use (BOM POMs are immutable, OSV records are
+      # compared by their modified timestamp, GitHub entries are revalidated by ETag), so restoring an
+      # old cache is safe. Cache entries cannot be overwritten, so every run saves a new one under a
+      # unique key and restores the most recent one.
+      - name: Restore cve-util cache
+        id: cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/cve-util-cache
+          key: cve-util-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cve-util-v1-${{ runner.os }}-
+
+      - name: Run CVE sync
+        # Run from the tool's directory so jbang finds run.java and its sources
+        working-directory: tools/cves-sync
+        run: |
+          work="$RUNNER_TEMP/cve-util-work"
+          mkdir -p "$work"
+
+          # --output writes UTF-8 without a BOM itself, and leaves any existing file alone if the run fails
+          set +e
+          jbang run.java releases --format yaml -v --output "$work/full.yaml" 2> "$work/stderr.log"
+          status=$?
+          set -e
+          cat "$work/stderr.log" >&2
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::cve-util exited with status $status; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+          # cve-util prints 'warning:' when results are incomplete or stale (a BOM or advisory could not be loaded)
+          if grep -q '^warning:' "$work/stderr.log"; then
+            echo "::error::cve-util reported warnings, the data may be incomplete; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+          # must contain at least one release group, otherwise the website build would break on an empty data file
+          if ! grep -q '^- releaseGroup:' "$work/full.yaml"; then
+            echo "::error::cve-util produced no release data; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+
+          # The statistics block (scan time, duration, request counts) differs on every run. Keep it out of the
+          # data file, so that the file only changes when the CVE data does, and show it on the run summary.
+          awk -v stats="$work/statistics.yaml" '
+            /^statistics:/ { skip = 1 }
+            skip && /^[^ ]/ && !/^statistics:/ { skip = 0 }
+            skip { print > stats; next }
+            { print }
+          ' "$work/full.yaml" > "$work/cves.yaml"
+          mv "$work/cves.yaml" "$CVES_OUTPUT"
+
+          {
+            echo '### cve-util statistics'
+            echo '```yaml'
+            cat "$work/statistics.yaml"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || github.token }}
+          CVE_UTIL_CACHE_DIR: ${{ runner.temp }}/cve-util-cache
+          CVES_OUTPUT: ../../_data/cves.yaml
+
+      # Also after a failed run: cache writes are atomic and a cold run is expensive, so keep what was downloaded.
+      # Pull requests only read the cache, they do not add entries.
+      - name: Save cve-util cache
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/cve-util-cache
+          key: cve-util-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Commit and push
+        if: github.event_name != 'pull_request'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add _data/cves.yaml
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Sync CVEs data"
+            git pull origin main --rebase
+            git push origin main
+          fi
