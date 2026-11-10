@@ -71,9 +71,25 @@ class ReleaseTimelineFactoryTest {
     void supportViewRowOrder() {
         Timeline t = factory.supportView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("3.40", "stream", "3.33", "3.20"), ids);
-        assertEquals(LocalDate.of(2025, 1, 1), t.scale().start());
+        assertEquals(List.of("stream", "3.40", "3.33", "3.20"), ids);
+        // the month of the earliest bar drawn in full: 3.20, released in March 2025
+        assertEquals(LocalDate.of(2025, 3, 1), t.scale().start());
         assertEquals(LocalDate.of(2028, 12, 31), t.scale().end());
+    }
+
+    @Test
+    void neverEndingOnlyReleaseKeepsItsRowButNotItsCommunityBarOrTheAxisStart() {
+        var withOld = new ReleaseTimelineFactory(catalogOf(YAML_AS_JSON.replace(
+                "{\"version\": \"0.2\"",
+                "{\"version\": \"1.0\", \"release_date\": \"2020-01-01\", \"eol_date\": \"2021-01-01\", "
+                        + "\"lts\": true, \"herodevs\": {\"eol_date\": \"nes\"}},\n"
+                        + "                {\"version\": \"0.2\"")));
+        Timeline t = withOld.supportView(TODAY);
+        assertTrue(t.rows().stream().anyMatch(r -> r.id().equals("1.0")));
+        assertEquals(List.of("nes"), kinds(row(t, "1.0")));
+        assertEquals(LocalDate.of(2025, 3, 1), t.scale().start());
+        // the full view still draws its community bar
+        assertEquals(List.of("community", "nes"), kinds(row(withOld.fullView(TODAY), "1.0")));
     }
 
     @Test
@@ -119,11 +135,40 @@ class ReleaseTimelineFactoryTest {
         assertEquals(List.of("community"), kinds(row(t, "3.1")));
     }
 
+    private static Timeline timelineWithRhbq(String rhbq) {
+        var catalog = catalogOf("""
+                {"releases": [{"version": "3.1", "release_date": "2026-01-01", "eol_date": "2027-01-01",
+                  "lts": true, "rhbq": %s}]}""".formatted(rhbq));
+        return new ReleaseTimelineFactory(catalog).supportView(TODAY);
+    }
+
+    @Test
+    void vendorBarRunsFromVendorReleaseDate() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-03-01\", \"eol_date\": \"2027-06-01\"}");
+        assertEquals(List.of("community", "enterprise"), kinds(row(t, "3.1")));
+        GanttTimelineSegment rhbq = row(t, "3.1").segments().get(1);
+        assertEquals(LocalDate.of(2026, 3, 1), rhbq.start());
+        assertEquals(LocalDate.of(2027, 6, 1), rhbq.end());
+        assertTrue(rhbq.details().contains("Red Hat release 01 Mar 2026"));
+    }
+
+    @Test
+    void vendorBarIsKeptWhenItEndsWithinCommunityMaintenance() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-03-01\", \"eol_date\": \"2026-12-01\"}");
+        assertEquals(List.of("community", "enterprise"), kinds(row(t, "3.1")));
+    }
+
+    @Test
+    void vendorBarIsDroppedWhenInlineWithCommunityBar() {
+        Timeline t = timelineWithRhbq("{\"release_date\": \"2026-01-01\", \"eol_date\": \"2027-01-01\"}");
+        assertEquals(List.of("community"), kinds(row(t, "3.1")));
+    }
+
     @Test
     void fullViewCoversWholeHistoryWithCompactRows() {
         Timeline t = factory.fullView(TODAY);
         List<String> ids = t.rows().stream().map(TimelineRow::id).toList();
-        assertEquals(List.of("3.40", "stream", "3.33", "3.20", "2.16"), ids);
+        assertEquals(List.of("stream", "3.40", "3.33", "3.20", "2.16"), ids);
         assertEquals(LocalDate.of(2019, 1, 1), t.scale().start());
         // 0.2 is a non-LTS minor, so it lives in the stream lane
         assertEquals(LocalDate.of(2019, 3, 1), row(t, "stream").segments().get(0).start());

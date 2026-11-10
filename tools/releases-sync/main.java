@@ -195,6 +195,7 @@ public class main implements Callable<Integer> {
         release.proposal = (Boolean) releaseMap.get("proposal");
         release.latestPatch = (String) releaseMap.get("latest_patch");
         release.link = (String) releaseMap.get("link");
+        release.branchedFrom = (String) releaseMap.get("branched_from");
 
         // Parse dates
         release.releaseDate = parseDate(releaseMap.get("release_date"));
@@ -203,13 +204,13 @@ public class main implements Callable<Integer> {
         release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
         release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
 
-        // Parse per-provider blocks (rhbq, ibm, herodevs), each with release_date / eol_date.
+        // Parse per-provider blocks (rhbq, ibm, herodevs), each with release_date / eol_date / branched_from.
         // eol_date for herodevs can be a date or a string like "nes".
         for (String provider : PROVIDERS) {
             Object block = releaseMap.get(provider);
             if (block instanceof Map<?, ?> blockMap) {
                 Map<String, Object> parsed = new LinkedHashMap<>();
-                for (String key : List.of("release_date", "eol_date")) {
+                for (String key : List.of("release_date", "eol_date", "branched_from")) {
                     Object value = blockMap.get(key);
                     if (value instanceof String strValue) {
                         // Try to parse as date first, if it fails keep as string (e.g., "nes")
@@ -799,6 +800,7 @@ public class main implements Callable<Integer> {
             release.eolDate = existing.eolDate;
             release.hasExplicitEolDate = existing.hasExplicitEolDate;
             release.link = existing.link;
+            release.branchedFrom = existing.branchedFrom;
             release.providers = existing.providers;
         } else {
             release.lts = false;
@@ -1057,6 +1059,10 @@ public class main implements Callable<Integer> {
             map.put("link", release.link);
         }
 
+        if (release.branchedFrom != null) {
+            map.put("branched_from", release.branchedFrom);
+        }
+
         for (Map.Entry<String, Map<String, Object>> provider : release.providers.entrySet()) {
             Map<String, Object> block = new LinkedHashMap<>();
             for (Map.Entry<String, Object> field : provider.getValue().entrySet()) {
@@ -1088,7 +1094,8 @@ public class main implements Callable<Integer> {
         public String latestPatch;
         public LocalDate latestPatchDate;
         public String link;
-        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date
+        public String branchedFrom;  // version this release branched from (hand-edited)
+        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date / branched_from
         public Map<String, Map<String, Object>> providers = new LinkedHashMap<>();
         public Boolean upcoming;
         public Boolean proposal;  // Upcoming release marked "(Proposal)" in the wiki
