@@ -1,15 +1,10 @@
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS org.junit.jupiter:junit-jupiter:5.11.4
-//DEPS org.junit.platform:junit-platform-launcher:1.11.4
-//SOURCES WikiReleasePlanning.java
+package io.quarkusio.releases.sync;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
-import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -19,20 +14,16 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
-import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
-import org.junit.platform.launcher.core.LauncherFactory;
-import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 
 /**
- * Run from this directory with {@code jbang WikiReleasePlanningTest.java}.
- * Uses the made-up wiki-style page in test/Release-Planning.md (fake versions and dates).
+ * Uses the made-up wiki-style page in src/test/resources/releases-sync/Release-Planning.md (fake versions and dates).
  */
 public class WikiReleasePlanningTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 11, 3);
 
     private static List<WikiReleasePlanning.PlannedRelease> parseFixture() throws Exception {
-        return WikiReleasePlanning.parse(Files.readString(Path.of("test/Release-Planning.md")));
+        return WikiReleasePlanning.parse(Files.readString(Path.of("src/test/resources/releases-sync/Release-Planning.md")));
     }
 
     @Test
@@ -108,15 +99,5 @@ public class WikiReleasePlanningTest {
     void emptyOrGarbageInputYieldsNothing() {
         assertTrue(WikiReleasePlanning.parse("").isEmpty());
         assertTrue(WikiReleasePlanning.parse("## 99.9\n\n- Core Final on March 1st 2099\n").isEmpty());
-    }
-
-    public static void main(String[] args) {
-        var listener = new SummaryGeneratingListener();
-        LauncherFactory.create().execute(
-                LauncherDiscoveryRequestBuilder.request().selectors(selectClass(WikiReleasePlanningTest.class)).build(),
-                listener);
-        listener.getSummary().printTo(new PrintWriter(System.out));
-        listener.getSummary().printFailuresTo(new PrintWriter(System.out));
-        System.exit(listener.getSummary().getTotalFailureCount() == 0 ? 0 : 1);
     }
 }

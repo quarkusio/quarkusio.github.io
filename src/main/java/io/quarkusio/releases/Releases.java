@@ -4,6 +4,8 @@ import java.time.Period;
 import java.util.List;
 import java.util.Locale;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import io.quarkiverse.roq.data.runtime.annotations.DataMapping;
 
 /**
@@ -19,9 +21,12 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     public record Policy(SupportPeriod ltsCadence, SupportPeriod ltsSupportDuration, String nonLtsSupportDuration, SupportPeriod releaseCadence,
             String ltsDescription, String eolDescription) {
 
-        public Policy {
-            // Ad-hoc variable replacement, for this field only
-            ltsDescription = ltsDescription == null ? null
+        /**
+         * The LTS description with {lts_cadence}, {lts_support_duration} and {release_cadence} filled in.
+         * The component itself keeps the raw text, so the data can be written back to the file.
+         */
+        public String renderedLtsDescription() {
+            return ltsDescription == null ? null
                     : ltsDescription.replace("{lts_cadence}", ltsCadence == null ? "" : ltsCadence.label())
                             .replace("{lts_support_duration}", ltsSupportDuration == null ? "" : ltsSupportDuration.label())
                             .replace("{release_cadence}", releaseCadence == null ? "" : releaseCadence.label());
@@ -82,9 +87,13 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     public record ProviderDates(String releaseDate, String eolDate) {
     }
 
-    /** One release as written in the YAML: dates are yyyy-MM-dd strings. */
+    /**
+     * One release as written in the YAML: dates are yyyy-MM-dd strings.
+     * upcoming and proposal are only written when true (NON_DEFAULT), lts is always written.
+     */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean upcoming,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean proposal, String latestPatch, String latestPatchDate, String link,
             ProviderDates rhbq, ProviderDates ibm, ProviderDates herodevs) {
     }
 }

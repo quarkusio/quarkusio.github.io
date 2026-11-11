@@ -5,7 +5,8 @@ on:
     - cron: '23 */12 * * *' # every 12 hours
   pull_request:
     paths:
-      - 'tools/releases-sync/**'
+      - 'src/main/java/io/quarkusio/releases/**'
+      - 'config/application-data-sync.properties'
       - '.github/workflows/sync-releases.yml'
   workflow_dispatch:
 
@@ -36,22 +37,23 @@ jobs:
           distribution: temurin
           java-version: 25
 
-      - uses: jbangdev/setup-jbang@main
+          cache: maven
 
-      - name: Test wiki parser
-        working-directory: tools/releases-sync
-        run: jbang WikiReleasePlanningTest.java
+      - name: Test release sync
+        run: ./mvnw -B test -Dtest='ReleasesSyncTest,WikiReleasePlanningTest'
+
+      # The data-sync profile builds the site with its data only (no content), and runs the sync at startup
+      - name: Build sync job
+        run: ./mvnw -B package -DskipTests -Dquarkus.profile=data-sync
 
       - name: Run release sync
-        # Run from the script's directory to avoid picking up the website's config/application.properties
-        working-directory: tools/releases-sync
-        run: jbang main.java ${{ github.event_name == 'pull_request' && '--dry-run' || '' }}
+        run: java -Dquarkus.profile=data-sync -jar target/quarkus-app/quarkus-run.jar
         env:
           GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || github.token }}
-          RELEASES_ORG: quarkusio
-          RELEASES_REPO: quarkus
-          RELEASES_INPUT: ../../_data/releases.yaml
-          RELEASES_OUTPUT: ../../_data/releases.yaml
+
+      # On pull requests, this is the dry run: the changes are shown but not committed
+      - name: Show changes
+        run: git diff -- _data/releases.yaml
 
       - name: Commit and push
         if: github.event_name != 'pull_request'

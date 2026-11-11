@@ -288,7 +288,7 @@ class ReleaseTimelineFactoryTest {
         var policy = new Releases.Policy(new Releases.SupportPeriod(6, "months"), new Releases.SupportPeriod(12, "months"),
                 null, new Releases.SupportPeriod(4, "weeks"),
                 "LTS every {lts_cadence} gets {lts_support_duration}, minors every {release_cadence}.", null);
-        assertEquals("LTS every 6 months gets 12 months, minors every 4 weeks.", policy.ltsDescription());
+        assertEquals("LTS every 6 months gets 12 months, minors every 4 weeks.", policy.renderedLtsDescription());
     }
 
     @Test
