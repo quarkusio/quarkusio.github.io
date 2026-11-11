@@ -10,6 +10,7 @@ import com.microsoft.playwright.Response;
 import com.microsoft.playwright.Route;
 import com.microsoft.playwright.options.WaitUntilState;
 
+import java.io.File;
 import java.io.IOException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -49,9 +51,14 @@ final class LinkCrawler implements AutoCloseable {
     private final Playwright playwright;
     private final Browser browser;
     private final String baseUrl;
+    private final CrawlConfig config;
 
-    /** @param siteUrl the root URL of the site to crawl, with or without a trailing slash */
-    LinkCrawler(String siteUrl) {
+    /**
+     * @param siteUrl the root URL of the site to crawl, with or without a trailing slash
+     * @param config what to crawl and how, from the {@code test.crawl.*} properties
+     */
+    LinkCrawler(String siteUrl, CrawlConfig config) {
+        this.config = config;
         String url = siteUrl;
         if (url.endsWith("/")) {
             url = url.substring(0, url.length() - 1);
@@ -379,17 +386,17 @@ final class LinkCrawler implements AutoCloseable {
     }
 
     private CrawlResults runCrawl() throws InterruptedException {
-        int maxPages = Integer.getInteger("test.crawl.max-pages", DEFAULT_MAX_PAGES);
-        int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
-        boolean checkInternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-internal", "true"));
-        boolean checkExternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-external", "false"));
-        String resultsFile = System.getProperty("test.crawl.results-file", "");
-        List<String> excludePaths = parseExcludePaths(System.getProperty("test.crawl.exclude-paths", ""));
-        List<String> excludeUrls = parseExcludePaths(System.getProperty("test.crawl.exclude-urls", ""));
-        List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
-        List<String> startPaths = parseExcludePaths(System.getProperty("test.crawl.start-paths", ""));
-        List<String> includePaths = parseExcludePaths(System.getProperty("test.crawl.include-paths", ""));
-        List<String> excludeSelectors = parseExcludePaths(System.getProperty("test.crawl.exclude-selectors", ""));
+        int maxPages = config.maxPages();
+        int threads = config.threads();
+        boolean checkInternal = config.checkInternal();
+        boolean checkExternal = config.checkExternal();
+        Optional<File> resultsFile = config.resultsFile();
+        List<String> excludePaths = values(config.excludePaths());
+        List<String> excludeUrls = values(config.excludeUrls());
+        List<String> changedPaths = values(config.changedPaths());
+        List<String> startPaths = values(config.startPaths());
+        List<String> includePaths = values(config.includePaths());
+        List<String> excludeSelectors = values(config.excludeSelectors());
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
         LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
@@ -509,8 +516,8 @@ final class LinkCrawler implements AutoCloseable {
             }
         });
 
-        if (!resultsFile.isEmpty()) {
-            writeResultsJson(reportable, uncheckable, oldContent, brokenFragments, resultsFile);
+        if (resultsFile.isPresent()) {
+            writeResultsJson(reportable, uncheckable, oldContent, brokenFragments, resultsFile.get());
         }
 
         if (!rateLimited.isEmpty()) {
@@ -1376,11 +1383,8 @@ final class LinkCrawler implements AutoCloseable {
         }
     }
 
-    private static List<String> parseExcludePaths(String property) {
-        if (property == null || property.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(property.split(","))
+    private static List<String> values(Optional<List<String>> property) {
+        return property.orElse(List.of()).stream()
                 .map(String::strip)
                 .filter(s -> !s.isEmpty())
                 .toList();
@@ -1419,21 +1423,12 @@ final class LinkCrawler implements AutoCloseable {
     private static final int NEWSLETTER_EPOCH_YEAR = 2020;
     private static final int NEWSLETTER_EPOCH_MONTH = 10; // October 2020 = issue #1
 
-    private static Integer getDatedContentCutoffMonths() {
-        String cutoffProperty = System.getProperty("test.crawl.dated-cutoff-months");
-        if (cutoffProperty == null || cutoffProperty.isBlank()) {
-            return null; // If not configured, check all dated content
-        }
-
-        try {
-            return Integer.parseInt(cutoffProperty);
-        } catch (NumberFormatException e) {
-            System.err.println("Invalid dated cutoff months value: " + cutoffProperty);
-            return null;
-        }
+    // If not configured, all dated content is checked
+    private Integer getDatedContentCutoffMonths() {
+        return config.datedCutoffMonths().orElse(null);
     }
 
-    private static boolean isOldNewsletter(String path) {
+    private boolean isOldNewsletter(String path) {
         Integer cutoffMonths = getDatedContentCutoffMonths();
         if (cutoffMonths == null) {
             return false; // No cutoff configured, check all newsletters
@@ -1631,7 +1626,7 @@ final class LinkCrawler implements AutoCloseable {
                                           Map<String, BrokenLink> uncheckable,
                                           Map<String, BrokenLink> oldContent,
                                           Map<String, FragmentLink> brokenFragments,
-                                          String path) {
+                                          File path) {
         Map<String, Object> output = new java.util.LinkedHashMap<>();
 
         // Reportable links (will raise defects and fail CI)
@@ -1656,7 +1651,7 @@ summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldCont
         output.put("summary", summary);
 
         try {
-            Path filePath = Path.of(path);
+            Path filePath = path.toPath();
             if (filePath.getParent() != null) {
                 Files.createDirectories(filePath.getParent());
             }
