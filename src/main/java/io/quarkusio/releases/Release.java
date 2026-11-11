@@ -11,18 +11,31 @@ import java.util.Objects;
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
         boolean lts, boolean upcoming, String latestPatch, LocalDate latestPatchDate, String link,
-        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol, LocalDate plannedEndDate) {
+        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol, LocalDate plannedEndDate,
+        LocalDate rhbqReleaseDate, LocalDate ibmReleaseDate,
+        LocalDate rhbqBranchedFrom, LocalDate ibmBranchedFrom, String branchedFrom) {
 
     public static Release from(Releases.Entry e) {
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
                 e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
                 date(eolDate(e.rhbq())), date(eolDate(e.ibm())),
-                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())), null);
+                eolDate(e.herodevs()) == null ? null : HeroDevsEol.parse(eolDate(e.herodevs())), null,
+                date(releaseDate(e.rhbq())), date(releaseDate(e.ibm())),
+                date(branchedFrom(e.rhbq())), date(branchedFrom(e.ibm())), e.branchedFrom());
     }
 
     public Release withPlannedEndDate(LocalDate end) {
         return new Release(version, releaseDate, plannedDate, eolDate, lts, upcoming, latestPatch, latestPatchDate,
-                link, rhbqEol, ibmEol, herodevsEol, end);
+                link, rhbqEol, ibmEol, herodevsEol, end, rhbqReleaseDate, ibmReleaseDate,
+                rhbqBranchedFrom, ibmBranchedFrom, branchedFrom);
+    }
+
+    private static String releaseDate(Releases.ProviderDates dates) {
+        return dates == null ? null : dates.releaseDate();
+    }
+
+    private static String branchedFrom(Releases.ProviderDates dates) {
+        return dates == null ? null : dates.branchedFrom();
     }
 
     private static String eolDate(Releases.ProviderDates dates) {
@@ -62,6 +75,12 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
             return null;
         }
         return later(eolDate, vendorEnd());
+    }
+
+    /** Any support offering is running on d: community, Red Hat, IBM or HeroDevs. */
+    public boolean supportActive(LocalDate d) {
+        return communityActive(d) || rhbqActive(d) || ibmActive(d) || herodevsNes()
+                || (herodevsEnd() != null && herodevsEnd().isAfter(d));
     }
 
     public boolean hasVendorSupport() {

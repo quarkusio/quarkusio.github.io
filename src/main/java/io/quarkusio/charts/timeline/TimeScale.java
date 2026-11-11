@@ -44,12 +44,29 @@ public record TimeScale(LocalDate start, LocalDate end) {
         return ticks;
     }
 
+    /** Every other calendar year, starting with the second, clipped to the range, for a subtle striped background. */
+    public List<Stripe> yearStripes() {
+        List<Stripe> stripes = new ArrayList<>();
+        for (int y = start.getYear(); y <= end.getYear(); y++) {
+            if ((y - start.getYear()) % 2 == 0) {
+                continue;
+            }
+            LocalDate from = LocalDate.of(y, 1, 1);
+            LocalDate to = LocalDate.of(y + 1, 1, 1).isAfter(end) ? end : LocalDate.of(y + 1, 1, 1);
+            stripes.add(new Stripe(pct(from), widthPct(from, to, 0)));
+        }
+        return stripes;
+    }
+
     public boolean contains(LocalDate d) {
         return d != null && !d.isBefore(start) && !d.isAfter(end);
     }
 
     static String format(double v) {
         return String.format(Locale.ROOT, "%.3f", v);
+    }
+
+    public record Stripe(String xPct, String widthPct) {
     }
 
     public record Tick(LocalDate date, String label, String pct) {

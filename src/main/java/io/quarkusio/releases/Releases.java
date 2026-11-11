@@ -78,13 +78,19 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     public record EolSupport(String name, String url, String description) {
     }
 
-    /** One provider's release and eol dates: yyyy-MM-dd string or "nes". */
-    public record ProviderDates(String releaseDate, String eolDate) {
+    /**
+     * One provider's release and eol dates: yyyy-MM-dd string or "nes". branchedFrom is the date of the community
+     * code the provider branched its build from; when absent the community release date is used.
+     */
+    public record ProviderDates(String releaseDate, String eolDate, String branchedFrom) {
     }
 
-    /** One release as written in the YAML: dates are yyyy-MM-dd strings. */
+    /**
+     * One release as written in the YAML: dates are yyyy-MM-dd strings. branchedFrom is the version this release
+     * was branched from, e.g. the non-LTS minor before an LTS.
+     */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
             boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
-            ProviderDates rhbq, ProviderDates ibm, ProviderDates herodevs) {
+            ProviderDates rhbq, ProviderDates ibm, ProviderDates herodevs, String branchedFrom) {
     }
 }

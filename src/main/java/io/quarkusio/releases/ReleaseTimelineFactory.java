@@ -63,40 +63,127 @@ public class ReleaseTimelineFactory {
         return fullView(now.toLocalDate());
     }
 
-    /** From the earliest year that still has support running, to the last support end. */
+    /**
+     * Only releases with a support offering running on the build date. The axis starts at the beginning of the
+     * month of the earliest bar that is drawn in full; never-ending support bars run off the left edge, so
+     * they do not push it back.
+     */
     public Timeline supportView(LocalDate today) {
-        int startYear = catalog.all().stream()
-                .filter(r -> !r.upcoming() && r.supportEnd() != null && r.supportEnd().isAfter(today))
-                .map(r -> r.releaseDate().getYear())
-                .min(Integer::compare).orElse(today.getYear());
-        return build("support", startYear, today);
+        List<Release> shown = shown(today, true);
+        LocalDate start = shown.stream().map(r -> earliestFullBar(r, today)).filter(d -> d != null)
+                .min(LocalDate::compareTo).orElse(LocalDate.of(today.getYear(), 1, 1))
+                .withDayOfMonth(1);
+        return build("support", start, today, true, shown);
     }
 
     /** The same compact rows over the whole history, back to the first release. */
     public Timeline fullView(LocalDate today) {
         LocalDate first = catalog.all().stream().filter(r -> r.releaseDate() != null)
                 .map(Release::releaseDate).min(LocalDate::compareTo).orElse(today);
-        return build("all", first.getYear(), today);
+        return build("all", LocalDate.of(first.getYear(), 1, 1), today, false, shown(today, false));
     }
 
-    private Timeline build(String id, int startYear, LocalDate today) {
-        TimeScale scale = new TimeScale(LocalDate.of(startYear, 1, 1), LocalDate.of(endYear(today), 12, 31));
-        GanttTimelineBuilder b = newBuilder(id, scale);
-        List<Release> shown = catalog.all().stream()
-                .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes()))
+    private List<Release> shown(LocalDate today, boolean activeOnly) {
+        return catalog.all().stream()
+                .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes())
+                        && (!activeOnly || r.supportActive(today)))
                 .toList();
-        // the non-LTS stream is the second row, after the first release row
-        int streamAfter = Math.min(1, shown.size());
-        if (streamAfter == 0) {
-            addStreamLane(b, today);
-        }
-        for (int i = 0; i < shown.size(); i++) {
-            addReleaseRow(b, shown.get(i), today);
-            if (i == streamAfter - 1) {
-                addStreamLane(b, today);
+    }
+
+    /**
+     * In the support view, the community bar is only worth drawing while the community or a dated enterprise
+     * offering (Red Hat, or IBM before its never-ending support) is still running. A release kept alive only by
+     * never-ending support keeps its row, with just that bar.
+     */
+    private static boolean communityBarShown(Release r, LocalDate today, boolean activeOnly) {
+        return !activeOnly || r.communityActive(today) || r.rhbqActive(today) || r.ibmActive(today);
+    }
+
+    /** Start of the earliest bar, branch or connector drawn for the release in the support view; never-ending bars are excluded. */
+    private LocalDate earliestFullBar(Release r, LocalDate today) {
+        LocalDate earliest = null;
+        if (communityBarShown(r, today, true)) {
+            earliest = earlier(earliest, r.releaseDate());
+            Release from = catalog.find(r.branchedFrom()).orElse(null);
+            if (r.lts() && from != null && !from.lts()) {
+                earliest = earlier(earliest, from.releaseDate());
             }
         }
+        if (r.eolDate() != null) {
+            if (enterpriseBar(r, r.rhbqReleaseDate(), r.rhbqEol())) {
+                earliest = earlier(earliest, enterpriseStart(r, r.rhbqReleaseDate()));
+                earliest = earlier(earliest, branchPoint(r, r.rhbqBranchedFrom()));
+            }
+            if (enterpriseBar(r, r.ibmReleaseDate(), r.ibmEol())) {
+                earliest = earlier(earliest, enterpriseStart(r, r.ibmReleaseDate()));
+                earliest = earlier(earliest, branchPoint(r, r.ibmBranchedFrom()));
+            }
+        }
+        return earliest;
+    }
+
+    private static LocalDate earlier(LocalDate a, LocalDate b) {
+        return a == null ? b : b == null ? a : b.isBefore(a) ? b : a;
+    }
+
+    private Timeline build(String id, LocalDate start, LocalDate today, boolean activeOnly, List<Release> shown) {
+        TimeScale scale = new TimeScale(start, LocalDate.of(endYear(today), 12, 31));
+        GanttTimelineBuilder b = newBuilder(id, scale);
+        // the non-LTS stream is the top row, with the LTS rows below it
+        addStreamLane(b, today);
+        for (Release r : shown) {
+            addReleaseRow(b, r, today, communityBarShown(r, today, activeOnly));
+        }
+        addBranches(b, shown, today, activeOnly);
         return b.build();
+    }
+
+    /**
+     * Draws branched_from: an LTS from the non-LTS release before it (straight down from the left edge of
+     * the stream bar it branched from, then into the LTS bar horizontally), and a non-LTS that follows a gap in the stream, where an LTS took the slot, from
+     * that LTS (rising from the left of its bar, an S-curve and a rise into the gap, then into the non-LTS bar horizontally).
+     * LTS releases that are on the chart are only connected while a support offering is running on the build date,
+     * to keep it calm; the ones with no row run off the bottom.
+     * Non-LTS releases with no gap between them are joined with a short horizontal line.
+     */
+    private void addBranches(GanttTimelineBuilder b, List<Release> shown, LocalDate today, boolean activeOnly) {
+        for (Release r : catalog.all()) {
+            if (r.upcoming() || !r.lts() || r.releaseDate() == null) {
+                continue;
+            }
+            boolean onChart = shown.contains(r);
+            if (onChart && (!r.supportActive(today) || !communityBarShown(r, today, activeOnly))) {
+                continue;
+            }
+            // an LTS with no row of its own is drawn as lines vanishing off the bottom of the chart
+            String row = onChart ? r.version() : GanttTimelineBuilder.BOTTOM;
+            Release from = catalog.find(r.branchedFrom()).orElse(null);
+            if (from != null && !from.lts() && from.releaseDate() != null) {
+                // leaves the left edge of the release it branches from, drops, then turns to enter the LTS bar horizontally
+                b.link("stream", row, from.releaseDate(), r.releaseDate());
+            }
+            for (Release next : catalog.all()) {
+                if (!next.upcoming() && !next.lts() && next.releaseDate() != null
+                        && r.version().equals(next.branchedFrom())) {
+                    // rises from the left of the LTS bar, like the vendor connectors, and S-curves over to the non-LTS bar
+                    b.rise(row, "stream", r.releaseDate(), next.releaseDate());
+                }
+            }
+        }
+        List<Release> stream = streamReleases();
+        for (int i = 1; i < stream.size(); i++) {
+            Release previous = stream.get(i - 1);
+            if (previous.eolDate() != null && !previous.eolDate().isBefore(stream.get(i).releaseDate())) {
+                b.chain("stream", stream.get(i).releaseDate());
+            }
+        }
+    }
+
+    private List<Release> streamReleases() {
+        return catalog.all().stream()
+                .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
+                .sorted(Comparator.comparing(Release::releaseDate))
+                .toList();
     }
 
     /** The default length of an upcoming bar: the policy's release cadence. */
@@ -165,11 +252,7 @@ public class ReleaseTimelineFactory {
     /** Non-LTS minors laid end to end; each is supported until the next one ships. */
     private void addStreamLane(GanttTimelineBuilder b, LocalDate today) {
         var row = b.row("stream", "Non-LTS stream").shortLabel("Non-LTS");
-        List<Release> stream = catalog.all().stream()
-                .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
-                .sorted(Comparator.comparing(Release::releaseDate))
-                .toList();
-        for (Release r : stream) {
+        for (Release r : streamReleases()) {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today),
                     "Quarkus " + r.version(), communityLines(r), r.version());
         }
@@ -178,7 +261,7 @@ public class ReleaseTimelineFactory {
         row.add();
     }
 
-    private void addReleaseRow(GanttTimelineBuilder b, Release r, LocalDate today) {
+    private void addReleaseRow(GanttTimelineBuilder b, Release r, LocalDate today, boolean communityBar) {
         var row = b.row(r.version(), r.version())
                 .href(r.link())
                 .data("version", r.version());
@@ -193,21 +276,27 @@ public class ReleaseTimelineFactory {
         }
         String name = "Quarkus " + r.version();
 
-        row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
-                communityLines(r), r.version());
+        if (communityBar) {
+            row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
+                    communityLines(r), r.version());
+        }
         if (r.eolDate() != null) {
-            if (later(r.rhbqEol(), r.eolDate())) {
+            if (enterpriseBar(r, r.rhbqReleaseDate(), r.rhbqEol())) {
                 int lane = row.lane("Red Hat");
-                row.segment("enterprise", "rhbq", lane, r.eolDate(), r.rhbqEol(), catalog.providerUrl("rhbq"),
+                LocalDate from = enterpriseStart(r, r.rhbqReleaseDate());
+                row.segment("enterprise", "rhbq", lane, from, r.rhbqEol(), catalog.providerUrl("rhbq"),
                         name + ": Red Hat build of Quarkus",
-                        List.of("Red Hat support until " + DATE.format(r.rhbqEol())), r.version());
+                        enterpriseLines("Red Hat", r.rhbqReleaseDate(), r.rhbqEol()), r.version());
+                row.branch(lane, branchPoint(r, r.rhbqBranchedFrom()));
             }
             if (r.ibmEol() != null) {
                 int lane = row.lane("IBM");
-                if (r.ibmEol().isAfter(r.eolDate())) {
-                    row.segment("enterprise", "ibm", lane, r.eolDate(), r.ibmEol(), catalog.providerUrl("ibm"),
+                if (enterpriseBar(r, r.ibmReleaseDate(), r.ibmEol())) {
+                    LocalDate from = enterpriseStart(r, r.ibmReleaseDate());
+                    row.segment("enterprise", "ibm", lane, from, r.ibmEol(), catalog.providerUrl("ibm"),
                             name + ": IBM Enterprise Build of Quarkus",
-                            List.of("IBM support until " + DATE.format(r.ibmEol())), r.version());
+                            enterpriseLines("IBM", r.ibmReleaseDate(), r.ibmEol()), r.version());
+                    row.branch(lane, branchPoint(r, r.ibmBranchedFrom()));
                 }
                 LocalDate from = r.ibmEol().isAfter(r.eolDate()) ? r.ibmEol() : r.eolDate();
                 row.segment("nes", "ibm", lane, from, null, catalog.providerUrl("ibm"),
@@ -229,8 +318,38 @@ public class ReleaseTimelineFactory {
         row.add();
     }
 
-    private static boolean later(LocalDate d, LocalDate than) {
-        return d != null && d.isAfter(than);
+    /**
+     * Whether a vendor's bar adds anything to the community bar above it. With a vendor release date the bar
+     * runs from that date to the vendor's end, layered under the community bar, and is dropped only when it
+     * would be identical to it (same start and end). Without one, as before, the bar only covers the time
+     * after community maintenance and is dropped unless the vendor supports the release for longer.
+     */
+    private static boolean enterpriseBar(Release r, LocalDate vendorRelease, LocalDate vendorEnd) {
+        if (vendorEnd == null) {
+            return false;
+        }
+        if (vendorRelease == null) {
+            return vendorEnd.isAfter(r.eolDate());
+        }
+        return !(vendorRelease.equals(r.releaseDate()) && vendorEnd.equals(r.eolDate()));
+    }
+
+    /** Where a vendor build branched off the community line: its branched_from, else the community release. */
+    private static LocalDate branchPoint(Release r, LocalDate branchedFrom) {
+        return branchedFrom != null ? branchedFrom : r.releaseDate();
+    }
+
+    private static LocalDate enterpriseStart(Release r, LocalDate vendorRelease) {
+        return vendorRelease != null ? vendorRelease : r.eolDate();
+    }
+
+    private static List<String> enterpriseLines(String vendor, LocalDate release, LocalDate end) {
+        List<String> lines = new ArrayList<>();
+        if (release != null) {
+            lines.add(vendor + " release " + DATE.format(release));
+        }
+        lines.add(vendor + " support until " + DATE.format(end));
+        return lines;
     }
 
     private String communityHref(Release r, LocalDate today) {
@@ -238,10 +357,6 @@ public class ReleaseTimelineFactory {
             return "https://code.quarkus.io/?S=" + r.version();
         }
         return r.link();
-    }
-
-    private String enterpriseUrl(Release r) {
-        return catalog.providerUrl(r.rhbqEol() != null ? "rhbq" : "ibm");
     }
 
     private List<String> communityLines(Release r) {
