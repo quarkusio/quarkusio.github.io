@@ -87,7 +87,7 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
 
     /**
      * One release as written in the YAML: dates are yyyy-MM-dd strings. branchedFrom is the version this release
-     * was branched from, e.g. the non-LTS minor before an LTS.
+     * was branched from: for an LTS, the non-LTS minor cut with it (not necessarily the one released just before).
      */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
             boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,

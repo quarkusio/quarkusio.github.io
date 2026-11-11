@@ -12,6 +12,7 @@
 //SOURCES WikiReleasePlanning.java
 //SOURCES EnterpriseReleaseDates.java
 //SOURCES MavenRepositories.java
+//SOURCES BranchLineage.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
@@ -728,6 +729,8 @@ public class main implements Callable<Integer> {
         // Sort all releases by version (latest first)
         processedReleases.sort((a, b) -> compareVersions(b.version, a.version));
 
+        fillBranchedFrom(processedReleases);
+
         // Compute EOL dates for non-LTS releases that don't have one explicitly set.
         // Policy: non-LTS releases are supported "until the next minor release",
         // so EOL date = release date of the next higher minor version.
@@ -778,6 +781,76 @@ public class main implements Callable<Integer> {
 
     private int compareVersions(String v1, String v2) {
         return new ComparableVersion(v1).compareTo(new ComparableVersion(v2));
+    }
+
+    /**
+     * Fills in branched_from for published 3.x+ LTS releases which don't have one, from git ancestry
+     * (see BranchLineage). Hand-edited values are never touched; where git gives no answer the field is left blank.
+     */
+    private void fillBranchedFrom(List<Release> releases) {
+        List<String> published = releases.stream()
+                .filter(r -> !Boolean.TRUE.equals(r.upcoming))
+                .map(r -> r.version).collect(Collectors.toList());
+        List<String> nonLts = releases.stream()
+                .filter(r -> !Boolean.TRUE.equals(r.upcoming) && !Boolean.TRUE.equals(r.lts))
+                .map(r -> r.version).collect(Collectors.toList());
+        for (Release r : releases) {
+            if (!Boolean.TRUE.equals(r.lts) || Boolean.TRUE.equals(r.upcoming) || r.branchedFrom != null
+                    || BranchLineage.major(r.version) < 3) {
+                continue;
+            }
+            try {
+                List<String> window = BranchLineage.minorsBelow(r.version, published).stream()
+                        .filter(nonLts::contains).collect(Collectors.toList());
+                Map<String, BranchLineage.MergeBase> mergeBases = new HashMap<>();
+                for (String v : window) {
+                    BranchLineage.MergeBase base = fetchMergeBase(v, r.version);
+                    if (base != null) {
+                        mergeBases.put(v, base);
+                    }
+                }
+                BranchLineage.Result result = BranchLineage.pick(mergeBases);
+                if (result.version() == null) {
+                    Log.warnf("⚠️ No candidate branch found for %s; leaving branched_from blank", r.version);
+                    continue;
+                }
+                if (result.ambiguous()) {
+                    Log.warnf("⚠️ %s has the same most recent merge-base with %s; using %s, please check", r.version,
+                            result.candidates(), result.version());
+                }
+                r.branchedFrom = result.version();
+                Log.infof("🌿 %s branched from %s (most recent merge-base)", r.version, r.branchedFrom);
+            } catch (Exception e) {
+                Log.warnf("Could not work out branched_from for %s: %s", r.version, e.getMessage());
+            }
+        }
+    }
+
+    /** The merge-base of two release branches, or null if either doesn't exist. */
+    private BranchLineage.MergeBase fetchMergeBase(String base, String head) throws Exception {
+        String url = String.format("https://api.github.com/repos/%s/%s/compare/%s...%s", org, repo, base, head);
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "Quarkus-Website-Release-Sync/1.0")
+                .GET()
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404) {
+            return null;
+        }
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("HTTP " + response.statusCode() + " comparing " + base + " with " + head);
+        }
+        try (JsonReader reader = Json.createReader(new StringReader(response.body()))) {
+            JsonObject commit = reader.readObject().getJsonObject("merge_base_commit");
+            if (commit == null) {
+                return null;
+            }
+            return new BranchLineage.MergeBase(commit.getString("sha"),
+                    commit.getJsonObject("commit").getJsonObject("committer").getString("date"));
+        }
     }
 
     private Release createProcessedRelease(String minorVersion, GitHubRelease earliest, GitHubRelease latest, Release existing) {
