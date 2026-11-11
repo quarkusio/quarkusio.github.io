@@ -48,35 +48,42 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `rhbq`, `ibm`, `herodevs` - Per-provider blocks with `release_date` and `eol_date` (herodevs `eol_date` can be a date or string like "nes")
 - `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
 
+## How it runs
+
+The sync is part of the website application: `ReleasesSyncJob` is only included when the application is built
+with the `data-sync` profile (`config/application-data-sync.properties`). That profile ignores all content, so the build
+only processes the data. The job runs at startup, writes `_data/releases.yaml` through Roq's `DataMappingWriter`
+(which keeps comments, key order and layout), and exits.
+
+The `Releases` data mapping is bound at build time, so the job must be built from the current data file:
+
+```bash
+./mvnw package -DskipTests -Dquarkus.profile=data-sync
+GITHUB_TOKEN="your_token" java -Dquarkus.profile=data-sync -jar target/quarkus-app/quarkus-run.jar
+
+# See the changes (or undo them with git checkout)
+git diff _data/releases.yaml
+```
+
 ## Tests
 
-The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page that imitates the wiki's layout
+The sync logic is tested in `ReleasesSyncTest`. The wiki parser is tested against
+`src/test/resources/releases-sync/Release-Planning.md`, a **made-up** page that imitates the wiki's layout
 (fake versions 98.x/99.x and fake dates, never real planning data):
 
 ```bash
-cd tools/releases-sync && jbang WikiReleasePlanningTest.java
-```
-
-## Running locally
-
-```bash
-# Dry run (show what would change)
-GITHUB_TOKEN="your_token" jbang tools/releases-sync/main.java --dry-run
-
-# Actually update
-GITHUB_TOKEN="your_token" jbang tools/releases-sync/main.java
+./mvnw test -Dtest='ReleasesSyncTest,WikiReleasePlanningTest'
 ```
 
 ## CI
 
 The workflow at `.github/workflows/sync-releases.yml`:
 - Runs on a schedule to update patch versions
-- Runs in dry-run mode on PRs touching `tools/releases-sync/` or the workflow itself
+- On PRs touching the sync code, its profile, or the workflow itself, shows the changes without committing them
 
-## Environment variables
+## Configuration
 
-- `GITHUB_TOKEN` - GitHub API token (required)
-- `RELEASES_ORG` - GitHub org (default: quarkusio)
-- `RELEASES_REPO` - GitHub repo (default: quarkus)
-- `RELEASES_INPUT` - Input file (default: _data/releases.yaml)
-- `RELEASES_OUTPUT` - Output file (default: _data/releases.yaml)
+- `GITHUB_TOKEN` - GitHub API token (optional, anonymous access has a lower rate limit)
+- `releases-sync.org` / `RELEASES_SYNC_ORG` - GitHub org (default: quarkusio)
+- `releases-sync.repo` / `RELEASES_SYNC_REPO` - GitHub repo (default: quarkus)
+- `releases-sync.predict-upcoming` - Add upcoming releases from the wiki, or predict them (default: true)
