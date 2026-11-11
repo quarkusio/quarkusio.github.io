@@ -1,0 +1,44 @@
+name: Check YAML for po4a
+
+on:
+  pull_request:
+    paths:
+      - '**.yml'
+      - '**.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check YAML for po4a
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install po4a
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends po4a
+          dpkg-query -W -f='po4a ${Version}\n' po4a
+
+      # pt.quarkus.io extracts the content YAML files with po4a to translate them.
+      # publications.yaml uses YAML features po4a does not support, and pt.quarkus.io skips it.
+      - name: Check content YAML files
+        run: |
+          failed=0
+          while IFS= read -r file; do
+            if ! output=$(po4a-updatepo --no-deprecation --msgmerge-opt --no-fuzzy-matching \
+                --master-charset UTF-8 -f yaml --master "$file" --po "$RUNNER_TEMP/check.po" 2>&1); then
+              echo "::error file=$file::po4a cannot parse this file, so pt.quarkus.io cannot translate it. See the job log for the reason."
+              echo "$output"
+              failed=1
+            fi
+            rm -f "$RUNNER_TEMP/check.po"
+          done < <(git ls-files -- '*.yml' '*.yaml' \
+            ':(exclude).github/' ':(exclude)theme/' ':(exclude)_data/publications.yaml')
+          exit $failed
