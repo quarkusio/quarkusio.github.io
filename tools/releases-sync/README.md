@@ -38,6 +38,11 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `upcoming` - Set for releases listed as upcoming in the wiki; removed once the release is published
 - `lts` - For upcoming releases only, taken from the wiki heading
 - `proposal` - `true` for upcoming releases marked `(Proposal)` in the wiki
+- `branched_from` - For published 3.x+ LTS releases that don't have one: the non-LTS minor (of the three below it) whose
+  branch has the most recent merge-base with the LTS branch (`BranchLineage.java`). Release order and `main` aren't used: LTS
+  policy changed over time (n-1 as parent, then concurrent n LTS / n+1 non-LTS releases) and `main` stopped being the trunk
+  from 3.38. If candidates tie the newest is used, with a warning; if there are none the field stays blank (as for 2.x).
+  Hand-edited values are never overwritten.
 
 **Manual (edit directly in releases.yaml):**
 - `policy` section - LTS cadence, support durations, descriptions
