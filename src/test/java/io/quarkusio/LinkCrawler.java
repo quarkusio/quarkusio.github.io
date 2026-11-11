@@ -389,6 +389,7 @@ final class LinkCrawler implements AutoCloseable {
         List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
         List<String> startPaths = parseExcludePaths(System.getProperty("test.crawl.start-paths", ""));
         List<String> includePaths = parseExcludePaths(System.getProperty("test.crawl.include-paths", ""));
+        List<String> excludeSelectors = parseExcludePaths(System.getProperty("test.crawl.exclude-selectors", ""));
 
         Set<String> visited = ConcurrentHashMap.newKeySet();
         LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
@@ -444,7 +445,7 @@ final class LinkCrawler implements AutoCloseable {
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
                             checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, crawledCount, maxPages,
-                            checkInternal, checkExternal, excludePaths, includePaths, excludeUrls, seedUrls,
+                            checkInternal, checkExternal, excludePaths, includePaths, excludeSelectors, excludeUrls, seedUrls,
                             startUrls, pendingWork, done);
 
                     ctx.close();
@@ -654,6 +655,7 @@ final class LinkCrawler implements AutoCloseable {
                           boolean checkExternal,
                           List<String> excludePaths,
                           List<String> includePaths,
+                          List<String> excludeSelectors,
                           List<String> excludeUrls,
                           Set<String> seedUrls,
                           Set<String> startUrls,
@@ -743,7 +745,10 @@ final class LinkCrawler implements AutoCloseable {
                 try {
                     @SuppressWarnings("unchecked")
                     var linkResult = (List<String>) p.evaluate(
-                            "() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href'))");
+                            "sels => [...document.querySelectorAll('a[href]')]"
+                                    + ".filter(a => !sels.some(s => a.closest(s)))"
+                                    + ".map(a => a.getAttribute('href'))",
+                            excludeSelectors);
                     hrefs = linkResult;
 
                     @SuppressWarnings("unchecked")
