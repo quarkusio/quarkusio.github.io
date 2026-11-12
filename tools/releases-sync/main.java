@@ -205,24 +205,23 @@ public class main implements Callable<Integer> {
         release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
         release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
 
-        // Parse per-provider blocks (rhbq, ibm, herodevs), each with release_date / eol_date / branched_from.
-        // eol_date for herodevs can be a date or a string like "nes".
+        // Parse per-provider blocks (rhbq, ibm, herodevs): dates release_date / eol_date, the version branched_from,
+        // and the flag open_ended.
         for (String provider : PROVIDERS) {
             Object block = releaseMap.get(provider);
             if (block instanceof Map<?, ?> blockMap) {
                 Map<String, Object> parsed = new LinkedHashMap<>();
-                for (String key : List.of("release_date", "eol_date", "branched_from")) {
+                for (String key : List.of("release_date", "eol_date")) {
                     Object value = blockMap.get(key);
-                    if (value instanceof String strValue) {
-                        // Try to parse as date first, if it fails keep as string (e.g., "nes")
-                        try {
-                            parsed.put(key, LocalDate.parse(strValue));
-                        } catch (Exception e) {
-                            parsed.put(key, strValue);
-                        }
-                    } else if (value != null) {
+                    if (value != null) {
                         parsed.put(key, parseDate(value));
                     }
+                }
+                if (blockMap.get("branched_from") != null) {
+                    parsed.put("branched_from", String.valueOf(blockMap.get("branched_from")));
+                }
+                if (blockMap.get("open_ended") instanceof Boolean openEnded) {
+                    parsed.put("open_ended", openEnded);
                 }
                 release.providers.put(provider, parsed);
             }
@@ -849,7 +848,7 @@ public class main implements Callable<Integer> {
                 return null;
             }
             return new BranchLineage.MergeBase(commit.getString("sha"),
-                    commit.getJsonObject("commit").getJsonObject("committer").getString("date"));
+                    Instant.parse(commit.getJsonObject("commit").getJsonObject("committer").getString("date")));
         }
     }
 
@@ -1139,14 +1138,17 @@ public class main implements Callable<Integer> {
         for (Map.Entry<String, Map<String, Object>> provider : release.providers.entrySet()) {
             Map<String, Object> block = new LinkedHashMap<>();
             for (Map.Entry<String, Object> field : provider.getValue().entrySet()) {
-                Object value = field.getValue();
-                // Dates are written as plain YAML dates, other values (e.g., "nes") are kept as strings
-                block.put(field.getKey(), value instanceof LocalDate date ? new DateScalar(toDateStr(date)) : value);
+                block.put(field.getKey(), yamlValue(field.getValue()));
             }
             map.put(provider.getKey(), block);
         }
 
         return map;
+    }
+
+    /** Dates are written as plain YAML dates, other values (the flags) as they are. */
+    private static Object yamlValue(Object value) {
+        return value instanceof LocalDate date ? new DateScalar(toDateStr(date)) : value;
     }
 
     // Data classes
@@ -1168,7 +1170,7 @@ public class main implements Callable<Integer> {
         public LocalDate latestPatchDate;
         public String link;
         public String branchedFrom;  // version this release branched from (hand-edited)
-        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date / branched_from
+        // Per-provider blocks keyed by provider (rhbq, ibm, herodevs); values are release_date / eol_date / branched_from, open_ended
         public Map<String, Map<String, Object>> providers = new LinkedHashMap<>();
         public Boolean upcoming;
         public Boolean proposal;  // Upcoming release marked "(Proposal)" in the wiki

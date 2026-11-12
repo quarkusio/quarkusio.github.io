@@ -51,7 +51,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - Whether this is an LTS release (published releases)
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `eol_date` is hand-edited (herodevs `eol_date` can be a date or string like "nes")
+- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `eol_date` is hand-edited. `branched_from` (quoted, e.g. `"3.20"`) is the community release the vendor forked its build from, when not the release itself. `open_ended: true` means the vendor supports the release with no end date once its other support has ended (IBM after its own `eol_date`, HeroDevs Never-Ending Support after all other support)
 - `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
 
 ## Tests
