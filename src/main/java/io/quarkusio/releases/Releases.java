@@ -255,9 +255,16 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     /**
      * One release as written in the YAML: dates are yyyy-MM-dd strings. branchedFrom is the version this release
      * was branched from: for an LTS, the non-LTS minor cut with it (not necessarily the one released just before).
+     * micros are the published micro releases of this minor, newest first; null when there are none (upcoming).
      */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
-            EnterpriseDates rhbq, EnterpriseDates ibm, EnterpriseDates herodevs, String branchedFrom) {
+            boolean upcoming, boolean proposal, String link, EnterpriseDates rhbq, EnterpriseDates ibm,
+            EnterpriseDates herodevs, String branchedFrom, List<MicroEntry> micros) {
+    }
+
+    /**
+     * One micro release as written in the YAML, e.g. 3.27.6.1: releaseDate is a yyyy-MM-dd string.
+     */
+    public record MicroEntry(String version, String releaseDate) {
     }
 }

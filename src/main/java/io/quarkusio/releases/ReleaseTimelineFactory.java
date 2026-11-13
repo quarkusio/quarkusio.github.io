@@ -88,8 +88,8 @@ public class ReleaseTimelineFactory {
 
     /** The same compact rows over the whole history, back to the first release. */
     public Timeline fullView(LocalDate today) {
-        LocalDate first = catalog.all().stream().filter(r -> r.releaseDate() != null)
-                .map(Release::releaseDate).min(LocalDate::compareTo).orElse(today);
+        LocalDate first = catalog.all().stream().map(Release::releaseDate)
+                .filter(localDate -> localDate!= null).min(LocalDate::compareTo).orElse(today);
         return build("all", LocalDate.of(first.getYear(), 1, 1), today, false, shown(today, false));
     }
 
@@ -371,9 +371,10 @@ public class ReleaseTimelineFactory {
         } else {
             lines.add("Community maintenance until " + DATE.format(r.eolDate()));
         }
-        if (r.latestPatch() != null) {
-            lines.add("Latest micro " + r.latestPatch()
-                    + (r.latestPatchDate() == null ? "" : " (" + DATE.format(r.latestPatchDate()) + ")"));
+        Micro latest = r.latestMicro();
+        if (latest != null) {
+            lines.add("Latest micro " + latest.version()
+                    + (latest.releaseDate() == null ? "" : " (" + DATE.format(latest.releaseDate()) + ")"));
         }
         return lines;
     }

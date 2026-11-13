@@ -2,6 +2,7 @@ package io.quarkusio.releases;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -11,16 +12,28 @@ import java.util.stream.Stream;
  * branchedFromVersion is a release version (e.g. "3.39"); the dates of the vendors' own branch points are
  * {@link EnterpriseOffering#branchedFromVersion()}, resolved to dates by {@link Releases#branchPoint}. rhbq, ibm and herodevs are null without a block for that vendor.
  * Values which aren't in the data are computed: when open-ended support starts (here), and the planned end of an
- * upcoming release ({@link Releases#plannedEndDate(Release)}).
+ * upcoming release ({@link Releases#plannedEndDate(Release)}), and the latest micro ({@link #latestMicro()}).
+ * micros are the published micro releases, newest first; empty for an upcoming release.
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
-        boolean lts, boolean upcoming, String latestPatch, LocalDate latestPatchDate, String link,
-        EnterpriseOffering rhbq, EnterpriseOffering ibm, EnterpriseOffering herodevs, String branchedFromVersion) {
+        boolean lts, boolean upcoming, String link,
+        EnterpriseOffering rhbq, EnterpriseOffering ibm, EnterpriseOffering herodevs, String branchedFromVersion,
+        List<Micro> micros) {
 
     public static Release from(Releases.Entry e) {
+        List<Micro> micros = e.micros() == null ? List.of()
+                : e.micros().stream().map(m -> new Micro(m.version(), date(m.releaseDate()))).toList();
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
-                e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
-                enterprise(e.rhbq()), enterprise(e.ibm()), enterprise(e.herodevs()), e.branchedFrom());
+                e.lts(), e.upcoming(), e.link(),
+                enterprise(e.rhbq()), enterprise(e.ibm()), enterprise(e.herodevs()), e.branchedFrom(), micros);
+    }
+
+    /**
+     * The most recent micro release (the first in {@link #micros()}, which the data lists newest first), or null if
+     * there are none.
+     */
+    public Micro latestMicro() {
+        return micros.isEmpty() ? null : micros.getFirst();
     }
 
     private static EnterpriseOffering enterprise(Releases.EnterpriseDates dates) {
