@@ -3,6 +3,7 @@ package io.quarkusio;
 import io.quarkiverse.roq.testing.RoqAndRoll;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.RestAssured;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -20,13 +21,16 @@ import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class LocalLinkCrawlerTest {
 
+    @Inject
+    CrawlConfig config;
+
     private LinkCrawler crawler;
 
     // RestAssured only points at the Roq server once a test is running, so the crawler
     // cannot be created in a @BeforeAll.
     private synchronized LinkCrawler crawler() {
         if (crawler == null) {
-            crawler = new LinkCrawler(RestAssured.baseURI + ":" + RestAssured.port);
+            crawler = new LinkCrawler(RestAssured.baseURI + ":" + RestAssured.port, config);
         }
         return crawler;
     }
