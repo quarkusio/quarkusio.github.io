@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
-class ReleaseCatalogTest {
+class ReleasesTest {
 
     static final LocalDate TODAY = LocalDate.of(2026, 10, 30);
 
@@ -25,19 +25,15 @@ class ReleaseCatalogTest {
                 {"version": "3.33", "release_date": "2026-03-25", "eol_date": "2027-03-25", "lts": true,
                  "rhbq": {"eol_date": "2028-06-30"}, "ibm": {"eol_date": "2028-06-30"}},
                 {"version": "3.20", "release_date": "2025-03-26", "eol_date": "2026-03-28", "lts": true,
-                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"eol_date": "nes"}},
+                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"open_ended": true}},
                 {"version": "2.16", "release_date": "2023-01-01", "eol_date": "2023-06-01", "lts": true,
-                 "herodevs": {"eol_date": "2030-01-01"}}
+                 "herodevs": {"open_ended": true}}
               ]
             }
             """;
 
-    static ReleaseCatalog catalogOf(String json, int maxUpcoming) {
-        return new ReleaseCatalog(parse(json), maxUpcoming);
-    }
-
-    static ReleaseCatalog catalogOf(String json) {
-        return new ReleaseCatalog(parse(json));
+    static Releases catalogOf(String json) {
+        return parse(json);
     }
 
     /** Binds like Roq does: a plain mapper, snake_case keys onto the Releases record. */
@@ -49,12 +45,12 @@ class ReleaseCatalogTest {
         }
     }
 
-    final ReleaseCatalog catalog = catalogOf(DATA);
+    final Releases catalog = catalogOf(DATA);
 
     @Test
     void bindsPolicyAndProviders() {
         assertEquals("12 months", catalog.policy().ltsSupportDuration().label());
-        assertEquals("https://ibm.example", catalog.providers().ibm().url());
+        assertEquals("https://ibm.example", catalog.supportProviders().ibm().url());
     }
 
     @Test
@@ -62,9 +58,9 @@ class ReleaseCatalogTest {
         Release lts = catalog.all().get(1);
         assertEquals(LocalDate.of(2026, 9, 30), lts.releaseDate());
         assertNull(catalog.all().get(0).releaseDate());
-        assertTrue(catalog.all().get(4).herodevsEol().isNes());
-        assertEquals(LocalDate.of(2030, 1, 1), catalog.all().get(5).herodevsEol().date());
-        assertFalse(catalog.all().get(1).hasNes());
+        assertTrue(catalog.all().get(4).herodevs().openEnded());
+        assertTrue(catalog.all().get(5).herodevs().openEnded());
+        assertNull(catalog.all().get(1).herodevs());
     }
 
     @Test
@@ -84,8 +80,8 @@ class ReleaseCatalogTest {
                   {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
                   {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"},
                   {"version": "3.40", "lts": true, "release_date": "2026-09-30"}]}""";
-        assertEquals(List.of("3.40"), versions(catalogOf(json, 0).listed()));
-        assertEquals(List.of("4.1", "4.0", "3.40"), versions(catalogOf(json, 2).listed()));
+        assertEquals(List.of("3.40"), versions(catalogOf(json).listed(0)));
+        assertEquals(List.of("4.1", "4.0", "3.40"), versions(catalogOf(json).listed(2)));
     }
 
     @Test
@@ -97,10 +93,10 @@ class ReleaseCatalogTest {
                   {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
                   {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"},
                   {"version": "3.40", "lts": true, "release_date": "2026-09-30"}]}""");
-        assertEquals(java.time.LocalDate.of(2027, 1, 27), c.visibleUpcoming().get(0).plannedEndDate());
+        assertEquals(java.time.LocalDate.of(2027, 1, 27), c.plannedEndDate(c.visibleUpcoming().get(0)));
         var lts = c.upcoming().stream().filter(r -> r.version().equals("4.3")).findFirst().orElseThrow();
-        assertEquals(java.time.LocalDate.of(2028, 3, 31), lts.plannedEndDate());
-        assertEquals(null, c.latest().orElseThrow().plannedEndDate());
+        assertEquals(java.time.LocalDate.of(2028, 3, 31), c.plannedEndDate(lts));
+        assertEquals(null, c.plannedEndDate(c.latest().orElseThrow()));
     }
 
     static List<String> versions(List<Release> releases) {
@@ -134,9 +130,10 @@ class ReleaseCatalogTest {
     @Test
     void vendorSupportFlags() {
         Release r = catalog.all().get(3);
-        assertTrue(r.rhbqActive(TODAY));
-        assertTrue(r.ibmActive(TODAY));
-        assertFalse(r.rhbqActive(LocalDate.of(2029, 1, 1)));
+        assertTrue(r.rhbq().activeOn(TODAY));
+        assertTrue(r.ibm().activeOn(TODAY));
+        assertTrue(r.anyOfferingActiveOn(TODAY));
+        assertFalse(r.rhbq().activeOn(LocalDate.of(2029, 1, 1)));
         assertTrue(r.communityActive(TODAY));
         assertFalse(r.communityActive(LocalDate.of(2030, 1, 1)));
         assertFalse(catalog.all().get(0).communityActive(TODAY), "upcoming is never active");

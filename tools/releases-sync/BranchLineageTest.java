@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
 import java.io.PrintWriter;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -22,7 +23,7 @@ import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 public class BranchLineageTest {
 
     private static BranchLineage.MergeBase mb(String sha, String date) {
-        return new BranchLineage.MergeBase(sha, date);
+        return new BranchLineage.MergeBase(sha, Instant.parse(date));
     }
 
     @Test

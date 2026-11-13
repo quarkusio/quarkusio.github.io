@@ -33,9 +33,9 @@ class ReleaseTimelineFactoryTest {
                 {"version": "3.39", "release_date": "2026-08-26", "eol_date": "2026-09-30", "lts": false},
                 {"version": "3.38", "release_date": "2026-07-22", "eol_date": "2026-08-26", "lts": false},
                 {"version": "3.33", "release_date": "2026-03-25", "eol_date": "2027-03-25", "lts": true,
-                 "rhbq": {"eol_date": "2028-06-30"}, "ibm": {"eol_date": "2028-06-30"}},
+                 "rhbq": {"eol_date": "2028-06-30"}, "ibm": {"eol_date": "2028-06-30", "open_ended": true}},
                 {"version": "3.20", "release_date": "2025-03-26", "eol_date": "2026-03-28", "lts": true,
-                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"eol_date": "nes"}},
+                 "rhbq": {"eol_date": "2027-06-30"}, "herodevs": {"open_ended": true}},
                 {"version": "3.50", "release_date": "2026-10-01", "lts": false},
                 {"version": "2.16", "release_date": "2023-01-01", "eol_date": "2023-06-01", "lts": true,
                  "rhbq": {"eol_date": "2023-07-01"}},
@@ -48,15 +48,15 @@ class ReleaseTimelineFactoryTest {
     public static final int WEEKS_TO_ADD = 4;
 
     /** Binds like Roq does (plain mapper, snake_case naming strategy): snake_case keys onto the Releases record. */
-    static ReleaseCatalog catalogOf(String json) {
+    static Releases catalogOf(String json) {
         try {
-            return new ReleaseCatalog(MAPPER.readValue(json, Releases.class));
+            return MAPPER.readValue(json, Releases.class);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
     }
 
-    final ReleaseCatalog catalog = catalogOf(YAML_AS_JSON);
+    final Releases catalog = catalogOf(YAML_AS_JSON);
     final ReleaseTimelineFactory factory = new ReleaseTimelineFactory(catalog);
 
     static List<String> kinds(TimelineRow row) {
@@ -82,31 +82,35 @@ class ReleaseTimelineFactoryTest {
         var withOld = new ReleaseTimelineFactory(catalogOf(YAML_AS_JSON.replace(
                 "{\"version\": \"0.2\"",
                 "{\"version\": \"1.0\", \"release_date\": \"2020-01-01\", \"eol_date\": \"2021-01-01\", "
-                        + "\"lts\": true, \"herodevs\": {\"eol_date\": \"nes\"}},\n"
+                        + "\"lts\": true, \"herodevs\": {\"open_ended\": true}},\n"
                         + "                {\"version\": \"0.2\"")));
         Timeline t = withOld.supportView(TODAY);
         assertTrue(t.rows().stream().anyMatch(r -> r.id().equals("1.0")));
-        assertEquals(List.of("nes"), kinds(row(t, "1.0")));
+        assertEquals(List.of("open-ended"), kinds(row(t, "1.0")));
         assertEquals(LocalDate.of(2025, 3, 1), t.scale().start());
         // the full view still draws its community bar
-        assertEquals(List.of("community", "nes"), kinds(row(withOld.fullView(TODAY), "1.0")));
+        assertEquals(List.of("community", "open-ended"), kinds(row(withOld.fullView(TODAY), "1.0")));
     }
 
     @Test
     void segmentKindsPerRow() {
         Timeline t = factory.supportView(TODAY);
         assertEquals(List.of("community"), kinds(row(t, "3.40")));
-        // community, Red Hat, then IBM enterprise followed by IBM never-ending
-        assertEquals(List.of("community", "enterprise", "enterprise", "nes"), kinds(row(t, "3.33")));
+        // community, Red Hat, then IBM enterprise followed by IBM open-ended
+        assertEquals(List.of("community", "enterprise", "enterprise", "open-ended"), kinds(row(t, "3.33")));
         assertEquals(List.of("Red Hat", "IBM"), row(t, "3.33").lanes());
-        GanttTimelineSegment ibmNes = row(t, "3.33").segments().get(3);
-        assertTrue(ibmNes.openEnded());
-        assertEquals("ibm", ibmNes.variant());
-        assertEquals(LocalDate.of(2028, 6, 30), ibmNes.start());
+        GanttTimelineSegment ibmOpenEnded = row(t, "3.33").segments().get(3);
+        assertTrue(ibmOpenEnded.openEnded());
+        assertEquals("ibm", ibmOpenEnded.variant());
+        assertEquals(LocalDate.of(2028, 6, 30), ibmOpenEnded.start());
         // 3.20: community, Red Hat, HeroDevs never-ending
-        assertEquals(List.of("community", "enterprise", "nes"), kinds(row(t, "3.20")));
+        assertEquals(List.of("community", "enterprise", "open-ended"), kinds(row(t, "3.20")));
         assertEquals("herodevs", row(t, "3.20").segments().get(2).variant());
         assertTrue(row(t, "3.20").segments().get(2).openEnded());
+        // each vendor's name for support with no end date, under one legend key
+        assertEquals("Quarkus 3.33: IBM open-ended support", ibmOpenEnded.title());
+        assertEquals("Quarkus 3.20: HeroDevs never-ending support", row(t, "3.20").segments().get(2).title());
+        assertTrue(factory.legend().stream().anyMatch(i -> i.key().equals("open-ended") && i.label().equals("EOL Patches")));
     }
 
     @Test
@@ -186,7 +190,7 @@ class ReleaseTimelineFactoryTest {
     @Test
     void catalogDerivedValues() {
         Release r = catalog.find("3.20").orElseThrow();
-        assertTrue(r.herodevsNes());
+        assertTrue(r.herodevs().openEnded());
         assertEquals(LocalDate.of(2027, 6, 30), r.supportEnd());
         assertEquals(Release.Status.ENTERPRISE_ONLY, r.status(TODAY));
         assertEquals(Release.Status.EOL, catalog.find("2.16").orElseThrow().status(TODAY));
@@ -262,11 +266,11 @@ class ReleaseTimelineFactoryTest {
 
     @Test
     void maxUpcomingShowsMoreAndNonLtsBarsEndWhereTheNextStarts() {
-        var catalog = new ReleaseCatalog(ReleaseCatalogTest.parse("""
+        var catalog = ReleasesTest.parse("""
                 {"releases": [
                    {"version": "4.1", "lts": false, "upcoming": true, "planned_date": "2027-01-27"},
-                   {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}"""), 2);
-        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
+                   {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
+        List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog, 2).supportView(TODAY), "stream").segments();
         assertEquals(2, segs.size());
         assertEquals(LocalDate.of(2027, 1, 27), segs.get(0).end());
     }

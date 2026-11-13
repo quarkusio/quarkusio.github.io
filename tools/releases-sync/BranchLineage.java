@@ -1,3 +1,4 @@
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -14,8 +15,8 @@ public final class BranchLineage {
     /** How many minors below an LTS are checked. */
     public static final int WINDOW = 3;
 
-    /** The merge-base of two branches: commit and commit time (ISO-8601, so it sorts as text). */
-    public record MergeBase(String sha, String date) {
+    /** The merge-base of two branches: the commit and when it was made. */
+    public record MergeBase(String sha, Instant date) {
     }
 
     /**
@@ -36,7 +37,7 @@ public final class BranchLineage {
      *        whose branch doesn't exist are left out
      */
     public static Result pick(Map<String, MergeBase> mergeBases) {
-        String latest = mergeBases.values().stream().map(MergeBase::date).max(Comparator.naturalOrder()).orElse(null);
+        Instant latest = mergeBases.values().stream().map(MergeBase::date).max(Comparator.naturalOrder()).orElse(null);
         List<String> tied = new ArrayList<>();
         if (latest != null) {
             mergeBases.forEach((v, mb) -> {
