@@ -5,5 +5,5 @@ import io.quarkus.qute.TemplateEnum;
 @TemplateEnum
 public enum LegendGroup {
 
-    PROVIDER, RELEASE_KIND
+    PROVIDER, RELEASE_KIND, SEVERITY, MARK
 }

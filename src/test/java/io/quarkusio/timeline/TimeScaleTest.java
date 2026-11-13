@@ -58,4 +58,14 @@ class TimeScaleTest {
         LocalDate d = LocalDate.of(2024, 1, 1);
         assertThrows(IllegalArgumentException.class, () -> new TimeScale(d, d));
     }
+
+    @Test
+    void shortRangesGetQuarterTicksAndLongRangesYearTicks() {
+        var quarters = new TimeScale(LocalDate.of(2024, 10, 1), LocalDate.of(2026, 11, 30)).ticks();
+        assertEquals("Oct 2024", quarters.get(0).label());
+        assertEquals("Oct 2026", quarters.get(quarters.size() - 1).label());
+        assertEquals(9, quarters.size());
+        var years = new TimeScale(LocalDate.of(2018, 1, 1), LocalDate.of(2026, 12, 31)).ticks();
+        assertEquals("2018", years.get(0).label());
+    }
 }

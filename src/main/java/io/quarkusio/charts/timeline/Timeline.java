@@ -63,7 +63,7 @@ public record Timeline(String id, TimeScale scale, List<TimelineRow> rows,
     }
 
     public String todayLabel(LocalDateTime now) {
-        return "Today · " + now.toLocalDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy", java.util.Locale.ENGLISH));
+        return TimeScale.todayLabel(now.toLocalDate());
     }
 
     public String todayPct(LocalDateTime now) {

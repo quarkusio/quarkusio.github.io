@@ -76,6 +76,12 @@
     }
     var maxLeft = window.scrollX + document.documentElement.clientWidth - tip.offsetWidth - 4;
     left = Math.max(window.scrollX + 4, Math.min(left, maxLeft));
+    // flip above the mark when there is no room below it, and keep it inside the window either way
+    var viewBottom = window.scrollY + document.documentElement.clientHeight - 4;
+    if (top + tip.offsetHeight > viewBottom) {
+      top = box.top + window.scrollY - tip.offsetHeight - 6;
+    }
+    top = Math.max(window.scrollY + 4, Math.min(top, viewBottom - tip.offsetHeight));
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
   }
