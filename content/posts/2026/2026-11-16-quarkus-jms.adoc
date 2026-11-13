@@ -1,0 +1,224 @@
+---
+layout: post
+title: 'Introducing Quarkus JMS'
+date: 2026-11-16
+tags: extension jms messaging
+synopsis: 'Quarkus JMS brings typed destinations, annotation-driven listeners, XA transactions and a Reactive Messaging connector to JMS applications on Quarkus 4.'
+author: ozangunalp
+---
+:imagesdir: /assets/images/posts/quarkus-jms
+
+== A dedicated JMS extension
+
+https://docs.quarkiverse.io/quarkus-jms/dev/index.html[Quarkus JMS] is a new extension for JMS, compatible with Quarkus 4.
+It provides three complementary APIs:
+
+* `JmsQueue<T>` and `JmsTopic<T>`, injectable typed destinations for sending and receiving messages
+* `@JmsListener`, for annotation-driven message consumption
+* a Reactive Messaging connector, `smallrye-jms`, for `@Incoming` / `@Outgoing` channels
+
+== The JMS extension ecosystem
+
+Until now, JMS support in Quarkus was spread across several extensions, each covering one part:
+
+* `quarkus-artemis-jms` provides the Apache ActiveMQ Artemis client, with configuration, Dev Services and native support.
+* `quarkus-qpid-jms` provides the Apache Qpid JMS client for AMQP 1.0 brokers.
+* `quarkus-pooled-jms` adds connection pooling and transaction manager integration.
+* `quarkus-ironjacamar`, together with `quarkus-artemis-jms-ra`, runs a JCA resource adapter for MDB-style message endpoints.
+* Camel Quarkus has its own JMS component for integration routes.
+
+For other providers, such as IBM MQ, applications produce a `ConnectionFactory` bean themselves.
+
+All of these extensions work at the level of the `ConnectionFactory`.
+Everything above it is left to the application: creating contexts and sessions, running consumer threads with a `receive()` loop, reconnecting after a failure, converting payloads.
+Getting XA transactions means combining pooled JMS, Narayana and, on the consumer side, a resource adapter.
+
+Quarkus JMS fills this gap.
+It works on top of these clients and handles session pooling, serialization and lifecycle for you.
+
+== Key features
+
+=== Sending and consuming messages
+
+To get started with Quarkus JMS you need to add the `io.quarkiverse.jms:quarkus-jms` extension next to a JMS provider.
+For example, with the `quarkus-artemis-jms` extension, the Artemis broker is started as a Dev Service and a `ConnectionFactory` is configured out of the box.
+The following example shows a REST endpoint that sends orders to a queue:
+
+[source,java]
+----
+import jakarta.inject.Inject;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+
+import io.quarkiverse.jms.JmsQueue;
+import io.smallrye.common.annotation.Identifier;
+
+@Path("/orders")
+public class OrderResource {
+
+    @Inject
+    @Identifier("orders")
+    JmsQueue<Order> orders;
+
+    @POST
+    public void placeOrder(Order order) {
+        orders.message(order)
+              .property("category", order.category())
+              .send();
+    }
+}
+----
+
+You can inject a destination by qualifying it with `@Identifier`.
+Injected destinations are type-safe: the generic parameter determines the payload type for both sending and receiving, and objects are converted to and from JSON.
+
+The following example shows a listener that processes them:
+
+[source,java]
+----
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkiverse.jms.JmsHeader;
+import io.quarkiverse.jms.JmsListener;
+import io.quarkiverse.jms.SendTo;
+import io.quarkus.logging.Log;
+
+@ApplicationScoped
+public class OrderProcessor {
+
+    @JmsListener(value = "orders", concurrency = 2, maxConcurrency = 8)
+    @SendTo("order-events")
+    public OrderEvent process(Order order, @JmsHeader("category") String category) {
+        Log.infof("Processing %s order %s", category, order.id());
+        return new OrderEvent(order.id(), "accepted");
+    }
+}
+----
+
+For consuming JMS messages continuously, you can annotate a CDI bean method with `@JmsListener`.
+The first non-annotated parameter is the message payload. You can inject message properties by annotating parameters with the `@JmsHeader` annotation.
+With `concurrency` and `maxConcurrency`, extra consumers are spawned when all existing ones are busy, and removed when they become idle.
+The `@SendTo` annotation allows sending the processing result to another destination.
+
+=== XA transactions
+
+XA transactions coordinate JMS message consumption with other XA resources, such as a database, in a single atomic transaction.
+For this, you need an XA-capable connection factory, enable XA on the datasource, and add the `quarkus-narayana-jta` extension:
+
+[source,properties]
+----
+quarkus.artemis.xa-enabled=true
+quarkus.datasource.jdbc.transactions=xa
+----
+
+Then set the listener's acknowledge mode to `XA`:
+
+[source,java]
+----
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+
+import io.quarkiverse.jms.JmsClient;
+import io.quarkiverse.jms.JmsListener;
+
+@ApplicationScoped
+public class OrderValidator {
+
+    @Inject
+    EntityManager em;
+
+    @Inject
+    JmsClient jms;
+
+    @JmsListener(value = "incoming-orders", acknowledge = JmsListener.AcknowledgeMode.XA)
+    public void validate(Order order) {
+        em.persist(new AuditLog("validated", order.id()));
+        jms.queue("validated-orders").send(order);
+    }
+}
+----
+
+`JmsClient` is an injectable service for accessing destinations dynamically at runtime, returning the same `JmsQueue` and `JmsTopic` instances described earlier.
+If the method fails, the message stays on `incoming-orders`, the insert is rolled back, and nothing is sent to `validated-orders`.
+
+Listener methods annotated with `@RunOnVirtualThread` run on virtual threads instead of the worker thread pool, which is useful for blocking I/O such as database calls or HTTP requests.
+Combined with XA and `maxConcurrency`, several messages are processed concurrently, each in its own virtual thread and transaction.
+
+=== Integration with the Quarkus ecosystem
+
+The Quarkus Messaging connector has also been revamped to support transactions.
+Available with the `quarkus-messaging-jms` extension, the `smallrye-jms` connector now supports local and XA transactions with the `transaction-mode` attribute, and offers failure strategies such as `fail`, `ignore` and `dead-letter-queue`.
+
+The Quarkus JMS extension provides close integration with other Quarkus extensions:
+
+* Observability extensions such as `quarkus-opentelemetry` and `quarkus-micrometer` allow tracing and timing sends, receives and listener invocations. Trace context is propagated in message properties.
+* When `quarkus-smallrye-health` is available, a readiness check reports whether listeners are connected.
+* The fault-tolerance annotations such as `@Retry`, `@CircuitBreaker` and `@Fallback` work on listener methods when `quarkus-smallrye-fault-tolerance` is available.
+
+Consult the https://docs.quarkiverse.io/quarkus-jms/dev/index.html[extension docs] to discover other features such as session pooling, request-reply, queue browsing, durable subscriptions, selectors, dead-letter routing, runtime listener registration and graceful shutdown.
+
+=== Supported JMS providers
+
+Quarkus JMS works with any provider that exposes a `ConnectionFactory` bean.
+Besides Apache ActiveMQ Artemis, it is tested with:
+
+* Apache ActiveMQ Classic
+* AMQP 1.0 brokers, through `quarkus-qpid-jms`
+* IBM MQ
+* RabbitMQ
+* Amazon SQS and Oracle AQ: only implement JMS 1.1 and are supported through a compatibility mode
+
+The https://docs.quarkiverse.io/quarkus-jms/dev/providers.html[JMS providers page] shows how to configure each of them.
+
+== Integration with other JMS extensions
+
+Quarkus JMS uses the default CDI `ConnectionFactory` bean, or a named one qualified with `@Identifier`, so it works on top of the extensions you already use.
+
+image::quarkus-jms-stack.webp["Quarkus JMS stack: three APIs on a shared runtime, optional pooled JMS and IronJacamar, and the providers that supply the ConnectionFactory"]
+
+When you need multiple connections or JMX monitoring, add `quarkus-pooled-jms`: the built-in session pool is then disabled automatically.
+
+When `quarkus-ironjacamar` is present, `@JmsListener` methods on classes annotated with `@ResourceEndpoint` are activated through the JCA resource adapter instead of the default polling consumer.
+Camel Quarkus routes are not affected and can share the same `ConnectionFactory`.
+
+== Migrating to Quarkus JMS
+
+If your application already uses JMS through a `ConnectionFactory`, the https://docs.quarkiverse.io/quarkus-jms/dev/migration.html[migration guide] shows how to replace the code that manages contexts, sessions and consumer threads with `JmsQueue` and `@JmsListener`.
+It also covers moving JCA message endpoints to `@JmsListener`.
+
+=== Spring JMS compatibility
+
+The `quarkus-spring-jms` module lets you use the Spring JMS API in a Quarkus application.
+It maps Spring's `@JmsListener`, `@SendTo`, `@Header`, `JmsClient` and `JmsResponse` to their Quarkus JMS equivalents at build time, so existing Spring listeners need minimal changes:
+
+[source,java]
+----
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.messaging.handler.annotation.SendTo;
+
+@ApplicationScoped
+public class OrderListener {
+
+    @JmsListener(destination = "orders", concurrency = "3-5")
+    @SendTo("order-events")
+    public OrderEvent process(Order order, @Header("category") String category) {
+        return new OrderEvent(order.id(), "processed");
+    }
+}
+----
+
+Container factories are configured in `application.properties` instead of `@Bean` definitions.
+Session pooling, transactions, tracing, metrics and health checks apply to Spring-annotated listeners as well.
+See the https://docs.quarkiverse.io/quarkus-jms/dev/spring-jms.html[Spring JMS compatibility guide] for details.
+
+== Feedback
+
+Quarkus JMS is in preview and will be part of the Quarkus Platform.
+To try it, follow the https://docs.quarkiverse.io/quarkus-jms/dev/index.html[Getting Started guide].
+We would like your feedback, in particular on the providers you use and on migrating existing applications.
+
+You can reach us on https://quarkusio.zulipchat.com[Zulip] or open an issue on https://github.com/quarkiverse/quarkus-jms/issues[GitHub].
