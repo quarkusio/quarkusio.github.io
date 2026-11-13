@@ -247,9 +247,11 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     /**
      * A vendor block (rhbq, ibm, herodevs): dates are yyyy-MM-dd strings. branchedFrom is the community release the
      * vendor branched its build from, e.g. "3.20"; when absent it is the release the block belongs to. openEnded is true when the
-     * vendor supports the release, with no end date, once its other support has ended.
+     * vendor supports the release, with no end date, once its other support has ended. lastInMajor marks the vendor's last
+     * minor of a major stream (3.x, 2.x), which is supported for longer than the others.
      */
-    public record EnterpriseDates(String releaseDate, String eolDate, String branchedFrom, boolean openEnded) {
+    public record EnterpriseDates(String releaseDate, String eolDate, String branchedFrom, boolean openEnded,
+            boolean lastInMajor) {
     }
 
     /**
