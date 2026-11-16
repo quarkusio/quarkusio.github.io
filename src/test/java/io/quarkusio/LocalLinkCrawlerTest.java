@@ -52,4 +52,9 @@ public class LocalLinkCrawlerTest {
     void crawlAndCheckFragmentAnchors() throws InterruptedException {
         crawler().crawlAndCheckFragmentAnchors();
     }
+
+    @Test
+    void crawlAndCheckHreflangAlternates() throws InterruptedException {
+        crawler().crawlAndCheckHreflangAlternates();
+    }
 }
