@@ -5,7 +5,662 @@
         <title>Quarkus - Supersonic Subatomic Java</title>
         <link>https://quarkus.io</link>
         <description>Quarkus is a Java framework for building fast, efficient, cloud-native applications. It is Kubernetes-native, supports JVM and native executable deployments, provides live reload and delightful developer tooling, integrates with Jakarta and MicroProfile standards, and offers extensions for databases, messaging, security, observability and AI.</description>
-        <lastBuildDate>Mon, 16 Nov 2026 04:56:40 +0000</lastBuildDate>
+        <lastBuildDate>Mon, 16 Nov 2026 08:32:34 +0000</lastBuildDate>
+        <item>
+            <title>Break your dependencies on purpose: introducing Quarkus Resiliency Testing</title>
+            <link>
+                https://quarkus.io/blog/quarkus-resiliency-testing/
+            </link>
+            <description>
+                &lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Imagine a customer placing an order.
+Your service reserves stock, charges their card, and stores the result.
+On a normal day, each step takes milliseconds and the customer sees a confirmation.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/order-journey.svg&quot; alt=&quot;Customer order flow through inventory, payments and the database&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Now imagine inventory accepts the connection but never answers.
+Or the payment provider charges the card just before the connection breaks.
+Or the database stops responding while your application is holding a connection from its pool.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;These failures demand different responses.
+Waiting longer can use up your workers; retrying can charge the customer twice; catching an exception does nothing if the client never throws one.
+A happy-path test tells you little about any of them.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing&quot;&gt;Quarkus Resiliency Testing&lt;/a&gt; lets you reproduce these conditions in a &lt;code&gt;@QuarkusTest&lt;/code&gt;, using your application&amp;#8217;s real clients and configuration.
+Let&amp;#8217;s follow that order through four failure scenarios and turn each one into a test.
+The examples are excerpts from the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders&quot;&gt;resilient-orders sample&lt;/a&gt;, which includes the endpoints, supporting classes and complete tests.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_put_the_failure_on_the_wire&quot;&gt;Put the failure on the wire&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Add the test dependency:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-xml hljs&quot; data-lang=&quot;xml&quot;&gt;&amp;lt;dependency&amp;gt;
+    &amp;lt;groupId&amp;gt;io.quarkiverse.resiliencytesting&amp;lt;/groupId&amp;gt;
+    &amp;lt;artifactId&amp;gt;quarkus-resiliency-testing-junit&amp;lt;/artifactId&amp;gt;
+    &amp;lt;version&amp;gt;0.6.0&amp;lt;/version&amp;gt;
+    &amp;lt;scope&amp;gt;test&amp;lt;/scope&amp;gt;
+&amp;lt;/dependency&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;With &lt;code&gt;NetworkFaultsProfile&lt;/code&gt;, the extension discovers supported outbound connections from Quarkus configuration, including Dev Services, and redirects them through proxies inside the test JVM.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/fault-proxy.svg&quot; alt=&quot;A test applies faults to an in-process proxy between the real client and its dependency&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The proxy normally relays traffic.
+During a fault, the real client encounters the broken connection and reacts with its own timeouts, retries and exceptions.
+A mock that throws an exception can check a fallback; this also exercises the client configuration that determines whether, and when, that fallback is reached.
+The fault injection needs no separate container or sidecar; dependencies such as the sample&amp;#8217;s PostgreSQL Dev Service can still need Docker.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_1_inventory_stops_answering&quot;&gt;1. Inventory stops answering&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The customer clicks “Place order”, but inventory never responds.
+We want to accept the order as pending instead of leaving the customer waiting indefinitely.
+In this sample, &lt;code&gt;Reservation.pending&lt;/code&gt; tells the endpoint to return &lt;code&gt;202&lt;/code&gt; with status &lt;code&gt;PENDING&lt;/code&gt;; completing the reservation later is a separate application responsibility.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div id=&quot;reserve-method&quot; class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Timeout(2000) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+@CircuitBreaker(requestVolumeThreshold = 2, failureRatio = 1.0) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+@Bulkhead(2) &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+@Fallback(fallbackMethod = &quot;reserveLater&quot;) &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+public Reservation reserve(String item) {
+    return inventory.reserve(item);
+}
+
+Reservation reserveLater(String item) {
+    return Reservation.pending(item);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The inventory service gets two seconds to answer.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Two failures in a row open the circuit breaker, and the inventory service is left alone for a while.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;At most two calls wait on the inventory service at the same time; more on that below.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;When the call fails, times out, or is refused by the open breaker or the full bulkhead, the order is accepted as pending instead.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The test makes inventory hang, checks the pending response, then checks recovery:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@QuarkusTest
+@TestProfile(NetworkFaultsProfile.class) &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+class InventoryFailuresTest {
+
+    @Inject
+    Faults faults; &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+
+    @Test
+    void inventoryServiceHangs() {
+        Target inventory = faults.target(InventoryClient.class); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+        try (var ignored = inventory.hangs()) { &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+            when()
+                    .post(&quot;/orders&quot;)
+                    .then()
+                    .statusCode(202) &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+                    .body(&quot;status&quot;, is(&quot;PENDING&quot;))
+                    .time(lessThan(3000L));
+        } &lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;(6)&lt;/b&gt;
+
+        when()
+                .post(&quot;/orders&quot;)
+                .then()
+                .statusCode(201) &lt;i class=&quot;conum&quot; data-value=&quot;7&quot;&gt;&lt;/i&gt;&lt;b&gt;(7)&lt;/b&gt;
+                .body(&quot;status&quot;, is(&quot;CONFIRMED&quot;));
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Puts a proxy in front of supported outbound connections configured by the application.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The entry point for applying faults.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The dependency is named by the bean the application already injects, here the REST Client interface.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The fault is a single method call: from now on, the inventory service accepts connections and never answers.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;5&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;@Timeout&lt;/code&gt; fires, and the fallback accepts the order as pending.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;6&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The fault ends with the block: the dependency works again, connection pools are flushed and circuit breakers are reset.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;7&quot;&gt;&lt;/i&gt;&lt;b&gt;7&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;So the recovery can be asserted in the same test: the next order is confirmed right away.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The time assertion gives the two-second timeout some test overhead.
+Remove the timeout and a slower client timeout can no longer make the test pass merely by eventually reaching the fallback.
+The extension creates the failure; the application still has to handle it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;_what_happens_to_the_next_customer&quot;&gt;What happens to the next customer?&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A timeout bounds one customer&amp;#8217;s wait.
+It does not limit how many requests can be waiting at once.
+If orders keep arriving while inventory is hung, those calls can occupy the workers that other requests need.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;code&gt;@Bulkhead(2)&lt;/code&gt; above limits concurrent calls to inventory to two.
+The third call should take the fallback immediately:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/inventory-bulkhead.svg&quot; alt=&quot;Two inventory calls occupy the bulkhead; a third order takes the fallback and returns 202 PENDING&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;Target inventory = faults.target(InventoryClient.class);
+try (var callers = Executors.newFixedThreadPool(2);
+        var ignored = inventory.hangs(Moment.onNextWrite())) { &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    for (int i = 0; i &amp;lt; 2; i++) {
+        callers.submit(() -&amp;gt; when().post(&quot;/orders&quot;)); &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+    }
+    inventory.traffic()
+            .awaitHeldConnections(2, Duration.ofSeconds(5)); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+
+    when()
+            .post(&quot;/orders&quot;)
+            .then()
+            .statusCode(202)
+            .time(lessThan(500L)); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The inventory service stops answering a connection as soon as the application sends a request on it.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Two orders start, and wait on the inventory service: the bulkhead is full.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Waits until the proxy holds both requests, rather than for a fixed time, so the third request starts only after both calls are held.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The third order does not wait: the bulkhead rejects the call at once, and the fallback accepts the order as pending.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Catches:&lt;/strong&gt; the missing bulkhead: the third order waits for the full two-second timeout as well.
+Under real load, every one of those waits holds a worker thread.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_2_the_payment_went_through_but_its_answer_did_not&quot;&gt;2. The payment went through, but its answer did not&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Inventory has recovered, and the customer pays.
+The payment provider records the charge and starts sending its response.
+Then the connection breaks.
+Our service sees a failure, but the money has already moved.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/payment-retry.svg&quot; alt=&quot;A payment response is lost; retrying with the same idempotency key returns the original charge&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A retry can recover the request, provided the provider supports idempotency and every attempt carries the same key.
+Generate that key before entering the retried method:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;// OrderResource
+@POST
+@Path(&quot;/{id}/payment&quot;)
+public String pay(@PathParam(&quot;id&quot;) String id) {
+    String idempotencyKey = UUID.randomUUID().toString(); &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+    return payments.charge(idempotencyKey, id);
+}
+
+// PaymentService
+@Retry(maxRetries = 2, delay = 200) &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+public String charge(String idempotencyKey, String orderId) {
+    return payments.charge(idempotencyKey, orderId);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;One key per payment, generated before the first attempt.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Every attempt receives the same key, and sends it as the &lt;code&gt;Idempotency-Key&lt;/code&gt; header.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;In the sample, a stand-in payment provider honours the keys like a real one, and records every charge, so the test can count them.
+The test loses the answer to the first payment, and checks what matters to the customer:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Inject
+PaymentLedger ledger; &lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;(1)&lt;/b&gt;
+
+@Test
+void responseLostAfterThePaymentWentThrough() {
+    Target payments = faults.target(PaymentClient.class);
+    try (var ignored = payments.http().forFirst(1)
+            .diesMidRequest(Moment.Http.afterHeaders())) { &lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;(2)&lt;/b&gt;
+        when()
+                .post(&quot;/orders/42/payment&quot;)
+                .then()
+                .statusCode(200); &lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;(3)&lt;/b&gt;
+    }
+
+    var attempts = payments.traffic().httpRequests(); &lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;(4)&lt;/b&gt;
+    assertEquals(2, attempts.size());
+    assertEquals(200, attempts.get(0).responseStatus()); &lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;(5)&lt;/b&gt;
+    assertEquals(1, ledger.chargesFor(&quot;42&quot;)); &lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;(6)&lt;/b&gt;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;colist arabic&quot;&gt;
+&lt;table&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;1&quot;&gt;&lt;/i&gt;&lt;b&gt;1&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The charges recorded by the stand-in payment provider.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;2&quot;&gt;&lt;/i&gt;&lt;b&gt;2&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The first payment reaches the provider, which charges the card, but the connection dies right after the response headers: the application never sees the answer.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;3&quot;&gt;&lt;/i&gt;&lt;b&gt;3&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The &lt;code&gt;@Retry&lt;/code&gt; sends the payment again, and the caller sees a success.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;4&quot;&gt;&lt;/i&gt;&lt;b&gt;4&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;Every request that went through the proxy, with its headers and the status it was answered with.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;5&quot;&gt;&lt;/i&gt;&lt;b&gt;5&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The first attempt had succeeded: the retry came after a payment that went through.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;i class=&quot;conum&quot; data-value=&quot;6&quot;&gt;&lt;/i&gt;&lt;b&gt;6&lt;/b&gt;&lt;/td&gt;
+&lt;td&gt;The customer was charged once.&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Catches:&lt;/strong&gt; the two classic mistakes.
+With the key generated inside the retried method, each attempt carries a different key, and the customer is charged twice.
+Without the retry, the card is charged but the customer is told the payment failed.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For retries of the incoming payment request itself, the key also needs to survive across requests; the example above covers retries within one request.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_3_the_database_stops_cooperating&quot;&gt;3. The database stops cooperating&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;_a_query_that_never_returns&quot;&gt;A query that never returns&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The customer now opens their order history.
+The endpoint catches persistence failures and returns a &lt;code&gt;503&lt;/code&gt; so the caller can try later:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@GET
+public Response list() {
+    try {
+        return Response.ok(orderRepository.listAll()).build();
+    } catch (PersistenceException e) {
+        return Response.status(503).entity(&quot;orders unavailable&quot;).build();
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Here &lt;code&gt;orderRepository&lt;/code&gt; is the sample&amp;#8217;s injected &lt;code&gt;Order.Repository&lt;/code&gt;; the extension resolves that repository to its datasource.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;But a database that &lt;em&gt;hangs&lt;/em&gt; does not necessarily produce an exception.
+The PostgreSQL JDBC driver waits forever for an answer by default, so the application needs a timeout of its own, or, as HikariCP&amp;#8217;s &lt;a href=&quot;https://github.com/brettwooldridge/HikariCP/wiki/Rapid-Recovery&quot;&gt;Rapid Recovery&lt;/a&gt; guide puts it, &quot;it is imperative that the application configures the driver-level TCP socket timeout&quot;:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;quarkus.datasource.jdbc.additional-jdbc-properties.socketTimeout=3&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The test makes the database stop answering:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;try (var ignored = faults.target(Order.Repository.class).hangs()) {
+    when()
+            .get(&quot;/orders&quot;)
+            .then()
+            .statusCode(503);
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;strong&gt;Catches:&lt;/strong&gt; the missing &lt;code&gt;socketTimeout&lt;/code&gt;: the request never comes back.
+In the test, it is REST Assured, the client calling the application, that eventually gives up, after the 30 seconds Quarkus allows it in tests.
+Without an effective timeout, the blocking JDBC call keeps its worker thread and pooled connection while it waits for the database.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The failure can spread beyond this request: every blocked query holds a pooled connection, leaving fewer for the next customer.
+You can test the exhausted state directly too, without generating a burst of traffic:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;try (var ignored = faults.pool(DataSource.class).exhausted()) {
+    when().get(&quot;/orders&quot;).then()
+            .statusCode(503)
+            .header(&quot;Retry-After&quot;, &quot;1&quot;);
+}
+when().get(&quot;/orders&quot;).then().statusCode(200);&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;This separate &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/pool-exhausted-500&quot;&gt;pool-exhausted-500 sample&lt;/a&gt; uses an exception mapper to translate the pool&amp;#8217;s acquisition timeout into &lt;code&gt;503&lt;/code&gt; with &lt;code&gt;Retry-After&lt;/code&gt;.
+Remove the mapper and the request returns &lt;code&gt;500&lt;/code&gt; instead.
+Pool exhaustion tests do not need &lt;code&gt;NetworkFaultsProfile&lt;/code&gt;.
+They check behavior when capacity runs out; measuring throughput still needs a load test.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;_the_database_is_back_but_its_connections_are_not&quot;&gt;The database is back, but its connections are not&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The database restarts, and the dashboard turns green again.
+The customer refreshes their order history, yet the first request still fails: the application has reused a connection that died during the restart.
+A fresh connection would work.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Reproduce that distinction by opening a connection, dropping existing connections, and making another request:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;when().get(&quot;/orders&quot;).then().statusCode(200);
+faults.target(Order.Repository.class).dropConnections();
+when().get(&quot;/orders&quot;).then().statusCode(200);&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;dropConnections()&lt;/code&gt; is a one-off interruption; new connections can succeed immediately.
+The sample configures Agroal to validate connections before reuse when their last validation is more than a millisecond old:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;quarkus.datasource.jdbc.foreground-validation-interval=PT0.001S&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;That aggressive interval makes the sample&amp;#8217;s recovery behavior explicit; choose a production interval with the cost of validation in mind.
+The test asks whether the next customer can use the recovered database, not merely whether the database is reachable.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect2&quot;&gt;
+&lt;h3 id=&quot;_what_if_the_connection_breaks_during_a_write&quot;&gt;What if the connection breaks during a write?&lt;/h3&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Reading history is one thing; losing a connection while saving a new order is another.
+Does the customer receive a failure response even though a row was left behind?
+The sample saves the order in a transaction and maps a failure to &lt;code&gt;503&lt;/code&gt;.
+Check both the response and the stored state:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;int before = orderCount();
+try (var ignored = faults.target(Order.Repository.class).diesMidRequest()) {
+    when().post(&quot;/orders&quot;).then().statusCode(503);
+}
+assertEquals(before, orderCount(), &quot;failed write left no order&quot;);
+when().post(&quot;/orders&quot;).then().statusCode(201);&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;&lt;code&gt;orderCount()&lt;/code&gt; lists orders through &lt;code&gt;GET /orders&lt;/code&gt; and counts them.
+This fault cuts the connection when the database starts responding; in this scenario the transaction does not commit.
+The final request checks recovery after the fault ends.
+Like the payment example, losing the acknowledgement of a &lt;em&gt;commit&lt;/em&gt; would be a different case: a connection error alone cannot prove that nothing was saved.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_4_the_order_is_saved_who_tells_shipping&quot;&gt;4. The order is saved. Who tells shipping?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There is one more dependency in the order&amp;#8217;s journey.
+The shipping service learns about orders through Kafka.
+A database row alone will not get a parcel dispatched: if publishing the event fails, the customer could see an order that shipping never hears about.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The sample deliberately couples order acceptance to Kafka availability.
+It writes the row, waits for Kafka to acknowledge the event, and only then commits the database transaction:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/order-event.svg&quot; alt=&quot;The sample writes an uncommitted order, waits for Kafka acknowledgement, and commits on success; a send failure rolls the database transaction back&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;@Transactional
+public Order place(String item, String status) {
+    Order order = new Order();
+    order.item = item;
+    order.placedAt = Instant.now();
+    order.status = status;
+    orders.persistAndFlush(order);
+    events.sendAndAwait(order.id);
+    return order;
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;Here &lt;code&gt;events&lt;/code&gt; is a &lt;code&gt;MutinyEmitter&amp;lt;Long&amp;gt;&lt;/code&gt; for the &lt;code&gt;order-events&lt;/code&gt; channel.
+Make Kafka unavailable and check that this request fails without leaving an order behind:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-java hljs&quot; data-lang=&quot;java&quot;&gt;int before = orderCount();
+try (var ignored = faults.target(MutinyEmitter.class).unavailable()) {
+    when().post(&quot;/orders&quot;).then().statusCode(503);
+}
+assertEquals(before, orderCount(), &quot;failed publish rolled back the order&quot;);
+when().post(&quot;/orders&quot;).then().statusCode(201);&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The extension targets the emitter&amp;#8217;s Kafka connection, including discovered brokers.
+Switching to fire-and-forget publishing would let the transaction commit before the send fails, breaking this test.
+The sample also bounds the producer&amp;#8217;s waits so the customer is not left waiting through a prolonged outage:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;mp.messaging.outgoing.order-events.max.block.ms=3000
+mp.messaging.outgoing.order-events.request.timeout.ms=2000
+mp.messaging.outgoing.order-events.delivery.timeout.ms=3000&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There is still a gap: Kafka can accept the event and the database commit can then fail.
+A lost Kafka acknowledgement can also leave the application uncertain whether the event arrived.
+&lt;code&gt;@Transactional&lt;/code&gt; does not make these two systems one transaction.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;If orders must be accepted while Kafka is down, the &lt;a href=&quot;https://microservices.io/patterns/data/transactional-outbox.html&quot;&gt;transactional outbox&lt;/a&gt; changes the design: save the order and an event record in the same database transaction, then publish the event separately.
+That changes the test too: during the outage, assert that the order and outbox record are saved; after recovery, assert that the event reaches shipping.
+The relay may publish duplicates, so shipping must handle them idempotently.
+The sample above tests synchronous publishing; those outbox assertions would belong to an application using that design.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_what_else_is_waiting_to_fail&quot;&gt;What else is waiting to fail?&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;We have checked the customer response, the stored order, and what happens when its event cannot be published.
+But some failures happen before a connection is established, or when the application writes a local file.
+You can test those failures too:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;The customer requests an invoice, but the disk is full. Does your service report the failure and recover when space is available?&lt;/strong&gt; &lt;code&gt;faults.directory(path).diskFull()&lt;/code&gt; makes supported Java file writes under that directory fail with “No space left on device”, without filling the disk.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Inventory is healthy, but its hostname no longer resolves. Does checkout handle that failure too?&lt;/strong&gt; &lt;code&gt;faults.target(InventoryClient.class).unresolvable()&lt;/code&gt; makes new connection attempts fail with &lt;code&gt;UnknownHostException&lt;/code&gt;. Drop existing connections first so the next request encounters the fault.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/guide-disk-and-dns.html&quot;&gt;disk and DNS guide&lt;/a&gt; has complete tests and explains their scope.
+Then there are the failures that emerge as your service grows:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;ulist&quot;&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Your LLM provider says “slow down”. Does your service send even more requests?&lt;/strong&gt; A client retry combined with &lt;code&gt;@Retry&lt;/code&gt; can multiply calls. Inject a &lt;code&gt;429&lt;/code&gt; and count the attempts that actually reach the provider.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;A stream stops after three events. Does your customer get an explanation or a broken connection?&lt;/strong&gt; Cut it at that exact point and test the recovery path.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Your database pool is full. Does Kubernetes restart an otherwise healthy pod?&lt;/strong&gt; Exhaust the pool and check whether liveness still answers.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders&quot;&gt;resilient-orders sample&lt;/a&gt; covers the retry and streaming scenarios; the &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/samples.html&quot;&gt;sample catalog&lt;/a&gt; includes overload and health-check failures.
+Pick the question you are least sure how your service would answer: that is a good next test.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_make_sure_the_test_exercised_the_failure&quot;&gt;Make sure the test exercised the failure&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;A test can apply a fault to the wrong dependency and still get its expected response.
+The extension guards against this: if no connection goes through the target proxy while the fault is active, it fails the test and identifies the target to investigate.
+That guard complements your assertions; you still need to check the outcome that matters, such as one charge, a bounded wait, or recovery.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_explore_it_in_dev_mode&quot;&gt;Explore it in dev mode&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;You can also investigate a failure before writing its regression test.
+Enable the Dev UI integration:&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;listingblock&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;pre class=&quot;highlightjs highlight&quot;&gt;&lt;code class=&quot;language-properties hljs&quot; data-lang=&quot;properties&quot;&gt;%dev.quarkus.resiliency-testing.enabled=true&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;strong&gt;Resiliency Testing&lt;/strong&gt; card lets you apply faults and inspect the requests they affected.
+Hang inventory, place an order, and watch what the customer sees.
+Then turn that observation into an assertion.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;imageblock text-center&quot;&gt;
+&lt;div class=&quot;content&quot;&gt;
+&lt;img src=&quot;/assets/images/posts/quarkus-resiliency-testing/dev-ui-demo.gif&quot; alt=&quot;The Resiliency Testing Dev UI applying a hang, an HTTP 503 and a delay to the inventory service&quot; width=&quot;900&quot;&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;For AI-assisted test writing, the extension also exposes Dev MCP tools, a test-writing guide and an inventory of guarded methods.
+Fault application through these tools is opt-in in the Dev UI.
+The &lt;a href=&quot;https://docs.quarkiverse.io/quarkus-resiliency-testing/dev/index.html&quot;&gt;documentation&lt;/a&gt; covers setup and the wider API, including Redis, Kafka, LangChain4j, streaming failures and worker-pool exhaustion.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;sect1&quot;&gt;
+&lt;h2 id=&quot;_try_one_failure_in_your_service&quot;&gt;Try one failure in your service&lt;/h2&gt;
+&lt;div class=&quot;sectionbody&quot;&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The extension requires Quarkus 4 and Java 21.
+Start with one dependency and one question: if it stops answering, what should the customer see, and how soon?
+Apply the fault, assert that behavior, and check recovery after the block closes.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;There are limits: HTTP-level faults require plaintext HTTP/1.x, &lt;code&gt;connectTimeout()&lt;/code&gt; is Linux-only, and &lt;code&gt;@QuarkusIntegrationTest&lt;/code&gt; is not yet supported.
+See the &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing#known-limitations&quot;&gt;known limitations&lt;/a&gt; for details, including Redis and MongoDB topology restrictions.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class=&quot;paragraph&quot;&gt;
+&lt;p&gt;The &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing/tree/main/samples/resilient-orders&quot;&gt;complete sample&lt;/a&gt; includes more scenarios, from retry amplification to a database connection lost mid-transaction.
+If a test exposes a bug, or a failure you need is missing, tell us on &lt;a href=&quot;https://github.com/quarkiverse/quarkus-resiliency-testing/issues&quot;&gt;GitHub&lt;/a&gt; or &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+            </description>
+            <pubDate>Thu, 12 Nov 2026 00:00:00 +0000</pubDate>
+            <guid>
+                https://quarkus.io/blog/quarkus-resiliency-testing/
+            </guid>
+            <author>Georgios Andrianakis (https://twitter.com/geoand86)</author>
+        </item>
         <item>
             <title>AI Root Cause Analysis: LLM-Powered Root-Cause Analysis for Distributed Systems</title>
             <link>
@@ -73427,69 +74082,6 @@ public class FooTest {
                 https://quarkus.io/blog/lts-releases/
             </guid>
             <author>Max Rydahl Andersen (https://twitter.com/maxandersen)</author>
-        </item>
-        <item>
-            <title>Quarkus 2.16.8.Final released - Maintenance release</title>
-            <link>
-                https://quarkus.io/blog/quarkus-2-16-8-final-released/
-            </link>
-            <description>
-                &lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As mentioned in previous blog posts, we encourage all our users to upgrade to Quarkus 3.
-However we understand the migration can require some time so we will continue to maintain 2.16.x for a while.
-Today, we released Quarkus 2.16.8.Final, the eighth maintenance release of our 2.16 release train.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;As usual, it contains bugfixes and documentation improvements,
-most notably the upgrade to Netty 4.1.94.Final, which fixes a CVE.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;It should be a safe upgrade for anyone already using 2.16.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are not already using 2.16, please refer to &lt;a href=&quot;https://github.com/quarkusio/quarkus/wiki/Migration-Guide-2.16&quot;&gt;our migration guide&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;_full_changelog&quot;&gt;Full changelog&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;You can get &lt;a href=&quot;https://github.com/quarkusio/quarkus/releases/tag/2.16.8.Final&quot;&gt;the full changelog of 2.16.8.Final on GitHub&lt;/a&gt; (minus what was already backported to 2.13.x).&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class=&quot;sect1&quot;&gt;
-&lt;h2 id=&quot;_come_join_us&quot;&gt;Come Join Us&lt;/h2&gt;
-&lt;div class=&quot;sectionbody&quot;&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;We value your feedback a lot so please report bugs, ask for improvements&amp;#8230;&amp;#8203; Let&amp;#8217;s build something great together!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;paragraph&quot;&gt;
-&lt;p&gt;If you are a Quarkus user or just curious, don&amp;#8217;t be shy and join our welcoming community:&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class=&quot;ulist&quot;&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;provide feedback on &lt;a href=&quot;https://github.com/quarkusio/quarkus/issues&quot;&gt;GitHub&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;craft some code and &lt;a href=&quot;https://github.com/quarkusio/quarkus/pulls&quot;&gt;push a PR&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;discuss with us on &lt;a href=&quot;https://quarkusio.zulipchat.com/&quot;&gt;Zulip&lt;/a&gt; and on the &lt;a href=&quot;https://groups.google.com/d/forum/quarkus-dev&quot;&gt;mailing list&lt;/a&gt;;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;ask your questions on &lt;a href=&quot;https://stackoverflow.com/questions/tagged/quarkus&quot;&gt;Stack Overflow&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-            </description>
-            <pubDate>Wed, 05 Jul 2023 00:00:00 +0000</pubDate>
-            <guid>
-                https://quarkus.io/blog/quarkus-2-16-8-final-released/
-            </guid>
-            <author>Guillaume Smet (https://twitter.com/gsmet_)</author>
         </item>
     </channel>
 </rss>
