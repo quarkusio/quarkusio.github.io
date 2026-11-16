@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 
+import io.quarkusio.charts.timeline.LegendItem;
 import io.quarkusio.charts.timeline.Timeline;
 import io.quarkusio.charts.timeline.gantt.TimelineRow;
 import io.quarkusio.charts.timeline.gantt.GanttTimelineSegment;
@@ -29,7 +30,9 @@ class ReleaseTimelineFactoryTest {
               "releases": [
                 {"version": "4.0.0", "lts": false, "upcoming": true},
                 {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true,
-                 "latest_patch": "3.40.1.1", "latest_patch_date": "2026-10-19", "link": "/blog/3-40/"},
+                 "link": "/blog/3-40/",
+                 "micros": [{"version": "3.40.1.1", "release_date": "2026-10-19"},
+                            {"version": "3.40.0", "release_date": "2026-09-30"}]},
                 {"version": "3.39", "release_date": "2026-08-26", "eol_date": "2026-09-30", "lts": false},
                 {"version": "3.38", "release_date": "2026-07-22", "eol_date": "2026-08-26", "lts": false},
                 {"version": "3.33", "release_date": "2026-03-25", "eol_date": "2027-03-25", "lts": true,
@@ -126,7 +129,7 @@ class ReleaseTimelineFactoryTest {
         List<GanttTimelineSegment> segs = stream.segments();
         assertEquals(WEEKS_TO_ADD, segs.size());
         // 3.38 -> 3.39 tile exactly; 3.39 ends at the LTS 3.40, 3.50 starts later
-        assertEquals(segs.get(0).end(), segs.get(1).start());
+        assertEquals(segs.getFirst().end(), segs.get(1).start());
         assertTrue(segs.get(2).openEnded());
     }
 
@@ -175,16 +178,109 @@ class ReleaseTimelineFactoryTest {
         assertEquals(List.of("stream", "3.40", "3.33", "3.20", "2.16"), ids);
         assertEquals(LocalDate.of(2019, 1, 1), t.scale().start());
         // 0.2 is a non-LTS minor, so it lives in the stream lane
-        assertEquals(LocalDate.of(2019, 3, 1), row(t, "stream").segments().get(0).start());
+        assertEquals(LocalDate.of(2019, 3, 1), row(t, "stream").segments().getFirst().start());
         assertEquals("true", row(t, "3.40").data().get("lts"));
     }
 
     @Test
     void tooltipLinesCarryDates() {
-        GanttTimelineSegment seg = row(factory.supportView(TODAY), "3.33").segments().get(0);
+        GanttTimelineSegment seg = row(factory.supportView(TODAY), "3.33").segments().getFirst();
         assertTrue(seg.tooltip().contains("Released 25 Mar 2026"));
         assertTrue(row(factory.supportView(TODAY), "3.33").segments().get(1).tooltip()
                 .contains("Red Hat support until 30 Jun 2028"));
+    }
+
+    @Test
+    void latestMicroIsTheFirstListed() {
+        Release r = catalog.find("3.40").orElseThrow();
+        assertEquals(2, r.micros().size());
+        assertEquals("3.40.1.1", r.latestMicro().version());
+        assertEquals(LocalDate.of(2026, 10, 19), r.latestMicro().releaseDate());
+        assertTrue(row(factory.supportView(TODAY), "3.40").segments().getFirst().tooltip()
+                .contains("Latest micro 3.40.1.1 (19 Oct 2026)"));
+    }
+
+    @Test
+    void communityBarsAreMarkedWhereEachFinalMicroWasReleased() {
+        var catalog = catalogOf("""
+                {"releases": [
+                   {"version": "3.40", "release_date": "2026-09-30", "eol_date": "2027-09-30", "lts": true, "micros": [
+                      {"version": "3.40.2", "release_date": "2026-10-28"},
+                      {"version": "3.40.1.1", "release_date": "2026-10-19"},
+                      {"version": "3.40.1", "release_date": "2026-10-19"},
+                      {"version": "3.40.1.CR1", "release_date": "2026-10-10", "candidate": true},
+                      {"version": "3.40.0", "release_date": "2026-09-30"},
+                      {"version": "3.40.0.CR1", "release_date": "2026-09-16", "candidate": true}]},
+                   {"version": "3.39", "release_date": "2026-08-26", "eol_date": "2026-09-30", "lts": false, "micros": [
+                      {"version": "3.39.1", "release_date": "2026-09-02"},
+                      {"version": "3.39.0", "release_date": "2026-08-26"}]}]}""");
+        var timeline = new ReleaseTimelineFactory(catalog).supportView(TODAY);
+        var scale = timeline.scale();
+        // the .0 is on the bar's left edge, the candidates aren't final, and two micros on one day share a mark
+        assertEquals(List.of(scale.pct(LocalDate.of(2026, 10, 19)), scale.pct(LocalDate.of(2026, 10, 28))),
+                row(timeline, "3.40").segments().getFirst().ticksPct());
+        GanttTimelineSegment stream = row(timeline, "stream").segments().stream()
+                .filter(sg -> "3.39".equals(sg.ref())).findFirst().orElseThrow();
+        assertEquals(List.of(scale.pct(LocalDate.of(2026, 9, 2))), stream.ticksPct());
+        assertEquals(stream.y() + stream.h(), stream.bottom());
+    }
+
+    @Test
+    void releaseWithoutMicrosHasNoLatestMicro() {
+        Release r = catalog.find("4.0.0").orElseThrow();
+        assertTrue(r.micros().isEmpty());
+        assertNull(r.latestMicro());
+    }
+
+    @Test
+    void latestMicroIsNeverAPreRelease() {
+        var catalog = catalogOf("""
+                {"releases": [
+                   {"version": "4.0", "lts": false, "upcoming": true, "micros": [
+                      {"version": "4.0.0.CR1", "release_date": "2026-11-10", "candidate": true,
+                       "github_url": "https://github.com/quarkusio/quarkus/releases/tag/4.0.0.CR1",
+                       "bom_url": "https://repo1.maven.org/maven2/io/quarkus/platform/quarkus-bom/4.0.0.CR1/quarkus-bom-4.0.0.CR1.pom"},
+                      {"version": "4.0.0.Beta1", "release_date": "2026-10-01", "beta": true}]},
+                   {"version": "3.28", "release_date": "2025-09-24", "lts": false, "micros": [
+                      {"version": "3.28.0", "release_date": "2025-09-24",
+                       "github_url": "https://github.com/quarkusio/quarkus/releases/tag/3.28.0"},
+                      {"version": "3.28.0.CR1", "release_date": "2025-09-10", "candidate": true}]}]}""");
+        Release upcoming = catalog.find("4.0").orElseThrow();
+        assertEquals(2, upcoming.micros().size());
+        assertTrue(upcoming.micros().getFirst().candidate());
+        assertTrue(upcoming.micros().get(1).beta());
+        assertTrue(upcoming.micros().getFirst().preRelease());
+        assertFalse(upcoming.micros().getFirst().isFinal());
+        assertEquals("https://repo1.maven.org/maven2/io/quarkus/platform/quarkus-bom/4.0.0.CR1/quarkus-bom-4.0.0.CR1.pom",
+                upcoming.micros().getFirst().bomUrl());
+        assertNull(upcoming.latestMicro());
+        Micro latest = catalog.find("3.28").orElseThrow().latestMicro();
+        assertEquals("3.28.0", latest.version());
+        assertTrue(latest.isFinal());
+        assertEquals("https://github.com/quarkusio/quarkus/releases/tag/3.28.0", latest.githubUrl());
+        assertNull(latest.bomUrl());
+    }
+
+    @Test
+    void preReleaseKindsAreRecognisedByVersion() {
+        assertTrue(Micro.isCandidate("3.28.0.CR1"));
+        assertTrue(Micro.isCandidate("2.0.0.CR3"));
+        assertFalse(Micro.isCandidate("4.0.0.Beta1"));
+        assertTrue(Micro.isBeta("4.0.0.Beta1"));
+        assertFalse(Micro.isBeta("3.28.0.CR1"));
+        assertTrue(Micro.isAlpha("3.0.0.Alpha3"));
+        assertFalse(Micro.isAlpha("3.28.0"));
+    }
+
+    @Test
+    void preReleasesAreRecognisedByVersion() {
+        assertTrue(Micro.isPreRelease("3.0.0.Alpha3"));
+        assertTrue(Micro.isPreRelease("4.0.0.Beta1"));
+        assertTrue(Micro.isPreRelease("3.28.0.CR1"));
+        assertTrue(Micro.isPreRelease("2.0.0.CR3"));
+        assertFalse(Micro.isPreRelease("3.28.0"));
+        assertFalse(Micro.isPreRelease("2.16.12.Final"));
+        assertFalse(Micro.isPreRelease("3.27.6.1"));
     }
 
     @Test
@@ -204,9 +300,22 @@ class ReleaseTimelineFactoryTest {
         var catalog = catalogOf("""
                 {"releases": [{"version": "4.0.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
         GanttTimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream")
-                .segments().get(0);
+                .segments().getFirst();
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
         assertTrue(seg.tooltip().contains("25 Nov 2026"));
+    }
+
+    @Test
+    void microLegendOnlyWhenThereAreMicrosToMark() {
+        assertTrue(factory.legend().stream().anyMatch(i -> i.key().equals("micro")));
+        var onlyDotZero = catalogOf("""
+                {"releases": [{"version": "3.1", "release_date": "2026-01-01", "eol_date": "2027-01-01", "lts": true,
+                   "micros": [{"version": "3.1.0", "release_date": "2026-01-01"},
+                              {"version": "3.1.0.CR1", "release_date": "2025-12-15", "candidate": true}]}]}""");
+        assertTrue(new ReleaseTimelineFactory(onlyDotZero).legend().stream().noneMatch(i -> i.key().equals("micro")));
+        // listed right after the community bar it marks
+        List<String> keys = factory.legend().stream().map(LegendItem::key).toList();
+        assertEquals(keys.indexOf("community") + 1, keys.indexOf("micro"));
     }
 
     @Test
@@ -236,7 +345,7 @@ class ReleaseTimelineFactoryTest {
         TimelineRow r = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream");
         assertTrue(r.badges().isEmpty());
         assertEquals("true", r.data().get("lts"));
-        GanttTimelineSegment seg = r.segments().get(0);
+        GanttTimelineSegment seg = r.segments().getFirst();
         assertEquals(LocalDate.of(2026, 11, 25), seg.start());
         assertEquals(LocalDate.of(2027, 11, 25), seg.end());
         assertTrue(seg.tooltip().contains("12 months"));
@@ -259,9 +368,9 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         assertEquals(1, segs.size());
-        assertEquals(LocalDate.of(2026, 11, 25), segs.get(0).start());
+        assertEquals(LocalDate.of(2026, 11, 25), segs.getFirst().start());
         // the hidden 4.1 still decides where 4.0 ends
-        assertEquals(LocalDate.of(2027, 1, 27), segs.get(0).end());
+        assertEquals(LocalDate.of(2027, 1, 27), segs.getFirst().end());
     }
 
     @Test
@@ -272,7 +381,7 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog, 2).supportView(TODAY), "stream").segments();
         assertEquals(2, segs.size());
-        assertEquals(LocalDate.of(2027, 1, 27), segs.get(0).end());
+        assertEquals(LocalDate.of(2027, 1, 27), segs.getFirst().end());
     }
 
     @Test
@@ -285,8 +394,8 @@ class ReleaseTimelineFactoryTest {
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         assertEquals(1, segs.size());
         // 4.4 starts only a day after the LTS: clipping stops at the default bar length
-        assertEquals(LocalDate.of(2027, 3, 31), segs.get(0).start());
-        assertEquals(LocalDate.of(2027, 3, 31).plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
+        assertEquals(LocalDate.of(2027, 3, 31), segs.getFirst().start());
+        assertEquals(LocalDate.of(2027, 3, 31).plusWeeks(WEEKS_TO_ADD), segs.getFirst().end());
 
         var roomy = catalogOf("""
                 {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
@@ -294,7 +403,7 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.4", "lts": false, "upcoming": true, "planned_date": "2027-06-30"},
                    {"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
         List<GanttTimelineSegment> clipped = row(new ReleaseTimelineFactory(roomy).supportView(TODAY), "stream").segments();
-        assertEquals(LocalDate.of(2027, 6, 30), clipped.get(0).end());
+        assertEquals(LocalDate.of(2027, 6, 30), clipped.getFirst().end());
     }
 
     @Test
@@ -303,7 +412,7 @@ class ReleaseTimelineFactoryTest {
                 {"policy": {"lts_support_duration": {"amount": 12, "unit": "months"}},
                  "releases": [{"version": "4.3", "lts": true, "upcoming": true, "planned_date": "2027-03-31"}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
-        assertEquals(LocalDate.of(2028, 3, 31), segs.get(0).end());
+        assertEquals(LocalDate.of(2028, 3, 31), segs.getFirst().end());
     }
 
     @Test
@@ -314,7 +423,7 @@ class ReleaseTimelineFactoryTest {
                    {"version": "4.0", "lts": false, "upcoming": true}]}""");
         List<GanttTimelineSegment> segs = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments();
         assertEquals(1, segs.size());
-        assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.get(0).end());
+        assertEquals(TODAY.plusWeeks(WEEKS_TO_ADD), segs.getFirst().end());
     }
 
     @Test
@@ -345,7 +454,7 @@ class ReleaseTimelineFactoryTest {
         var catalog = catalogOf("""
                 {"policy": {"release_cadence": {"amount": 2, "unit": "months"}},
                  "releases": [{"version": "4.0", "lts": false, "upcoming": true, "planned_date": "2026-11-25"}]}""");
-        GanttTimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments().get(0);
+        GanttTimelineSegment seg = row(new ReleaseTimelineFactory(catalog).supportView(TODAY), "stream").segments().getFirst();
         assertEquals(LocalDate.of(2027, 1, 25), seg.end());
     }
 }

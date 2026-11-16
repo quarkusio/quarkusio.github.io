@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 
 import io.quarkus.logging.Log;
+import io.quarkusio.releases.Micro;
 import io.quarkusio.releases.Releases;
 import io.quarkusio.releases.sync.GitHubReleases.GitHubMilestone;
 import io.quarkusio.releases.sync.GitHubReleases.GitHubRelease;
@@ -119,10 +120,15 @@ public final class ReleasesSync {
 
     // ---- Merge ----
 
+    /**
+     * @param githubReleases the final GitHub releases
+     * @param micros every micro of each minor, newest first, from {@link Micros#byMinor}
+     */
     public static Releases sync(Releases existing, List<GitHubRelease> githubReleases, List<UpcomingRelease> predicted,
-            List<UpcomingRelease> wikiUpcoming, MergeBases mergeBases) {
+            List<UpcomingRelease> wikiUpcoming, MergeBases mergeBases, Map<String, List<Releases.MicroEntry>> micros) {
+        // Some candidates are marked as final releases on GitHub (e.g. 3.5.0.CR1): they don't make a minor published
         Map<String, List<GitHubRelease>> releasesByMinor = githubReleases.stream()
-                .filter(r -> r.tagName() != null && isValidVersion(r.tagName()))
+                .filter(r -> r.tagName() != null && isValidVersion(r.tagName()) && !Micro.isPreRelease(r.tagName()))
                 .collect(Collectors.groupingBy(r -> minorVersion(r.tagName())));
 
         List<WorkingRelease> existingReleases = existing.releases() == null ? List.of()
@@ -134,8 +140,8 @@ public final class ReleasesSync {
         for (Map.Entry<String, List<GitHubRelease>> entry : releasesByMinor.entrySet()) {
             List<GitHubRelease> minorReleases = new ArrayList<>(entry.getValue());
             minorReleases.sort((a, b) -> compareVersions(b.tagName(), a.tagName()));
-            processed.add(WorkingRelease.published(entry.getKey(), minorReleases.get(minorReleases.size() - 1),
-                    minorReleases.get(0), existingByVersion.get(entry.getKey())));
+            processed.add(WorkingRelease.published(entry.getKey(), minorReleases, micros.get(entry.getKey()),
+                    existingByVersion.get(entry.getKey())));
         }
 
         // Upcoming releases from the planning wiki replace the existing entry for the same version
@@ -181,6 +187,13 @@ public final class ReleasesSync {
                         processed.add(WorkingRelease.upcoming(next));
                         Log.infof("Predicted upcoming release: %s (source: %s)", next.version(), next.source());
                     });
+        }
+
+        // Upcoming releases can already have candidates or betas (e.g. 4.0.0.Beta1)
+        for (WorkingRelease release : processed) {
+            if (Boolean.TRUE.equals(release.upcoming)) {
+                release.micros = micros.get(minorVersion(release.version));
+            }
         }
 
         processed.sort((a, b) -> compareVersions(b.version, a.version));
@@ -324,9 +337,9 @@ public final class ReleasesSync {
 
     private static Releases.Entry withProviderDates(Releases.Entry r, String provider, Releases.EnterpriseDates dates) {
         return new Releases.Entry(r.version(), r.releaseDate(), r.plannedDate(), r.eolDate(), r.lts(), r.upcoming(),
-                r.proposal(), r.latestPatch(), r.latestPatchDate(), r.link(),
+                r.proposal(), r.link(),
                 provider.equals("rhbq") ? dates : r.rhbq(), provider.equals("ibm") ? dates : r.ibm(),
-                provider.equals("herodevs") ? dates : r.herodevs(), r.branchedFrom());
+                provider.equals("herodevs") ? dates : r.herodevs(), r.branchedFrom(), r.micros());
     }
 
     /**
@@ -393,6 +406,10 @@ public final class ReleasesSync {
         Releases.EnterpriseDates rhbq;
         Releases.EnterpriseDates ibm;
         Releases.EnterpriseDates herodevs;
+        /**
+         * The published micro releases, newest first; null when there are none.
+         */
+        List<Releases.MicroEntry> micros;
 
         static WorkingRelease from(Releases.Entry entry) {
             WorkingRelease release = new WorkingRelease();
@@ -404,23 +421,31 @@ public final class ReleasesSync {
             release.lts = entry.lts();
             release.upcoming = entry.upcoming();
             release.proposal = entry.proposal();
-            release.latestPatch = entry.latestPatch();
-            release.latestPatchDate = date(entry.latestPatchDate());
             release.link = entry.link();
             release.branchedFrom = entry.branchedFrom();
             release.rhbq = entry.rhbq();
             release.ibm = entry.ibm();
             release.herodevs = entry.herodevs();
+            release.micros = entry.micros();
             return release;
         }
 
-        static WorkingRelease published(String minorVersion, GitHubRelease earliest, GitHubRelease latest,
-                WorkingRelease existing) {
+        /**
+         * @param githubReleases the final GitHub releases of this minor, newest first
+         * @param micros every micro of this minor, newest first, including pre-releases
+         */
+        static WorkingRelease published(String minorVersion, List<GitHubRelease> githubReleases,
+                List<Releases.MicroEntry> micros, WorkingRelease existing) {
             WorkingRelease release = new WorkingRelease();
             release.version = minorVersion;
-            release.releaseDate = gitHubDate(earliest.publishedAt());
-            release.latestPatch = latest.tagName();
-            release.latestPatchDate = gitHubDate(latest.publishedAt());
+            release.micros = micros;
+            // The date of the first final micro (not a candidate), the earlier of GitHub and Maven Central
+            release.releaseDate = micros == null ? null
+                    : micros.stream().filter(m -> !m.candidate() && !m.beta() && !m.alpha() && m.releaseDate() != null)
+                            .reduce((newer, older) -> older).map(m -> LocalDate.parse(m.releaseDate())).orElse(null);
+            if (release.releaseDate == null) {
+                release.releaseDate = gitHubDate(githubReleases.get(githubReleases.size() - 1).publishedAt());
+            }
             // Preserve manual fields from the existing release
             if (existing != null) {
                 release.lts = existing.lts;
@@ -457,7 +482,7 @@ public final class ReleasesSync {
             boolean isUpcoming = Boolean.TRUE.equals(upcoming);
             return new Releases.Entry(version, string(releaseDate), string(plannedDate), string(eolDate),
                     Boolean.TRUE.equals(lts), isUpcoming, isUpcoming && Boolean.TRUE.equals(proposal),
-                    latestPatch, string(latestPatchDate), link, rhbq, ibm, herodevs, branchedFrom);
+                    link, rhbq, ibm, herodevs, branchedFrom, micros == null || micros.isEmpty() ? null : micros);
         }
 
         private static LocalDate date(String value) {

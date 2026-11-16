@@ -255,9 +255,25 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     /**
      * One release as written in the YAML: dates are yyyy-MM-dd strings. branchedFrom is the version this release
      * was branched from: for an LTS, the non-LTS minor cut with it (not necessarily the one released just before).
+     * micros are the published micro releases of this minor, newest first; null when there are none (upcoming).
      */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, boolean proposal, String latestPatch, String latestPatchDate, String link,
-            EnterpriseDates rhbq, EnterpriseDates ibm, EnterpriseDates herodevs, String branchedFrom) {
+            boolean upcoming, boolean proposal, String link, EnterpriseDates rhbq, EnterpriseDates ibm,
+            EnterpriseDates herodevs, String branchedFrom, List<MicroEntry> micros) {
+    }
+
+    /**
+     * One micro release as written in the YAML, e.g. 3.27.6.1 or 3.28.0.CR1: releaseDate is a yyyy-MM-dd string.
+     * githubUrl is its GitHub release and bomUrl its platform BOM on Maven Central; either can be null, as not every
+     * release has both. candidate (CR), beta and alpha mark pre-releases; all are false for a final release.
+     */
+    public record MicroEntry(String version, String releaseDate, String githubUrl, String bomUrl, boolean candidate,
+            boolean beta, boolean alpha) {
+
+        /** A micro whose candidate, beta and alpha flags are worked out from its version. */
+        public static MicroEntry of(String version, String releaseDate, String githubUrl, String bomUrl) {
+            return new MicroEntry(version, releaseDate, githubUrl, bomUrl, Micro.isCandidate(version),
+                    Micro.isBeta(version), Micro.isAlpha(version));
+        }
     }
 }

@@ -24,7 +24,7 @@ public class EnterpriseReleaseDates {
     private static final Pattern METADATA_VERSION = Pattern.compile("<version>([^<]+)</version>");
     // Apache-style listing row: <a href="3.27.0.redhat-00001/">...</a>   2025-11-26 12:17
     private static final Pattern LISTING_ROW = Pattern.compile(
-            "<a href=\"(\\d[^\"/]*)/\">[^\\n]*?(\\d{4}-\\d{2}-\\d{2})\\s+\\d{2}:\\d{2}");
+            "<a href=\"(\\d[^\"/]*)/\"[^>]*>[^\\n]*?(\\d{4}-\\d{2}-\\d{2})\\s+\\d{2}:\\d{2}");
 
     /** Versions listed in a maven-metadata.xml. */
     public static List<String> parseMetadata(String xml) {

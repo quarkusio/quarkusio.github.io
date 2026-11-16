@@ -60,9 +60,24 @@ public class MavenRepositories {
         String listing();
     }
 
+    @RegisterRestClient(configKey = "maven-central", baseUri = "https://repo1.maven.org/maven2/io/quarkus/platform/quarkus-bom")
+    @Retry(maxRetries = 2, delay = 5, delayUnit = ChronoUnit.SECONDS, retryOn = {WebApplicationException.class, ProcessingException.class}, abortOn = NotFoundException.class)
+    @ExponentialBackoff
+    @CircuitBreaker(requestVolumeThreshold = 3, failureRatio = 1.0, delay = 1, delayUnit = ChronoUnit.HOURS, failOn = {WebApplicationException.class, ProcessingException.class}, skipOn = NotFoundException.class)
+    public interface Central {
+        /** The directory listing of every platform BOM version, with its upload date. */
+        @GET
+        @Path("/")
+        String listing();
+    }
+
     @Inject
     @RestClient
     Rhbq rhbq;
+
+    @Inject
+    @RestClient
+    Central central;
 
     @Inject
     @RestClient
@@ -92,6 +107,25 @@ public class MavenRepositories {
             Log.warnf("Stopped reading the Red Hat Maven repository: %s", e.toString());
         }
         return result;
+    }
+
+    /**
+     * Every community platform BOM version on Maven Central, to the date it was published there (one request).
+     *
+     * @return null if Maven Central can't be read, or lists nothing
+     */
+    public Map<String, LocalDate> platformBomDates() {
+        try {
+            Map<String, LocalDate> dates = EnterpriseReleaseDates.parseListing(central.listing());
+            if (dates.isEmpty()) {
+                Log.warnf("Maven Central lists no platform BOMs");
+                return null;
+            }
+            return dates;
+        } catch (RuntimeException e) {
+            Log.warnf("Could not read the platform BOMs from Maven Central: %s", e.toString());
+            return null;
+        }
     }
 
     /** Minor to the first date a build of it was published to the IBM repository, for the wanted minors only. */
