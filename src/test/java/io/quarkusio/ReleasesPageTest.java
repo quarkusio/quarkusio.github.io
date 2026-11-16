@@ -228,4 +228,15 @@ public class ReleasesPageTest extends BrowserTest {
         String text = upcoming.first().locator("td").nth(1).textContent().trim();
         assertTrue(text.matches("—|\\d{2} [A-Z][a-z]{2} \\d{4}\\s*\\(planned\\)"), "Unexpected released cell: " + text);
     }
+
+    @Test
+    void openEndedTimelineBarsUseFadeGradient() {
+        page.navigate(baseUrl + "/releases/");
+        Locator bars = page.locator("#tl-support .tl-seg--open-ended rect");
+        org.junit.jupiter.api.Assumptions.assumeTrue(bars.count() > 0, "No open-ended bars in the data");
+        for (int i = 0; i < bars.count(); i++) {
+            String fill = bars.nth(i).getAttribute("fill");
+            assertTrue(fill != null && fill.startsWith("url(#"), "Open-ended bar should fill with a fade gradient but had: " + fill);
+        }
+    }
 }
