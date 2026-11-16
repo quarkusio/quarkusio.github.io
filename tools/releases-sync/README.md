@@ -15,7 +15,7 @@ and upcoming releases current by reading the
 
 ## Upcoming releases
 
-Upcoming releases come from the wiki (`WikiReleasePlanning.java`). Each `## <major>.<minor> [LTS] [(Proposal)]`
+Upcoming releases come from the wiki (`io/quarkusio/releases/sync/WikiReleasePlanning.java`). Each `## <major>.<minor> [LTS] [(Proposal)]`
 heading with a "Full Platform release ... on <date>" bullet becomes an entry with `upcoming: true`,
 `planned_date` set to that Platform date, `lts` set from the heading, and `proposal: true` if the heading is marked `(Proposal)`. Other headings
 (e.g. `4.0 Beta1`) are ignored.
@@ -39,7 +39,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - For upcoming releases only, taken from the wiki heading
 - `proposal` - `true` for upcoming releases marked `(Proposal)` in the wiki
 - `branched_from` - For published 3.x+ LTS releases that don't have one: the non-LTS minor (of the three below it) whose
-  branch has the most recent merge-base with the LTS branch (`BranchLineage.java`). Release order and `main` aren't used: LTS
+  branch has the most recent merge-base with the LTS branch (`io/quarkusio/releases/sync/BranchLineage.java`). Release order and `main` aren't used: LTS
   policy changed over time (n-1 as parent, then concurrent n LTS / n+1 non-LTS releases) and `main` stopped being the trunk
   from 3.38. If candidates tie the newest is used, with a warning; if there are none the field stays blank (as for 2.x).
   Hand-edited values are never overwritten.
@@ -60,8 +60,9 @@ The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page
 (fake versions 98.x/99.x and fake dates, never real planning data):
 
 ```bash
-cd tools/releases-sync && jbang WikiReleasePlanningTest.java
-jbang EnterpriseReleaseDatesTest.java
+cd tools/releases-sync && jbang io/quarkusio/releases/sync/WikiReleasePlanningTest.java
+jbang io/quarkusio/releases/sync/EnterpriseReleaseDatesTest.java
+jbang io/quarkusio/releases/sync/BranchLineageTest.java
 ```
 
 ## Running locally
@@ -82,7 +83,7 @@ The workflow at `.github/workflows/sync-releases.yml`:
 
 ## Environment variables
 
-- `GITHUB_TOKEN` - GitHub API token (required)
+- `GITHUB_TOKEN` - GitHub API token (optional, anonymous access has a lower rate limit)
 - `RELEASES_ORG` - GitHub org (default: quarkusio)
 - `RELEASES_REPO` - GitHub repo (default: quarkus)
 - `RELEASES_INPUT` - Input file (default: _data/releases.yaml)

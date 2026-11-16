@@ -3,6 +3,8 @@
 //DEPS org.junit.platform:junit-platform-launcher:1.11.4
 //SOURCES EnterpriseReleaseDates.java
 
+package io.quarkusio.releases.sync;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
