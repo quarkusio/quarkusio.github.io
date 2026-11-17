@@ -166,7 +166,11 @@ final class LinkCrawler implements AutoCloseable {
             "security-identity-customization",
             "standard-security-annotations",
             "synthetic_beans",
-            "token-propagation");
+            "token-propagation",
+            "embedded-roles",
+            "embedded-users",
+            "roles-properties",
+            "users-properties");
 
     // --- Anchors that render fine today but are stale in frozen snapshots ---
     // These render correctly on the current guides (confirmed on both quarkus.io
@@ -190,12 +194,8 @@ final class LinkCrawler implements AutoCloseable {
     // quarkusio/quarkus#56286. Drop each entry as the corresponding anchor starts rendering.
     private static final Set<String> DEAD_UPSTREAM_ANCHORS = Set.of(
             "build-analytics.quarkus-analytics-uri-base",
-            "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
-            "embedded-roles",
-            "embedded-users",
-            "quarkus-datasource_quarkus.datasource.db-version",
-            "roles-properties",
-            "users-properties");
+            "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client", // quarkusio/quarkus#58504
+            "quarkus-datasource_quarkus.datasource.db-version");
 
     private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
 
