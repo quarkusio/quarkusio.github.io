@@ -22,7 +22,14 @@ public class GitHubReleases {
     private static final String USER_AGENT = "Quarkus-Website-Release-Sync/1.0";
     private static final int MAX_ATTEMPTS = 3;
 
-    public record GitHubRelease(String tagName, String publishedAt, boolean prerelease) {
+    /**
+     * @param htmlUrl the release's page on GitHub, can be null
+     */
+    public record GitHubRelease(String tagName, String publishedAt, boolean prerelease, String htmlUrl) {
+
+        public GitHubRelease(String tagName, String publishedAt, boolean prerelease) {
+            this(tagName, publishedAt, prerelease, null);
+        }
     }
 
     public record GitHubMilestone(String title, String dueOn) {
@@ -77,7 +84,8 @@ public class GitHubReleases {
                     continue;
                 }
                 boolean prerelease = json.path("prerelease").asBoolean(false);
-                (prerelease ? preReleases : releases).add(new GitHubRelease(tagName, publishedAt, prerelease));
+                (prerelease ? preReleases : releases).add(
+                        new GitHubRelease(tagName, publishedAt, prerelease, json.path("html_url").asText(null)));
             }
             Log.debugf("Fetched page %d (%d final, %d pre-releases so far)", page, releases.size(), preReleases.size());
         }

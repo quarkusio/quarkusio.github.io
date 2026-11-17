@@ -15,8 +15,8 @@ class EnterpriseOfferingTest {
 
     private static Release release(Releases.EnterpriseDates rhbq, Releases.EnterpriseDates ibm,
             Releases.EnterpriseDates herodevs) {
-        return Release.from(new Releases.Entry("3.20", "2025-03-26", null, "2025-09-24", true, false, false, null, null,
-                null, rhbq, ibm, herodevs, null));
+        return Release.from(new Releases.Entry("3.20", "2025-03-26", null, "2025-09-24", true, false, false, null, rhbq,
+                ibm, herodevs, null, null));
     }
 
     @Test

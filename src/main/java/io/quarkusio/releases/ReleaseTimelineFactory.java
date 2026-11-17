@@ -50,7 +50,14 @@ public class ReleaseTimelineFactory {
     public List<LegendItem> legend() {
         List<LegendItem> items = new ArrayList<>(List.of(
                 new LegendItem(RELEASE_KIND, "community", "Community maintenance",
-                        "Solid bar: bug fixes and security patches from the Quarkus community."),
+                        "Solid bar: bug fixes and security patches from the Quarkus community.")));
+        // only once there are micros to mark (the .0 is on the bar's edge, so it takes a later one)
+        if (catalog.all().stream().anyMatch(r -> finalMicroDates(r).stream()
+                .anyMatch(d -> r.releaseDate() != null && d.isAfter(r.releaseDate())))) {
+            items.add(new LegendItem(RELEASE_KIND, "micro", "Micro release",
+                    "Faint line across a community bar: a micro release, with fixes for that minor."));
+        }
+        items.addAll(List.of(
                 new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
                         "Bordered bar: paid support with an end date, from Red Hat and IBM."),
                 new LegendItem(RELEASE_KIND, "open-ended", "EOL Patches",
@@ -88,8 +95,8 @@ public class ReleaseTimelineFactory {
 
     /** The same compact rows over the whole history, back to the first release. */
     public Timeline fullView(LocalDate today) {
-        LocalDate first = catalog.all().stream().filter(r -> r.releaseDate() != null)
-                .map(Release::releaseDate).min(LocalDate::compareTo).orElse(today);
+        LocalDate first = catalog.all().stream().map(Release::releaseDate)
+                .filter(localDate -> localDate!= null).min(LocalDate::compareTo).orElse(today);
         return build("all", LocalDate.of(first.getYear(), 1, 1), today, false, shown(today, false));
     }
 
@@ -263,7 +270,8 @@ public class ReleaseTimelineFactory {
         var row = b.row("stream", "Non-LTS stream").shortLabel("Non-LTS");
         for (Release r : streamReleases()) {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today),
-                    "Quarkus " + r.version(), communityLines(r), r.version());
+                    "Quarkus " + r.version(), communityLines(r), r.version())
+                    .ticks(finalMicroDates(r));
         }
         addUpcoming(today, row);
 
@@ -287,7 +295,8 @@ public class ReleaseTimelineFactory {
 
         if (communityBar) {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
-                    communityLines(r), r.version());
+                    communityLines(r), r.version())
+                    .ticks(finalMicroDates(r));
         }
         if (r.eolDate() != null) {
             if (enterpriseBar(r, r.rhbq())) {
@@ -363,6 +372,11 @@ public class ReleaseTimelineFactory {
         return r.link();
     }
 
+    /** When each final micro was released (not candidates, betas or alphas), for the marks on the community bar. */
+    private static List<LocalDate> finalMicroDates(Release r) {
+        return r.micros().stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
+    }
+
     private List<String> communityLines(Release r) {
         List<String> lines = new ArrayList<>();
         lines.add("Released " + DATE.format(r.releaseDate()));
@@ -371,9 +385,10 @@ public class ReleaseTimelineFactory {
         } else {
             lines.add("Community maintenance until " + DATE.format(r.eolDate()));
         }
-        if (r.latestPatch() != null) {
-            lines.add("Latest micro " + r.latestPatch()
-                    + (r.latestPatchDate() == null ? "" : " (" + DATE.format(r.latestPatchDate()) + ")"));
+        Micro latest = r.latestMicro();
+        if (latest != null) {
+            lines.add("Latest micro " + latest.version()
+                    + (latest.releaseDate() == null ? "" : " (" + DATE.format(latest.releaseDate()) + ")"));
         }
         return lines;
     }

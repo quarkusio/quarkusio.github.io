@@ -13,6 +13,7 @@
 //SOURCES io/quarkiverse/roq/data/runtime/annotations/DataMapping.java
 //SOURCES ../../src/main/java/io/quarkusio/releases/Releases.java
 //SOURCES ../../src/main/java/io/quarkusio/releases/Release.java
+//SOURCES ../../src/main/java/io/quarkusio/releases/Micro.java
 //SOURCES ../../src/main/java/io/quarkusio/releases/EnterpriseOffering.java
 //SOURCES io/quarkusio/releases/sync/WikiReleasePlanning.java
 //SOURCES io/quarkusio/releases/sync/EnterpriseReleaseDates.java
@@ -20,6 +21,7 @@
 //SOURCES io/quarkusio/releases/sync/BranchLineage.java
 //SOURCES io/quarkusio/releases/sync/GitHubReleases.java
 //SOURCES io/quarkusio/releases/sync/ReleasesSync.java
+//SOURCES io/quarkusio/releases/sync/Micros.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
@@ -28,6 +30,7 @@ import io.quarkusio.releases.sync.GitHubReleases;
 import io.quarkusio.releases.sync.GitHubReleases.FetchResult;
 import io.quarkusio.releases.sync.GitHubReleases.GitHubMilestone;
 import io.quarkusio.releases.sync.MavenRepositories;
+import io.quarkusio.releases.sync.Micros;
 import io.quarkusio.releases.sync.ReleasesSync;
 import io.quarkusio.releases.sync.ReleasesSync.UpcomingRelease;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -123,9 +126,26 @@ public class main implements Callable<Integer> {
             // The release planning wiki is authoritative for upcoming releases
             List<UpcomingRelease> wikiUpcoming = predictUpcoming ? wikiUpcoming(github, fetchResult) : List.of();
 
+            // Micros: every GitHub release (final and pre-release), merged with the platform BOMs on Maven Central
+            Map<String, LocalDate> boms = mavenRepositories.platformBomDates();
+            if (boms == null) {
+                Log.warnf("Keeping the platform BOMs already in the data; new ones will be added by a later run");
+                boms = Micros.bomsFromExisting(existingData);
+            } else {
+                Log.infof("Found %d platform BOMs on Maven Central", boms.size());
+            }
+            List<Micros.GitHubTag> allGitHub = new ArrayList<>();
+            for (GitHubReleases.GitHubRelease r : fetchResult.releases()) {
+                allGitHub.add(new Micros.GitHubTag(r.tagName(), r.publishedAt(), r.htmlUrl()));
+            }
+            for (GitHubReleases.GitHubRelease r : fetchResult.preReleases()) {
+                allGitHub.add(new Micros.GitHubTag(r.tagName(), r.publishedAt(), r.htmlUrl()));
+            }
+            Map<String, List<Releases.MicroEntry>> micros = Micros.byMinor(allGitHub, boms);
+
             // Process and merge data
             Releases updatedData = ReleasesSync.sync(existingData, fetchResult.releases(), upcomingReleases,
-                    wikiUpcoming, github::fetchMergeBase);
+                    wikiUpcoming, github::fetchMergeBase, micros);
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "rhbq", mavenRepositories::rhbqDates);
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "ibm", mavenRepositories::ibmDates);
             ReleasesSync.validateEnterpriseReleaseDates(updatedData);
@@ -412,14 +432,6 @@ public class main implements Callable<Integer> {
             }
         }
 
-        if (release.latestPatch() != null) {
-            map.put("latest_patch", new QuotedScalar(release.latestPatch()));
-        }
-
-        if (release.latestPatchDate() != null) {
-            map.put("latest_patch_date", new DateScalar(release.latestPatchDate()));
-        }
-
         if (release.link() != null) {
             map.put("link", release.link());
         }
@@ -431,6 +443,38 @@ public class main implements Callable<Integer> {
         putProvider(map, "rhbq", release.rhbq());
         putProvider(map, "ibm", release.ibm());
         putProvider(map, "herodevs", release.herodevs());
+
+        // Last, as it is long. Block mappings, not one-line {...} flow mappings: pt.quarkus.io translates
+        // this file with po4a, whose YAML::Tiny parser rejects inline lists and dictionaries.
+        // A missing URL is left out rather than written empty (YAML::Tiny also trips on some empty values)
+        if (release.micros() != null && !release.micros().isEmpty()) {
+            List<Map<String, Object>> micros = new ArrayList<>();
+            for (Releases.MicroEntry micro : release.micros()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("version", new QuotedScalar(micro.version()));
+                if (micro.releaseDate() != null) {
+                    m.put("release_date", new DateScalar(micro.releaseDate()));
+                }
+                // Only written when true, like upcoming and proposal
+                if (micro.candidate()) {
+                    m.put("candidate", true);
+                }
+                if (micro.beta()) {
+                    m.put("beta", true);
+                }
+                if (micro.alpha()) {
+                    m.put("alpha", true);
+                }
+                if (micro.githubUrl() != null) {
+                    m.put("github_url", micro.githubUrl());
+                }
+                if (micro.bomUrl() != null) {
+                    m.put("bom_url", micro.bomUrl());
+                }
+                micros.add(m);
+            }
+            map.put("micros", micros);
+        }
 
         return map;
     }

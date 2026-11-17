@@ -188,6 +188,8 @@ public final class GanttTimelineBuilder {
         private final List<Integer> branchLane = new ArrayList<>();
         private String href;
         private String shortLabel;
+        /** The segment added by the last segment() call, or null if it was outside the range. */
+        private GanttTimelineSegment last;
         private RowBuilder(String id, String label) {
             this.id = id;
             this.label = label;
@@ -238,14 +240,37 @@ public final class GanttTimelineBuilder {
             boolean open = end == null;
             LocalDate to = open ? scale.end() : end;
             if (to.isBefore(scale.start()) || start.isAfter(scale.end())) {
+                last = null;
                 return this; // entirely outside the visible range
             }
             LocalDate from = start.isBefore(scale.start()) ? scale.start() : start;
             if (to.isAfter(scale.end())) {
                 to = scale.end();
             }
-            segments.add(new GanttTimelineSegment(kind, variant, lane, start, end, open, href, title,
-                    List.copyOf(details), ref, scale.pct(from), scale.widthPct(from, to, MIN_WIDTH_PCT), 0, 0));
+            last = new GanttTimelineSegment(kind, variant, lane, start, end, open, href, title,
+                    List.copyOf(details), ref, scale.pct(from), scale.widthPct(from, to, MIN_WIDTH_PCT), 0, 0, List.of());
+            segments.add(last);
+            return this;
+        }
+
+        /**
+         * Marks dates on the segment just added, e.g. releases within a support period, as thin vertical lines
+         * across its bar. Only dates strictly inside the visible part of the bar are drawn: a mark on either edge
+         * would just thicken it. Does nothing if that segment was outside the range.
+         */
+        public RowBuilder ticks(List<LocalDate> dates) {
+            if (last == null) {
+                return this;
+            }
+            LocalDate from = last.start().isBefore(scale.start()) ? scale.start() : last.start();
+            LocalDate to = last.end() == null || last.end().isAfter(scale.end()) ? scale.end() : last.end();
+            List<String> ticks = dates.stream().filter(d -> d.isAfter(from) && d.isBefore(to)).sorted().distinct()
+                    .map(scale::pct).toList();
+            GanttTimelineSegment marked = new GanttTimelineSegment(last.kind(), last.variant(), last.lane(),
+                    last.start(), last.end(), last.openEnded(), last.href(), last.title(), last.details(), last.ref(),
+                    last.xPct(), last.wPct(), last.y(), last.h(), ticks);
+            segments.set(segments.size() - 1, marked);
+            last = marked;
             return this;
         }
 
@@ -326,7 +351,8 @@ public final class GanttTimelineBuilder {
                         y = lanesTop + (slot[sg.lane()] - 1) * laneStep;
                     }
                     return new GanttTimelineSegment(sg.kind(), sg.variant(), sg.lane(), sg.start(), sg.end(),
-                            sg.openEnded(), sg.href(), sg.title(), sg.details(), sg.ref(), sg.xPct(), sg.wPct(), y, h);
+                            sg.openEnded(), sg.href(), sg.title(), sg.details(), sg.ref(), sg.xPct(), sg.wPct(), y, h,
+                            sg.ticksPct());
                 }).toList();
                 List<TimelineLink> branches = new ArrayList<>();
                 for (int i = 0; i < branchLane.size(); i++) {
