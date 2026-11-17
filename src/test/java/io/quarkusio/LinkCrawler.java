@@ -153,7 +153,20 @@ final class LinkCrawler implements AutoCloseable {
             "duration-note-anchor-quarkus-knative-knative-config",
             "duration-note-anchor-quarkus-kubernetes-client",
             "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
-            "duration-note-anchor-quarkus-openshift-openshift-config");
+            "duration-note-anchor-quarkus-openshift-openshift-config",
+            "analysis-configurer",
+            "basic-auth",
+            "bean-reference-note-anchor",
+            "configuring-json-support",
+            "coordination",
+            "dev-mode",
+            "multi-module-maven",
+            "mutual-TLS-authentication",
+            "quarkus-vertx-http_quarkus.http.auth.session.encryption-key",
+            "security-identity-customization",
+            "standard-security-annotations",
+            "synthetic_beans",
+            "token-propagation");
 
     // --- Anchors that render fine today but are stale in frozen snapshots ---
     // These render correctly on the current guides (confirmed on both quarkus.io
@@ -174,40 +187,15 @@ final class LinkCrawler implements AutoCloseable {
     // (quarkusio/quarkus, docs/src/main/asciidoc/) — a missing/renamed section
     // anchor or a stale referring link — not a site-generator issue, so they are
     // excused everywhere until fixed upstream. The full per-guide list is in
-    // dead-upstream-anchors.md (to be filed as a quarkusio/quarkus issue).
-    // TODO: file the upstream issue, reference it here, and drop each entry as the
-    //       corresponding anchor starts rendering.
+    // quarkusio/quarkus#56286. Drop each entry as the corresponding anchor starts rendering.
     private static final Set<String> DEAD_UPSTREAM_ANCHORS = Set.of(
-            "analysis-configurer",
-            "back-channel-logout",
-            "basic-auth",
-            "bean-reference-note-anchor",
             "build-analytics.quarkus-analytics-uri-base",
-            "configuring-json-support",
-            "coordination",
-            "dev-mode",
-            "devservices-configuration-free-databases",
-            "duration-note-anchor-quarkus-mongodb-config-group-dev-services-build-time-config",
             "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
             "embedded-roles",
             "embedded-users",
-            "infinispan-annotations-api",
-            "integration-with-github-and-other-oauth2-providers",
-            "multi-module-maven",
-            "multipart-support",
-            "mutual-TLS-authentication",
-            "proof-of-key-for-code-exchange-pkce",
             "quarkus-datasource_quarkus.datasource.db-version",
-            "quarkus-vertx-http_quarkus.http.auth.session.encryption-key",
             "roles-properties",
-            "security-identity-customization",
-            "service-binding",
-            "standard-security-annotations",
-            "synthetic_beans",
-            "syslog-configuration",
-            "token-propagation",
-            "users-properties",
-            "webjar-locator-support");
+            "users-properties");
 
     private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
 
@@ -1322,7 +1310,7 @@ final class LinkCrawler implements AutoCloseable {
      *       everywhere;</li>
      *   <li>the {@link #DEAD_UPSTREAM_ANCHORS} — upstream guide content bugs
      *       (missing/renamed anchor or stale link) dead on both engines and
-     *       everywhere, listed in dead-upstream-anchors.md;</li>
+     *       everywhere, tracked in quarkusio/quarkus#56286;</li>
      *   <li>{@link #WILL_NOT_BACKPORT_FRAGMENTS} (quarkus#55413) — fixed on main but
      *       not backported, so only excused under a frozen {@code /version/<number>/}
      *       snapshot;</li>
