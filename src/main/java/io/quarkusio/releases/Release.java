@@ -9,8 +9,8 @@ import java.util.stream.Stream;
 /**
  * One entry of _data/releases.yaml. Dates are null when unknown or open-ended.
  * An upcoming release has no release date, only an optional planned date.
- * branchedFromVersion is a release version (e.g. "3.39"); the dates of the vendors' own branch points are
- * {@link EnterpriseOffering#branchedFromVersion()}, resolved to dates by {@link Releases#branchPoint}. rhbq, ibm and herodevs are null without a block for that vendor.
+ * parentRelease is the minor this release branched from (e.g. "3.39"); the dates of the vendors' own branch points are
+ * {@link EnterpriseOffering#parentRelease()}, resolved to dates by {@link Releases#branchPoint}. rhbq, ibm and herodevs are null without a block for that vendor.
  * Values which aren't in the data are computed: when open-ended support starts (here), and the planned end of an
  * upcoming release ({@link Releases#plannedEndDate(Release)}), and the latest micro ({@link #latestMicro()}).
  * micros are the published micro releases, newest first, including candidates (e.g. 3.28.0.CR1); empty when there
@@ -18,16 +18,20 @@ import java.util.stream.Stream;
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
         boolean lts, boolean upcoming, String link,
-        EnterpriseOffering rhbq, EnterpriseOffering ibm, EnterpriseOffering herodevs, String branchedFromVersion,
+        EnterpriseOffering rhbq, EnterpriseOffering ibm, EnterpriseOffering herodevs, String parentRelease,
         List<Micro> micros) {
 
     public static Release from(Releases.Entry e) {
-        List<Micro> micros = e.micros() == null ? List.of()
-                : e.micros().stream().map(m -> new Micro(m.version(), date(m.releaseDate()), m.githubUrl(), m.bomUrl(),
-                        m.candidate(), m.beta(), m.alpha())).toList();
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
                 e.lts(), e.upcoming(), e.link(),
-                enterprise(e.rhbq()), enterprise(e.ibm()), enterprise(e.herodevs()), e.branchedFrom(), micros);
+                enterprise(e.rhbq()), enterprise(e.ibm()), enterprise(e.herodevs()), e.parentRelease(),
+                micros(e.micros()));
+    }
+
+    private static List<Micro> micros(List<Releases.MicroEntry> entries) {
+        return entries == null ? List.of()
+                : entries.stream().map(m -> new Micro(m.version(), date(m.releaseDate()), m.githubUrl(), m.bomUrl(),
+                        m.candidate(), m.beta(), m.alpha(), m.parentRelease())).toList();
     }
 
     /**
@@ -40,8 +44,8 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
 
     private static EnterpriseOffering enterprise(Releases.EnterpriseDates dates) {
         return dates == null ? null
-                : new EnterpriseOffering(date(dates.releaseDate()), date(dates.eolDate()), dates.branchedFrom(),
-                        dates.openEnded());
+                : new EnterpriseOffering(date(dates.releaseDate()), date(dates.eolDate()), dates.parentRelease(),
+                        dates.openEnded(), micros(dates.micros()));
     }
 
     /**

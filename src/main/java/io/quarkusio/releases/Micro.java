@@ -7,10 +7,12 @@ import java.util.regex.Pattern;
  * One micro release of a minor, e.g. 3.27.6.1 of 3.27, or a pre-release such as 3.28.0.CR1. The release date is null
  * when unknown. githubUrl is its GitHub release, bomUrl its platform BOM on Maven Central; either can be null.
  * candidate, beta and alpha come from the data (the releases sync sets them from the version, see
- * {@link #isCandidate(String)}); at most one is true, and none for a final release.
+ * {@link #isCandidate(String)}); at most one is true, and none for a final release. parentRelease is the version of
+ * the micro it was built from (see {@link Releases.MicroEntry}); null when unknown. Vendor builds are Micros too,
+ * listed in their {@link EnterpriseOffering#micros()}.
  */
 public record Micro(String version, LocalDate releaseDate, String githubUrl, String bomUrl, boolean candidate,
-        boolean beta, boolean alpha) {
+        boolean beta, boolean alpha, String parentRelease) {
 
     private static final Pattern CANDIDATE = Pattern.compile("(?i)[.-](cr|rc)\\d*$");
     private static final Pattern BETA = Pattern.compile("(?i)[.-]beta\\d*$");

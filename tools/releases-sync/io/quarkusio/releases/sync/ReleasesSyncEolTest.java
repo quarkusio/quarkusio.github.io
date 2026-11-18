@@ -13,6 +13,7 @@
 //SOURCES WikiReleasePlanning.java
 //SOURCES EnterpriseReleaseDates.java
 //SOURCES BranchLineage.java
+//SOURCES Lineage.java
 //SOURCES GitHubReleases.java
 //SOURCES Micros.java
 //SOURCES ReleasesSync.java
@@ -41,7 +42,7 @@ import io.quarkusio.releases.Releases;
 public class ReleasesSyncEolTest {
 
     private static Releases.EnterpriseDates dates(String release, String eol, boolean last) {
-        return new Releases.EnterpriseDates(release, eol, null, false, last);
+        return new Releases.EnterpriseDates(release, eol, null, false, last, null);
     }
 
     private static Releases.Entry entry(String version, Releases.EnterpriseDates rhbq, Releases.EnterpriseDates ibm) {

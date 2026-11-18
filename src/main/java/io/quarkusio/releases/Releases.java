@@ -158,14 +158,24 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
 
     /**
      * Where a vendor's build branched off the community line, for plotting: the release date of the release it
-     * branched from (its branchedFromVersion), else of the release itself. Only minor versions can be resolved, as
-     * the data has no dates for micro releases; an unknown version falls back to the release itself.
-     * TODO resolve micro versions (e.g. "3.20.3", what vendors really fork from) once the data lists micro releases.
+     * branched from (its parentRelease), else of the release itself. The parent can be a micro (e.g. "3.20.3", what
+     * vendors really fork from) or a minor (e.g. "3.19"); an unknown version, or one with no date, falls back to the
+     * release itself.
      */
     public LocalDate branchPoint(Release release, EnterpriseOffering vendor) {
-        String version = vendor.branchedFromVersion();
-        return version == null ? release.releaseDate()
-                : find(version).map(Release::releaseDate).orElse(release.releaseDate());
+        String version = vendor.parentRelease();
+        if (version == null) {
+            return release.releaseDate();
+        }
+        LocalDate date = findMicro(version).map(Micro::releaseDate)
+                .or(() -> find(version).map(Release::releaseDate))
+                .orElse(null);
+        return date == null ? release.releaseDate() : date;
+    }
+
+    /** A community micro (e.g. "3.20.3" or "3.28.0.CR1") of any release, by version. */
+    public Optional<Micro> findMicro(String version) {
+        return all().stream().flatMap(r -> r.micros().stream()).filter(m -> m.version().equals(version)).findFirst();
     }
 
     /** Support provider URL by key: rhbq, ibm or herodevs. */
@@ -245,37 +255,46 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     }
 
     /**
-     * A vendor block (rhbq, ibm, herodevs): dates are yyyy-MM-dd strings. branchedFrom is the community release the
-     * vendor branched its build from, e.g. "3.20"; when absent it is the release the block belongs to. openEnded is true when the
-     * vendor supports the release, with no end date, once its other support has ended. lastInMajor marks the vendor's last
-     * minor of a major stream (3.x, 2.x), which is supported for longer than the others.
+     * A vendor block (rhbq, ibm, herodevs): dates are yyyy-MM-dd strings. parentRelease is the community release the
+     * vendor branched its build from, e.g. "3.20.1" (a micro) or "3.20" (a minor); when absent it is the release the
+     * block belongs to. openEnded is true when the vendor supports the release, with no end date, once its other
+     * support has ended. lastInMajor marks the vendor's last minor of a major stream (3.x, 2.x), which is
+     * supported for longer than the others. micros are the vendor's own builds of this minor (e.g.
+     * 3.20.1.SP1-redhat-00001), newest first; null when there are none (HeroDevs has no builds of its own).
      */
-    public record EnterpriseDates(String releaseDate, String eolDate, String branchedFrom, boolean openEnded,
-            boolean lastInMajor) {
+    public record EnterpriseDates(String releaseDate, String eolDate, String parentRelease, boolean openEnded,
+            boolean lastInMajor, List<MicroEntry> micros) {
     }
 
     /**
-     * One release as written in the YAML: dates are yyyy-MM-dd strings. branchedFrom is the version this release
+     * One release as written in the YAML: dates are yyyy-MM-dd strings. parentRelease is the minor this release
      * was branched from: for an LTS, the non-LTS minor cut with it (not necessarily the one released just before).
      * micros are the published micro releases of this minor, newest first; null when there are none (upcoming).
      */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
             boolean upcoming, boolean proposal, String link, EnterpriseDates rhbq, EnterpriseDates ibm,
-            EnterpriseDates herodevs, String branchedFrom, List<MicroEntry> micros) {
+            EnterpriseDates herodevs, String parentRelease, List<MicroEntry> micros) {
     }
 
     /**
-     * One micro release as written in the YAML, e.g. 3.27.6.1 or 3.28.0.CR1: releaseDate is a yyyy-MM-dd string.
-     * githubUrl is its GitHub release and bomUrl its platform BOM on Maven Central; either can be null, as not every
-     * release has both. candidate (CR), beta and alpha mark pre-releases; all are false for a final release.
+     * One micro release as written in the YAML, e.g. 3.27.6.1, 3.28.0.CR1, or a vendor build such as
+     * 3.20.1.SP1-redhat-00001: releaseDate is a yyyy-MM-dd string. githubUrl is its GitHub release and bomUrl its
+     * platform BOM (on Maven Central, or the vendor's repository); either can be null, as not every release has both.
+     * candidate (CR), beta and alpha mark pre-releases; all are false for a final release. parentRelease is the micro
+     * it was built from: the previous micro of its line, a micro of another minor for the first micro of a minor, or
+     * for a vendor build the community micro (or the vendor's own previous build) it is based on; null when unknown.
      */
     public record MicroEntry(String version, String releaseDate, String githubUrl, String bomUrl, boolean candidate,
-            boolean beta, boolean alpha) {
+            boolean beta, boolean alpha, String parentRelease) {
 
-        /** A micro whose candidate, beta and alpha flags are worked out from its version. */
+        /** A micro whose candidate, beta and alpha flags are worked out from its version, with no parent yet. */
         public static MicroEntry of(String version, String releaseDate, String githubUrl, String bomUrl) {
             return new MicroEntry(version, releaseDate, githubUrl, bomUrl, Micro.isCandidate(version),
-                    Micro.isBeta(version), Micro.isAlpha(version));
+                    Micro.isBeta(version), Micro.isAlpha(version), null);
+        }
+
+        public MicroEntry withParentRelease(String parent) {
+            return new MicroEntry(version, releaseDate, githubUrl, bomUrl, candidate, beta, alpha, parent);
         }
     }
 }
