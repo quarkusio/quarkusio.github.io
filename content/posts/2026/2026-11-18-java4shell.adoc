@@ -1,0 +1,210 @@
+---
+layout: post
+title: 'Java4Shell (CVE-2026-114938): Status and mitigation for Quarkus users'
+date: 2026-11-18
+tags: security cve
+synopsis: 'Java4Shell is a JDK vulnerability, not a Quarkus one. This post presents the current status and mitigations.'
+author: cescoffier
+---
+
+[IMPORTANT]
+====
+This post is updated as the situation evolves.
+
+*Last updated:* 18 November 2026, 18:00 UTC
+====
+
+== TL;DR / Current status
+
+* Quarkus is *not* affected. The JDK is.
+* Native executables built with Mandrel are *not* affected.
+* Mandrel builder images: *patched* (workaround applied). Re-pull floating tags. Update pinned tags. See the https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags[available tags].
+* UBI Java runtime images: *not yet fixed*. Add `-XX:-UseBASE64Intrinsics` to the JVM options as workaround.
+* JVM on bare metal: if your JDK is patched, you are fine. Otherwise, add `-XX:-UseBASE64Intrinsics` as workaround.
+
+[cols="2,1,3"]
+|===
+|Deployment model |Status |Action
+
+|JVM on bare metal
+|Depends on your JDK
+|Upgrade the JDK, or add `-XX:-UseBASE64Intrinsics`
+
+|JVM in a container, UBI Java runtime image
+|⚠️ Not fixed yet
+|Add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`
+
+|Native executable (Mandrel)
+|✅ Not affected
+|None
+
+|Mandrel builder images
+|✅ Patched
+|Re-pull floating tags, update pinned tags
+|===
+
+== The vulnerability
+
+CVE-2026-114938, aka "Java4Shell", is a memory corruption bug in the OpenJDK Base64 decoder.
+The JVM uses a CPU-optimized implementation (an _intrinsic_) to decode Base64.
+A crafted Base64 input makes it write past its buffer.
+Researchers demonstrated memory disclosure and remote code execution.
+
+Exploitation requires *all* of the following:
+
+* An unpatched OpenJDK 17.0.6+, 21, 25 or 27 build (all vendors: Temurin, Red Hat, Corretto, Zulu, etc.).
+* An **x86-64** CPU exposing **AVX-512 VBMI** (on Linux: `avx512f`, `avx512bw`, `avx512vbmi` and `bmi2` in `/proc/cpuinfo`).
+ARM64 is not affected.
+* Base64 intrinsics enabled (the default).
+* The application decodes attacker-controlled Base64 data.
+Almost every HTTP application does decode Base64: Basic auth headers, JWTs, request payloads.
+
+Oracle rates it CVSS 3.1 8.1. No exploitation in the wild is known at the time of writing.
+
+References:
+
+* https://www.tenable.com/blog/java4shell-cve-2026-114938-frequently-asked-questions-about-openjdk-rce-vulnerability[Tenable FAQ]
+* https://www.keycloak.org/2026/11/java4shell-vulnerability-cve-2026-114938[Keycloak advisory]
+
+== Is Quarkus affected?
+
+No. The bug lives in the JDK, not in Quarkus.
+Upgrading Quarkus does not fix it.
+Fixing or mitigating the JDK does.
+
+== Mitigation per deployment model
+
+=== JVM on bare metal
+
+You run your Quarkus application with a JDK installed on the host.
+
+* If your JDK vendor shipped a fixed build and you installed it: you are fine.
+* Otherwise: add `-XX:-UseBASE64Intrinsics` to the JVM options.
+
+[source,shell]
+----
+java -XX:-UseBASE64Intrinsics -jar target/quarkus-app/quarkus-run.jar
+----
+
+Or, if you use `JAVA_OPTS` in your start scripts:
+
+[source,shell]
+----
+export JAVA_OPTS="$JAVA_OPTS -XX:-UseBASE64Intrinsics"
+----
+
+Remove the flag once a fixed JDK is deployed.
+
+=== JVM in a container, UBI Java runtime image
+
+This is the Quarkus recommended setup (`Dockerfile.jvm`, `registry.access.redhat.com/ubi9/openjdk-<version>-runtime` or `registry.access.redhat.com/ubi10/openjdk-<version>-runtime`).
+
+The UBI Java runtime images are *not fixed yet*.
+We are waiting for updated images.
+We will update this post when they are available.
+
+In the meantime, add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`.
+Use `JAVA_OPTS_APPEND`, not `JAVA_OPTS`: overriding `JAVA_OPTS` drops the defaults computed by the image.
+
+In your `Dockerfile.jvm`:
+
+[source,dockerfile]
+----
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager -XX:-UseBASE64Intrinsics"
+----
+
+Or at deployment time, without rebuilding the image (Kubernetes / OpenShift):
+
+[source,yaml]
+----
+env:
+  - name: JAVA_OPTS_APPEND
+    value: "-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager -XX:-UseBASE64Intrinsics"
+----
+
+If you use the Quarkus Kubernetes extension:
+
+[source,properties]
+----
+quarkus.kubernetes.env.vars.java-opts-append=-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager -XX:-UseBASE64Intrinsics
+----
+
+=== Native executable compiled with Mandrel
+
+Not affected.
+A native executable does not run on the HotSpot JVM and does not use the vulnerable intrinsic.
+No action needed.
+
+=== Mandrel builder images
+
+These images let you build a native executable without installing Mandrel (`quarkus.native.container-build=true`).
+
+The resulting native executable is *not affected*, whatever image version built it.
+
+The images themselves ship a JDK, used to run the `native-image` build.
+They have been patched with the workaround (https://github.com/quarkusio/quarkus-images/pull/344[quarkus-images#344]):
+
+* On amd64 images bundling an affected JDK (21 before 21.0.13.1, 25 before 25.0.5.1), the image sets `JAVA_TOOL_OPTIONS=-XX:-UseBASE64Intrinsics`.
+* arm64 images are not affected and are unchanged.
+* Once the images bundle a fixed JDK, the workaround is dropped automatically.
+
+Your build logs now show `Picked up JAVA_TOOL_OPTIONS: -XX:-UseBASE64Intrinsics`. This is expected.
+
+If you override `JAVA_TOOL_OPTIONS` when running the builder image, you drop the workaround. Keep `-XX:-UseBASE64Intrinsics` in your value.
+
+To get the patched image:
+
+* Floating tags (`jdk-21`, `jdk-25`): re-pull the image.
+Docker and Podman do not re-pull automatically.
++
+[source,shell]
+----
+docker pull quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21
+docker pull quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
+----
++
+Use `podman pull` with the same arguments if you use Podman.
+Or set `quarkus.native.container-runtime-options=--pull=always`.
+* Pinned tags: update to a patched tag:
+** JDK 21: `23.1.13.0-Final-java21-2026-11-18`
+** JDK 25: `25.0.5.0-Final-java25-2026-11-18`
+
+To check that your local image is patched (amd64):
+
+[source,shell]
+----
+docker run --rm --entrypoint printenv quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21 JAVA_TOOL_OPTIONS
+docker run --rm --entrypoint printenv quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 JAVA_TOOL_OPTIONS
+----
+
+Expected output: `-XX:-UseBASE64Intrinsics`.
+
+== Verify the mitigation
+
+Do not trust the environment variable alone. Check the running JVM:
+
+[source,shell]
+----
+jcmd <pid> VM.flags -all | grep UseBASE64Intrinsics
+----
+
+Expected output:
+
+[source]
+----
+bool UseBASE64Intrinsics = false {product} {command line}
+----
+
+The origin at the end depends on how the flag is set: `+{command line}+` for `JAVA_OPTS_APPEND` or the `java` command, `+{environment}+` for `JAVA_TOOL_OPTIONS`.
+What matters is `UseBASE64Intrinsics = false`.
+
+In a container, run it with `kubectl exec` or `docker exec`.
+The Quarkus process is usually PID 1.
+
+== Acknowledgements
+
+Thanks to https://github.com/zakkak[@zakkak], https://github.com/Karm[@Karm] and https://github.com/gsmet[@gsmet] for their help assessing the impact and patching the images.
+
+== Updates
+
+* *18 November 2026, 18:00 UTC*: Initial publication. Mandrel builder images (`jdk-21`, `jdk-25`) patched at 13:15 UTC.
