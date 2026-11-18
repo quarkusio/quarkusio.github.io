@@ -96,20 +96,6 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
-      - name: Cache jbang
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.jbang/cache
-          key: ${{ runner.os }}-jbang-${{ hashFiles('.github/workflows/build.yml') }}
-          restore-keys: ${{ runner.os }}-jbang-
-
-      - uses: jbangdev/setup-jbang@main
-
-      - name: Start Java test server
-        run: |
-          jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
-          jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 &
-
       # Tests that start their own site (@RoqAndRoll) generate it in-process. They do not need the
       # numbered guide versions, which would need most of the default heap to generate.
       - name: Run smoke tests
@@ -218,6 +204,29 @@ jobs:
             echo "Targeted check: $PATHS"
           fi
 
+      # The server is only needed by Lighthouse, so start it right before and stop it right after,
+      # rather than leaving a JVM running next to the smoke tests and the link crawler.
+      - name: Cache jbang
+        if: steps.link_scope.outputs.mode != 'skip'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.jbang/cache
+          key: ${{ runner.os }}-jbang-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: ${{ runner.os }}-jbang-
+
+      - uses: jbangdev/setup-jbang@main
+        if: steps.link_scope.outputs.mode != 'skip'
+
+      - name: Start Java test server
+        if: steps.link_scope.outputs.mode != 'skip'
+        run: |
+          jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
+          # setsid gives the server its own process group, so it can be stopped with its java child
+          setsid jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 > "$RUNNER_TEMP/roq-serve.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/roq-serve.pid"
+          curl -sf --retry 60 --retry-connrefused --retry-delay 2 -o /dev/null http://localhost:8090/ \
+            || { cat "$RUNNER_TEMP/roq-serve.log"; exit 1; }
+
       - name: Run Lighthouse CI
         if: steps.link_scope.outputs.mode != 'skip'
         run: |
@@ -234,6 +243,13 @@ jobs:
           npx lhci autorun $URLS
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: Stop Java test server
+        if: always() && steps.link_scope.outputs.mode != 'skip'
+        run: |
+          if [ -f "$RUNNER_TEMP/roq-serve.pid" ]; then
+            kill -- "-$(cat "$RUNNER_TEMP/roq-serve.pid")" 2>/dev/null || true
+          fi
 
       # Versioned guides (2.x-5.x) are excluded from non-infra builds by
       # the only-latest-guides profile, so skip crawling those paths unless
