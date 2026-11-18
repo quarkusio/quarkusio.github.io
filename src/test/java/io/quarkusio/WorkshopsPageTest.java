@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.util.List;
 
 import com.microsoft.playwright.Locator;
@@ -11,6 +12,7 @@ import static io.quarkusio.UnrenderedMarkupDetector.findUnresolvedPlaceholders;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@QuarkusTest
 public class WorkshopsPageTest extends BrowserTest {
 
     public static final String WORKSHOPS_PATH = "/workshops/";

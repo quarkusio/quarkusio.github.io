@@ -1,31 +1,86 @@
 # Release Sync
 
-Keeps `_data/releases.yaml` patch versions current by fetching from the GitHub API.
+Keeps `_data/releases.yaml` micro releases current by fetching from the GitHub API,
+and upcoming releases current by reading the
+[Release Planning wiki](https://github.com/quarkusio/quarkus/wiki/Release-Planning).
 
 ## What it does
 
-1. Fetches releases from GitHub API
+1. Fetches releases from GitHub API, and the platform BOM versions from Maven Central
 2. Groups by minor version (3.36.x becomes "3.36")
-3. Updates `latest_patch` and `latest_patch_date` for each minor
-4. Preserves all manually-edited fields
+3. Lists every micro release of each minor, including candidates, under `micros`
+4. Reads the Release Planning wiki (raw markdown) and replaces the upcoming entries with every
+   release whose Platform release date is today or later (including `(Proposal)` entries)
+5. Preserves all manually-edited fields
+
+## Upcoming releases
+
+Upcoming releases come from the wiki (`io/quarkusio/releases/sync/WikiReleasePlanning.java`). Each `## <major>.<minor> [LTS] [(Proposal)]`
+heading with a "Full Platform release ... on <date>" bullet becomes an entry with `upcoming: true`,
+`planned_date` set to that Platform date, `lts` set from the heading, and `proposal: true` if the heading is marked `(Proposal)`. Other headings
+(e.g. `4.0 Beta1`) are ignored.
+
+Existing `upcoming: true` entries are replaced by the wiki's entry for the same version, but
+kept when the wiki has no usable entry for them (e.g. its date couldn't be parsed; a warning is
+logged). Delete such an entry by hand once it is no longer planned.
+
+If the wiki can't be read and there are no hand-edited upcoming entries, the next release is
+predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 
 ## Field ownership
 
 **Automated (updated by this script):**
-- `latest_patch` - Latest patch version
-- `latest_patch_date` - Date of latest patch
-- `release_date` - Date of first release in this minor
+- `micros` - Every micro of the minor, newest first, including candidates and betas (e.g. `3.28.0.CR1`, `4.0.0.Beta1`, which
+  upcoming releases can have too). Rewritten in full on every run (`io/quarkusio/releases/sync/Micros.java`). It is the union
+  of two sources, which don't quite line up: the GitHub releases of quarkusio/quarkus (final and pre-release), and the
+  platform BOMs (`io.quarkus.platform:quarkus-bom`) on Maven Central, which start at 2.0 and skip some X.0 core releases
+  (e.g. there is a 3.28.0.CR1 BOM but no 3.28.0 one). Each micro has:
+  - `version`
+  - `release_date` - the earlier of the GitHub publish date and the Maven Central upload date (they differ, usually
+    by a day, for a few releases)
+  - `candidate: true` for a release candidate (`CR`, or `RC`), `beta: true` for a `Beta`, `alpha: true` for an
+    `Alpha`; worked out from the version, and left out for final releases
+  - `github_url` - its GitHub release; left out if there is none
+  - `bom_url` - its platform BOM POM on Maven Central; left out if there is none
+
+  Maven Central is read once per run (one directory listing, with the same retries and circuit breaker as the
+  enterprise repositories below). If it can't be read, the BOMs already in the data are kept and new ones are
+  added by a later run. There is no `latest_patch` field: the site works the latest final micro out from this
+  list (`Release.latestMicro()`, which skips candidates, betas and alphas)
+- `release_date` - Date of first final release in this minor (published releases only), from `micros`. Pre-releases
+  are recognised by their version (Alpha, Beta, CR, RC), as GitHub marks some of them (e.g. 3.5.0.CR1) as final
+- `rhbq.release_date`, `ibm.release_date` - When the minor first appeared in the Red Hat / IBM Maven repository (publish date of the earliest micro build of `quarkus-bom`, not an announced GA date). The provider block is created if the repository has the minor; its `eol_date` stays hand-edited. A date, once set, is never looked up or overwritten, so routine runs make no requests to these servers (the IBM one is rate limited). When a lookup is needed it uses Quarkus REST Client interfaces (`MavenRepositories`) with SmallRye Fault Tolerance: requests are sequential and paced, transient failures (429, 5xx, I/O errors) are retried twice with exponential backoff, and a circuit breaker then stops all further requests to that server for the run; the gaps are filled by a later run. An enterprise `release_date` earlier than the community one is impossible: a scraped one is ignored with a warning, and the run fails before writing if any (including hand-edited) date is inconsistent
+- `planned_date` - For upcoming releases: the planned Platform release date from the wiki
+- `upcoming` - Set for releases listed as upcoming in the wiki; removed once the release is published
+- `lts` - For upcoming releases only, taken from the wiki heading
+- `proposal` - `true` for upcoming releases marked `(Proposal)` in the wiki
+- `branched_from` - For published 3.x+ LTS releases that don't have one: the non-LTS minor (of the three below it) whose
+  branch has the most recent merge-base with the LTS branch (`io/quarkusio/releases/sync/BranchLineage.java`). Release order and `main` aren't used: LTS
+  policy changed over time (n-1 as parent, then concurrent n LTS / n+1 non-LTS releases) and `main` stopped being the trunk
+  from 3.38. If candidates tie the newest is used, with a warning; if there are none the field stays blank (as for 2.x).
+  Hand-edited values are never overwritten.
 
 **Manual (edit directly in releases.yaml):**
 - `policy` section - LTS cadence, support durations, descriptions
 - `support_providers` section - Commercial support providers
 - `eol_support` section - EOL support options
-- `lts` - Whether this is an LTS release
+- `lts` - Whether this is an LTS release (published releases)
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq_eol`, `ibm_eol`, `herodevs_eol` - Commercial EOL dates (herodevs_eol can be a date or string like "nes")
-- `upcoming` - For releases not yet published
-- `planned_date` - Planned release date of an upcoming release (set from milestones when predicted; `release_date` is only for published releases)
+- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `eol_date` is hand-edited. `branched_from` (quoted, e.g. `"3.20"`) is the community release the vendor forked its build from, when not the release itself. `open_ended: true` means the vendor supports the release with no end date once its other support has ended (IBM after its own `eol_date`, HeroDevs Never-Ending Support after all other support)
+- `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
+
+## Tests
+
+The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page that imitates the wiki's layout
+(fake versions 98.x/99.x and fake dates, never real planning data):
+
+```bash
+cd tools/releases-sync && jbang io/quarkusio/releases/sync/WikiReleasePlanningTest.java
+jbang io/quarkusio/releases/sync/EnterpriseReleaseDatesTest.java
+jbang io/quarkusio/releases/sync/BranchLineageTest.java
+jbang io/quarkusio/releases/sync/MicrosTest.java
+```
 
 ## Running locally
 
@@ -40,12 +95,12 @@ GITHUB_TOKEN="your_token" jbang tools/releases-sync/main.java
 ## CI
 
 The workflow at `.github/workflows/sync-releases.yml`:
-- Runs on a schedule to update patch versions
+- Runs on a schedule to update micro releases
 - Runs in dry-run mode on PRs touching `tools/releases-sync/` or the workflow itself
 
 ## Environment variables
 
-- `GITHUB_TOKEN` - GitHub API token (required)
+- `GITHUB_TOKEN` - GitHub API token (optional, anonymous access has a lower rate limit)
 - `RELEASES_ORG` - GitHub org (default: quarkusio)
 - `RELEASES_REPO` - GitHub repo (default: quarkus)
 - `RELEASES_INPUT` - Input file (default: _data/releases.yaml)

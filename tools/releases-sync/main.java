@@ -3,18 +3,41 @@
 //DEPS io.quarkus.platform:quarkus-bom:3.36.3@pom
 //DEPS io.quarkus:quarkus-picocli
 //DEPS io.quarkus:quarkus-config-yaml
+//DEPS io.quarkus:quarkus-rest-client
+//DEPS io.quarkus:quarkus-smallrye-fault-tolerance
+//Q:CONFIG quarkus.rest-client.connect-timeout=10000
+//Q:CONFIG quarkus.rest-client.read-timeout=30000
 //DEPS org.yaml:snakeyaml:2.2
+//DEPS org.apache.maven:maven-artifact:3.9.9
+//DEPS com.fasterxml.jackson.dataformat:jackson-dataformat-yaml
+//SOURCES io/quarkiverse/roq/data/runtime/annotations/DataMapping.java
+//SOURCES ../../src/main/java/io/quarkusio/releases/Releases.java
+//SOURCES ../../src/main/java/io/quarkusio/releases/Release.java
+//SOURCES ../../src/main/java/io/quarkusio/releases/Micro.java
+//SOURCES ../../src/main/java/io/quarkusio/releases/EnterpriseOffering.java
+//SOURCES io/quarkusio/releases/sync/WikiReleasePlanning.java
+//SOURCES io/quarkusio/releases/sync/EnterpriseReleaseDates.java
+//SOURCES io/quarkusio/releases/sync/MavenRepositories.java
+//SOURCES io/quarkusio/releases/sync/BranchLineage.java
+//SOURCES io/quarkusio/releases/sync/GitHubReleases.java
+//SOURCES io/quarkusio/releases/sync/ReleasesSync.java
+//SOURCES io/quarkusio/releases/sync/Micros.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
-import jakarta.json.Json;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonReader;
-import jakarta.json.JsonValue;
+import io.quarkusio.releases.Releases;
+import io.quarkusio.releases.sync.GitHubReleases;
+import io.quarkusio.releases.sync.GitHubReleases.FetchResult;
+import io.quarkusio.releases.sync.GitHubReleases.GitHubMilestone;
+import io.quarkusio.releases.sync.MavenRepositories;
+import io.quarkusio.releases.sync.Micros;
+import io.quarkusio.releases.sync.ReleasesSync;
+import io.quarkusio.releases.sync.ReleasesSync.UpcomingRelease;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.yaml.snakeyaml.DumperOptions;
-import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.nodes.Node;
 import org.yaml.snakeyaml.nodes.Tag;
@@ -23,29 +46,26 @@ import org.yaml.snakeyaml.representer.Representer;
 import picocli.CommandLine;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileWriter;
-import java.io.StringReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Keeps _data/releases.yaml current. The sync itself is in ReleasesSync (merge logic) and GitHubReleases (API);
+ * this script reads and writes the file.
+ */
 @CommandLine.Command(name = "sync-releases", mixinStandardHelpOptions = true)
 public class main implements Callable<Integer> {
 
     @ConfigProperty(name = "GITHUB_TOKEN")
-    String token;
+    Optional<String> token;
+
+    @Inject
+    MavenRepositories mavenRepositories;
 
     @ConfigProperty(name = "RELEASES_ORG", defaultValue = "quarkusio")
     String org;
@@ -65,9 +85,6 @@ public class main implements Callable<Integer> {
     @CommandLine.Option(names = {"--no-predict-upcoming"}, negatable = true, description = "Predict and add upcoming releases based on milestones and patterns")
     boolean predictUpcoming = true;
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
-    private static final Pattern VERSION_PATTERN = Pattern.compile("^(\\d+)\\.(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?");
-
     @Override
     public Integer call() throws Exception {
         Log.infof("🚀 Syncing releases for %s/%s", org, repo);
@@ -80,20 +97,25 @@ public class main implements Callable<Integer> {
 
         try {
             // Load existing releases data
-            ReleaseData existingData = loadExistingData();
-            Log.infof("📋 Loaded existing data with %d releases", existingData.releases.size());
+            Releases existingData = loadExistingData();
+            Log.infof("📋 Loaded existing data with %d releases", existingData.releases().size());
+
+            if (token.isEmpty()) {
+                Log.warnf("GITHUB_TOKEN is not set, using anonymous GitHub API access (lower rate limit)");
+            }
+            GitHubReleases github = new GitHubReleases(org, repo, token.orElse(null));
 
             // Fetch GitHub releases (both final and pre-releases in one pass)
-            FetchReleasesResult fetchResult = fetchAllGitHubReleases();
-            List<GitHubRelease> githubReleases = fetchResult.releases;
+            FetchResult fetchResult = github.fetchReleases();
             Log.infof("Fetched %d releases from GitHub (%d pre-releases)",
-                     githubReleases.size(), fetchResult.preReleases.size());
+                     fetchResult.releases().size(), fetchResult.preReleases().size());
 
             // Fetch upcoming release predictions if enabled
             List<UpcomingRelease> upcomingReleases = new ArrayList<>();
             if (predictUpcoming) {
                 try {
-                    upcomingReleases = predictUpcomingReleases(githubReleases, fetchResult.preReleases);
+                    upcomingReleases = ReleasesSync.predictUpcoming(fetchResult.releases(), fetchResult.preReleases(),
+                            milestones(github));
                     Log.infof("Predicted %d upcoming releases", upcomingReleases.size());
                 } catch (Exception e) {
                     Log.warnf("Upcoming release prediction failed: %s", e.getMessage());
@@ -101,9 +123,33 @@ public class main implements Callable<Integer> {
                 }
             }
 
+            // The release planning wiki is authoritative for upcoming releases
+            List<UpcomingRelease> wikiUpcoming = predictUpcoming ? wikiUpcoming(github, fetchResult) : List.of();
+
+            // Micros: every GitHub release (final and pre-release), merged with the platform BOMs on Maven Central
+            Map<String, LocalDate> boms = mavenRepositories.platformBomDates();
+            if (boms == null) {
+                Log.warnf("Keeping the platform BOMs already in the data; new ones will be added by a later run");
+                boms = Micros.bomsFromExisting(existingData);
+            } else {
+                Log.infof("Found %d platform BOMs on Maven Central", boms.size());
+            }
+            List<Micros.GitHubTag> allGitHub = new ArrayList<>();
+            for (GitHubReleases.GitHubRelease r : fetchResult.releases()) {
+                allGitHub.add(new Micros.GitHubTag(r.tagName(), r.publishedAt(), r.htmlUrl()));
+            }
+            for (GitHubReleases.GitHubRelease r : fetchResult.preReleases()) {
+                allGitHub.add(new Micros.GitHubTag(r.tagName(), r.publishedAt(), r.htmlUrl()));
+            }
+            Map<String, List<Releases.MicroEntry>> micros = Micros.byMinor(allGitHub, boms);
+
             // Process and merge data
-            ReleaseData updatedData = processReleases(existingData, githubReleases, upcomingReleases);
-            Log.infof("🔄 Processed into %d release entries", updatedData.releases.size());
+            Releases updatedData = ReleasesSync.sync(existingData, fetchResult.releases(), upcomingReleases,
+                    wikiUpcoming, github::fetchMergeBase, micros);
+            updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "rhbq", mavenRepositories::rhbqDates);
+            updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "ibm", mavenRepositories::ibmDates);
+            ReleasesSync.validateEnterpriseReleaseDates(updatedData);
+            Log.infof("🔄 Processed into %d release entries", updatedData.releases().size());
 
             // Generate YAML output
             String yamlOutput = generateYaml(updatedData);
@@ -139,570 +185,42 @@ public class main implements Callable<Integer> {
         }
     }
 
-    private ReleaseData loadExistingData() throws Exception {
+    private Releases loadExistingData() throws Exception {
         if (!inputFile.exists()) {
             throw new RuntimeException("Input file not found: " + inputFile.getPath() +
                 "\nThe releases.yaml file must exist with policy, support_providers, and eol_support sections.");
         }
-
-        Yaml yaml = new Yaml(new LoaderOptions());
-        try (FileInputStream fis = new FileInputStream(inputFile)) {
-            Map<String, Object> data = yaml.load(fis);
-            return parseReleaseData(data);
-        }
+        // Same mapping as the website's Releases data bean
+        YAMLMapper mapper = YAMLMapper.builder()
+                .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .build();
+        return mapper.readValue(inputFile, Releases.class);
     }
 
-    private ReleaseData parseReleaseData(Map<String, Object> data) {
-        ReleaseData result = new ReleaseData();
-
-        result.policy = (Map<String, Object>) data.getOrDefault("policy", new LinkedHashMap<>());
-        result.supportProviders = (Map<String, Object>) data.getOrDefault("support_providers", new LinkedHashMap<>());
-        result.eolSupport = (List<Map<String, Object>>) data.getOrDefault("eol_support", new ArrayList<>());
-
-        List<Map<String, Object>> releaseList = (List<Map<String, Object>>) data.getOrDefault("releases", new ArrayList<>());
-        for (Map<String, Object> releaseMap : releaseList) {
-            result.releases.add(parseRelease(releaseMap));
-        }
-
-        return result;
-    }
-
-    private Release parseRelease(Map<String, Object> releaseMap) {
-        Release release = new Release();
-        release.version = (String) releaseMap.get("version");
-        release.lts = (Boolean) releaseMap.getOrDefault("lts", false);
-        release.upcoming = (Boolean) releaseMap.get("upcoming");
-        release.latestPatch = (String) releaseMap.get("latest_patch");
-        release.link = (String) releaseMap.get("link");
-
-        // Parse dates
-        release.releaseDate = parseDate(releaseMap.get("release_date"));
-        release.plannedDate = parseDate(releaseMap.get("planned_date"));
-        release.eolDate = parseDate(releaseMap.get("eol_date"));
-        release.hasExplicitEolDate = releaseMap.containsKey("eol_date");
-        release.latestPatchDate = parseDate(releaseMap.get("latest_patch_date"));
-        release.rhbqEol = parseDate(releaseMap.get("rhbq_eol"));
-        release.ibmEol = parseDate(releaseMap.get("ibm_eol"));
-
-        // Parse herodevs_eol - can be a date or string like "nes"
-        Object herodevsEolValue = releaseMap.get("herodevs_eol");
-        if (herodevsEolValue instanceof String) {
-            String strValue = (String) herodevsEolValue;
-            // Try to parse as date first, if it fails keep as string
-            try {
-                release.herodevsEol = LocalDate.parse(strValue);
-            } catch (Exception e) {
-                release.herodevsEol = strValue;  // Keep as string (e.g., "nes")
-            }
-        } else {
-            release.herodevsEol = parseDate(herodevsEolValue);
-        }
-
-        return release;
-    }
-
-    private LocalDate parseDate(Object dateObj) {
-        if (dateObj == null) return null;
-        if (dateObj instanceof LocalDate) return (LocalDate) dateObj;
-        if (dateObj instanceof java.util.Date) {
-            return ((java.util.Date) dateObj).toInstant().atZone(ZoneOffset.UTC).toLocalDate();
-        }
-        if (dateObj instanceof String) {
-            String dateStr = (String) dateObj;
-            if (dateStr.trim().isEmpty()) return null;
-            return LocalDate.parse(dateStr);
-        }
-        return null;
-    }
-
-    private static class FetchReleasesResult {
-        List<GitHubRelease> releases = new ArrayList<>();
-        List<GitHubRelease> preReleases = new ArrayList<>();
-    }
-
-    private FetchReleasesResult fetchAllGitHubReleases() throws Exception {
-        FetchReleasesResult result = new FetchReleasesResult();
-        String url = String.format("https://api.github.com/repos/%s/%s/releases", org, repo);
-
-        int page = 1;
-        while (true) {
-            String requestUrl = url + "?page=" + page + "&per_page=100";
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(requestUrl))
-                    .header("Authorization", "Bearer " + token)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "Quarkus-Website-Release-Sync/1.0")
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 403) {
-                String rateLimitRemaining = response.headers().firstValue("X-RateLimit-Remaining").orElse(null);
-                String rateLimitReset = response.headers().firstValue("X-RateLimit-Reset").orElse(null);
-                if ("0".equals(rateLimitRemaining)) {
-                    String resetTime = rateLimitReset != null
-                        ? Instant.ofEpochSecond(Long.parseLong(rateLimitReset)).toString()
-                        : "unknown";
-                    throw new RuntimeException(String.format(
-                        "GitHub API rate limit exceeded. Resets at: %s", resetTime));
-                }
-            }
-
-            if (response.statusCode() != 200) {
-                throw new RuntimeException(String.format(
-                    "Failed to fetch releases (page %d): HTTP %d - %s",
-                    page, response.statusCode(), response.body()));
-            }
-
-            List<GitHubRelease> pageReleases = parseGitHubReleases(response.body());
-
-            if (pageReleases.isEmpty()) {
-                break;
-            }
-
-            for (GitHubRelease release : pageReleases) {
-                if (release.draft) {
-                    continue;
-                }
-                if (release.prerelease) {
-                    result.preReleases.add(release);
-                } else {
-                    result.releases.add(release);
-                }
-            }
-
-            Log.debugf("Fetched page %d: %d releases (%d final, %d pre-releases so far)",
-                      page, pageReleases.size(), result.releases.size(), result.preReleases.size());
-
-            page++;
-
-            if (page > 100) {
-                Log.warnf("Reached page limit (100), stopping pagination");
-                break;
-            }
-        }
-
-        return result;
-    }
-
-    private List<GitHubRelease> fetchGitHubReleases() throws Exception {
-        return fetchAllGitHubReleases().releases;
-    }
-
-    private List<GitHubRelease> parseGitHubReleases(String jsonResponse) {
-        List<GitHubRelease> releases = new ArrayList<>();
-
-        try (JsonReader reader = Json.createReader(new StringReader(jsonResponse))) {
-            JsonArray array = reader.readArray();
-            for (JsonValue value : array) {
-                if (value instanceof JsonObject) {
-                    GitHubRelease release = parseGitHubRelease((JsonObject) value);
-                    if (release != null) {
-                        releases.add(release);
-                    }
-                }
-            }
-        }
-
-        return releases;
-    }
-
-    private GitHubRelease parseGitHubRelease(JsonObject json) {
-        GitHubRelease release = new GitHubRelease();
-
-        release.tagName = json.getString("tag_name", null);
-        release.publishedAt = json.getString("published_at", null);
-        release.prerelease = json.getBoolean("prerelease", false);
-        release.draft = json.getBoolean("draft", false);
-
-        if (release.tagName != null && release.publishedAt != null) {
-            return release;
-        }
-        return null;
-    }
-
-    private List<UpcomingRelease> predictUpcomingReleases(List<GitHubRelease> existingReleases,
-                                                          List<GitHubRelease> preReleases) {
-        List<UpcomingRelease> upcoming = new ArrayList<>();
-
-        // Get existing release versions to avoid conflicts
-        Set<String> existingVersions = existingReleases.stream()
-                .map(r -> getMinorVersion(r.tagName))
-                .collect(Collectors.toSet());
-
-        Log.infof("Checking for upcoming releases (existing versions: %d)", existingVersions.size());
-
-        // Method 1: Check GitHub milestones for upcoming releases
+    private static List<GitHubMilestone> milestones(GitHubReleases github) {
         try {
-            List<UpcomingRelease> milestoneReleases = predictFromMilestones(existingVersions);
-            upcoming.addAll(milestoneReleases);
-            Log.infof("Found %d upcoming releases from milestones", milestoneReleases.size());
-        } catch (Exception e) {
-            Log.warnf("Milestone prediction failed: %s", e.getMessage());
-        }
-
-        // Method 2: Check pre-release tags (CR, Alpha, Beta) for upcoming final releases
-        try {
-            List<UpcomingRelease> preReleaseUpcoming = predictFromPreReleases(preReleases, existingVersions);
-            upcoming.addAll(preReleaseUpcoming);
-            Log.infof("Found %d upcoming releases from pre-releases", preReleaseUpcoming.size());
-        } catch (Exception e) {
-            Log.warnf("Pre-release prediction failed: %s", e.getMessage());
-        }
-
-        // Method 3: Predict next minor release based on cadence pattern
-        try {
-            List<UpcomingRelease> cadenceReleases = predictFromCadence(existingReleases, existingVersions);
-            upcoming.addAll(cadenceReleases);
-            Log.infof("Found %d upcoming releases from cadence", cadenceReleases.size());
-        } catch (Exception e) {
-            Log.warnf("Cadence prediction failed: %s", e.getMessage());
-        }
-
-        // Remove duplicates and sort
-        List<UpcomingRelease> result = upcoming.stream()
-                .distinct()
-                .sorted((a, b) -> compareVersions(b.version, a.version))
-                .collect(Collectors.toList());
-
-        if (result.isEmpty()) {
-            Log.warnf("No upcoming releases predicted from any source");
-        } else {
-            Log.infof("Total predicted upcoming releases: %d", result.size());
-        }
-
-        return result;
-    }
-
-    private List<UpcomingRelease> predictFromMilestones(Set<String> existingVersions) {
-        List<UpcomingRelease> upcoming = new ArrayList<>();
-
-        try {
-            String url = String.format("https://api.github.com/repos/%s/%s/milestones", org, repo);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url + "?state=open&per_page=100"))
-                    .header("Authorization", "Bearer " + token)
-                    .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "Quarkus-Website-Release-Sync/1.0")
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                List<GitHubMilestone> milestones = parseMilestones(response.body());
-
-                for (GitHubMilestone milestone : milestones) {
-                    String version = extractVersionFromMilestone(milestone.title);
-                    if (version != null && !existingVersions.contains(version)) {
-                        upcoming.add(new UpcomingRelease(version, "milestone", milestone.dueOn));
-                        Log.infof("🎯 Found milestone-based upcoming release: %s (due: %s)", version, milestone.dueOn);
-                    }
-                }
-            }
+            return github.fetchOpenMilestones();
         } catch (Exception e) {
             Log.warnf("Failed to fetch milestones: %s", e.getMessage());
+            return List.of();
         }
-
-        return upcoming;
     }
 
-    private List<UpcomingRelease> predictFromPreReleases(List<GitHubRelease> preReleases,
-                                                         Set<String> existingVersions) {
-        List<UpcomingRelease> upcoming = new ArrayList<>();
-
-        for (GitHubRelease release : preReleases) {
-            if (release.tagName != null) {
-                String baseVersion = extractBaseVersionFromPreRelease(release.tagName);
-                if (baseVersion != null && !existingVersions.contains(baseVersion)) {
-                    upcoming.add(new UpcomingRelease(baseVersion, "prerelease", null));
-                    Log.infof("Found pre-release indicating upcoming: %s (from %s)", baseVersion, release.tagName);
-                }
+    private static List<UpcomingRelease> wikiUpcoming(GitHubReleases github, FetchResult fetched) {
+        try {
+            String page = github.fetchReleasePlanningWiki();
+            if (page == null) {
+                return List.of();
             }
-        }
-
-        return upcoming;
-    }
-
-    private List<UpcomingRelease> predictFromCadence(List<GitHubRelease> existingReleases, Set<String> existingVersions) {
-        List<UpcomingRelease> upcoming = new ArrayList<>();
-
-        // Find the latest minor version
-        String latestMinor = existingReleases.stream()
-                .map(r -> getMinorVersion(r.tagName))
-                .filter(this::isValidVersion)
-                .max((a, b) -> compareVersions(a, b))
-                .orElse(null);
-
-        if (latestMinor != null) {
-            try {
-                // Parse current version
-                String[] parts = latestMinor.split("\\.");
-                int major = Integer.parseInt(parts[0]);
-                int minor = Integer.parseInt(parts[1]);
-
-                // Predict next minor version
-                String nextMinor = major + "." + (minor + 1);
-
-                if (!existingVersions.contains(nextMinor)) {
-                    upcoming.add(new UpcomingRelease(nextMinor, "cadence", null));
-                    Log.infof("📅 Predicted next minor release based on cadence: %s", nextMinor);
-                }
-            } catch (Exception e) {
-                Log.debugf("Failed to parse version for cadence prediction: %s", e.getMessage());
-            }
-        }
-
-        return upcoming;
-    }
-
-    private String extractVersionFromMilestone(String title) {
-        if (title == null) return null;
-
-        // Common milestone patterns:
-        // "3.38 - 3.x" -> "3.38"
-        // "3.38" -> "3.38"
-        // "4.0 - main" -> "4.0"
-
-        Pattern pattern = Pattern.compile("^(\\d+\\.\\d+)(?:\\s|$|\\s*-|\\s*\\.|$)");
-        Matcher matcher = pattern.matcher(title);
-
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-
-        return null;
-    }
-
-    private String extractBaseVersionFromPreRelease(String tagName) {
-        if (tagName == null) return null;
-
-        // Pre-release patterns:
-        // "3.38.0.CR1" -> "3.38"
-        // "3.38.0.Alpha1" -> "3.38"
-        // "3.38.0.Beta1" -> "3.38"
-
-        Pattern pattern = Pattern.compile("^(\\d+\\.\\d+)\\.\\d+\\.(CR|Alpha|Beta|RC)");
-        Matcher matcher = pattern.matcher(tagName);
-
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-
-        return null;
-    }
-
-    private List<GitHubMilestone> parseMilestones(String jsonResponse) {
-        List<GitHubMilestone> milestones = new ArrayList<>();
-
-        try (JsonReader reader = Json.createReader(new StringReader(jsonResponse))) {
-            JsonArray array = reader.readArray();
-            for (JsonValue value : array) {
-                if (value instanceof JsonObject) {
-                    GitHubMilestone milestone = parseMilestone((JsonObject) value);
-                    if (milestone != null) {
-                        milestones.add(milestone);
-                    }
-                }
-            }
+            List<UpcomingRelease> upcoming = ReleasesSync.wikiUpcoming(page, fetched.releases(),
+                    LocalDate.now(ZoneOffset.UTC));
+            Log.infof("Found %d upcoming releases in the release planning wiki", upcoming.size());
+            return upcoming;
         } catch (Exception e) {
-            Log.debugf("Failed to parse milestones: %s", e.getMessage());
+            Log.warnf("Failed to read release planning wiki: %s", e.getMessage());
+            return List.of();
         }
-
-        return milestones;
-    }
-
-    private GitHubMilestone parseMilestone(JsonObject json) {
-        GitHubMilestone milestone = new GitHubMilestone();
-        milestone.title = json.getString("title", null);
-        milestone.dueOn = json.isNull("due_on") ? null : json.getString("due_on", null);
-        return milestone;
-    }
-
-    private ReleaseData processReleases(ReleaseData existingData, List<GitHubRelease> githubReleases, List<UpcomingRelease> upcomingReleases) {
-        // Group GitHub releases by minor version
-        Map<String, List<GitHubRelease>> releasesByMinor = githubReleases.stream()
-                .filter(r -> r.tagName != null && isValidVersion(r.tagName))
-                .collect(Collectors.groupingBy(r -> getMinorVersion(r.tagName)));
-
-        // Create map of existing releases for easy lookup
-        Map<String, Release> existingReleases = existingData.releases.stream()
-                .collect(Collectors.toMap(r -> r.version, r -> r));
-
-        // Process each minor version group
-        List<Release> processedReleases = new ArrayList<>();
-
-        for (Map.Entry<String, List<GitHubRelease>> entry : releasesByMinor.entrySet()) {
-            String minorVersion = entry.getKey();
-            List<GitHubRelease> minorReleases = entry.getValue();
-
-            // Sort releases by semantic version (latest first)
-            minorReleases.sort((a, b) -> compareVersions(b.tagName, a.tagName));
-
-            GitHubRelease latest = minorReleases.get(0);
-            GitHubRelease earliest = minorReleases.get(minorReleases.size() - 1);
-
-            Release existingRelease = existingReleases.get(minorVersion);
-            Release processedRelease = createProcessedRelease(minorVersion, earliest, latest, existingRelease);
-
-            processedReleases.add(processedRelease);
-        }
-
-        // Handle existing upcoming releases with smart logic
-        Set<String> manualUpcomingVersions = new HashSet<>();
-        for (Release existing : existingData.releases) {
-            if (Boolean.TRUE.equals(existing.upcoming)) {
-                if (releasesByMinor.containsKey(existing.version)) {
-                    // Upcoming release now exists - auto-update it to actual release
-                    Log.infof("🔄 Auto-updating upcoming release %s to actual release (now published)", existing.version);
-                    // The actual release is already processed above, so we don't add the upcoming version
-                } else {
-                    // Keep existing upcoming release and mark as manually curated
-                    processedReleases.add(existing);
-                    manualUpcomingVersions.add(existing.version);
-                    Log.infof("✋ Preserving manually curated upcoming release: %s", existing.version);
-                }
-            }
-        }
-
-        // Find latest released version to filter out stale predictions
-        String latestReleasedVersion = processedReleases.stream()
-                .filter(r -> !Boolean.TRUE.equals(r.upcoming))
-                .map(r -> r.version)
-                .max(this::compareVersions)
-                .orElse(null);
-
-        // Add the single next upcoming release if no manual upcoming releases exist
-        if (manualUpcomingVersions.isEmpty()) {
-            UpcomingRelease nextUpcoming = upcomingReleases.stream()
-                    .filter(u -> latestReleasedVersion == null || compareVersions(u.version, latestReleasedVersion) > 0)
-                    .filter(u -> !releasesByMinor.containsKey(u.version))
-                    .min((a, b) -> compareVersions(a.version, b.version))
-                    .orElse(null);
-
-            if (nextUpcoming != null) {
-                Release upcomingRelease = createUpcomingRelease(nextUpcoming);
-                processedReleases.add(upcomingRelease);
-                Log.infof("🆕 Added predicted upcoming release: %s (source: %s)", nextUpcoming.version, nextUpcoming.source);
-            }
-        } else {
-            Log.infof("📝 Skipping prediction - manual upcoming releases found: %s", manualUpcomingVersions);
-        }
-
-        // Sort all releases by version (latest first)
-        processedReleases.sort((a, b) -> compareVersions(b.version, a.version));
-
-        // Compute EOL dates for non-LTS releases that don't have one explicitly set.
-        // Policy: non-LTS releases are supported "until the next minor release",
-        // so EOL date = release date of the next higher minor version.
-        for (int i = 0; i < processedReleases.size(); i++) {
-            Release release = processedReleases.get(i);
-            if (release.hasExplicitEolDate || Boolean.TRUE.equals(release.upcoming)) {
-                continue;
-            }
-            if (Boolean.TRUE.equals(release.lts)) {
-                continue;
-            }
-            // Find the next higher version (previous index since sorted latest-first)
-            if (i > 0) {
-                Release nextRelease = processedReleases.get(i - 1);
-                LocalDate nextDate = nextRelease.releaseDate != null ? nextRelease.releaseDate : nextRelease.plannedDate;
-                if (nextDate != null) {
-                    release.eolDate = nextDate;
-                }
-            }
-        }
-
-        // Build result
-        ReleaseData result = new ReleaseData();
-        result.policy = existingData.policy;
-        result.supportProviders = existingData.supportProviders;
-        result.eolSupport = existingData.eolSupport;
-        result.releases = processedReleases;
-
-        return result;
-    }
-
-    private boolean isValidVersion(String version) {
-        return VERSION_PATTERN.matcher(version).find();
-    }
-
-    private String getMinorVersion(String version) {
-        Matcher matcher = VERSION_PATTERN.matcher(version);
-        if (matcher.find()) {
-            return matcher.group(1) + "." + matcher.group(2);
-        }
-        return version;
-    }
-
-    private int compareVersions(String v1, String v2) {
-        Matcher m1 = VERSION_PATTERN.matcher(v1);
-        Matcher m2 = VERSION_PATTERN.matcher(v2);
-        String clean1 = m1.find() ? v1.substring(m1.start(), m1.end()) : v1;
-        String clean2 = m2.find() ? v2.substring(m2.start(), m2.end()) : v2;
-
-        String[] parts1 = clean1.split("\\.");
-        String[] parts2 = clean2.split("\\.");
-
-        int maxLength = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < maxLength; i++) {
-            int part1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int part2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-
-            if (part1 != part2) {
-                return Integer.compare(part1, part2);
-            }
-        }
-        return 0;
-    }
-
-    private Release createProcessedRelease(String minorVersion, GitHubRelease earliest, GitHubRelease latest, Release existing) {
-        Release release = new Release();
-        release.version = minorVersion;
-
-        // Set release date from earliest release
-        release.releaseDate = parseGitHubDate(earliest.publishedAt);
-
-        // Set latest patch info
-        release.latestPatch = latest.tagName;
-        release.latestPatchDate = parseGitHubDate(latest.publishedAt);
-
-        // Clear upcoming flag since we have real GitHub data
-        release.upcoming = null;
-
-        // Preserve manual fields from existing release
-        if (existing != null) {
-            release.lts = existing.lts;
-            release.eolDate = existing.eolDate;
-            release.hasExplicitEolDate = existing.hasExplicitEolDate;
-            release.link = existing.link;
-            release.rhbqEol = existing.rhbqEol;
-            release.ibmEol = existing.ibmEol;
-            release.herodevsEol = existing.herodevsEol;
-        } else {
-            release.lts = false;
-        }
-
-        return release;
-    }
-
-    private Release createUpcomingRelease(UpcomingRelease upcoming) {
-        Release release = new Release();
-        release.version = upcoming.version;
-        release.lts = false;  // Default to non-LTS for upcoming releases
-        release.upcoming = true;
-
-        // Set planned release date if available (release_date is only for published releases)
-        if (upcoming.dueDate != null) {
-            try {
-                release.plannedDate = LocalDate.parse(upcoming.dueDate.split("T")[0]);
-            } catch (Exception e) {
-                Log.debugf("Failed to parse due date for upcoming release %s: %s", upcoming.version, e.getMessage());
-            }
-        }
-
-        return release;
     }
 
     private void showDiff(String newContent) {
@@ -826,14 +344,6 @@ public class main implements Callable<Integer> {
     }
 
 
-    private LocalDate parseGitHubDate(String isoDate) {
-        return Instant.parse(isoDate).atOffset(ZoneOffset.UTC).toLocalDate();
-    }
-
-    private static String toDateStr(LocalDate ld) {
-        return ld.toString();
-    }
-
     static class DateScalar {
         final String value;
         DateScalar(String value) { this.value = value; }
@@ -868,7 +378,7 @@ public class main implements Callable<Integer> {
         }
     }
 
-    private String generateYaml(ReleaseData data) throws Exception {
+    private String generateYaml(Releases data) throws Exception {
         // Preserve everything before "releases:" from the original file
         String original = Files.readString(inputFile.toPath());
         int relIdx = original.indexOf("\nreleases:\n");
@@ -884,7 +394,7 @@ public class main implements Callable<Integer> {
         Yaml relYaml = new Yaml(new ReleasesRepresenter(relOpts), relOpts);
 
         List<Map<String, Object>> releasesList = new ArrayList<>();
-        for (Release release : data.releases) {
+        for (Releases.Entry release : data.releases()) {
             releasesList.add(releaseToMap(release));
         }
         Map<String, Object> relMap = new LinkedHashMap<>();
@@ -897,119 +407,103 @@ public class main implements Callable<Integer> {
         return header + relSection;
     }
 
-    private Map<String, Object> releaseToMap(Release release) {
+    private Map<String, Object> releaseToMap(Releases.Entry release) {
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("version", new QuotedScalar(release.version));
+        map.put("version", new QuotedScalar(release.version()));
 
-        if (release.releaseDate != null) {
-            map.put("release_date", new DateScalar(toDateStr(release.releaseDate)));
+        if (release.releaseDate() != null) {
+            map.put("release_date", new DateScalar(release.releaseDate()));
         }
 
-        if (release.plannedDate != null) {
-            map.put("planned_date", new DateScalar(toDateStr(release.plannedDate)));
+        if (release.plannedDate() != null) {
+            map.put("planned_date", new DateScalar(release.plannedDate()));
         }
 
-        if (release.eolDate != null) {
-            map.put("eol_date", new DateScalar(toDateStr(release.eolDate)));
-        } else if (release.hasExplicitEolDate) {
-            map.put("eol_date", null);
+        if (release.eolDate() != null) {
+            map.put("eol_date", new DateScalar(release.eolDate()));
         }
 
-        map.put("lts", release.lts);
+        map.put("lts", release.lts());
 
-        if (Boolean.TRUE.equals(release.upcoming)) {
+        if (release.upcoming()) {
             map.put("upcoming", true);
-        }
-
-        if (release.latestPatch != null) {
-            map.put("latest_patch", new QuotedScalar(release.latestPatch));
-        }
-
-        if (release.latestPatchDate != null) {
-            map.put("latest_patch_date", new DateScalar(toDateStr(release.latestPatchDate)));
-        }
-
-        if (release.link != null) {
-            map.put("link", release.link);
-        }
-
-        if (release.rhbqEol != null) {
-            map.put("rhbq_eol", new DateScalar(toDateStr(release.rhbqEol)));
-        }
-
-        if (release.ibmEol != null) {
-            map.put("ibm_eol", new DateScalar(toDateStr(release.ibmEol)));
-        }
-
-        if (release.herodevsEol != null) {
-            if (release.herodevsEol instanceof LocalDate) {
-                map.put("herodevs_eol", new DateScalar(toDateStr((LocalDate) release.herodevsEol)));
-            } else if (release.herodevsEol instanceof String) {
-                map.put("herodevs_eol", release.herodevsEol);  // Keep as string (e.g., "nes")
+            if (release.proposal()) {
+                map.put("proposal", true);
             }
+        }
+
+        if (release.link() != null) {
+            map.put("link", release.link());
+        }
+
+        if (release.branchedFrom() != null) {
+            map.put("branched_from", release.branchedFrom());
+        }
+
+        putProvider(map, "rhbq", release.rhbq());
+        putProvider(map, "ibm", release.ibm());
+        putProvider(map, "herodevs", release.herodevs());
+
+        // Last, as it is long. Block mappings, not one-line {...} flow mappings: pt.quarkus.io translates
+        // this file with po4a, whose YAML::Tiny parser rejects inline lists and dictionaries.
+        // A missing URL is left out rather than written empty (YAML::Tiny also trips on some empty values)
+        if (release.micros() != null && !release.micros().isEmpty()) {
+            List<Map<String, Object>> micros = new ArrayList<>();
+            for (Releases.MicroEntry micro : release.micros()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("version", new QuotedScalar(micro.version()));
+                if (micro.releaseDate() != null) {
+                    m.put("release_date", new DateScalar(micro.releaseDate()));
+                }
+                // Only written when true, like upcoming and proposal
+                if (micro.candidate()) {
+                    m.put("candidate", true);
+                }
+                if (micro.beta()) {
+                    m.put("beta", true);
+                }
+                if (micro.alpha()) {
+                    m.put("alpha", true);
+                }
+                if (micro.githubUrl() != null) {
+                    m.put("github_url", micro.githubUrl());
+                }
+                if (micro.bomUrl() != null) {
+                    m.put("bom_url", micro.bomUrl());
+                }
+                micros.add(m);
+            }
+            map.put("micros", micros);
         }
 
         return map;
     }
 
-    // Data classes
-    public static class ReleaseData {
-        public Map<String, Object> policy = new LinkedHashMap<>();
-        public Map<String, Object> supportProviders = new LinkedHashMap<>();
-        public List<Map<String, Object>> eolSupport = new ArrayList<>();
-        public List<Release> releases = new ArrayList<>();
-    }
-
-    public static class Release {
-        public String version;
-        public LocalDate releaseDate;
-        public LocalDate plannedDate;  // upcoming releases only
-        public LocalDate eolDate;
-        public boolean hasExplicitEolDate;
-        public Boolean lts;
-        public String latestPatch;
-        public LocalDate latestPatchDate;
-        public String link;
-        public LocalDate rhbqEol;
-        public LocalDate ibmEol;
-        public Object herodevsEol;  // Can be a date or string like "nes"
-        public Boolean upcoming;
-    }
-
-    public static class GitHubRelease {
-        public String tagName;
-        public String publishedAt;
-        public boolean prerelease;
-        public boolean draft;
-    }
-
-    public static class UpcomingRelease {
-        public String version;
-        public String source;  // "milestone", "prerelease", "cadence"
-        public String dueDate; // ISO date string, can be null
-
-        public UpcomingRelease(String version, String source, String dueDate) {
-            this.version = version;
-            this.source = source;
-            this.dueDate = dueDate;
+    private static void putProvider(Map<String, Object> map, String name, Releases.EnterpriseDates dates) {
+        if (dates == null) {
+            return;
         }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (!(obj instanceof UpcomingRelease)) return false;
-            UpcomingRelease other = (UpcomingRelease) obj;
-            return Objects.equals(version, other.version);
+        Map<String, Object> block = new LinkedHashMap<>();
+        putProviderValue(block, "release_date", dates.releaseDate());
+        putProviderValue(block, "eol_date", dates.eolDate());
+        if (dates.branchedFrom() != null) {
+            block.put("branched_from", dates.branchedFrom());
         }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(version);
+        if (dates.openEnded()) {
+            block.put("open_ended", true);
         }
+        map.put(name, block);
     }
 
-    public static class GitHubMilestone {
-        public String title;
-        public String dueOn;
+    private static void putProviderValue(Map<String, Object> block, String key, String value) {
+        if (value == null) {
+            return;
+        }
+        // Dates are written as plain YAML dates
+        try {
+            block.put(key, new DateScalar(LocalDate.parse(value).toString()));
+        } catch (Exception e) {
+            block.put(key, value);
+        }
     }
 }

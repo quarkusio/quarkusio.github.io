@@ -13,10 +13,14 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
-import io.quarkusio.timeline.LegendItem;
-import io.quarkusio.timeline.TimeScale;
-import io.quarkusio.timeline.Timeline;
-import io.quarkusio.timeline.TimelineBuilder;
+import io.quarkusio.charts.timeline.LegendItem;
+import io.quarkusio.charts.timeline.TimeScale;
+import io.quarkusio.charts.timeline.Timeline;
+import io.quarkusio.charts.timeline.gantt.GanttTimelineBuilder;
+
+import static io.quarkusio.charts.timeline.LegendGroup.PROVIDER;
+import static io.quarkusio.charts.timeline.LegendGroup.RELEASE_KIND;
+import static io.quarkusio.releases.ReleaseKind.MAJOR;
 
 /** Builds the two release support timelines shown on /releases/. */
 @ApplicationScoped
@@ -24,29 +28,46 @@ import io.quarkusio.timeline.TimelineBuilder;
 public class ReleaseTimelineFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
-    static final int UPCOMING_WEEKS = 4;
+    /** Used for the default upcoming bar when the policy has no release_cadence. */
 
-    private final ReleaseCatalog catalog;
+    private final Releases catalog;
+    private final int maxUpcoming;
 
     @Inject
-    public ReleaseTimelineFactory(ReleaseCatalog catalog) {
+    public ReleaseTimelineFactory(Releases catalog, ReleasesConfig config) {
+        this(catalog, config.maxUpcoming());
+    }
+
+    public ReleaseTimelineFactory(Releases catalog) {
+        this(catalog, Releases.DEFAULT_MAX_UPCOMING);
+    }
+
+    public ReleaseTimelineFactory(Releases catalog, int maxUpcoming) {
         this.catalog = catalog;
+        this.maxUpcoming = maxUpcoming;
     }
 
     public List<LegendItem> legend() {
         List<LegendItem> items = new ArrayList<>(List.of(
-                new LegendItem("community", "Community maintenance",
-                        "Solid bar: bug fixes and security patches from the Quarkus community."),
-                new LegendItem("enterprise", "Enterprise support",
+                new LegendItem(RELEASE_KIND, "community", "Community maintenance",
+                        "Solid bar: bug fixes and security patches from the Quarkus community.")));
+        // only once there are micros to mark (the .0 is on the bar's edge, so it takes a later one)
+        if (catalog.all().stream().anyMatch(r -> finalMicroDates(r).stream()
+                .anyMatch(d -> r.releaseDate() != null && d.isAfter(r.releaseDate())))) {
+            items.add(new LegendItem(RELEASE_KIND, "micro", "Micro release",
+                    "Faint line across a community bar: a micro release, with fixes for that minor."));
+        }
+        items.addAll(List.of(
+                new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
                         "Bordered bar: paid support with an end date, from Red Hat and IBM."),
-                new LegendItem("nes", "Never-ending support",
+                new LegendItem(RELEASE_KIND, "open-ended", "EOL Patches",
                         "Fading bar: paid patches with no end date, from IBM and HeroDevs.")));
         if (catalog.all().stream().anyMatch(Release::upcoming)) {
-            items.add(new LegendItem("upcoming", "Upcoming", "Planned release."));
+            items.add(new LegendItem(RELEASE_KIND, "upcoming", "Upcoming", "Planned release."));
         }
-        items.add(new LegendItem("prov-rhbq", "Red Hat", "Red Hat build of Quarkus"));
-        items.add(new LegendItem("prov-ibm", "IBM", "IBM Enterprise Build of Quarkus"));
-        items.add(new LegendItem("prov-herodevs", "HeroDevs", "HeroDevs Never-Ending Support"));
+        items.add(new LegendItem(PROVIDER, "rhbq", "Red Hat", "Red Hat build of Quarkus"));
+        items.add(new LegendItem(PROVIDER,"ibm", "IBM", "IBM Enterprise Build of Quarkus"));
+        items.add(new LegendItem(PROVIDER,"herodevs", "HeroDevs", "HeroDevs Never-Ending Support"));
         return items;
     }
 
@@ -59,109 +80,180 @@ public class ReleaseTimelineFactory {
         return fullView(now.toLocalDate());
     }
 
-    /** From the earliest year that still has support running, to the last support end. */
+    /**
+     * Only releases with a support offering running on the build date. The axis starts at the beginning of the
+     * month of the earliest bar that is drawn in full; open-ended support bars run off the left edge, so
+     * they do not push it back.
+     */
     public Timeline supportView(LocalDate today) {
-        int startYear = catalog.all().stream()
-                .filter(r -> !r.upcoming() && r.supportEnd() != null && r.supportEnd().isAfter(today))
-                .map(r -> r.releaseDate().getYear())
-                .min(Integer::compare).orElse(today.getYear());
-        return build("support", startYear, today);
+        List<Release> shown = shown(today, true);
+        LocalDate start = shown.stream().map(r -> earliestFullBar(r, today)).filter(d -> d != null)
+                .min(LocalDate::compareTo).orElse(LocalDate.of(today.getYear(), 1, 1))
+                .withDayOfMonth(1);
+        return build("support", start, today, true, shown);
     }
 
     /** The same compact rows over the whole history, back to the first release. */
     public Timeline fullView(LocalDate today) {
-        LocalDate first = catalog.all().stream().filter(r -> r.releaseDate() != null)
-                .map(Release::releaseDate).min(LocalDate::compareTo).orElse(today);
-        return build("all", first.getYear(), today);
+        LocalDate first = catalog.all().stream().map(Release::releaseDate)
+                .filter(localDate -> localDate!= null).min(LocalDate::compareTo).orElse(today);
+        return build("all", LocalDate.of(first.getYear(), 1, 1), today, false, shown(today, false));
     }
 
-    private Timeline build(String id, int startYear, LocalDate today) {
-        TimeScale scale = new TimeScale(LocalDate.of(startYear, 1, 1), LocalDate.of(endYear(today), 12, 31));
-        TimelineBuilder b = newBuilder(id, scale);
-        List<Release> shown = catalog.all().stream()
-                .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasNes()))
+    private List<Release> shown(LocalDate today, boolean activeOnly) {
+        return catalog.all().stream()
+                .filter(r -> !r.upcoming() && (r.lts() || r.hasVendorSupport() || r.hasOpenEndedSupport())
+                        && (!activeOnly || r.supportActive(today)))
                 .toList();
-        // the non-LTS stream is the second row, after the first release row
-        int streamAfter = Math.min(1, shown.size());
-        if (streamAfter == 0) {
-            addStreamLane(b, today);
-        }
-        for (int i = 0; i < shown.size(); i++) {
-            addReleaseRow(b, shown.get(i), today);
-            if (i == streamAfter - 1) {
-                addStreamLane(b, today);
+    }
+
+    /**
+     * In the support view, the community bar is only worth drawing while the community or a dated enterprise
+     * offering (Red Hat, or IBM before its open-ended support) is still running. A release kept alive only by
+     * open-ended support keeps its row, with just that bar.
+     */
+    private static boolean communityBarShown(Release r, LocalDate today, boolean activeOnly) {
+        return !activeOnly || r.communityActive(today) || r.anyOfferingActiveOn(today);
+    }
+
+    /** Start of the earliest bar, branch or connector drawn for the release in the support view; never-ending bars are excluded. */
+    private LocalDate earliestFullBar(Release r, LocalDate today) {
+        LocalDate earliest = null;
+        if (communityBarShown(r, today, true)) {
+            earliest = earlier(earliest, r.releaseDate());
+            Release from = catalog.find(r.branchedFromVersion()).orElse(null);
+            if (r.lts() && from != null && !from.lts()) {
+                earliest = earlier(earliest, from.releaseDate());
             }
         }
+        if (r.eolDate() != null) {
+            for (EnterpriseOffering vendor : new EnterpriseOffering[] { r.rhbq(), r.ibm() }) {
+                if (enterpriseBar(r, vendor)) {
+                    earliest = earlier(earliest, enterpriseStart(r, vendor));
+                    earliest = earlier(earliest, catalog.branchPoint(r, vendor));
+                }
+            }
+        }
+        return earliest;
+    }
+
+    private static LocalDate earlier(LocalDate a, LocalDate b) {
+        return a == null ? b : b == null ? a : b.isBefore(a) ? b : a;
+    }
+
+    private Timeline build(String id, LocalDate start, LocalDate today, boolean activeOnly, List<Release> shown) {
+        TimeScale scale = new TimeScale(start, LocalDate.of(endYear(today), 12, 31));
+        GanttTimelineBuilder b = newBuilder(id, scale);
+        // the non-LTS stream is the top row, with the LTS rows below it
+        addStreamLane(b, today);
+        for (Release r : shown) {
+            addReleaseRow(b, r, today, communityBarShown(r, today, activeOnly));
+        }
+        addBranches(b, shown, today, activeOnly);
         return b.build();
     }
 
-    /** Covers every support end and every upcoming bar, so planned releases are not cropped. */
-    private int endYear(LocalDate today) {
-        Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
-        int supportEnds = catalog.all().stream().map(Release::supportEnd).filter(d -> d != null)
-                .map(LocalDate::getYear).max(Integer::compare).orElse(today.getYear());
-        int upcomingEnds = catalog.all().stream().filter(Release::upcoming)
-                .map(r -> upcomingStart(r, today))
-                .map(start -> start.plusWeeks(UPCOMING_WEEKS).getYear())
-                .max(Integer::compare).orElse(today.getYear());
-        int upcomingLtsEnds = lts == null ? today.getYear() : catalog.all().stream()
-                .filter(r -> r.upcoming() && r.lts())
-                .map(r -> upcomingStart(r, today).plus(lts).getYear())
-                .max(Integer::compare).orElse(today.getYear());
-        return Math.max(Math.max(supportEnds, upcomingEnds), Math.max(upcomingLtsEnds, today.getYear()));
+    /**
+     * Draws branched_from: an LTS from the non-LTS release before it (straight down from the left edge of
+     * the stream bar it branched from, then into the LTS bar horizontally), and a non-LTS that follows a gap in the stream, where an LTS took the slot, from
+     * that LTS (rising from the left of its bar, an S-curve and a rise into the gap, then into the non-LTS bar horizontally).
+     * LTS releases that are on the chart are only connected while a support offering is running on the build date,
+     * to keep it calm; the ones with no row run off the bottom.
+     * Non-LTS releases with no gap between them are joined with a short horizontal line.
+     */
+    private void addBranches(GanttTimelineBuilder b, List<Release> shown, LocalDate today, boolean activeOnly) {
+        for (Release r : catalog.all()) {
+            if (r.upcoming() || !r.lts() || r.releaseDate() == null) {
+                continue;
+            }
+            boolean onChart = shown.contains(r);
+            if (onChart && (!r.supportActive(today) || !communityBarShown(r, today, activeOnly))) {
+                continue;
+            }
+            // an LTS with no row of its own is drawn as lines vanishing off the bottom of the chart
+            String row = onChart ? r.version() : GanttTimelineBuilder.BOTTOM;
+            Release from = catalog.find(r.branchedFromVersion()).orElse(null);
+            if (from != null && !from.lts() && from.releaseDate() != null) {
+                // leaves the left edge of the release it branches from, drops, then turns to enter the LTS bar horizontally
+                b.link("stream", row, from.releaseDate(), r.releaseDate());
+            }
+            for (Release next : catalog.all()) {
+                if (!next.upcoming() && !next.lts() && next.releaseDate() != null
+                        && r.version().equals(next.branchedFromVersion())) {
+                    // rises from the left of the LTS bar, like the vendor connectors, and S-curves over to the non-LTS bar
+                    b.rise(row, "stream", r.releaseDate(), next.releaseDate());
+                }
+            }
+        }
+        List<Release> stream = streamReleases();
+        for (int i = 1; i < stream.size(); i++) {
+            Release previous = stream.get(i - 1);
+            if (previous.eolDate() != null && !previous.eolDate().isBefore(stream.get(i).releaseDate())) {
+                b.chain("stream", stream.get(i).releaseDate());
+            }
+        }
     }
 
-    private TimelineBuilder newBuilder(String id, TimeScale scale) {
-        TimelineBuilder b = new TimelineBuilder(id, scale);
+    private List<Release> streamReleases() {
+        return catalog.all().stream()
+                .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
+                .sorted(Comparator.comparing(Release::releaseDate))
+                .toList();
+    }
+
+    /** The default length of an upcoming bar: the policy's release cadence. */
+    private Period cadence() {
+        return catalog.cadence();
+    }
+
+    /** Covers every support end and every visible upcoming bar, so planned releases are not cropped. */
+    private int endYear(LocalDate today) {
+        int supportEnds = catalog.all().stream().map(Release::supportEnd).filter(d -> d != null)
+                .map(LocalDate::getYear).max(Integer::compare).orElse(today.getYear());
+        int upcomingEnds = catalog.visibleUpcoming(maxUpcoming).stream()
+                .map(r -> upcomingEnd(r, today).getYear())
+                .max(Integer::compare).orElse(today.getYear());
+        return Math.max(Math.max(supportEnds, upcomingEnds), today.getYear());
+    }
+
+    private GanttTimelineBuilder newBuilder(String id, TimeScale scale) {
+        GanttTimelineBuilder b = new GanttTimelineBuilder(id, scale);
         for (Release major : catalog.majors()) {
-            b.marker(major.releaseDate(), "Quarkus " + major.version().replaceAll("\\.0$", ""), "major");
+            b.marker(major.releaseDate(), "Quarkus " + major.version().replaceAll("\\.0$", ""), MAJOR);
         }
         for (LegendItem item : legend()) {
-            b.legend(item.kind(), item.label(), item.description());
+            b.legend(item);
         }
         return b;
     }
 
     /**
-     * Only drawn for releases flagged upcoming. Starts on the planned_date when the data has one in
-     * the future, otherwise today. An LTS runs for the policy's LTS support duration (12 months),
-     * clipped to the start of the next upcoming release but never to less than the default bar length.
-     * A non-LTS is supported only until the next minor, so when another upcoming release follows,
-     * its bar ends where that one starts; the last one is a short placeholder.
+     * Ends at the release's planned end date. Without one, or if that is not after the start,
+     * an LTS gets the policy's LTS duration and anything else the default bar length.
      */
-    private void addUpcoming(TimelineBuilder b, LocalDate today, TimelineBuilder.RowBuilder row) {
+    private LocalDate upcomingEnd(Release r, LocalDate today) {
+        LocalDate start = upcomingStart(r, today);
+        LocalDate planned = catalog.plannedEndDate(r);
+        if (planned != null && planned.isAfter(start)) {
+            return planned;
+        }
         Period lts = catalog.policy() == null ? null : catalog.policy().ltsSupportPeriod();
-        List<Release> upcoming = catalog.all().stream()
-                .filter(Release::upcoming)
-                .sorted(Comparator.comparing((Release r) -> upcomingStart(r, today))
-                        .thenComparing(r -> r.version()))
-                .toList();
-        for (int i = 0; i < upcoming.size(); i++) {
-            Release r = upcoming.get(i);
-            boolean planned = isPlanned(r, today);
-            LocalDate start = upcomingStart(r, today);
-            boolean ltsLength = r.lts() && lts != null;
-            LocalDate nextStart = i + 1 < upcoming.size() ? upcomingStart(upcoming.get(i + 1), today) : null;
-            LocalDate end;
-            if (ltsLength) {
-                end = start.plus(lts);
-                if (nextStart != null && nextStart.isBefore(end)) {
-                    // Clip to where the next release starts, but keep at least the default bar length visible
-                    LocalDate minEnd = start.plusWeeks(UPCOMING_WEEKS);
-                    end = nextStart.isAfter(minEnd) ? nextStart : minEnd;
-                }
-            } else {
-                end = nextStart != null && nextStart.isAfter(start) ? nextStart : start.plusWeeks(UPCOMING_WEEKS);
-            }
+        return start.plus(r.lts() && lts != null ? lts : cadence());
+    }
+
+    private void addUpcoming(LocalDate today, GanttTimelineBuilder.RowBuilder row) {
+        boolean ltsLength = catalog.policy() != null && catalog.policy().ltsSupportPeriod() != null;
+        for (Release r : catalog.visibleUpcoming(maxUpcoming)) {
             List<String> lines = new ArrayList<>();
-            lines.add(planned ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
-            if (ltsLength) {
-                lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration());
+            lines.add(isPlanned(r, today) ? "Planned release " + DATE.format(r.plannedDate()) : "Upcoming release");
+            if (r.lts() && ltsLength) {
+                lines.add("LTS: community maintenance for " + catalog.policy().ltsSupportDuration().label());
             }
             if (r.lts()) {
-                row.badge("LTS").data("lts", "true");
+                // data only: a visible LTS badge would mislabel the non-LTS stream row
+                row.data("lts", "true");
             }
-            row.segment("upcoming", start, end, null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
+            row.segment("upcoming", upcomingStart(r, today), upcomingEnd(r, today), null, "Quarkus " + r.version() + " (upcoming)", lines, r.version());
         }
     }
 
@@ -174,22 +266,19 @@ public class ReleaseTimelineFactory {
     }
 
     /** Non-LTS minors laid end to end; each is supported until the next one ships. */
-    private void addStreamLane(TimelineBuilder b, LocalDate today) {
+    private void addStreamLane(GanttTimelineBuilder b, LocalDate today) {
         var row = b.row("stream", "Non-LTS stream").shortLabel("Non-LTS");
-        List<Release> stream = catalog.all().stream()
-                .filter(r -> !r.upcoming() && !r.lts() && r.releaseDate() != null)
-                .sorted(Comparator.comparing(Release::releaseDate))
-                .toList();
-        for (Release r : stream) {
+        for (Release r : streamReleases()) {
             row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today),
-                    "Quarkus " + r.version(), communityLines(r), r.version());
+                    "Quarkus " + r.version(), communityLines(r), r.version())
+                    .ticks(finalMicroDates(r));
         }
-        addUpcoming(b, today, row);
+        addUpcoming(today, row);
 
         row.add();
     }
 
-    private void addReleaseRow(TimelineBuilder b, Release r, LocalDate today) {
+    private void addReleaseRow(GanttTimelineBuilder b, Release r, LocalDate today, boolean communityBar) {
         var row = b.row(r.version(), r.version())
                 .href(r.link())
                 .data("version", r.version());
@@ -204,44 +293,76 @@ public class ReleaseTimelineFactory {
         }
         String name = "Quarkus " + r.version();
 
-        row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
-                communityLines(r), r.version());
+        if (communityBar) {
+            row.segment("community", r.releaseDate(), r.eolDate(), communityHref(r, today), name,
+                    communityLines(r), r.version())
+                    .ticks(finalMicroDates(r));
+        }
         if (r.eolDate() != null) {
-            if (later(r.rhbqEol(), r.eolDate())) {
+            if (enterpriseBar(r, r.rhbq())) {
                 int lane = row.lane("Red Hat");
-                row.segment("enterprise", "rhbq", lane, r.eolDate(), r.rhbqEol(), catalog.providerUrl("rhbq"),
+                LocalDate from = enterpriseStart(r, r.rhbq());
+                row.segment("enterprise", "rhbq", lane, from, r.rhbq().eolDate(), catalog.providerUrl("rhbq"),
                         name + ": Red Hat build of Quarkus",
-                        List.of("Red Hat support until " + DATE.format(r.rhbqEol())), r.version());
+                        enterpriseLines("Red Hat", r.rhbq().releaseDate(), r.rhbq().eolDate()), r.version());
+                row.branch(lane, catalog.branchPoint(r, r.rhbq()));
             }
-            if (r.ibmEol() != null) {
+            if (r.ibm() != null && r.ibm().hasEndDate()) {
                 int lane = row.lane("IBM");
-                if (r.ibmEol().isAfter(r.eolDate())) {
-                    row.segment("enterprise", "ibm", lane, r.eolDate(), r.ibmEol(), catalog.providerUrl("ibm"),
+                if (enterpriseBar(r, r.ibm())) {
+                    LocalDate from = enterpriseStart(r, r.ibm());
+                    row.segment("enterprise", "ibm", lane, from, r.ibm().eolDate(), catalog.providerUrl("ibm"),
                             name + ": IBM Enterprise Build of Quarkus",
-                            List.of("IBM support until " + DATE.format(r.ibmEol())), r.version());
+                            enterpriseLines("IBM", r.ibm().releaseDate(), r.ibm().eolDate()), r.version());
+                    row.branch(lane, catalog.branchPoint(r, r.ibm()));
                 }
-                LocalDate from = r.ibmEol().isAfter(r.eolDate()) ? r.ibmEol() : r.eolDate();
-                row.segment("nes", "ibm", lane, from, null, catalog.providerUrl("ibm"),
-                        name + ": IBM never-ending support",
-                        List.of("IBM never-ending support after " + DATE.format(from), "No end date"), r.version());
+                if (r.ibm().openEnded()) {
+                    openEndedSegment(row, lane, "ibm", "IBM open-ended support", r.openEndedStart(r.ibm()), name,
+                            r.version());
+                }
             }
-            if (r.hasNes()) {
-                int lane = row.lane("HeroDevs");
-                LocalDate from = r.supportEnd();
-                row.segment("nes", "herodevs", lane, from, r.herodevsEnd(), catalog.providerUrl("herodevs"),
-                        name + ": HeroDevs never-ending support",
-                        List.of(r.herodevsEnd() == null
-                                ? "HeroDevs never-ending support after " + DATE.format(from)
-                                : "HeroDevs support until " + DATE.format(r.herodevsEnd()),
-                                r.herodevsEnd() == null ? "No end date" : "Ends " + DATE.format(r.herodevsEnd())),
-                        r.version());
+            if (r.herodevs() != null && r.herodevs().openEnded()) {
+                openEndedSegment(row, row.lane("HeroDevs"), "herodevs", "HeroDevs never-ending support",
+                        r.openEndedStart(r.herodevs()), name, r.version());
             }
         }
         row.add();
     }
 
-    private static boolean later(LocalDate d, LocalDate than) {
-        return d != null && d.isAfter(than);
+    /** Draws a bar for support with no end date, e.g. "IBM open-ended support", starting on from. */
+    private void openEndedSegment(GanttTimelineBuilder.RowBuilder row, int lane, String provider, String description,
+            LocalDate from, String name, String version) {
+        row.segment("open-ended", provider, lane, from, null, catalog.providerUrl(provider), name + ": " + description,
+                List.of(description + " after " + DATE.format(from), "No end date"), version);
+    }
+
+    /**
+     * Whether a vendor's bar adds anything to the community bar above it. With a vendor release date the bar
+     * runs from that date to the vendor's end, layered under the community bar, and is dropped only when it
+     * would be identical to it (same start and end). Without one, as before, the bar only covers the time
+     * after community maintenance and is dropped unless the vendor supports the release for longer.
+     */
+    private static boolean enterpriseBar(Release r, EnterpriseOffering vendor) {
+        if (vendor == null || !vendor.hasEndDate()) {
+            return false;
+        }
+        if (vendor.releaseDate() == null) {
+            return vendor.eolDate().isAfter(r.eolDate());
+        }
+        return !(vendor.releaseDate().equals(r.releaseDate()) && vendor.eolDate().equals(r.eolDate()));
+    }
+
+    private static LocalDate enterpriseStart(Release r, EnterpriseOffering vendor) {
+        return vendor.releaseDate() != null ? vendor.releaseDate() : r.eolDate();
+    }
+
+    private static List<String> enterpriseLines(String vendor, LocalDate release, LocalDate end) {
+        List<String> lines = new ArrayList<>();
+        if (release != null) {
+            lines.add(vendor + " release " + DATE.format(release));
+        }
+        lines.add(vendor + " support until " + DATE.format(end));
+        return lines;
     }
 
     private String communityHref(Release r, LocalDate today) {
@@ -251,8 +372,9 @@ public class ReleaseTimelineFactory {
         return r.link();
     }
 
-    private String enterpriseUrl(Release r) {
-        return catalog.providerUrl(r.rhbqEol() != null ? "rhbq" : "ibm");
+    /** When each final micro was released (not candidates, betas or alphas), for the marks on the community bar. */
+    private static List<LocalDate> finalMicroDates(Release r) {
+        return r.micros().stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
     }
 
     private List<String> communityLines(Release r) {
@@ -263,9 +385,10 @@ public class ReleaseTimelineFactory {
         } else {
             lines.add("Community maintenance until " + DATE.format(r.eolDate()));
         }
-        if (r.latestPatch() != null) {
-            lines.add("Latest micro " + r.latestPatch()
-                    + (r.latestPatchDate() == null ? "" : " (" + DATE.format(r.latestPatchDate()) + ")"));
+        Micro latest = r.latestMicro();
+        if (latest != null) {
+            lines.add("Latest micro " + latest.version()
+                    + (latest.releaseDate() == null ? "" : " (" + DATE.format(latest.releaseDate()) + ")"));
         }
         return lines;
     }

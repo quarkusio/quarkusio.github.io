@@ -817,6 +817,33 @@ NOTE: The default pool cleaner period is 1 second.
 quarkus.datasource.reactive.pool-cleaner-period=5S
 ----
 
+== TCP keep-alive
+
+When the database host disappears without closing its connections, for example after a network failure or when a firewall silently drops the connections, the client may wait for a response that never comes.
+Enabling TCP keep-alive lets the operating system probe connections that carry no traffic and close them when the database host does not answer:
+
+[source,properties]
+----
+quarkus.datasource.reactive.tcp-keep-alive=true
+----
+
+By default, the probes follow the operating system settings (on Linux, the `net.ipv4.tcp_keepalive_*` kernel parameters, where the first probe is sent after two hours by default).
+You can set them per datasource:
+
+[source,properties]
+----
+quarkus.datasource.reactive.tcp-keep-alive=true
+quarkus.datasource.reactive.tcp-keep-alive-idle=60S
+quarkus.datasource.reactive.tcp-keep-alive-interval=10S
+quarkus.datasource.reactive.tcp-keep-alive-count=3
+----
+
+IMPORTANT: `tcp-keep-alive-idle`, `tcp-keep-alive-interval` and `tcp-keep-alive-count` are only effective with a Linux native transport (epoll or io_uring, see xref:vertx-reference.adoc#native-transport[Native transports]).
+With the default NIO transport or with kqueue, they are ignored and the operating system settings apply.
+
+NOTE: TCP keep-alive is disabled by default.
+It is not supported by the Oracle client, which does not use the Vert.x network stack; configure the Oracle JDBC driver through `additional-properties` instead.
+
 == TLS configuration
 
 All reactive SQL clients support TLS configuration through the Quarkus TLS registry.
@@ -854,6 +881,28 @@ The `ssl-negotiation` property accepts two values:
 * `postgres` (default) — traditional negotiation, compatible with all PostgreSQL versions.
 * `direct` — direct SSL, requires PostgreSQL 17 or later.
 
+=== Channel binding (PostgreSQL 11+)
+
+Channel binding is a method for the server to authenticate itself to the client.
+It is only supported over SSL connections, with PostgreSQL 11 or later servers using the SCRAM authentication method.
+
+Configure it with the `channel-binding` property:
+
+[source,properties]
+----
+quarkus.datasource.reactive.postgresql.ssl-mode=require
+quarkus.datasource.reactive.postgresql.channel-binding=require
+----
+
+The `channel-binding` property accepts three values:
+
+* `disable` — prevents the use of channel binding.
+* `prefer` (default) — the client uses channel binding if available.
+* `require` — the connection must employ channel binding. If it cannot, for example because SSL is not enabled, the connection fails.
+
+Channel binding can also be configured with the `channel_binding` parameter of the reactive datasource URL, for example `postgresql://localhost/mydb?sslmode=require&channel_binding=require`.
+When the `channel-binding` property is set, it takes precedence over the URL parameter.
+
 === TDS 8.0 (Microsoft SQL Server 2022+)
 
 Microsoft SQL Server 2022 and later support TDS 8.0, which performs the TLS handshake before any TDS protocol exchange.
@@ -880,6 +929,7 @@ In this case, you can customize pool creation by creating a class implementing `
 import jakarta.inject.Singleton;
 
 import io.quarkus.reactive.datasource.PoolCreator;
+import io.vertx.pgclient.PgBuilder;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlConnectOptions;
@@ -892,7 +942,12 @@ public class CustomPoolCreator implements PoolCreator {
         SqlConnectOptions connectOptions = input.connectOptionsList().get(0);
         PoolOptions poolOptions = input.poolOptions();
         // Customize connectOptions, poolOptions or both, as required
-        return Pool.pool(input.vertx(), connectOptions, poolOptions);
+        return PgBuilder.pool()
+                .with(poolOptions)
+                .with(input.netClientOptions())
+                .connectingTo(connectOptions)
+                .using(input.vertx())
+                .build();
     }
 }
 ----
@@ -900,6 +955,32 @@ public class CustomPoolCreator implements PoolCreator {
 For a named datasource, annotate the bean with `@ReactiveDataSource("datasource-name")`.
 
 TIP: `PoolCreator` is also the way to set Vert.x options that cannot be expressed as configuration properties, such as `SqlConnectOptions.setPreparedStatementCacheSqlFilter(Predicate<String>)`.
+
+When a xref:credentials-provider.adoc[credentials provider] is configured, or when multiple hosts are listed for round-robin load balancing, use `input.dynamicConnectOptionsList()` instead of `input.connectOptionsList()` to build the pool.
+`dynamicConnectOptionsList()` returns a `Supplier<Future<SqlConnectOptions>>` that re-fetches credentials on every connection attempt and rotates across hosts, so new connections automatically pick up rotated credentials:
+
+[source,java]
+----
+import jakarta.inject.Singleton;
+
+import io.quarkus.reactive.datasource.PoolCreator;
+import io.vertx.pgclient.PgBuilder;
+import io.vertx.sqlclient.Pool;
+
+@Singleton
+public class CustomPoolCreator implements PoolCreator {
+
+    @Override
+    public Pool create(Input input) {
+        return PgBuilder.pool()
+                .with(input.poolOptions())
+                .with(input.netClientOptions())
+                .connectingTo(input.dynamicConnectOptionsList())
+                .using(input.vertx())
+                .build();
+    }
+}
+----
 
 == Pipelining
 

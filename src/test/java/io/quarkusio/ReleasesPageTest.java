@@ -1,10 +1,12 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import com.microsoft.playwright.Locator;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class ReleasesPageTest extends BrowserTest {
 
     @Test
@@ -146,7 +148,14 @@ public class ReleasesPageTest extends BrowserTest {
         page.navigate(baseUrl + "/releases/");
         Locator lts = page.locator("#tl-support .tl-row[data-lts]");
         assertTrue(lts.count() >= 1);
+        String rangeStart = page.locator("#tl-support").getAttribute("data-range-start");
         for (int i = 0; i < lts.count(); i++) {
+            // A long-EOL LTS kept visible only by vendor/NES support has its community period
+            // entirely before the view's range, so there is nothing to draw.
+            String eol = lts.nth(i).getAttribute("data-eol");
+            if (eol != null && eol.compareTo(rangeStart) < 0) {
+                continue;
+            }
             assertTrue(lts.nth(i).locator(".tl-seg--community").count() >= 1,
                     "LTS row should have a community segment");
         }
@@ -218,5 +227,16 @@ public class ReleasesPageTest extends BrowserTest {
         org.junit.jupiter.api.Assumptions.assumeTrue(upcoming.count() > 0, "No upcoming release in the data");
         String text = upcoming.first().locator("td").nth(1).textContent().trim();
         assertTrue(text.matches("—|\\d{2} [A-Z][a-z]{2} \\d{4}\\s*\\(planned\\)"), "Unexpected released cell: " + text);
+    }
+
+    @Test
+    void openEndedTimelineBarsUseFadeGradient() {
+        page.navigate(baseUrl + "/releases/");
+        Locator bars = page.locator("#tl-support .tl-seg--open-ended rect");
+        org.junit.jupiter.api.Assumptions.assumeTrue(bars.count() > 0, "No open-ended bars in the data");
+        for (int i = 0; i < bars.count(); i++) {
+            String fill = bars.nth(i).getAttribute("fill");
+            assertTrue(fill != null && fill.startsWith("url(#"), "Open-ended bar should fill with a fade gradient but had: " + fill);
+        }
     }
 }

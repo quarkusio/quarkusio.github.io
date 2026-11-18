@@ -18,6 +18,7 @@ guidance before starting work:
 - `templates/` — Qute layout templates (`layouts/`) and partials (`partials/`)
 - `_data/` — YAML data files (`authors.yaml`, `siteConfig.yml`, events, books)
 - `web/` — SCSS stylesheets and static assets
+- `theme/` — The Quarkus Roq theme (layout, header, navigation, footers, colours), used in place by the site and packaged as a jar for other sites (see `theme/README.md`)
 - `public/` — Static assets (images, JavaScript, fonts)
 - `config/application.properties` — Main Roq/Quarkus configuration
 - `config/application-noguides.properties` — Profile that excludes guides for fast builds
@@ -38,7 +39,8 @@ Requires Java 21+. Site is served at http://localhost:8042.
 ## Running Tests
 
 ```sh
-./mvnw test
+./mvnw test                          # unit tests and tests that start the app
+./mvnw test -Pfullsite                       # slower tests that need the full site
 ```
 
 ## Blog Post Conventions
@@ -49,3 +51,6 @@ Requires Java 21+. Site is served at http://localhost:8042.
 - Tags: lowercase, space-separated
 - Permalink pattern: `/blog/:Name/` (configured in `config/application.properties`)
 - Images: store in `assets/images/posts/<slug>/`, reference with `:imagesdir:`
+- Links to future-dated posts must be conditional, or they 404 until the
+  target publishes — see "Linking to a Future-Dated Post" in
+  `.agents/skills/building-blog/SKILL.md`

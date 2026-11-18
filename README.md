@@ -108,6 +108,74 @@ The CNAME record for XX.quarkus.io should point to "quarkusio.github.io.".
 
 See Step 5 on https://docs.github.com/en/github/working-with-github-pages/managing-a-custom-domain-for-your-github-pages-site for more information.
 
+## Using the Quarkus theme in your site
+
+The look of quarkus.io (layout, header and navigation, footers, colours and light/dark modes) is available as a
+[Roq](https://iamroq.dev/) theme, so other Roq sites, such as the localized sites, can look like quarkus.io.
+Its sources are in [`theme/`](theme/), and it is published in a Maven repository at https://quarkus.io/maven/.
+
+1. Add the repository and the theme to your site's `pom.xml`:
+
+    ```xml
+    <repositories>
+        <repository>
+            <id>quarkus-website</id>
+            <url>https://quarkus.io/maven/</url>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+    ```
+
+    ```xml
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-website-theme</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    ```
+
+2. Use the theme's `base` layout for your pages:
+
+    ```html
+    ---
+    layout: base
+    title: My page
+    ---
+    <h1>{=page.title}</h1>
+    ```
+
+3. Add the theme styles to a stylesheet in your site's `web/` directory (e.g. `web/style.scss`):
+
+    ```scss
+    @use "quarkus-theme";
+    ```
+
+    The theme styles are not bundled on their own, so that you decide where they go relative to your own styles:
+    usually first, so your styles can build on them, as quarkus.io does at the top of [`web/main.scss`](web/main.scss).
+
+4. Describe your footer in `projectfooter.yaml` (footer text and links), in your site's data directory. Start from
+   quarkus.io's [`_data/projectfooter.yaml`](_data/projectfooter.yaml). The menus are part of the theme, so they are
+   the same on every site using it, and their links point at https://quarkus.io/. (quarkus.io and the localized sites
+   built from this repository set `quarkus-website-theme.links-url=/` in `config/application.properties`, so their
+   menu links stay on the site, e.g. ja.quarkus.io/about.)
+
+5. Optionally, customize the layout by overriding its `lang`, `head`, `header`, `footer` or `scripts` sections in your
+   own `templates/layouts/base.html`, as quarkus.io does in [`templates/layouts/base.html`](templates/layouts/base.html):
+
+    ```html
+    ---
+    theme-layout: base
+    ---
+    {#insert /}
+
+    {#footer}
+    {#include partials/quarkus/footer-minimal.html /}
+    {/footer}
+    ```
+
+[`theme/example-minimal-site/`](theme/example-minimal-site/) is a complete minimal site using the theme, and [`theme/README.md`](theme/README.md)
+has more details, including how to work on the theme itself.
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](https://github.com/quarkusio/quarkusio.github.io/tree/main/CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.

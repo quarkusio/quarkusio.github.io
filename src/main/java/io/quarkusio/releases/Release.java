@@ -2,29 +2,59 @@ package io.quarkusio.releases;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 /**
  * One entry of _data/releases.yaml. Dates are null when unknown or open-ended.
  * An upcoming release has no release date, only an optional planned date.
+ * branchedFromVersion is a release version (e.g. "3.39"); the dates of the vendors' own branch points are
+ * {@link EnterpriseOffering#branchedFromVersion()}, resolved to dates by {@link Releases#branchPoint}. rhbq, ibm and herodevs are null without a block for that vendor.
+ * Values which aren't in the data are computed: when open-ended support starts (here), and the planned end of an
+ * upcoming release ({@link Releases#plannedEndDate(Release)}), and the latest micro ({@link #latestMicro()}).
+ * micros are the published micro releases, newest first, including candidates (e.g. 3.28.0.CR1); empty when there
+ * are none.
  */
 public record Release(String version, LocalDate releaseDate, LocalDate plannedDate, LocalDate eolDate,
-        boolean lts, boolean upcoming, String latestPatch, LocalDate latestPatchDate, String link,
-        LocalDate rhbqEol, LocalDate ibmEol, HeroDevsEol herodevsEol) {
+        boolean lts, boolean upcoming, String link,
+        EnterpriseOffering rhbq, EnterpriseOffering ibm, EnterpriseOffering herodevs, String branchedFromVersion,
+        List<Micro> micros) {
 
     public static Release from(Releases.Entry e) {
+        List<Micro> micros = e.micros() == null ? List.of()
+                : e.micros().stream().map(m -> new Micro(m.version(), date(m.releaseDate()), m.githubUrl(), m.bomUrl(),
+                        m.candidate(), m.beta(), m.alpha())).toList();
         return new Release(e.version(), date(e.releaseDate()), date(e.plannedDate()), date(e.eolDate()),
-                e.lts(), e.upcoming(), e.latestPatch(), date(e.latestPatchDate()), e.link(),
-                date(e.rhbqEol()), date(e.ibmEol()),
-                e.herodevsEol() == null ? null : HeroDevsEol.parse(e.herodevsEol()));
+                e.lts(), e.upcoming(), e.link(),
+                enterprise(e.rhbq()), enterprise(e.ibm()), enterprise(e.herodevs()), e.branchedFrom(), micros);
     }
 
+    /**
+     * The most recent final micro release (the first one in {@link #micros()}, which the data lists newest first, that
+     * isn't marked as a candidate, beta or alpha), or null if there is none.
+     */
+    public Micro latestMicro() {
+        return micros.stream().filter(Micro::isFinal).findFirst().orElse(null);
+    }
+
+    private static EnterpriseOffering enterprise(Releases.EnterpriseDates dates) {
+        return dates == null ? null
+                : new EnterpriseOffering(date(dates.releaseDate()), date(dates.eolDate()), dates.branchedFrom(),
+                        dates.openEnded());
+    }
+
+    /**
+     * Turns a yyyy-MM-dd string from the data into a date.
+     * TODO remove once Roq can bind java.time types (https://github.com/quarkiverse/quarkus-roq/pull/1381): the {@link Releases} records
+     * can then declare LocalDate, and from and enterprise pass the dates straight through.
+     */
     private static LocalDate date(String value) {
         return value == null || value.isBlank() ? null : LocalDate.parse(value);
     }
 
     public enum Status {
-        UPCOMING, ACTIVE, COMMUNITY, ENTERPRISE_ONLY, NES_ONLY, EOL
+        UPCOMING, ACTIVE, COMMUNITY, ENTERPRISE_ONLY, OPEN_ENDED_ONLY, EOL
     }
 
     /** End of community maintenance; null when open-ended. */
@@ -34,7 +64,7 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
 
     /** Latest end of Red Hat or IBM support, or null if neither applies. */
     public LocalDate vendorEnd() {
-        return later(rhbqEol, ibmEol);
+        return later(rhbq == null ? null : rhbq.eolDate(), ibm == null ? null : ibm.eolDate());
     }
 
     /** End of enterprise support, only when it extends past community maintenance. */
@@ -54,22 +84,13 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
         return later(eolDate, vendorEnd());
     }
 
+    /** Any support offering is running on d: community, Red Hat, IBM or HeroDevs. */
+    public boolean supportActive(LocalDate d) {
+        return communityActive(d) || anyOfferingActiveOn(d) || hasOpenEndedSupport();
+    }
+
     public boolean hasVendorSupport() {
-        return rhbqEol != null || ibmEol != null;
-    }
-
-    public boolean hasNes() {
-        return herodevsEol != null;
-    }
-
-    /** True for "nes": never-ending support with no end date. */
-    public boolean herodevsNes() {
-        return herodevsEol != null && herodevsEol.isNes();
-    }
-
-    /** End of dated HeroDevs support, or null when none or never-ending. */
-    public LocalDate herodevsEnd() {
-        return herodevsEol == null ? null : herodevsEol.date();
+        return (rhbq != null && rhbq.hasEndDate()) || (ibm != null && ibm.hasEndDate());
     }
 
     /** Community maintenance is running: not upcoming, and either open-ended or ending after d. */
@@ -81,20 +102,38 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
         return communityActive(now.toLocalDate());
     }
 
-    public boolean rhbqActive(LocalDate d) {
-        return rhbqEol != null && rhbqEol.isAfter(d);
+    /**
+     * When a vendor's support with no end date starts: when its own dated support ends, or, for a vendor with no build
+     * of its own (HeroDevs), once all dated vendor support has ended; never before community support ends.
+     */
+    public LocalDate openEndedStart(EnterpriseOffering vendor) {
+        return later(eolDate, vendor.hasRelease() ? vendor.eolDate() : vendorEnd());
     }
 
-    public boolean rhbqActive(LocalDateTime now) {
-        return rhbqActive(now.toLocalDate());
+    /** Support with no end date, IBM's open-ended support or HeroDevs' Never-Ending Support, is offered. */
+    public boolean hasOpenEndedSupport() {
+        return (ibm != null && ibm.openEnded()) || (herodevs != null && herodevs.openEnded());
     }
 
-    public boolean ibmActive(LocalDate d) {
-        return ibmEol != null && ibmEol.isAfter(d);
+    /**
+     * Some vendor's dated support for the release is running on d. Called from Java with a date; templates use the
+     * {@link #anyOfferingActiveOn(LocalDateTime)} overload.
+     */
+    public boolean anyOfferingActiveOn(LocalDate d) {
+        return vendors().anyMatch(vendor -> vendor.activeOn(d));
     }
 
-    public boolean ibmActive(LocalDateTime now) {
-        return ibmActive(now.toLocalDate());
+    /**
+     * Same as {@link #anyOfferingActiveOn(LocalDate)}, for templates: Roq gives them {@code now} as a LocalDateTime
+     * (releases-table-band.html marks supported rows with it).
+     */
+    public boolean anyOfferingActiveOn(LocalDateTime now) {
+        return anyOfferingActiveOn(now.toLocalDate());
+    }
+
+    /** The vendor offerings the release has. */
+    private Stream<EnterpriseOffering> vendors() {
+        return Stream.of(rhbq, ibm, herodevs).filter(Objects::nonNull);
     }
 
     /** Community maintenance has ended: has an end date that is not after d. */
@@ -107,7 +146,7 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
     }
 
     public boolean isSupportedOn(LocalDate d) {
-        return status(d) != Status.EOL && status(d) != Status.UPCOMING && status(d) != Status.NES_ONLY;
+        return status(d) != Status.EOL && status(d) != Status.UPCOMING && status(d) != Status.OPEN_ENDED_ONLY;
     }
 
     public Status status(LocalDate d) {
@@ -125,8 +164,8 @@ public record Release(String version, LocalDate releaseDate, LocalDate plannedDa
         if (vendor != null && vendor.isAfter(d)) {
             return Status.ENTERPRISE_ONLY;
         }
-        if (herodevsNes() || (herodevsEnd() != null && herodevsEnd().isAfter(d))) {
-            return Status.NES_ONLY;
+        if (hasOpenEndedSupport()) {
+            return Status.OPEN_ENDED_ONLY;
         }
         return Status.EOL;
     }

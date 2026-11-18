@@ -93,6 +93,48 @@ Posts with a `date` value in the future are served normally by the
 local dev server and by the pull request preview. No special flag or
 workaround is needed; production hides them until their date.
 
+### Linking to a Future-Dated Post
+
+A link from a published post to a future-dated one is a 404 in
+production until the target's date, and the link checker will flag it.
+Make the link conditional on the target page existing:
+
+```asciidoc
+:imagesdir: /assets/images/posts/<slug>
+:qute:
+
+...
+
+{#if site.document('posts/2026/2026-11-17-target-slug.adoc')}
+See the link:/blog/target-slug/[companion post].
+{#else}
+A companion post next week will cover ...
+{/if}
+```
+
+The production site is rebuilt daily, and every page is regenerated in
+the same build, so the link appears in the build that publishes the
+target post. Things to get right:
+
+- **`:qute:` is required.** AsciiDoc posts are not processed by Qute
+  by default. Without it, the `{#if}` tags render as literal text and
+  both branches appear, with no build error. Once enabled, any other
+  `{#...}` or `{/...}` in the post (e.g. in code samples) is parsed
+  by Qute too.
+- **The path is relative to `content/`** and includes any year
+  directory and the file extension. A wrong path silently returns
+  null, so the link never appears.
+- **The dev server always shows the link**, because it serves future
+  posts. To check production behaviour, run a static build:
+
+  ```bash
+  QUARKUS_PROFILE=prod,noguides QUARKUS_ROQ_GENERATOR_BATCH=true ./mvnw package quarkus:run -DskipTests
+  ```
+
+  and inspect `target/roq/blog/<slug>/index.html`. Re-run with
+  `SITE_FUTURE=true` to confirm the link appears once the target is
+  published.
+
 ## Iteration Loop
 
 ```

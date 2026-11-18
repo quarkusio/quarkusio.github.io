@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Response;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests for HTML output produced by _plugins/asciidoctor-extension.rb.
  */
+@QuarkusTest
 public class AsciidocExtensionTest extends BrowserTest {
 
     @ParameterizedTest

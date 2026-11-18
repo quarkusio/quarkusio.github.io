@@ -2,7 +2,9 @@ name: Build
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types:
+      - opened
+      - synchronize
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,16 +44,22 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pom.xml') }}
 
-      # git restore-mtime is currently broken in the GH Actions images so using our own updated local copy
-      # see https://github.com/MestreLion/git-tools/blob/main/git-restore-mtime
-      - name: Restore mtime
-        run: ./tools/git-restore-mtime
-
       - name: Detect infra changes
         id: infra
         run: |
-          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-            CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...HEAD -- \
+          # The checkout is the merge of the PR into main as it is *now*, which can be well ahead of
+          # pull_request.base.sha (the main tip when the PR was opened or last pushed). Diffing against
+          # base.sha would count everything merged to main since as part of this PR, so use the first
+          # parent of the merge commit (the main tip that was merged) as the baseline instead.
+          # Fall back to the merge base if HEAD is not a merge commit (e.g. the PR is already up to date).
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            BASE_COMMIT=$(git rev-parse HEAD^1)
+          else
+            BASE_COMMIT=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD 2>/dev/null || true)
+          fi
+          echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
+          if [ -n "$BASE_COMMIT" ]; then
+            CHANGED=$(git diff --name-only "$BASE_COMMIT" HEAD -- \
               .github/workflows/build.yml \
               pom.xml \
               config/ \
@@ -67,22 +75,33 @@ jobs:
             echo "include_versions=false" >> $GITHUB_OUTPUT
           fi
 
+      # No --with-deps: it runs apt-get, which needs the Ubuntu mirrors (unreachable from some
+      # runners) and only adds fonts; the runner image already has the libraries Chromium needs.
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn -B test-compile exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --only-shell chromium"
+
       - name: Build with Maven
         run: |
           export QUARKUS_ROQ_GENERATOR_BATCH=true
           # unlike production, the preview shows future-dated posts so reviewers can check them
           export SITE_FUTURE=true
+          PROFILE_ARG=""
           if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
             export QUARKUS_PROFILE=only-latest-guides
+            # QUARKUS_PROFILE does not reach @QuarkusTest, so the tests get the profile separately
+            PROFILE_ARG="-Dquarkus.test.profile=test,only-latest-guides"
           fi
-          mvn -B package quarkus:run -DskipTests
+          mvn -B package quarkus:run $PROFILE_ARG
+        env:
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
-      - name: Compile tests
-        run: mvn -B test-compile
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: mvn exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --with-deps --only-shell chromium"
+      - name: Cache jbang
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.jbang/cache
+          key: ${{ runner.os }}-jbang-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: ${{ runner.os }}-jbang-
 
       - uses: jbangdev/setup-jbang@main
 
@@ -91,8 +110,10 @@ jobs:
           jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
           jbang roq@quarkiverse/quarkus-roq serve target/roq/ -p 8090 &
 
+      # Tests that start their own site (@RoqAndRoll) generate it in-process. They do not need the
+      # numbered guide versions, which would need most of the default heap to generate.
       - name: Run smoke tests
-        run: mvn -B test -Dtest.url=http://localhost:8090
+        run: mvn -B test -Pfullsite -Dquarkus.test.profile=test,only-latest-guides
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
@@ -130,11 +151,13 @@ jobs:
             exit 0
           }
 
-          # Compare with the deployment of the commit this PR branched from, rather than the
+          # Compare with the deployment of the main commit merged into this build, rather than the
           # latest deployment, so what has landed on main since then is not counted as a change.
           # Each deploy commit on gh-pages is titled "deploy: <source sha>"; use the newest one
           # whose source is an ancestor of the branch point, or the latest if there is none.
-          BASE_COMMIT=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD 2>/dev/null || true)
+          # BASE_COMMIT is the main tip merged into the checkout (see "Detect infra changes"), so the
+          # built site differs from its deployment only by what this PR changes.
+          BASE_COMMIT="${{ steps.infra.outputs.base_commit }}"
           DEPLOYED=origin/gh-pages
           if [ -n "$BASE_COMMIT" ]; then
             while read -r commit subject; do
@@ -226,7 +249,11 @@ jobs:
           if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
             EXCLUDE_ARG=""
           fi
-          mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
+          PROFILE_ARG=""
+          if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
+            PROFILE_ARG="-Dquarkus.test.profile=test,only-latest-guides"
+          fi
+          mvn -B test -Pe2e $PROFILE_ARG \
             -Dtest.crawl.check-external=false \
             $EXCLUDE_ARG \
             $CHANGED_PATHS_ARG
@@ -377,10 +404,35 @@ jobs:
           path: ./target/roq
           retention-days: 3
 
+  theme:
+    name: Theme
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Package the theme
+        run: mvn -B -f theme/pom.xml install
+
+      # quarkus.io uses the theme sources directly, so check the packaged jar works in another site
+      - name: Build the example site with the packaged theme
+        working-directory: theme/example-minimal-site
+        run: QUARKUS_ROQ_GENERATOR_BATCH=true mvn -B package quarkus:run -DskipTests
+
+      - name: Check the example site
+        run: theme/example-minimal-site/verify.sh theme/example-minimal-site/target/roq
+
   build-report:
     runs-on: ubuntu-latest
     name: Build report
-    needs: [build]
+    needs:
+      - build
     if: always()
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

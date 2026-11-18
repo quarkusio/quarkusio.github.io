@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -17,6 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static io.quarkusio.UnrenderedMarkupDetector.assertDoesNotContainUnrenderedMarkup;
 import static org.junit.jupiter.api.Assertions.*;
 
+@QuarkusTest
 public class GuidesPageTest extends BrowserTest {
 
     @ParameterizedTest

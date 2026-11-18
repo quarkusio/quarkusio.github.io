@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import io.quarkus.test.junit.QuarkusTest;
 import java.io.IOException;
 import java.io.StringReader;
 import java.net.URI;
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 
+@QuarkusTest
 public class SitemapTest extends BrowserTest {
 
     @Override

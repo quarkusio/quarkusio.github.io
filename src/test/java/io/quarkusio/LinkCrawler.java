@@ -1,0 +1,1703 @@
+package io.quarkusio;
+
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.PlaywrightException;
+import com.microsoft.playwright.Response;
+import com.microsoft.playwright.Route;
+import com.microsoft.playwright.options.WaitUntilState;
+
+import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.junit.jupiter.api.Assertions.fail;
+
+/**
+ * Crawls a served site, checking its links, images and fragment anchors. Used by the link
+ * crawler tests, which differ in where the site comes from.
+ */
+final class LinkCrawler implements AutoCloseable {
+
+    private final Playwright playwright;
+    private final Browser browser;
+    private final String baseUrl;
+
+    /** @param siteUrl the root URL of the site to crawl, with or without a trailing slash */
+    LinkCrawler(String siteUrl) {
+        String url = siteUrl;
+        if (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        baseUrl = url;
+        playwright = Playwright.create();
+        browser = playwright.chromium().launch(
+                new BrowserType.LaunchOptions().setHeadless(true));
+    }
+
+    @Override
+    public void close() {
+        browser.close();
+        playwright.close();
+    }
+
+
+    private static final int DEFAULT_MAX_PAGES = Integer.MAX_VALUE;
+    private static final int DEFAULT_THREADS = 16;
+
+    // --- Links that we know are wrong that we have in our docs to illustrate errors ---
+    // renamed to security-oidc-code-flow-authentication; the /version/main/ match is a Roq migration issue
+    private static final List<Pattern> DELIBERATE_ERRORS = List.of(
+            Pattern.compile("^/version/([\\d.]+|main)/guides/security-openid-connect-web-authentication$"));
+
+    // --- Waiting for release ---
+    private static final Pattern WAITING_FOR_RELEASE = Pattern.compile(
+            // Generated config docs use a relative link:native-and-ssl.html which
+            // resolves to e.g. /guides/native-and-ssl.html (404).
+            // Fixed upstream in quarkusio/quarkus@43805585b1, expected in Quarkus 3.40.
+            "^/guides/.*native-and-ssl\\.html$");
+
+    // --- Will-not-backport: broken links in frozen versioned guide snapshots ---
+    // Versioned guide snapshots are frozen copies of old releases. Broken
+    // cross-references to guides that were renamed or removed can't be fixed
+    // without backporting to old release branches, which we won't do.
+    private static final List<Pattern> WILL_NOT_BACKPORT_PATTERNS = List.of(
+            // file path links (link:src/main/resources/...) that aren't web pages
+            Pattern.compile("^/version/[\\d.]+/guides/cassandra/src/"),
+            // retired guide
+            Pattern.compile("^/version/[\\d.]+/guides/deploying-to-openshift-S2I-howto$"),
+            // renamed to opentelemetry-tracing
+            Pattern.compile("^/version/[\\d.]+/guides/opentelemetry$"),
+            // renamed to security-openid-connect-multitenancy-howto
+            Pattern.compile("^/version/[\\d.]+/guides/security-openid-connect-multitenancy$"),
+            // typo in cross-ref within the versioned snapshot
+            Pattern.compile("^/version/[\\d.]+/guides/hibernate-search-stqndqlone-elasticsearch$"),
+            // extensions search link in a frozen snapshot that resolves under /version/
+            Pattern.compile("^/version/[\\d.]+/.*extensions/?\\?search-regex=kogito"),
+            // native-and-ssl.html relative-link fix (Quarkus 3.40) won't be backported to snapshots
+            Pattern.compile("^/version/[\\d.]+/guides/.*native-and-ssl\\.html$"),
+            // cross-references to guides that were renamed/removed/retired after these snapshots
+            Pattern.compile("^/version/[\\d.]+/guides/("
+                    + "consul-config"
+                    + "|micrometer"
+                    + "|microprofile-health"
+                    + "|microprofile-metrics"
+                    + "|vault"
+                    + "|security-authorization"
+                    + "|security-authorization-web-endpoints-reference"
+                    + "|security-authorization-of-web-endpoints-reference"
+                    + "|registry\\.quarkus\\.io"
+                    + "|registry\\.quarkus\\.io\\.maven\\.repo"
+                    + "|security-oidc-bearer-token-authentication-concept"
+                    + "|security-oidc-code-flow-authentication-concept"
+                    + "|security-protect-service-applications-by-using-oidc-bearer-authentication-how-to"
+                    + "|https:/quarkus\\.io/guides/dev-services"
+                    + ")$")
+    );
+
+    // --- Known-broken fragment anchors (temporary, Roq regressions) ---
+    // Some guides set :extension-status: but forget to include the
+    // extension-status.adoc note block, so the generated status badge links to a
+    // #extension-status-note anchor that is never rendered. The referring link is
+    // emitted unconditionally by the extension-status treeprocessor, producing a
+    // dead fragment on every affected guide (and each of its versioned snapshots,
+    // including /version/main/), so it is excused everywhere.
+    //
+    // TODO: remove at some point
+    private static final Set<String> KNOWN_BROKEN_FRAGMENTS = Set.of(
+            "extension-status-note");
+
+    // --- Will-not-backport: fragment anchors fixed upstream on Quarkus main ---
+    // The doc-reference cross-references were corrected on Quarkus main by
+    // quarkusio/quarkus#55413 (merged 2026-07-13): doc-contribute-docs-howto.adoc
+    // now links to the anchors that actually exist (#titles-headings, #categories,
+    // #doc-structure), and those render fine. The old links below survive only in
+    // the frozen numbered versioned snapshots and will not be backported, so they
+    // are excused under /version/<number>/ only; the current guides stay strict.
+    private static final Set<String> WILL_NOT_BACKPORT_FRAGMENTS = Set.of(
+            "s2i",
+            "titles-and-headings",
+            "document-attributes-and-variables",
+            "document-structure",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-kubernetes",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-knative",
+            "duration-note-anchor-quarkus-kubernetes_quarkus-openshift",
+            "duration-note-anchor-quarkus-kubernetes-client_quarkus-kubernetes-client", // Fixed in quarkus#55413
+            "duration-note-anchor-quarkus-knative-knative-config",
+            "duration-note-anchor-quarkus-kubernetes-client",
+            "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
+            "duration-note-anchor-quarkus-openshift-openshift-config",
+            "analysis-configurer",
+            "basic-auth",
+            "bean-reference-note-anchor",
+            "configuring-json-support",
+            "coordination",
+            "dev-mode",
+            "multi-module-maven",
+            "mutual-TLS-authentication",
+            "quarkus-vertx-http_quarkus.http.auth.session.encryption-key",
+            "security-identity-customization",
+            "standard-security-annotations",
+            "synthetic_beans",
+            "token-propagation");
+
+    // --- Anchors that render fine today but are stale in frozen snapshots ---
+    // These render correctly on the current guides (confirmed on both quarkus.io
+    // and es.quarkus.io); only the frozen numbered versioned snapshots reference
+    // the old ids. Excused under /version/<number>/ only, current guides stay
+    // strict.
+    private static final Set<String> STALE_IN_FROZEN_SNAPSHOTS = Set.of(
+            "logging-adapters",
+            "quarkus-vertx-http_quarkus-http-non-application-root-path");
+
+      private static final Set<String> UNRENDERED_UPSTREAM_ANCHORS = Set.of();
+
+    // --- Dead upstream anchors: broken on BOTH engines, everywhere ---
+    // Each of these #fragment links points at an anchor id that Asciidoctor never
+    // emits, on either the Roq (quarkus.io) or the jRuby/Jekyll (es.quarkus.io)
+    // path, and on latest /guides/, /version/main/ and the numbered snapshots
+    // alike. They are upstream content bugs in the guide sources
+    // (quarkusio/quarkus, docs/src/main/asciidoc/) — a missing/renamed section
+    // anchor or a stale referring link — not a site-generator issue, so they are
+    // excused everywhere until fixed upstream. The full per-guide list is in
+    // quarkusio/quarkus#56286. Drop each entry as the corresponding anchor starts rendering.
+    private static final Set<String> DEAD_UPSTREAM_ANCHORS = Set.of(
+            "build-analytics.quarkus-analytics-uri-base",
+            "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
+            "embedded-roles",
+            "embedded-users",
+            "quarkus-datasource_quarkus.datasource.db-version",
+            "roles-properties",
+            "users-properties");
+
+    private static final Set<String> PRODUCTION_HOSTS = Set.of("quarkus.io", "www.quarkus.io");
+
+    // Paths that should NOT be rewritten to localhost - they are served from different repos
+    private static final Set<String> EXTERNAL_QUARKUSIO_PATHS = Set.of(
+            "/extensions",
+            "/benchmarks",
+            "/quarkus-workshops",
+            "/quarkus-workshop-langchain4j",
+            "/almanac"
+    );
+
+    // URLs that should never be crawled. AsciiDoc auto-links URL literals in
+    // prose (e.g. "https://quarkus.io/issuer" in the security-jwt guide) even
+    // though they're not navigation links.
+    private static final Set<String> DO_NOT_VISIT = Set.of(
+            "http://host.testcontainers.internal",
+            "https://registry.quarkus.io/maven", // registry maven endpoint is not browsable
+            "https://auth.streamnative.cloud",
+            "https://quarkus.io/issuer",
+            "/issuer"
+    );
+
+    private static final Pattern HREF_PATTERN = Pattern.compile(
+            "<a\\s[^>]*?href\\s*=\\s*[\"']([^\"']*)[\"']",
+            Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern META_REFRESH_PATTERN = Pattern.compile(
+            "<meta\\s[^>]*?(?:" +
+                    "http-equiv\\s*=\\s*[\"']?refresh[\"']?[^>]*?content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)" +
+                    "|" +
+                    "content\\s*=\\s*[\"']?\\d+\\s*;\\s*url=([^\"'\\s>]+)[^>]*?http-equiv\\s*=\\s*[\"']?refresh[\"']?" +
+                    ")",
+            Pattern.CASE_INSENSITIVE);
+
+    private CrawlResults crawlResults;
+
+    private synchronized CrawlResults getCrawlResults() throws InterruptedException {
+        if (crawlResults != null) {
+            return crawlResults;
+        }
+        crawlResults = runCrawl();
+        return crawlResults;
+    }
+
+    void crawlAndCheckLinks() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenLinks.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> unexpected = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> rateLimited = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> uncheckable = new ArrayList<>();
+            List<Map.Entry<String, BrokenLink>> oldContent = new ArrayList<>();
+            int knownCount = 0;
+            for (var entry : results.brokenLinks.entrySet()) {
+                if (isKnownBrokenLink(entry.getKey())) {
+                    knownCount++;
+                } else if (entry.getValue().status == 429) {
+                    rateLimited.add(entry);
+                } else if (isUncheckableStatus(entry.getValue().status)) {
+                    uncheckable.add(entry);
+                } else if (isFromOldContent(entry.getValue().referrer, results.publishDates)) {
+                    oldContent.add(entry);
+                } else {
+                    unexpected.add(entry);
+                }
+            }
+            if (knownCount > 0) {
+                System.out.println("Skipped " + knownCount + " known broken link(s)");
+            }
+            if (!uncheckable.isEmpty()) {
+                uncheckable.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Uncheckable broken links (401/403/410) - " + uncheckable.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(uncheckable));
+            }
+            if (!oldContent.isEmpty()) {
+                oldContent.sort(Map.Entry.comparingByKey());
+                System.out.println("\n=== Broken links in old content (newsletters/blogs older than cutoff) - " + oldContent.size() + " found ===");
+                System.out.println("These links are reported but do not fail the build:");
+                System.out.println(buildLinkReport(oldContent));
+            }
+            if (!unexpected.isEmpty()) {
+                unexpected.sort(Map.Entry.comparingByKey());
+                fail("Found " + unexpected.size() + " broken link(s)"
+                        + (rateLimited.isEmpty() ? "" : " (plus " + rateLimited.size() + " rate-limited)")
+                        + (uncheckable.isEmpty() ? "" : " (plus " + uncheckable.size() + " uncheckable 401/403/410)")
+                        + (oldContent.isEmpty() ? "" : " (plus " + oldContent.size() + " in old content)")
+                        + ":\n" + buildLinkReport(unexpected));
+            }
+            if (!rateLimited.isEmpty()) {
+                fail("All " + rateLimited.size() + " failures were rate-limited (429) — no defects will be raised,"
+                        + " but the links could not be verified.");
+            }
+        }
+    }
+
+    // Status codes that are uncheckable - printed but don't fail the build or raise defects
+    private static boolean isUncheckableStatus(int status) {
+        return status == 401 || status == 403 || status == 410;
+    }
+
+    // Check if a broken link is from old content (old newsletter or blog post)
+    private boolean isFromOldContent(String referrer, Map<String, java.time.LocalDate> publishDates) {
+        if (referrer == null) {
+            return false;
+        }
+        String path = stripHost(referrer);
+        return isOldNewsletter(path) || isOldBlogPost(path, publishDates);
+    }
+
+    private boolean isKnownBrokenLink(String url) {
+        String path = normalizePath(url);
+
+        if (isDeliberateError(path)) {
+            return true;
+        }
+
+        if (WAITING_FOR_RELEASE.matcher(path).find()) {
+            return true;
+        }
+        for (Pattern p : WILL_NOT_BACKPORT_PATTERNS) {
+            if (p.matcher(path).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isDeliberateError(String path) {
+        for (Pattern p : DELIBERATE_ERRORS) {
+            if (p.matcher(path).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String stripHost(String url) {
+        return url.startsWith(baseUrl) ? url.substring(baseUrl.length()) : url;
+    }
+
+    private String normalizePath(String url) {
+        String path = stripHost(url);
+        if (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
+    void crawlAndCheckImages() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenImages.isEmpty()) {
+            List<Map.Entry<String, BrokenImage>> sorted = new ArrayList<>(results.brokenImages.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenImages.size() + " broken image(s):\n" + buildImageReport(sorted));
+        }
+    }
+
+    void crawlAndCheckFragmentAnchors() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.brokenFragments.isEmpty()) {
+            List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(results.brokenFragments.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            fail("Found " + results.brokenFragments.size() + " broken fragment anchor(s):\n" + buildFragmentReport(sorted));
+        }
+    }
+
+    private CrawlResults runCrawl() throws InterruptedException {
+        int maxPages = Integer.getInteger("test.crawl.max-pages", DEFAULT_MAX_PAGES);
+        int threads = Integer.getInteger("test.crawl.threads", DEFAULT_THREADS);
+        boolean checkInternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-internal", "true"));
+        boolean checkExternal = Boolean.parseBoolean(System.getProperty("test.crawl.check-external", "false"));
+        String resultsFile = System.getProperty("test.crawl.results-file", "");
+        List<String> excludePaths = parseExcludePaths(System.getProperty("test.crawl.exclude-paths", ""));
+        List<String> excludeUrls = parseExcludePaths(System.getProperty("test.crawl.exclude-urls", ""));
+        List<String> changedPaths = parseExcludePaths(System.getProperty("test.crawl.changed-paths", ""));
+        List<String> startPaths = parseExcludePaths(System.getProperty("test.crawl.start-paths", ""));
+        List<String> includePaths = parseExcludePaths(System.getProperty("test.crawl.include-paths", ""));
+        List<String> excludeSelectors = parseExcludePaths(System.getProperty("test.crawl.exclude-selectors", ""));
+
+        Set<String> visited = ConcurrentHashMap.newKeySet();
+        LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        Map<String, BrokenLink> brokenLinks = new ConcurrentHashMap<>();
+        Map<String, BrokenImage> brokenImages = new ConcurrentHashMap<>();
+        Map<String, String> referrers = new ConcurrentHashMap<>();
+        Set<String> checkedExternal = ConcurrentHashMap.newKeySet();
+        Set<String> checkedImages = ConcurrentHashMap.newKeySet();
+        Map<String, FragmentLink> fragmentLinks = new ConcurrentHashMap<>();
+        // Element ids present on each crawled page, keyed by normalized URL.
+        // Collected during the crawl so fragment anchors can be verified in
+        // memory afterwards instead of re-navigating to every page.
+        Map<String, Set<String>> pageIds = new ConcurrentHashMap<>();
+        // Publish dates for blog posts and newsletters, keyed by normalized URL.
+        // Collected during crawl to determine if content is old and should be
+        // excluded from external link checking.
+        Map<String, java.time.LocalDate> publishDates = new ConcurrentHashMap<>();
+        AtomicInteger crawledCount = new AtomicInteger();
+
+        Set<String> seedUrls = ConcurrentHashMap.newKeySet();
+        Set<String> startUrls = ConcurrentHashMap.newKeySet();
+        AtomicInteger pendingWork = new AtomicInteger();
+        if (!changedPaths.isEmpty()) {
+            System.out.println("Incremental mode: checking " + changedPaths.size() + " changed page(s)");
+            for (String path : changedPaths) {
+                String url = normalize(baseUrl + path);
+                seedUrls.add(url);
+                pendingWork.incrementAndGet();
+                queue.add(url);
+            }
+        } else {
+            // Without start paths, crawl from the site root
+            for (String path : startPaths.isEmpty() ? List.of("/") : startPaths) {
+                String url = normalize(baseUrl + path);
+                startUrls.add(url);
+                pendingWork.incrementAndGet();
+                queue.add(url);
+            }
+        }
+
+        var done = new AtomicBoolean(false);
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                try (Playwright pw = Playwright.create()) {
+                    Browser br = pw.chromium().launch(
+                            new BrowserType.LaunchOptions().setHeadless(true));
+                    BrowserContext ctx = br.newContext();
+                    ctx.route("**/*.{css,woff,woff2,ttf,eot}", Route::abort);
+                    Page p = ctx.newPage();
+                    p.setDefaultNavigationTimeout(60_000);
+
+                    crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
+                            checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, crawledCount, maxPages,
+                            checkInternal, checkExternal, excludePaths, includePaths, excludeSelectors, excludeUrls, seedUrls,
+                            startUrls, pendingWork, done);
+
+                    ctx.close();
+                    br.close();
+                }
+            });
+        }
+
+        executor.shutdown();
+        while (!executor.isTerminated()) {
+            Thread.sleep(2000);
+            if (pendingWork.get() <= 0) {
+                done.set(true);
+                break;
+            }
+        }
+        executor.awaitTermination(30, TimeUnit.MINUTES);
+
+        List<Map.Entry<String, BrokenLink>> unknownBroken = brokenLinks.entrySet().stream()
+                .filter(e -> !isKnownBrokenLink(e.getKey()))
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
+
+        List<Map.Entry<String, BrokenLink>> deliberateErrors = brokenLinks.entrySet().stream()
+                .filter(e -> isDeliberateError(normalizePath(e.getKey())))
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
+
+        Map<String, FragmentLink> brokenFragments = verifyFragments(fragmentLinks, pageIds);
+
+        long knownBroken = brokenLinks.size() - unknownBroken.size() - deliberateErrors.size();
+        String summary = "Crawled " + crawledCount.get() + " internal pages"
+                + (checkExternal ? ", checked " + checkedExternal.size() + " external links" : "")
+                + ", checked " + checkedImages.size() + " unique images"
+                + ", found " + unknownBroken.size() + " broken links"
+                + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : "")
+                + ", found " + brokenImages.size() + " broken images"
+                + ", found " + brokenFragments.size() + " broken fragment anchors"
+                + " (" + threads + " threads)";
+        System.out.println(summary);
+
+        // The results file drives issue creation, so it must only hold links that are
+        // actually a problem. 429s mean we could not check the link, not that it is dead.
+        // 401/403/410 statuses are also uncheckable - they're informational but not defects.
+        // Broken links in old newsletters/blogs are natural and not worth fixing.
+        // Known failures and deliberate errors are excused by the assertions below —
+        // filing defects for any of these would be noise.
+        Map<String, BrokenLink> rateLimited = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> uncheckable = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> oldContent = new ConcurrentHashMap<>();
+        Map<String, BrokenLink> reportable = new ConcurrentHashMap<>();
+        brokenLinks.forEach((url, link) -> {
+            if (link.status == 429) {
+                rateLimited.put(url, link);
+            } else if (isUncheckableStatus(link.status)) {
+                uncheckable.put(url, link);
+            } else if (isFromOldContent(link.referrer, publishDates)) {
+                oldContent.put(url, link);
+            } else if (!isKnownBrokenLink(url)) {
+                reportable.put(url, link);
+            }
+        });
+
+        if (!resultsFile.isEmpty()) {
+            writeResultsJson(reportable, uncheckable, oldContent, brokenFragments, resultsFile);
+        }
+
+        if (!rateLimited.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(rateLimited.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("WARNING: " + rateLimited.size()
+                    + " link(s) could not be checked due to rate limiting (429):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        if (!uncheckable.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + uncheckable.size()
+                    + " uncheckable link(s) (401/403/410 - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        if (!oldContent.isEmpty()) {
+            List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+            sorted.sort(Map.Entry.comparingByKey());
+            System.out.println("INFO: " + oldContent.size()
+                    + " broken link(s) in old content (newsletters/blogs older than cutoff - reported but no defects raised):\n"
+                    + buildLinkReport(sorted));
+        }
+
+        try {
+            Path summaryFile = Path.of("target", "crawl-summary.txt");
+            Files.createDirectories(summaryFile.getParent());
+            StringBuilder sb = new StringBuilder(summary).append("\n");
+
+            int cap = 20;
+            if (!unknownBroken.isEmpty()) {
+                sb.append("\n**Broken links (will raise defects)");
+                if (unknownBroken.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(unknownBroken.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : unknownBroken.subList(0, Math.min(cap, unknownBroken.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!uncheckable.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(uncheckable.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Uncheckable links (401/403/410 - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!oldContent.isEmpty()) {
+                List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(oldContent.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken links in old content (newsletters/blogs older than cutoff - informational only)");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    BrokenLink link = entry.getValue();
+                    sb.append("- `").append(link.status).append("` ").append(entry.getKey());
+                    if (link.referrer != null) {
+                        sb.append(" ← ").append(link.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!brokenImages.isEmpty()) {
+                List<Map.Entry<String, BrokenImage>> sorted = new ArrayList<>(brokenImages.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken images");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    BrokenImage img = entry.getValue();
+                    sb.append("- `").append(img.status).append("` ").append(entry.getKey());
+                    if (img.referrer != null) {
+                        sb.append(" ← ").append(img.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (!brokenFragments.isEmpty()) {
+                List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(brokenFragments.entrySet());
+                sorted.sort(Map.Entry.comparingByKey());
+                sb.append("\n**Broken fragment anchors");
+                if (sorted.size() > cap) {
+                    sb.append(" (first ").append(cap).append(" of ").append(sorted.size()).append(")");
+                }
+                sb.append(":**\n");
+                for (var entry : sorted.subList(0, Math.min(cap, sorted.size()))) {
+                    FragmentLink frag = entry.getValue();
+                    sb.append("- `#").append(frag.fragment).append("` ").append(frag.url);
+                    if (frag.referrer != null) {
+                        sb.append(" ← ").append(frag.referrer);
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            Files.writeString(summaryFile, sb.toString());
+        } catch (IOException ignored) {
+        }
+
+        return new CrawlResults(brokenLinks, brokenImages, brokenFragments, publishDates);
+    }
+
+    private void crawLoop(Page p,
+                          LinkedBlockingQueue<String> queue,
+                          Set<String> visited,
+                          Map<String, BrokenLink> brokenLinks,
+                          Map<String, BrokenImage> brokenImages,
+                          Map<String, String> referrers,
+                          Set<String> checkedExternal,
+                          Set<String> checkedImages,
+                          Map<String, FragmentLink> fragmentLinks,
+                          Map<String, Set<String>> pageIds,
+                          Map<String, java.time.LocalDate> publishDates,
+                          AtomicInteger crawledCount,
+                          int maxPages,
+                          boolean checkInternal,
+                          boolean checkExternal,
+                          List<String> excludePaths,
+                          List<String> includePaths,
+                          List<String> excludeSelectors,
+                          List<String> excludeUrls,
+                          Set<String> seedUrls,
+                          Set<String> startUrls,
+                          AtomicInteger pendingWork,
+                          AtomicBoolean done) {
+        boolean incrementalMode = !seedUrls.isEmpty();
+        while (!done.get()) {
+            if (crawledCount.get() >= maxPages) {
+                break;
+            }
+            String currentUrl;
+            try {
+                currentUrl = queue.poll(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (currentUrl == null) {
+                continue;
+            }
+
+            try {
+                String normalizedUrl = normalize(currentUrl);
+                if (!visited.add(normalizedUrl)) {
+                    continue;
+                }
+                crawledCount.incrementAndGet();
+
+                Response response = navigateWithRetry(p, currentUrl);
+                if (response == null) {
+                    try {
+                        if (!currentUrl.equals(normalize(p.url()))) {
+                            continue;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    if (checkInternal) {
+                        BrokenLink probe = probeWithHttp(currentUrl);
+                        if (probe != null) {
+                            brokenLinks.put(currentUrl, new BrokenLink(probe.status, probe.statusText, referrers.get(normalizedUrl)));
+                        }
+                    }
+                    continue;
+                }
+
+                int status = response.status();
+                if (status >= 400) {
+                    if (checkInternal) {
+                        brokenLinks.put(currentUrl, new BrokenLink(status, response.statusText(), referrers.get(normalizedUrl)));
+                    }
+                    continue;
+                }
+
+                if (incrementalMode && !seedUrls.contains(normalizedUrl)) {
+                    continue;
+                }
+
+            // In incremental mode, only extract links from seed pages (the
+            // changed pages). Non-seed pages are visited only to verify their
+            // status — a depth-1 check from each changed page.
+            if (incrementalMode && !seedUrls.contains(currentUrl)) {
+                continue;
+            }
+
+                // Pages outside the include list are visited only to verify their
+                // status; links are followed only from included pages and the
+                // start pages.
+                if (!startUrls.contains(normalizedUrl) && !isIncluded(normalizedUrl, includePaths)) {
+                    continue;
+                }
+
+                // Use the browser's actual URL (after redirects) as the base for
+                // resolving relative URLs — e.g. /newsletter/18 redirects to
+                // /newsletter/18/ and relative src="index_files/img.png" must
+                // resolve against the trailing-slash form.
+                String pageUrl = p.url();
+
+                // Some pages (old guide stubs) have JS redirects to production.
+                // If the browser navigated away from localhost, skip link
+                // extraction so we don't queue production URLs.
+                if (!pageUrl.startsWith(baseUrl)) {
+                    continue;
+                }
+
+                List<String> hrefs;
+                List<String> imageSrcs;
+                try {
+                    @SuppressWarnings("unchecked")
+                    var linkResult = (List<String>) p.evaluate(
+                            "sels => [...document.querySelectorAll('a[href]')]"
+                                    + ".filter(a => !sels.some(s => a.closest(s)))"
+                                    + ".map(a => a.getAttribute('href'))",
+                            excludeSelectors);
+                    hrefs = linkResult;
+
+                    @SuppressWarnings("unchecked")
+                    var imageResult = (List<String>) p.evaluate("""
+                            () => {
+                              const srcs = new Set();
+                              document.querySelectorAll('img[src]').forEach(img => srcs.add(img.getAttribute('src')));
+                              document.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
+                                el.getAttribute('srcset').split(',').forEach(entry => {
+                                  const url = entry.trim().split(/\\s+/)[0];
+                                  if (url) srcs.add(url);
+                                });
+                              });
+                              return [...srcs];
+                            }""");
+                    imageSrcs = imageResult;
+
+                    // Capture every element id on the page while it is loaded, so
+                    // fragment anchors can be verified in memory later without a
+                    // second navigation pass.
+                    @SuppressWarnings("unchecked")
+                    var idResult = (List<String>) p.evaluate(
+                            "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
+                    pageIds.put(normalizedUrl, new HashSet<>(idResult));
+
+                    // Extract publish date from blog posts and newsletters for old content filtering
+                    extractPublishDate(p, normalizedUrl, publishDates);
+                } catch (PlaywrightException e) {
+                    hrefs = extractLinksViaHttp(currentUrl);
+                    if (hrefs == null) {
+                        if (checkInternal) {
+                            brokenLinks.put(currentUrl, new BrokenLink(0, e.getMessage(), referrers.get(normalizedUrl)));
+                        }
+                        continue;
+                    }
+                    imageSrcs = List.of();
+                }
+
+                for (String href : hrefs) {
+                    if (href == null || href.isBlank()) {
+                        continue;
+                    }
+
+                    ResolvedLink resolved = resolveLink(pageUrl, href);
+                    if (resolved == null) {
+                        continue;
+                    }
+
+                    if (resolved.internal) {
+                        String normalized = normalize(resolved.url);
+                        if (!visited.contains(normalized) && !isExcluded(normalized, excludePaths)) {
+                            pendingWork.incrementAndGet();
+                            queue.add(resolved.url);
+                            referrers.putIfAbsent(normalized, currentUrl);
+                        }
+                        if (resolved.fragment != null) {
+                            String key = normalized + "#" + resolved.fragment;
+                            fragmentLinks.putIfAbsent(key,
+                                    new FragmentLink(normalized, resolved.fragment, currentUrl));
+                        }
+                    } else if (checkExternal && !isExcludedUrl(resolved.url, excludeUrls)
+                            && !isOnDoNotCheckList(resolved.url) && checkedExternal.add(resolved.url)) {
+                        BrokenLink result = checkExternalLink(resolved.url);
+                        if (result != null) {
+                            brokenLinks.put(resolved.url, new BrokenLink(result.status, result.statusText, currentUrl));
+                        }
+                    }
+                }
+
+                for (String src : imageSrcs) {
+                    if (src == null || src.isBlank() || src.startsWith("data:")) {
+                        continue;
+                    }
+
+                    String resolvedImage = resolveImageUrl(pageUrl, src);
+                    if (resolvedImage == null || !resolvedImage.startsWith(baseUrl)) {
+                        continue;
+                    }
+
+                    if (checkedImages.add(resolvedImage)) {
+                        BrokenImage result = checkImageUrl(resolvedImage);
+                        if (result != null) {
+                            brokenImages.put(resolvedImage, new BrokenImage(result.status, result.statusText, currentUrl));
+                        }
+                    }
+                }
+            } finally {
+                pendingWork.decrementAndGet();
+            }
+        }
+    }
+
+    private static Response navigateWithRetry(Page p, String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                Response response = p.navigate(url,
+                        new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                return response;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    continue;
+                }
+            }
+        }
+        return null;
+    }
+
+    private ResolvedLink resolveLink(String currentPageUrl, String href) {
+        if (href.startsWith("mailto:") || href.startsWith("javascript:")
+                || href.startsWith("tel:")
+                || DO_NOT_VISIT.contains(href)) {
+            return null;
+        }
+
+        if (href.equals("#")) {
+            return null;
+        }
+
+        if (href.startsWith("#")) {
+            String fragment = href.substring(1);
+            if (fragment.isEmpty()) {
+                return null;
+            }
+            return new ResolvedLink(currentPageUrl, true, fragment);
+        }
+
+        String resolved;
+        boolean internal;
+        if (href.startsWith("http://") || href.startsWith("https://")) {
+            if (isLocalhostUrl(href) || isExampleUrl(href)) {
+                return null;
+            }
+            resolved = rewriteToLocal(href);
+            internal = resolved.startsWith(baseUrl);
+        } else {
+            try {
+                resolved = resolveRelativeUrl(currentPageUrl, href);
+            } catch (Exception e) {
+                return null;
+            }
+            if (resolved == null) {
+                return null;
+            }
+            internal = resolved.startsWith(baseUrl);
+        }
+
+        String fragment = null;
+        int fragmentIndex = resolved.indexOf('#');
+        if (fragmentIndex >= 0) {
+            fragment = resolved.substring(fragmentIndex + 1);
+            if (fragment.isEmpty()) {
+                fragment = null;
+            }
+            resolved = resolved.substring(0, fragmentIndex);
+        }
+
+        return new ResolvedLink(resolved, internal, fragment);
+    }
+
+    private static String resolveImageUrl(String currentPageUrl, String src) {
+        if (src.startsWith("http://") || src.startsWith("https://")) {
+            return src;
+        }
+        return resolveRelativeUrl(currentPageUrl, src);
+    }
+
+    private static String resolveRelativeUrl(String base, String relative) {
+        try {
+            URI resolved = URI.create(base).resolve(relative).normalize();
+            String path = resolved.getPath();
+            while (path.startsWith("/../")) {
+                path = path.substring(3);
+            }
+            return new URI(resolved.getScheme(), resolved.getAuthority(), path,
+                    resolved.getQuery(), resolved.getFragment()).toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static BrokenImage checkImageUrl(String url) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try (HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build()) {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+                int status = response.statusCode();
+                if (status >= 400) {
+                    if (attempt == 0) {
+                        continue;
+                    }
+                    return new BrokenImage(status, "HTTP " + status, null);
+                }
+                return null;
+            } catch (Exception e) {
+                if (attempt == 0) {
+                    continue;
+                }
+                return new BrokenImage(0, e.getMessage(), null);
+            }
+        }
+        return null;
+    }
+
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (compatible; QuarkusLinkChecker/1.0; +https://quarkus.io)";
+
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private static final HttpClient NO_REDIRECT_HTTP_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    private static final ConcurrentHashMap<String, Semaphore> DOMAIN_SEMAPHORES = new ConcurrentHashMap<>();
+
+    private static Semaphore domainSemaphore(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) host = url;
+            return DOMAIN_SEMAPHORES.computeIfAbsent(host.toLowerCase(), k -> new Semaphore(2));
+        } catch (IllegalArgumentException e) {
+            return DOMAIN_SEMAPHORES.computeIfAbsent(url, k -> new Semaphore(1));
+        }
+    }
+
+    private static BrokenLink checkExternalLink(String url) {
+        Semaphore sem = domainSemaphore(url);
+        try {
+            sem.acquire();
+            try {
+                return doCheckExternalLink(url);
+            } finally {
+                sem.release();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new BrokenLink(0, "interrupted", null);
+        }
+    }
+
+    private static BrokenLink doCheckExternalLink(String url) {
+        try {
+            HttpRequest headRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .header("User-Agent", USER_AGENT)
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            int status = sendWithRetry(headRequest);
+
+            // Some sites reject HEAD but accept GET — fall back
+            if (status >= 400 && status < 500) {
+                HttpRequest getRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .header("User-Agent", USER_AGENT)
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                status = sendWithRetry(getRequest);
+            }
+
+            // Some sites block bot user-agents — retry without custom UA
+            // and without following redirects (some sites redirect bots to challenge pages)
+            if (status == 401 || status == 403) {
+                HttpRequest retryRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .timeout(Duration.ofSeconds(15))
+                        .build();
+                int retryStatus = NO_REDIRECT_HTTP_CLIENT.send(retryRequest, HttpResponse.BodyHandlers.discarding()).statusCode();
+                if (retryStatus < 400) {
+                    status = retryStatus;
+                }
+            }
+
+            if (status == 403 && hostMatches(url, FORBIDDEN_OK_HOSTS)) {
+                return null;
+            }
+            if (status == 405 && hostMatches(url, METHOD_NOT_ALLOWED_OK_HOSTS)) {
+                return null;
+            }
+
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static boolean hostMatches(String url, List<String> hosts) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            String hostLower = host.toLowerCase();
+            for (String h : hosts) {
+                if (hostLower.endsWith(h)) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // ignore
+        }
+        return false;
+    }
+
+    private static int sendWithRetry(HttpRequest request) throws IOException, InterruptedException {
+        int status = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+        Duration delay = Duration.ofSeconds(65);
+        Duration maxDelay = Duration.ofMinutes(5);
+        for (int attempt = 0; attempt < 3 && (status==429 || status >= 500); attempt++) {
+            Thread.sleep(delay.toMillis());
+            status = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            delay = delay.multipliedBy(2);
+            if (delay.compareTo(maxDelay) > 0) delay = maxDelay;
+        }
+        return status;
+    }
+
+    private static List<String> extractLinksViaHttp(String url) {
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 400) {
+                return null;
+            }
+            List<String> hrefs = new ArrayList<>();
+            Matcher m = HREF_PATTERN.matcher(response.body());
+            while (m.find()) {
+                hrefs.add(m.group(1));
+            }
+            return hrefs;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Falls back to plain HTTP when Playwright can't navigate (downloads, bad schemes, meta-refresh).
+    // Returns null if reachable, BrokenLink otherwise.
+    private static BrokenLink probeWithHttp(String url) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return new BrokenLink(0, "unsupported scheme", null);
+        }
+
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<String> response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+
+            String body = response.body();
+            if (body != null) {
+                Matcher m = META_REFRESH_PATTERN.matcher(body);
+                if (m.find()) {
+                    String target = m.group(1) != null ? m.group(1) : m.group(2);
+                    target = target.strip();
+                    BrokenLink targetCheck = checkUrlReachable(target, url);
+                    if (targetCheck != null) {
+                        return new BrokenLink(targetCheck.status,
+                                "meta-refresh target unreachable: " + target + " (" + targetCheck.statusText + ")", null);
+                    }
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private static BrokenLink checkUrlReachable(String url, String sourceUrl) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            try {
+                url = URI.create(sourceUrl).resolve(url).toString();
+            } catch (IllegalArgumentException e) {
+                return new BrokenLink(0, "invalid redirect target: " + url, null);
+            }
+        }
+
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            int status = response.statusCode();
+            if (status >= 400) {
+                return new BrokenLink(status, "HTTP " + status, null);
+            }
+            return null;
+        } catch (Exception e) {
+            return new BrokenLink(0, e.getMessage(), null);
+        }
+    }
+
+    private String rewriteToLocal(String target) {
+        if (!target.startsWith("http://") && !target.startsWith("https://")) {
+            return target;
+        }
+        try {
+            URI targetUri = URI.create(target);
+            String host = targetUri.getHost();
+            if (host != null && PRODUCTION_HOSTS.contains(host)) {
+                String path = targetUri.getPath();
+                if (path != null && !path.isEmpty()) {
+                    // Don't rewrite paths that are served from other repositories
+                    for (String externalPath : EXTERNAL_QUARKUSIO_PATHS) {
+                        if (path.equals(externalPath) || path.startsWith(externalPath + "/")) {
+                            return target;  // Keep original production URL
+                        }
+                    }
+                    return baseUrl + path;
+                }
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return target;
+    }
+
+    private static String buildLinkReport(List<Map.Entry<String, BrokenLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenLink link = entry.getValue();
+            sb.append("  ").append(link.status).append(" ").append(entry.getKey());
+            if (link.referrer != null) {
+                sb.append("\n       linked from: ").append(link.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildImageReport(List<Map.Entry<String, BrokenImage>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            BrokenImage img = entry.getValue();
+            sb.append("  ").append(img.status).append(" ").append(entry.getKey());
+            if (img.referrer != null) {
+                sb.append("\n       found on: ").append(img.referrer);
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String buildFragmentReport(List<Map.Entry<String, FragmentLink>> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (var entry : entries) {
+            FragmentLink frag = entry.getValue();
+            sb.append("  ").append(frag.url).append("#").append(frag.fragment);
+            sb.append("\n       linked from: ").append(frag.referrer);
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private Map<String, FragmentLink> verifyFragments(Map<String, FragmentLink> fragmentLinks,
+            Map<String, Set<String>> pageIds) {
+        if (fragmentLinks.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, FragmentLink> broken = new ConcurrentHashMap<>();
+        int knownBroken = 0;
+
+        List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(fragmentLinks.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        // Pages whose ids we did not capture during the crawl (e.g. incremental
+        // mode, off-site redirects). These are verified on demand by navigating,
+        // preserving the original coverage.
+        Map<String, Set<String>> fallbackIds = new HashMap<>();
+        Page p = null;
+        BrowserContext ctx = null;
+
+        for (var entry : sorted) {
+            FragmentLink link = entry.getValue();
+
+            // Skip query-style fragments (e.g. #q=spring) used by search.quarkus.io
+            // See https://github.com/quarkusio/search.quarkus.io/pull/597
+            if (link.fragment.contains("=")) {
+                continue;
+            }
+
+            // Skip hash routes (e.g. #/compare/3.34.0/3.35.0) used by single-page
+            // apps such as the almanac; they are client-side paths, not element ids
+            if (link.fragment.startsWith("/")) {
+                continue;
+            }
+
+            Set<String> ids = pageIds.get(link.url);
+            if (ids == null) {
+                // Not seen during the crawl — fetch it once and cache the ids.
+                ids = fallbackIds.get(link.url);
+                if (ids == null) {
+                    if (p == null) {
+                        ctx = browser.newContext();
+                        ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+                        p = ctx.newPage();
+                        p.setDefaultNavigationTimeout(30_000);
+                    }
+                    ids = fetchPageIds(p, link.url);
+                    fallbackIds.put(link.url, ids);
+                }
+            }
+
+            // A null id set means the page could not be loaded (4xx, redirect
+            // off-site, etc.); match the previous behaviour and skip it.
+            if (ids == FetchFailed.INSTANCE) {
+                continue;
+            }
+
+            if (!ids.contains(link.fragment)) {
+                if (isKnownBrokenFragment(link.url, link.fragment)) {
+                    knownBroken++;
+                    continue;
+                }
+                broken.put(entry.getKey(), link);
+            }
+        }
+
+        if (ctx != null) {
+            ctx.close();
+        }
+
+        System.out.println("Checked " + fragmentLinks.size() + " fragment anchors, found "
+                + broken.size() + " broken"
+                + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : ""));
+
+        return broken;
+    }
+
+    /**
+     * A fragment link is a known-broken anchor we tolerate so the check can gate
+     * real regressions. Covers these cases:
+     * <ul>
+     *   <li>{@link #KNOWN_BROKEN_FRAGMENTS} (#2892) — the #extension-status-note
+     *       anchor guides forget to include; excused everywhere;</li>
+     *   <li>the {@link #UNRENDERED_UPSTREAM_ANCHORS} block anchor — present in
+     *       source but never emitted by Asciidoctor (both engines), so dead
+     *       everywhere;</li>
+     *   <li>the {@link #DEAD_UPSTREAM_ANCHORS} — upstream guide content bugs
+     *       (missing/renamed anchor or stale link) dead on both engines and
+     *       everywhere, tracked in quarkusio/quarkus#56286;</li>
+     *   <li>{@link #WILL_NOT_BACKPORT_FRAGMENTS} (quarkus#55413) — fixed on main but
+     *       not backported, so only excused under a frozen {@code /version/<number>/}
+     *       snapshot;</li>
+     *   <li>{@link #STALE_IN_FROZEN_SNAPSHOTS} — render fine today, stale only in a
+     *       frozen {@code /version/<number>/} snapshot.</li>
+     * </ul>
+     */
+    private static boolean isKnownBrokenFragment(String url, String fragment) {
+        if (KNOWN_BROKEN_FRAGMENTS.contains(fragment)) {
+            return true;
+        }
+        if (UNRENDERED_UPSTREAM_ANCHORS.contains(fragment)) {
+            return true;
+        }
+        if (DEAD_UPSTREAM_ANCHORS.contains(fragment)) {
+            return true;
+        }
+        if (WILL_NOT_BACKPORT_FRAGMENTS.contains(fragment)
+                || STALE_IN_FROZEN_SNAPSHOTS.contains(fragment)) {
+            return isFrozenVersionSnapshot(url);
+        }
+        return false;
+    }
+
+    /** True for a frozen numbered versioned snapshot ({@code /version/<number>/}), not main. */
+    private static boolean isFrozenVersionSnapshot(String url) {
+        return VERSION_SNAPSHOT_PATTERN.matcher(url).find();
+    }
+
+    private static final Pattern VERSION_SNAPSHOT_PATTERN =
+            Pattern.compile("/version/[\\d.]+/");
+
+    /** Sentinel id set used to remember pages that failed to load. */
+    private static final class FetchFailed {
+        static final Set<String> INSTANCE = Set.of();
+    }
+
+    private Set<String> fetchPageIds(Page p, String url) {
+        try {
+            Response response = p.navigate(url,
+                    new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+            if (response == null || response.status() >= 400) {
+                return FetchFailed.INSTANCE;
+            }
+            @SuppressWarnings("unchecked")
+            var idResult = (List<String>) p.evaluate(
+                    "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
+            return new HashSet<>(idResult);
+        } catch (Exception e) {
+            return FetchFailed.INSTANCE;
+        }
+    }
+
+    private static List<String> parseExcludePaths(String property) {
+        if (property == null || property.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(property.split(","))
+                .map(String::strip)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    // An empty include list means everything is included
+    private boolean isIncluded(String url, List<String> includePaths) {
+        if (includePaths.isEmpty()) {
+            return true;
+        }
+        String path = stripHost(url);
+        for (String included : includePaths) {
+            if (path.startsWith(included)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isExcluded(String url, List<String> excludePaths) {
+        String path = stripHost(url);
+        for (String excluded : excludePaths) {
+            if (path.startsWith(excluded)) {
+                return true;
+            }
+        }
+        // Note: old newsletters and blog posts are NOT excluded here anymore
+        // They are visited and checked, but their broken links are treated as informational
+        return false;
+    }
+
+    // Newsletters and blog posts naturally accumulate dead external links over time.
+    // Configurable cutoff for validating external links in dated content.
+    // Content older than the cutoff will have broken links reported but not raise defects.
+    private static final Pattern NEWSLETTER_PATTERN = Pattern.compile("^/newsletter/(\\d+)");
+    private static final int NEWSLETTER_EPOCH_YEAR = 2020;
+    private static final int NEWSLETTER_EPOCH_MONTH = 10; // October 2020 = issue #1
+
+    private static Integer getDatedContentCutoffMonths() {
+        String cutoffProperty = System.getProperty("test.crawl.dated-cutoff-months");
+        if (cutoffProperty == null || cutoffProperty.isBlank()) {
+            return null; // If not configured, check all dated content
+        }
+
+        try {
+            return Integer.parseInt(cutoffProperty);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid dated cutoff months value: " + cutoffProperty);
+            return null;
+        }
+    }
+
+    private static boolean isOldNewsletter(String path) {
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all newsletters
+        }
+
+        Matcher m = NEWSLETTER_PATTERN.matcher(path);
+        if (m.find()) {
+            int issue = Integer.parseInt(m.group(1));
+            java.time.LocalDate now = java.time.LocalDate.now();
+            int monthsSinceEpoch = (now.getYear() - NEWSLETTER_EPOCH_YEAR) * 12
+                    + now.getMonthValue() - NEWSLETTER_EPOCH_MONTH;
+            return issue <= monthsSinceEpoch - cutoffMonths;
+        }
+        return false;
+    }
+
+    private static final Pattern BLOG_POST_PATTERN = Pattern.compile("^/blog/[^/]+/?$");
+
+    /**
+     * Extract the publish date from a blog post or newsletter page and store it in the map.
+     * The date is extracted from the page's metadata or structure.
+     */
+    private void extractPublishDate(Page page, String normalizedUrl, Map<String, java.time.LocalDate> publishDates) {
+        String path = stripHost(normalizedUrl);
+
+        // Check if it's a blog post or newsletter
+        if (!path.startsWith("/blog/") && !path.startsWith("/newsletter/")) {
+            return;
+        }
+
+        try {
+            // For blog posts, look for the date in the page metadata or content
+            // Blog posts typically have a <time> element or date metadata
+            String dateStr = (String) page.evaluate("""
+                () => {
+                    // Try to find date in time element with datetime attribute
+                    const timeElement = document.querySelector('time[datetime]');
+                    if (timeElement) {
+                        return timeElement.getAttribute('datetime');
+                    }
+                    // Try to find date in meta tags
+                    const metaDate = document.querySelector('meta[property="article:published_time"]');
+                    if (metaDate) {
+                        return metaDate.getAttribute('content');
+                    }
+                    // Try to find date in JSON-LD
+                    const jsonLd = document.querySelector('script[type="application/ld+json"]');
+                    if (jsonLd) {
+                        try {
+                            const data = JSON.parse(jsonLd.textContent);
+                            if (data.datePublished) {
+                                return data.datePublished;
+                            }
+                        } catch (e) {
+                            // Ignore parse errors
+                        }
+                    }
+                    // Try to extract date from .post-date element (Quarkus site specific)
+                    const postDate = document.querySelector('.post-date');
+                    if (postDate) {
+                        // Text format: "September 17, 2026" or "Month DD, YYYY"
+                        const dateText = postDate.textContent.trim().split('\\n')[0].trim();
+                        // Try to parse the date
+                        const parsed = new Date(dateText);
+                        if (!isNaN(parsed)) {
+                            // Return in ISO format
+                            return parsed.toISOString().split('T')[0];
+                        }
+                    }
+                    return null;
+                }
+            """);
+
+            if (dateStr != null && !dateStr.isBlank()) {
+                // Parse the date string (usually in ISO format like "2024-01-18" or "2024-01-18T00:00:00Z")
+                java.time.LocalDate date = java.time.LocalDate.parse(dateStr.substring(0, Math.min(10, dateStr.length())));
+                publishDates.put(normalizePath(normalizedUrl), date);
+            }
+        } catch (Exception e) {
+            // If we can't extract the date, don't fail - just skip this page
+        }
+    }
+
+    private boolean isOldBlogPost(String path, Map<String, java.time.LocalDate> publishDates) {
+        Integer cutoffMonths = getDatedContentCutoffMonths();
+        if (cutoffMonths == null) {
+            return false; // No cutoff configured, check all blog posts
+        }
+
+        Matcher m = BLOG_POST_PATTERN.matcher(path);
+        if (m.find()) {
+            java.time.LocalDate postDate = publishDates.get(normalizePath(path));
+            if (postDate != null) {
+                java.time.LocalDate cutoffDate = java.time.LocalDate.now().minusMonths(cutoffMonths);
+                return postDate.isBefore(cutoffDate);
+            }
+        }
+        return false;
+    }
+
+    private static boolean isExcludedUrl(String url, List<String> excludeUrls) {
+        for (String excluded : excludeUrls) {
+            if (url.contains(excluded)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isOnDoNotCheckList(String url) {
+        for (String domain : DO_NOT_CHECK) {
+            if (url.contains(domain)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isLocalhostUrl(String href) {
+        return href.startsWith("http://localhost") || href.startsWith("https://localhost")
+                || href.startsWith("http://0.0.0.0") || href.startsWith("http://127.0.0.1")
+                || href.startsWith("https://0.0.0.0") || href.startsWith("https://127.0.0.1");
+    }
+
+    private static final Pattern TEMPLATE_VAR_PATTERN = Pattern.compile("\\$\\{|\\{[a-zA-Z]");
+
+    private static final List<String> EXAMPLE_HOSTS = List.of(
+            "example.com", "example.org", "example.net", "1.2.3.4",
+            "your-domain", "your-dns", "your-ngrok",
+            "application.com", "service.example",
+            "SERVER_HOST", "SERVER_PORT",
+            "myservice.com", "my-service.com", "openshift-helloworld",
+            "quarkus-auth0", "stage.code.quarkus.io",
+            "nip.io", "cluster.local", "ocp.host"
+    );
+
+    // Sites that return 403 Forbidden for bot requests but 404 for genuinely dead links
+    private static final List<String> FORBIDDEN_OK_HOSTS = List.of(
+            "medium.com"
+    );
+
+    // Sites that return 405 Method Not Allowed for bot requests but 404 for genuinely dead links
+    private static final List<String> METHOD_NOT_ALLOWED_OK_HOSTS = List.of(
+            "infoq.com"
+    );
+
+    private static final List<String> DO_NOT_CHECK = List.of(
+            "linkedin.com",
+            "pexels.com",
+            "docs.gitlab.com",
+            "search.maven.org",
+            "linux.die.net",
+            "uber.com/blog",
+            "rfc-editor.org",
+            "netflixtechblog.com",
+            // Localized sites 404 for untranslated pages — tracked in #2695
+            "cn.quarkus.io/blog",
+            "es.quarkus.io/blog",
+            "ja.quarkus.io/blog",
+            "pt.quarkus.io/blog"
+    );
+
+    private static boolean isExampleUrl(String url) {
+        if (TEMPLATE_VAR_PATTERN.matcher(url).find()) {
+            return true;
+        }
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null) {
+                return true;
+            }
+            String hostLower = host.toLowerCase();
+            for (String example : EXAMPLE_HOSTS) {
+                if (hostLower.contains(example.toLowerCase())) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+        return false;
+    }
+
+    private static String normalize(String url) {
+        if (url.length() > 1 && url.endsWith("/")) {
+            return url.substring(0, url.length() - 1);
+        }
+        return url;
+    }
+
+    record ResolvedLink(String url, boolean internal, String fragment) {
+    }
+
+    private static void writeResultsJson(Map<String, BrokenLink> reportable,
+                                          Map<String, BrokenLink> uncheckable,
+                                          Map<String, BrokenLink> oldContent,
+                                          Map<String, FragmentLink> brokenFragments,
+                                          String path) {
+        Map<String, Object> output = new java.util.LinkedHashMap<>();
+
+        // Reportable links (will raise defects and fail CI)
+        output.put("reportable", convertToList(reportable));
+
+        // Uncheckable links (informational only - 401/403/410 status codes)
+        output.put("uncheckable", convertToList(uncheckable));
+
+        // Old content links (informational only - from old blogs/newsletters)
+        output.put("oldContent", convertToList(oldContent));
+
+        // Fragment anchors missing from a page that loads fine (will raise defects and fail CI)
+        output.put("brokenFragments", convertFragmentsToList(brokenFragments));
+
+        // Summary counts
+        Map<String, Integer> summary = new java.util.LinkedHashMap<>();
+        summary.put("reportableCount", reportable.size());
+        summary.put("uncheckableCount", uncheckable.size());
+        summary.put("oldContentCount", oldContent.size());
+summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldContent.size()+brokenFragments.size());
+        summary.put("brokenFragmentCount", brokenFragments.size());
+        output.put("summary", summary);
+
+        try {
+            Path filePath = Path.of(path);
+            if (filePath.getParent() != null) {
+                Files.createDirectories(filePath.getParent());
+            }
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(filePath.toFile(), output);
+            System.out.println("Wrote results to " + path + " (" + summary.get("totalBrokenLinks") + " total broken links, "
+                    + brokenFragments.size() + " broken fragment anchors)");
+        } catch (IOException e) {
+            System.err.println("Warning: could not write results file: " + e.getMessage());
+        }
+    }
+
+    private static List<Map<String, Object>> convertToList(Map<String, BrokenLink> broken) {
+        List<Map.Entry<String, BrokenLink>> sorted = new ArrayList<>(broken.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        return sorted.stream()
+                .map(entry -> {
+                    Map<String, Object> map = new java.util.LinkedHashMap<>();
+                    map.put("url", entry.getKey());
+                    map.put("status", entry.getValue().status());
+                    map.put("statusText", entry.getValue().statusText());
+                    map.put("referrer", entry.getValue().referrer());
+                    return map;
+                })
+                .toList();
+    }
+
+    // The url is the full link (page#fragment), so the issue raised for it names the exact anchor
+    private static List<Map<String, Object>> convertFragmentsToList(Map<String, FragmentLink> fragments) {
+        List<Map.Entry<String, FragmentLink>> sorted = new ArrayList<>(fragments.entrySet());
+        sorted.sort(Map.Entry.comparingByKey());
+
+        return sorted.stream()
+                .map(entry -> {
+                    Map<String, Object> map = new java.util.LinkedHashMap<>();
+                    map.put("url", entry.getKey());
+                    map.put("fragment", entry.getValue().fragment());
+                    map.put("referrer", entry.getValue().referrer());
+                    return map;
+                })
+                .toList();
+    }
+
+    record FragmentLink(String url, String fragment, String referrer) {
+    }
+
+    record BrokenLink(int status, String statusText, String referrer) {
+    }
+
+    record BrokenImage(int status, String statusText, String referrer) {
+    }
+
+    record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages,
+                         Map<String, FragmentLink> brokenFragments, Map<String, java.time.LocalDate> publishDates) {
+    }
+}
