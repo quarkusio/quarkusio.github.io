@@ -38,6 +38,8 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
   - `version`
   - `release_date` - the earlier of the GitHub publish date and the Maven Central upload date (they differ, usually
     by a day, for a few releases)
+  - `rhbq.last_in_major`, `ibm.last_in_major` - Set to `true` on the vendor's newest minor of a major stream (3.x, 2.x) once the vendor has shipped a newer major, unless a minor of that stream is already marked. It can be set by hand earlier, e.g. on the last 3.x before 4.0 is out
+  - `rhbq.eol_date`, `ibm.eol_date` - Computed from the support policy (`EnterpriseReleaseDates.computeEolDate`). One end date is kept; full support and maintenance aren't distinguished. Red Hat ([policy](https://access.redhat.com/support/policy/updates/red_hat_build_of_quarkus_notes)): a minor that is not `last_in_major` ends six months after the next minor of its major stream is released (the previous minor is in maintenance for six months); until there is a next minor, a year after its own release is a placeholder. IBM: a year after its own release. A `last_in_major` minor ends 3 years (Red Hat) or 5 years (IBM) after the vendor's first release in that major stream, but no earlier than six months after the vendor's first release of the next major: Red Hat's full support starts with a new major and ends when the next major is released, and the older one then stays in maintenance for at least six months. Red Hat's `last_in_major` minor can't be computed until the next major has a build, so until then its date is a hand-edited placeholder. Missing dates are filled in. Where a later release fixes a date, it is recomputed when that release appears and replaces the recorded one: a Red Hat minor's, when its next minor appears; a `last_in_major` minor's, when the next major appears, but that one is never shortened, since Red Hat publishes it and has extended it before (`EnterpriseReleaseDates.eolDateToRecord`). Any other existing date is kept, with a warning if it disagrees with the computed one
   - `candidate: true` for a release candidate (`CR`, or `RC`), `beta: true` for a `Beta`, `alpha: true` for an
     `Alpha`; worked out from the version, and left out for final releases
   - `github_url` - its GitHub release; left out if there is none
@@ -67,7 +69,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - Whether this is an LTS release (published releases)
 - `eol_date` - End of life date
 - `link` - Blog post link
-- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `eol_date` is hand-edited. `branched_from` (quoted, e.g. `"3.20"`) is the community release the vendor forked its build from, when not the release itself. `open_ended: true` means the vendor supports the release with no end date once its other support has ended (IBM after its own `eol_date`, HeroDevs Never-Ending Support after all other support)
+- `rhbq`, `ibm`, `herodevs` - Per-provider blocks; `rhbq.eol_date` of a `last_in_major` minor, until the next major has a build (the other vendor `eol_date`s are computed, see above); `last_in_major` can be set by hand too. `branched_from` (quoted, e.g. `"3.20"`) is the community release the vendor forked its build from, when not the release itself. `open_ended: true` means the vendor supports the release with no end date once its other support has ended (IBM after its own `eol_date`, HeroDevs Never-Ending Support after all other support)
 - `upcoming`, `planned_date` - Only needed as a fallback when the wiki lists nothing usable for a release (`release_date` is only for published releases)
 
 ## Tests
@@ -78,6 +80,7 @@ The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page
 ```bash
 cd tools/releases-sync && jbang io/quarkusio/releases/sync/WikiReleasePlanningTest.java
 jbang io/quarkusio/releases/sync/EnterpriseReleaseDatesTest.java
+jbang io/quarkusio/releases/sync/ReleasesSyncEolTest.java
 jbang io/quarkusio/releases/sync/BranchLineageTest.java
 jbang io/quarkusio/releases/sync/MicrosTest.java
 ```

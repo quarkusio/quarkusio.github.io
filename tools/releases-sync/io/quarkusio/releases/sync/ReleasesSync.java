@@ -295,9 +295,9 @@ public final class ReleasesSync {
             }
             Releases.EnterpriseDates existing = providerDates(release, provider);
             Releases.EnterpriseDates dated = existing == null
-                    ? new Releases.EnterpriseDates(date.toString(), null, null, false)
+                    ? new Releases.EnterpriseDates(date.toString(), null, null, false, false)
                     : new Releases.EnterpriseDates(date.toString(), existing.eolDate(), existing.branchedFrom(),
-                            existing.openEnded());
+                            existing.openEnded(), existing.lastInMajor());
             releases.add(withProviderDates(release, provider, dated));
         }
         return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
@@ -324,6 +324,66 @@ public final class ReleasesSync {
             throw new IllegalStateException(problems.size() + " enterprise release date(s) are before the community "
                     + "release date; first: " + problems.get(0));
         }
+    }
+
+    /**
+     * For the Red Hat and IBM builds: marks a minor as the vendor's last of its major stream once the vendor
+     * has shipped a newer major (unless a minor of that stream is already marked, by hand), then fills in any
+     * missing eol_date from the support policy and warns about an existing one that disagrees with it. An
+     * existing eol_date is kept, except where a later release fixes it (see
+     * {@link EnterpriseReleaseDates#eolDateToRecord}). Red Hat's last minor, until the next major, is a hand-edited
+     * placeholder. See {@link EnterpriseReleaseDates#computeEolDate}.
+     */
+    public static Releases applyEnterpriseEolDates(Releases data) {
+        Map<String, Map<String, Releases.EnterpriseDates>> updated = new LinkedHashMap<>();
+        for (String provider : List.of("rhbq", "ibm")) {
+            Map<String, EnterpriseReleaseDates.Build> builds = new LinkedHashMap<>();
+            for (Releases.Entry r : data.releases()) {
+                Releases.EnterpriseDates dates = providerDates(r, provider);
+                LocalDate released = dates == null ? null : parseDateOrNull(dates.releaseDate());
+                if (released != null) {
+                    builds.put(r.version(), new EnterpriseReleaseDates.Build(released, dates.lastInMajor()));
+                }
+            }
+            Set<String> newlyLast = EnterpriseReleaseDates.newlyLastInMajor(builds);
+            newlyLast.forEach(v -> {
+                Log.infof("Marking %s %s as the last of its major stream: the vendor has released a newer major", provider, v);
+                builds.put(v, new EnterpriseReleaseDates.Build(builds.get(v).releaseDate(), true));
+            });
+            Map<String, Releases.EnterpriseDates> result = new LinkedHashMap<>();
+            for (Releases.Entry r : data.releases()) {
+                Releases.EnterpriseDates dates = providerDates(r, provider);
+                if (dates == null || !builds.containsKey(r.version())) {
+                    continue;
+                }
+                String eol = dates.eolDate();
+                LocalDate actual = parseDateOrNull(eol);
+                eol = EnterpriseReleaseDates.eolDateToRecord(provider, r.version(), builds, actual)
+                        .map(LocalDate::toString).orElse(eol);
+                if (actual != null && !actual.toString().equals(eol)) {
+                    Log.infof("Setting %s %s eol_date to %s (was %s): a later release fixes it", provider, r.version(),
+                            eol, actual);
+                } else if (actual != null) {
+                    EnterpriseReleaseDates.checkEolDate(provider, r.version(), builds, actual)
+                            .ifPresent(problem -> Log.warnf("Check this hand-edited date: %s", problem));
+                }
+                result.put(r.version(), new Releases.EnterpriseDates(dates.releaseDate(), eol, dates.branchedFrom(),
+                        dates.openEnded(), builds.get(r.version()).lastInMajor()));
+            }
+            updated.put(provider, result);
+        }
+        List<Releases.Entry> releases = new ArrayList<>();
+        for (Releases.Entry r : data.releases()) {
+            Releases.Entry e = r;
+            for (String provider : List.of("rhbq", "ibm")) {
+                Releases.EnterpriseDates dates = updated.get(provider).get(r.version());
+                if (dates != null) {
+                    e = withProviderDates(e, provider, dates);
+                }
+            }
+            releases.add(e);
+        }
+        return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
     }
 
     private static Releases.EnterpriseDates providerDates(Releases.Entry release, String provider) {

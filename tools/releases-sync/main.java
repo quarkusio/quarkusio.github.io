@@ -149,6 +149,7 @@ public class main implements Callable<Integer> {
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "rhbq", mavenRepositories::rhbqDates);
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "ibm", mavenRepositories::ibmDates);
             ReleasesSync.validateEnterpriseReleaseDates(updatedData);
+            updatedData = ReleasesSync.applyEnterpriseEolDates(updatedData);
             Log.infof("🔄 Processed into %d release entries", updatedData.releases().size());
 
             // Generate YAML output
@@ -491,6 +492,9 @@ public class main implements Callable<Integer> {
         }
         if (dates.openEnded()) {
             block.put("open_ended", true);
+        }
+        if (dates.lastInMajor()) {
+            block.put("last_in_major", true);
         }
         map.put(name, block);
     }

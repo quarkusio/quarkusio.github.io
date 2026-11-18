@@ -48,17 +48,17 @@ class EnterpriseOfferingTest {
 
     @Test
     void ibmOpenEndedSupportComesFromTheData() {
-        Release r = release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, true), null);
+        Release r = release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, true, false), null);
         assertTrue(r.ibm().openEnded());
-        assertFalse(release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, false), null).ibm().openEnded());
+        assertFalse(release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, false, false), null).ibm().openEnded());
         // starts when IBM's own support ends, or the community's if later
         assertEquals(LocalDate.of(2027, 6, 30), r.openEndedStart(r.ibm()));
     }
 
     @Test
     void openEndedSupportWithoutABuildStartsWhenAllOtherSupportEnds() {
-        Release r = release(new Releases.EnterpriseDates(null, "2028-06-30", null, false),
-                new Releases.EnterpriseDates(null, "2027-06-30", null, true), new Releases.EnterpriseDates(null, null, null, true));
+        Release r = release(new Releases.EnterpriseDates(null, "2028-06-30", null, false, false),
+                new Releases.EnterpriseDates(null, "2027-06-30", null, true, false), new Releases.EnterpriseDates(null, null, null, true, false));
         assertTrue(r.herodevs().openEnded());
         assertEquals(LocalDate.of(2028, 6, 30), r.openEndedStart(r.herodevs()));
         assertNull(release(null, null, null).herodevs());
@@ -66,11 +66,11 @@ class EnterpriseOfferingTest {
 
     @Test
     void openEndedSupportCountsOnceEnterpriseSupportEnds() {
-        Release r = release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, true), null);
+        Release r = release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, true, false), null);
         assertEquals(Release.Status.ENTERPRISE_ONLY, r.status(LocalDate.of(2026, 1, 1)));
         assertEquals(Release.Status.OPEN_ENDED_ONLY, r.status(LocalDate.of(2028, 1, 1)));
         assertTrue(r.supportActive(LocalDate.of(2040, 1, 1)));
-        assertFalse(release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, false), null)
+        assertFalse(release(null, new Releases.EnterpriseDates(null, "2027-06-30", null, false, false), null)
                 .supportActive(LocalDate.of(2028, 1, 1)));
     }
 }

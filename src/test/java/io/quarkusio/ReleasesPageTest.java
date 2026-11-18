@@ -1,5 +1,6 @@
 package io.quarkusio;
 
+import java.time.LocalDate;
 import io.quarkus.test.junit.QuarkusTest;
 import com.microsoft.playwright.Locator;
 import org.junit.jupiter.api.Test;
@@ -154,6 +155,12 @@ public class ReleasesPageTest extends BrowserTest {
             // entirely before the view's range, so there is nothing to draw.
             String eol = lts.nth(i).getAttribute("data-eol");
             if (eol != null && eol.compareTo(rangeStart) < 0) {
+                continue;
+            }
+            // Likewise one whose community and vendor support have both ended, and which is kept only by
+            // open-ended support (HeroDevs, IBM), is drawn with just that bar.
+            if (eol != null && eol.compareTo(LocalDate.now().toString()) < 0
+                    && lts.nth(i).getAttribute("data-supported") == null) {
                 continue;
             }
             assertTrue(lts.nth(i).locator(".tl-seg--community").count() >= 1,
