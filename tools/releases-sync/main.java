@@ -22,6 +22,7 @@
 //SOURCES io/quarkusio/releases/sync/GitHubReleases.java
 //SOURCES io/quarkusio/releases/sync/ReleasesSync.java
 //SOURCES io/quarkusio/releases/sync/Micros.java
+//SOURCES io/quarkusio/releases/sync/Lineage.java
 
 import io.quarkus.logging.Log;
 import jakarta.inject.Inject;
@@ -148,7 +149,16 @@ public class main implements Callable<Integer> {
                     wikiUpcoming, github::fetchMergeBase, micros);
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "rhbq", mavenRepositories::rhbqDates);
             updatedData = ReleasesSync.applyEnterpriseReleaseDates(updatedData, "ibm", mavenRepositories::ibmDates);
+            // The vendors' own builds, then the parent of every micro, community and vendor
+            updatedData = ReleasesSync.applyVendorMicros(updatedData, "rhbq",
+                    mavenRepositories.rhbqBuilds(ReleasesSync.knownVendorBuilds(updatedData, "rhbq")),
+                    MavenRepositories::rhbqBomUrl);
+            updatedData = ReleasesSync.applyVendorMicros(updatedData, "ibm", mavenRepositories.ibmBuilds(),
+                    MavenRepositories::ibmBomUrl);
+            updatedData = ReleasesSync.applyParents(updatedData, existingData, github::contains);
             ReleasesSync.validateEnterpriseReleaseDates(updatedData);
+            ReleasesSync.microsBeforeTheirParents(updatedData)
+                    .forEach(problem -> Log.warnf("Check this release date: %s", problem));
             updatedData = ReleasesSync.applyEnterpriseEolDates(updatedData);
             Log.infof("🔄 Processed into %d release entries", updatedData.releases().size());
 
@@ -437,8 +447,8 @@ public class main implements Callable<Integer> {
             map.put("link", release.link());
         }
 
-        if (release.branchedFrom() != null) {
-            map.put("branched_from", release.branchedFrom());
+        if (release.parentRelease() != null) {
+            map.put("parent_release", release.parentRelease());
         }
 
         putProvider(map, "rhbq", release.rhbq());
@@ -449,35 +459,42 @@ public class main implements Callable<Integer> {
         // this file with po4a, whose YAML::Tiny parser rejects inline lists and dictionaries.
         // A missing URL is left out rather than written empty (YAML::Tiny also trips on some empty values)
         if (release.micros() != null && !release.micros().isEmpty()) {
-            List<Map<String, Object>> micros = new ArrayList<>();
-            for (Releases.MicroEntry micro : release.micros()) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("version", new QuotedScalar(micro.version()));
-                if (micro.releaseDate() != null) {
-                    m.put("release_date", new DateScalar(micro.releaseDate()));
-                }
-                // Only written when true, like upcoming and proposal
-                if (micro.candidate()) {
-                    m.put("candidate", true);
-                }
-                if (micro.beta()) {
-                    m.put("beta", true);
-                }
-                if (micro.alpha()) {
-                    m.put("alpha", true);
-                }
-                if (micro.githubUrl() != null) {
-                    m.put("github_url", micro.githubUrl());
-                }
-                if (micro.bomUrl() != null) {
-                    m.put("bom_url", micro.bomUrl());
-                }
-                micros.add(m);
-            }
-            map.put("micros", micros);
+            map.put("micros", microsToList(release.micros()));
         }
 
         return map;
+    }
+
+    private static List<Map<String, Object>> microsToList(List<Releases.MicroEntry> entries) {
+        List<Map<String, Object>> micros = new ArrayList<>();
+        for (Releases.MicroEntry micro : entries) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("version", new QuotedScalar(micro.version()));
+            if (micro.releaseDate() != null) {
+                m.put("release_date", new DateScalar(micro.releaseDate()));
+            }
+            // Only written when true, like upcoming and proposal
+            if (micro.candidate()) {
+                m.put("candidate", true);
+            }
+            if (micro.beta()) {
+                m.put("beta", true);
+            }
+            if (micro.alpha()) {
+                m.put("alpha", true);
+            }
+            if (micro.parentRelease() != null) {
+                m.put("parent_release", new QuotedScalar(micro.parentRelease()));
+            }
+            if (micro.githubUrl() != null) {
+                m.put("github_url", micro.githubUrl());
+            }
+            if (micro.bomUrl() != null) {
+                m.put("bom_url", micro.bomUrl());
+            }
+            micros.add(m);
+        }
+        return micros;
     }
 
     private static void putProvider(Map<String, Object> map, String name, Releases.EnterpriseDates dates) {
@@ -487,14 +504,17 @@ public class main implements Callable<Integer> {
         Map<String, Object> block = new LinkedHashMap<>();
         putProviderValue(block, "release_date", dates.releaseDate());
         putProviderValue(block, "eol_date", dates.eolDate());
-        if (dates.branchedFrom() != null) {
-            block.put("branched_from", dates.branchedFrom());
+        if (dates.parentRelease() != null) {
+            block.put("parent_release", new QuotedScalar(dates.parentRelease()));
         }
         if (dates.openEnded()) {
             block.put("open_ended", true);
         }
         if (dates.lastInMajor()) {
             block.put("last_in_major", true);
+        }
+        if (dates.micros() != null && !dates.micros().isEmpty()) {
+            block.put("micros", microsToList(dates.micros()));
         }
         map.put(name, block);
     }
