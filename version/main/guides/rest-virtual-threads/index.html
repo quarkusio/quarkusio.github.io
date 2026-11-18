@@ -2200,6 +2200,14 @@
 <li data-level="1"><a href="#create-the-weather-client">Create the weather client</a></li>
 <li data-level="1"><a href="#create-the-http-endpoint">Create the HTTP endpoint</a></li>
 <li data-level="1"><a href="#run-the-application-in-dev-mode">Run the application in dev mode</a></li>
+<li data-level="1"><a href="#use-virtual-threads-for-every-endpoint">Use virtual threads for every endpoint</a>
+<ul>
+<li data-level="2"><a href="#use-the-configuration-property">Use the configuration property</a></li>
+<li data-level="2"><a href="#annotate-the-quarkus-rest-application-class">Annotate the Quarkus REST Application class</a></li>
+<li data-level="2"><a href="#choose-between-the-two-approaches">Choose between the two approaches</a></li>
+<li data-level="2"><a href="#revert-to-worker-threads-without-code-changes">Revert to worker threads without code changes</a></li>
+</ul>
+</li>
 <li data-level="1"><a href="#verify-pinning-using-tests">Verify pinning using tests</a></li>
 <li data-level="1"><a href="#conclusion">Conclusion</a></li>
 </ul>
@@ -2608,6 +2616,149 @@ You should get something like:</p>
 <p>The result is captured by Quarkus and written in the HTTP response</p>
 </li>
 </ol>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="use-virtual-threads-for-every-endpoint"><a class="anchor" href="#use-virtual-threads-for-every-endpoint"></a>Use virtual threads for every endpoint</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Annotating every endpoint with <code>@RunOnVirtualThread</code> can be cumbersome when you want your whole application to use virtual threads.
+There are two ways to switch the default execution model for all endpoints at once: a configuration property and an annotated Quarkus REST <code>Application</code> class.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Before switching all endpoints to virtual threads, make sure your application and its dependencies do not suffer from thread pinning or carrier thread monopolization.
+For more information, see the Quarkus <a href="/version/main/guides/virtual-threads/">Virtual thread support reference</a> guide.
+Thread pinning caused by <code>synchronized</code> blocks is resolved in JDK 24 and later, so we recommend running on JDK 24 or later when enabling virtual threads globally.
+You can detect pinning in your tests, as shown in the section below.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="use-the-configuration-property"><a class="anchor" href="#use-the-configuration-property"></a>Use the configuration property</h3>
+<div class="paragraph">
+<p>You can enable virtual threads for all Quarkus REST endpoints with a single build-time property:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.rest.blocking.signatures.execution.mode=virtual-thread</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When enabled, every endpoint that would otherwise be executed on a worker thread is executed on a virtual thread instead.
+The regular execution model rules still apply:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Endpoints considered non-blocking because they return <code>Uni</code>, <code>Multi</code> or <code>CompletionStage</code> keep running on the event loop.</p>
+</li>
+<li>
+<p>Explicit <code>@Blocking</code>, <code>@NonBlocking</code> and <code>@RunOnVirtualThread</code> annotations on the endpoint method or resource class always take precedence.
+So, if a specific endpoint is not safe to run on a virtual thread, annotate it with <code>@Blocking</code> to keep it on a worker thread.</p>
+</li>
+<li>
+<p>An execution model annotation on the Quarkus REST <code>Application</code> class takes precedence over this property, and a warning is logged at startup.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="annotate-the-quarkus-rest-application-class"><a class="anchor" href="#annotate-the-quarkus-rest-application-class"></a>Annotate the Quarkus REST Application class</h3>
+<div class="paragraph">
+<p>Alternatively, you can declare the default execution model in code.
+Quarkus does not require a Quarkus REST <code>Application</code> class, but you can add one and annotate it with <code>@RunOnVirtualThread</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">package org.acme;
+
+import jakarta.ws.rs.core.Application;
+
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
+@RunOnVirtualThread
+public class MyApplication extends Application {
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Every endpoint without an explicit <code>@Blocking</code> annotation is then executed on a virtual thread.
+Unlike the configuration property, this approach also moves endpoints with a non-blocking signature, such as endpoints returning <code>Uni</code>, to a virtual thread.
+The same applies to endpoints annotated with <code>@NonBlocking</code>; in this case, a warning is logged at startup.
+An application can only have one <code>Application</code> class.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="choose-between-the-two-approaches"><a class="anchor" href="#choose-between-the-two-approaches"></a>Choose between the two approaches</h3>
+<div class="paragraph">
+<p>The following table summarizes on which thread an endpoint is executed, depending on how it is declared:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<caption class="title">Table 1. Execution model depending on the endpoint declaration</caption>
+<colgroup>
+<col style="width: 40%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Endpoint</th>
+<th class="tableblock halign-left valign-top">Default</th>
+<th class="tableblock halign-left valign-top"><code>quarkus.rest.blocking.signatures.execution.mode=virtual-thread</code></th>
+<th class="tableblock halign-left valign-top"><code>@RunOnVirtualThread</code> on <code>Application</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No annotation, blocking signature (returns <code>String</code>, a POJO, &#8230;&#8203;)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Worker thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No annotation, non-blocking signature (returns <code>Uni</code>, <code>Multi</code>, <code>CompletionStage</code>, &#8230;&#8203;)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Event loop</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Event loop</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>@Blocking</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Worker thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Worker thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Worker thread</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>@NonBlocking</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Event loop</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Event loop</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread (a warning is logged)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>@RunOnVirtualThread</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual thread</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="revert-to-worker-threads-without-code-changes"><a class="anchor" href="#revert-to-worker-threads-without-code-changes"></a>Revert to worker threads without code changes</h3>
+<div class="paragraph">
+<p>If you run into problems, you do not need to remove the property or the annotation to compare against the worker thread model.
+Setting <code>quarkus.virtual-threads.enabled=false</code> executes all the endpoints marked to run on virtual threads on worker threads instead.</p>
+</div>
 </div>
 </div>
 </div>
