@@ -8,11 +8,13 @@
 //SOURCES ../../../quarkiverse/roq/data/runtime/annotations/DataMapping.java
 //SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Releases.java
 //SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Release.java
+//SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Micro.java
 //SOURCES ../../../../../../src/main/java/io/quarkusio/releases/EnterpriseOffering.java
 //SOURCES WikiReleasePlanning.java
 //SOURCES EnterpriseReleaseDates.java
 //SOURCES BranchLineage.java
 //SOURCES GitHubReleases.java
+//SOURCES Micros.java
 //SOURCES ReleasesSync.java
 
 package io.quarkusio.releases.sync;
@@ -43,8 +45,8 @@ public class ReleasesSyncEolTest {
     }
 
     private static Releases.Entry entry(String version, Releases.EnterpriseDates rhbq, Releases.EnterpriseDates ibm) {
-        return new Releases.Entry(version, "2080-01-01", null, null, true, false, false, null, null, null, rhbq, ibm,
-                null, null);
+        return new Releases.Entry(version, "2080-01-01", null, null, true, false, false, null, rhbq, ibm,
+                null, null, null);
     }
 
     private static Releases releases(Releases.Entry... entries) {
