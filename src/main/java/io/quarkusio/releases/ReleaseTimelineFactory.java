@@ -55,7 +55,7 @@ public class ReleaseTimelineFactory {
         if (catalog.all().stream().anyMatch(r -> finalMicroDates(r).stream()
                 .anyMatch(d -> r.releaseDate() != null && d.isAfter(r.releaseDate())))) {
             items.add(new LegendItem(RELEASE_KIND, "micro", "Micro release",
-                    "Faint line across a community bar: a micro release, with fixes for that minor."));
+                    "Faint line across a bar: a micro or emergency fix release."));
         }
         items.addAll(List.of(
                 new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
@@ -304,7 +304,8 @@ public class ReleaseTimelineFactory {
                 LocalDate from = enterpriseStart(r, r.rhbq());
                 row.segment("enterprise", "rhbq", lane, from, r.rhbq().eolDate(), catalog.providerUrl("rhbq"),
                         name + ": Red Hat build of Quarkus",
-                        enterpriseLines("Red Hat", r.rhbq().releaseDate(), r.rhbq().eolDate()), r.version());
+                        enterpriseLines("Red Hat", r.rhbq()), r.version())
+                        .ticks(finalMicroDates(r.rhbq()));
                 row.branch(lane, catalog.branchPoint(r, r.rhbq()));
             }
             if (r.ibm() != null && r.ibm().hasEndDate()) {
@@ -313,7 +314,8 @@ public class ReleaseTimelineFactory {
                     LocalDate from = enterpriseStart(r, r.ibm());
                     row.segment("enterprise", "ibm", lane, from, r.ibm().eolDate(), catalog.providerUrl("ibm"),
                             name + ": IBM Enterprise Build of Quarkus",
-                            enterpriseLines("IBM", r.ibm().releaseDate(), r.ibm().eolDate()), r.version());
+                            enterpriseLines("IBM", r.ibm()), r.version())
+                            .ticks(finalMicroDates(r.ibm()));
                     row.branch(lane, catalog.branchPoint(r, r.ibm()));
                 }
                 if (r.ibm().openEnded()) {
@@ -356,13 +358,22 @@ public class ReleaseTimelineFactory {
         return vendor.releaseDate() != null ? vendor.releaseDate() : r.eolDate();
     }
 
-    private static List<String> enterpriseLines(String vendor, LocalDate release, LocalDate end) {
+    private static List<String> enterpriseLines(String vendor, EnterpriseOffering offering) {
         List<String> lines = new ArrayList<>();
-        if (release != null) {
-            lines.add(vendor + " release " + DATE.format(release));
+        if (offering.releaseDate() != null) {
+            lines.add(vendor + " release " + DATE.format(offering.releaseDate()));
         }
-        lines.add(vendor + " support until " + DATE.format(end));
+        lines.add(vendor + " support until " + DATE.format(offering.eolDate()));
+        Micro latest = latestFinal(offering.micros());
+        if (latest != null) {
+            lines.add("Latest micro " + latest.version()
+                    + (latest.releaseDate() == null ? "" : " (" + DATE.format(latest.releaseDate()) + ")"));
+        }
         return lines;
+    }
+
+    private static Micro latestFinal(List<Micro> micros) {
+        return micros.stream().filter(Micro::isFinal).findFirst().orElse(null);
     }
 
     private String communityHref(Release r, LocalDate today) {
@@ -374,7 +385,15 @@ public class ReleaseTimelineFactory {
 
     /** When each final micro was released (not candidates, betas or alphas), for the marks on the community bar. */
     private static List<LocalDate> finalMicroDates(Release r) {
-        return r.micros().stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
+        return finalMicroDates(r.micros());
+    }
+
+    private static List<LocalDate> finalMicroDates(EnterpriseOffering vendor) {
+        return finalMicroDates(vendor.micros());
+    }
+
+    private static List<LocalDate> finalMicroDates(List<Micro> micros) {
+        return micros.stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
     }
 
     private List<String> communityLines(Release r) {
