@@ -37,7 +37,7 @@ public class MavenRepositories {
 
     private static final long PAUSE_BETWEEN_REQUESTS_MS = 1_000;
     private static final String RHBQ_URL = "https://maven.repository.redhat.com/ga/com/redhat/quarkus/platform/quarkus-bom";
-    private static final String IBM_URL = "https://public.dhe.ibm.com/ibmdl/export/pub/software/appcafe/maven-repository/io/quarkus/quarkus-bom";
+    private static final String IBM_URL = "https://public.dhe.ibm.com/ibmdl/export/pub/software/appcafe/maven-repository/com/redhat/quarkus/platform/quarkus-bom/";
 
     @RegisterRestClient(configKey = "rhbq-maven", baseUri = RHBQ_URL)
     @Retry(maxRetries = 2, delay = 5, delayUnit = ChronoUnit.SECONDS, retryOn = {WebApplicationException.class, ProcessingException.class}, abortOn = NotFoundException.class)
