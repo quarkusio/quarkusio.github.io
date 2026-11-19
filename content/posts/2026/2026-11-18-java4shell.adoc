@@ -11,14 +11,15 @@ author: cescoffier
 ====
 This post is updated as the situation evolves.
 
-*Last updated:* 18 November 2026, 19:00 UTC
+*Last updated:* 19 November 2026, 09:00 UTC
 ====
 
 == TL;DR / Current status
 
 * Quarkus is *not* affected. The JDK is.
 * Native executables built with Mandrel are *not* affected.
-* Mandrel builder images: *patched* (workaround applied). Re-pull floating tags. Update pinned tags. See the https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags[available tags]. A second patches was required for the `native-image` tool invocation.
+* IBM Semeru (OpenJ9) is *not* affected.
+* Builder images (Mandrel and GraalVM CE): *patched* (workaround applied). Re-pull floating tags. Update pinned tags. See <<builder-images>>.
 * UBI Java runtime images: *not yet fixed*. Add `-XX:-UseBASE64Intrinsics` to the JVM options as workaround.
 * JVM on bare metal: if your JDK is patched, you are fine. Otherwise, add `-XX:-UseBASE64Intrinsics` as workaround.
 
@@ -38,7 +39,7 @@ This post is updated as the situation evolves.
 |✅ Not affected
 |None
 
-|Mandrel builder images
+|Builder images (Mandrel, GraalVM CE)
 |✅ Patched
 |Re-pull floating tags, update pinned tags
 |===
@@ -53,6 +54,7 @@ Researchers demonstrated memory disclosure and remote code execution.
 Exploitation requires *all* of the following:
 
 * An unpatched OpenJDK 17.0.6+, 21, 25 or 27 build (all vendors: Temurin, Red Hat, Corretto, Zulu, etc.).
+IBM Semeru is not affected: it uses the OpenJ9 JVM, not HotSpot, and does not include the vulnerable intrinsic.
 * An **x86-64** CPU exposing **AVX-512 VBMI** (on Linux: `avx512f`, `avx512bw`, `avx512vbmi` and `bmi2` in `/proc/cpuinfo`).
 ARM64 is not affected.
 * Base64 intrinsics enabled (the default).
@@ -73,6 +75,13 @@ Upgrading Quarkus does not fix it.
 Fixing or mitigating the JDK does.
 
 == Mitigation per deployment model
+
+=== The workaround: `-XX:-UseBASE64Intrinsics`
+
+The `-XX:-UseBASE64Intrinsics` flag disables the vulnerable intrinsic.
+The JVM falls back to the standard Java implementation of the `Base64` decoder, which is memory-safe.
+The decoded output is the same.
+Only the speed changes: decoding is slower, which rarely matters outside Base64-heavy workloads.
 
 === JVM on bare metal
 
@@ -135,14 +144,34 @@ Not affected.
 A native executable does not run on the HotSpot JVM and does not use the vulnerable intrinsic.
 No action needed.
 
-=== Mandrel builder images
+[[builder-images]]
+=== Builder images (Mandrel and GraalVM CE)
 
-These images let you build a native executable without installing Mandrel (`quarkus.native.container-build=true`).
+These images let you build a native executable without installing Mandrel or GraalVM (`quarkus.native.container-build=true`).
 
-The resulting native executable is *not affected*, whatever image version built it.
+The resulting native executables are *not affected*, whatever image version built them.
 
-The images themselves ship a JDK, used to run the `native-image` build.
-They have been patched with the workaround (https://github.com/quarkusio/quarkus-images/pull/344[quarkus-images#344]), followed by a second patch (https://github.com/quarkusio/quarkus-images/pull/345[quarkus-images#345]) to fix the `native-image` tool invocation:
+==== Why patch the builder images?
+
+The `native-image` tool is a Java application.
+It runs on the JDK shipped in the builder image.
+That JDK is affected.
+The build only processes your own code and dependencies, so the risk is low.
+Still, we do not want to ship images with an unprotected vulnerable JDK.
+So we applied the workaround to the builder images.
+
+==== Patched images
+
+* https://quay.io/repository/quarkus/ubi10-quarkus-mandrel-builder-image?tab=tags[`ubi10-quarkus-mandrel-builder-image`] (used by default by Quarkus)
+* https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags[`ubi9-quarkus-mandrel-builder-image`]
+* https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags[`ubi-quarkus-mandrel-builder-image`] (deprecated)
+* https://quay.io/repository/quarkus/ubi10-quarkus-graalvmce-builder-image?tab=tags[`ubi10-quarkus-graalvmce-builder-image`]
+* https://quay.io/repository/quarkus/ubi9-quarkus-graalvmce-builder-image?tab=tags[`ubi9-quarkus-graalvmce-builder-image`]
+* https://quay.io/repository/quarkus/ubi-quarkus-graalvmce-builder-image?tab=tags[`ubi-quarkus-graalvmce-builder-image`]
+
+==== What changed
+
+The images have been patched with the workaround (https://github.com/quarkusio/quarkus-images/pull/344[quarkus-images#344]), followed by a second patch (https://github.com/quarkusio/quarkus-images/pull/345[quarkus-images#345]) to fix the `native-image` tool invocation:
 
 * On amd64 images bundling an affected JDK (21 before 21.0.13.1, 25 before 25.0.5.1), the image sets `JAVA_TOOL_OPTIONS=-XX:-UseBASE64Intrinsics`.
 * arm64 images are not affected and are unchanged.
@@ -207,5 +236,6 @@ Thanks to https://github.com/zakkak[@zakkak], https://github.com/Karm[@Karm] and
 
 == Updates
 
+* *19 November 2026, 09:00 UTC*: Explain the impact on native executables and builder images.
 * *18 November 2026, 19:00 UTC*: Mandrel builder images (`jdk-21`, `jdk-25`) required a second patch at 17:30 UTC.
 * *18 November 2026, 18:00 UTC*: Initial publication. Mandrel builder images (`jdk-21`, `jdk-25`) patched at 13:15 UTC.
