@@ -11,7 +11,7 @@ author: cescoffier
 ====
 This post is updated as the situation evolves.
 
-*Last updated:* 19 November 2026, 09:00 UTC
+*Last updated:* 19 November 2026, 21:45 UTC
 ====
 
 == TL;DR / Current status
@@ -20,7 +20,8 @@ This post is updated as the situation evolves.
 * Native executables built with Mandrel are *not* affected.
 * IBM Semeru (OpenJ9) is *not* affected.
 * Builder images (Mandrel and GraalVM CE): *patched* (workaround applied). Re-pull floating tags. Update pinned tags. See <<builder-images>>.
-* UBI Java runtime images: *not yet fixed*. Add `-XX:-UseBASE64Intrinsics` to the JVM options as workaround.
+* UBI Java images (UBI 8, UBI 9 and UBI 10): *fixed* on 19 November 2026. Rebuild your container images on the fixed base image, or apply the `-XX:-UseBASE64Intrinsics` workaround. See <<ubi-images>>.
+* The UBI 9 `1.23` images (used by default by Quarkus 3.27) are *not* fixed and will not be. Switch to `1.24`.
 * JVM on bare metal: if your JDK is patched, you are fine. Otherwise, add `-XX:-UseBASE64Intrinsics` as workaround.
 
 [cols="2,1,3"]
@@ -32,8 +33,8 @@ This post is updated as the situation evolves.
 |Upgrade the JDK, or add `-XX:-UseBASE64Intrinsics`
 
 |JVM in a container, UBI Java runtime image
-|⚠️ Not fixed yet
-|Add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`
+|✅ Fixed, rebuild required
+|Rebuild your container image on the fixed base image and redeploy, or add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`
 
 |Native executable (Mandrel)
 |✅ Not affected
@@ -104,15 +105,65 @@ export JAVA_OPTS="$JAVA_OPTS -XX:-UseBASE64Intrinsics"
 
 Remove the flag once a fixed JDK is deployed.
 
+[[ubi-images]]
 === JVM in a container, UBI Java runtime image
 
 This is the Quarkus recommended setup (`Dockerfile.jvm`, `registry.access.redhat.com/ubi9/openjdk-<version>-runtime` or `registry.access.redhat.com/ubi10/openjdk-<version>-runtime`).
 
-The UBI Java runtime images are *not fixed yet*.
-We are waiting for updated images.
-We will update this post when they are available.
+The UBI Java images were *fixed* on 19 November 2026.
+The floating tags (`1.23` for UBI 8, `1.24` for UBI 9 and UBI 10) now point to builds shipping a fixed JDK:
 
-In the meantime, add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`.
+[cols="3,1,1,2,1",options="header"]
+|===
+|Image |Floating tag |Fixed build |Release date (UTC) |JDK
+
+|`registry.access.redhat.com/ubi8/openjdk-17-runtime` |`1.23` |`1.23-7` |2026-11-19 10:44 |17.0.21.1
+|`registry.access.redhat.com/ubi8/openjdk-21-runtime` |`1.23` |`1.23-7` |2026-11-19 10:48 |21.0.13.1
+|`registry.access.redhat.com/ubi9/openjdk-17-runtime` |`1.24` |`1.24-6` |2026-11-19 10:54 |17.0.21.1
+|`registry.access.redhat.com/ubi9/openjdk-21-runtime` |`1.24` |`1.24-5` |2026-11-19 10:51 |21.0.13.1
+|`registry.access.redhat.com/ubi9/openjdk-25-runtime` |`1.24` |`1.24-5` |2026-11-19 10:55 |25.0.5.1
+|`registry.access.redhat.com/ubi10/openjdk-21-runtime` |`1.24` |`1.24-21` |2026-11-19 12:51 |21.0.13.1
+|`registry.access.redhat.com/ubi10/openjdk-25-runtime` |`1.24` |`1.24-21` |2026-11-19 09:48 |25.0.5.1
+|===
+
+==== Rebuild your container images
+
+Your existing container images still contain the vulnerable JDK.
+Fixed base images do not change images you already built, nor containers already running.
+You have to *rebuild* your container images on top of the fixed base image, then *redeploy* them.
+
+Docker and Podman reuse the base image cached locally.
+Make sure the build uses the fixed one:
+
+* With a `Dockerfile`: build with `docker build --pull` (or `podman build --pull=newer`), or run `docker pull <base image>` before building, including when the build is run by the Quarkus Docker or Podman extensions.
+* With Jib: the base image tag is resolved against the registry at each build, so the next build uses the fixed image.
+* If you pinned the base image to a build tag (e.g. `1.24-3`) or a digest (`@sha256:...`), update it to the fixed build listed above.
+
+To check that an image ships a fixed JDK:
+
+[source,shell]
+----
+docker run --rm --entrypoint java <your image> -version
+----
+
+The JDK version must be at least 17.0.21.1, 21.0.13.1 or 25.0.5.1.
+Vulnerable images show 17.0.21, 21.0.13 or 25.0.5 (without the trailing `.1`), or older.
+
+==== Quarkus 3.27: switch to the `1.24` images
+
+Quarkus 3.27 uses the UBI 9 `1.23` images by default (`registry.access.redhat.com/ubi9/openjdk-<version>-runtime:1.23`, in the generated `Dockerfile.jvm` and as the default base image of the container image extensions).
+This stream is no longer maintained: it was *not* fixed and will not be.
+
+If you are using Quarkus 3.27, switch to the `1.24` images:
+
+* In your `Dockerfile.jvm`: `FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24` (or `openjdk-17-runtime:1.24`).
+* With Jib: `quarkus.jib.base-jvm-image=registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24` (or `openjdk-17-runtime:1.24`).
+* With OpenShift S2I builds: `quarkus.openshift.base-jvm-image=registry.access.redhat.com/ubi9/openjdk-21:1.24` (or `openjdk-17:1.24`).
+
+==== Workaround, if you cannot rebuild yet
+
+If you cannot rebuild and redeploy your images right away, add `-XX:-UseBASE64Intrinsics` to `JAVA_OPTS_APPEND`.
+It can be set at deployment time, without rebuilding the image.
 Use `JAVA_OPTS_APPEND`, not `JAVA_OPTS`: overriding `JAVA_OPTS` drops the defaults computed by the image.
 
 In your `Dockerfile.jvm`:
@@ -236,6 +287,7 @@ Thanks to https://github.com/zakkak[@zakkak], https://github.com/Karm[@Karm] and
 
 == Updates
 
+* *19 November 2026, 21:45 UTC*: The UBI 8, UBI 9 and UBI 10 Java images are fixed. Rebuild your container images on the fixed base images. Quarkus 3.27 users have to switch to the UBI 9 `1.24` images.
 * *19 November 2026, 09:00 UTC*: Explain the impact on native executables and builder images.
 * *18 November 2026, 19:00 UTC*: Mandrel builder images (`jdk-21`, `jdk-25`) required a second patch at 17:30 UTC.
 * *18 November 2026, 18:00 UTC*: Initial publication. Mandrel builder images (`jdk-21`, `jdk-25`) patched at 13:15 UTC.
