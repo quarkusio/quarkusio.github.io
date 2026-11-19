@@ -198,7 +198,7 @@ public final class ReleasesSync {
 
         processed.sort((a, b) -> compareVersions(b.version, a.version));
 
-        fillBranchedFrom(processed, mergeBases);
+        fillParentRelease(processed, mergeBases);
 
         // Non-LTS releases are supported "until the next minor release":
         // when not set explicitly, their EOL date is the release date of the next minor.
@@ -219,10 +219,10 @@ public final class ReleasesSync {
     }
 
     /**
-     * Fills in branched_from for published 3.x+ LTS releases which don't have one, from git ancestry
+     * Fills in parent_release for published 3.x+ LTS releases which don't have one, from git ancestry
      * (see BranchLineage). Hand-edited values are never touched; where git gives no answer the field is left blank.
      */
-    private static void fillBranchedFrom(List<WorkingRelease> releases, MergeBases mergeBases) {
+    private static void fillParentRelease(List<WorkingRelease> releases, MergeBases mergeBases) {
         List<String> published = releases.stream()
                 .filter(r -> !Boolean.TRUE.equals(r.upcoming))
                 .map(r -> r.version).toList();
@@ -230,7 +230,7 @@ public final class ReleasesSync {
                 .filter(r -> !Boolean.TRUE.equals(r.upcoming) && !Boolean.TRUE.equals(r.lts))
                 .map(r -> r.version).toList();
         for (WorkingRelease r : releases) {
-            if (!Boolean.TRUE.equals(r.lts) || Boolean.TRUE.equals(r.upcoming) || r.branchedFrom != null
+            if (!Boolean.TRUE.equals(r.lts) || Boolean.TRUE.equals(r.upcoming) || r.parentRelease != null
                     || BranchLineage.major(r.version) < 3) {
                 continue;
             }
@@ -246,17 +246,17 @@ public final class ReleasesSync {
                 }
                 BranchLineage.Result result = BranchLineage.pick(bases);
                 if (result.version() == null) {
-                    Log.warnf("No candidate branch found for %s; leaving branched_from blank", r.version);
+                    Log.warnf("No candidate branch found for %s; leaving parent_release blank", r.version);
                     continue;
                 }
                 if (result.ambiguous()) {
                     Log.warnf("%s has the same most recent merge-base with %s; using %s, please check", r.version,
                             result.candidates(), result.version());
                 }
-                r.branchedFrom = result.version();
-                Log.infof("%s branched from %s (most recent merge-base)", r.version, r.branchedFrom);
+                r.parentRelease = result.version();
+                Log.infof("%s branched from %s (most recent merge-base)", r.version, r.parentRelease);
             } catch (Exception e) {
-                Log.warnf("Could not work out branched_from for %s: %s", r.version, e.getMessage());
+                Log.warnf("Could not work out parent_release for %s: %s", r.version, e.getMessage());
             }
         }
     }
@@ -295,12 +295,202 @@ public final class ReleasesSync {
             }
             Releases.EnterpriseDates existing = providerDates(release, provider);
             Releases.EnterpriseDates dated = existing == null
-                    ? new Releases.EnterpriseDates(date.toString(), null, null, false)
-                    : new Releases.EnterpriseDates(date.toString(), existing.eolDate(), existing.branchedFrom(),
-                            existing.openEnded());
+                    ? new Releases.EnterpriseDates(date.toString(), null, null, false, false, null)
+                    : new Releases.EnterpriseDates(date.toString(), existing.eolDate(), existing.parentRelease(),
+                            existing.openEnded(), existing.lastInMajor(), existing.micros());
             releases.add(withProviderDates(release, provider, dated));
         }
         return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
+    }
+
+    // ---- Vendor builds ----
+
+    /**
+     * The vendor's builds already in the data, with their dates, so they aren't looked up again.
+     */
+    public static Map<String, LocalDate> knownVendorBuilds(Releases data, String provider) {
+        Map<String, LocalDate> known = new HashMap<>();
+        for (Releases.Entry release : data.releases()) {
+            Releases.EnterpriseDates block = providerDates(release, provider);
+            if (block != null && block.micros() != null) {
+                block.micros().forEach(m -> known.put(m.version(), parseDateOrNull(m.releaseDate())));
+            }
+        }
+        return known;
+    }
+
+    /**
+     * Lists the vendor's builds of each published minor as the micros of its vendor block, newest first, creating the
+     * block if the minor has none. The list is rewritten in full; parents are filled in by {@link #applyParents}.
+     *
+     * @param builds every build in the vendor's repository (the latest build of each version) to its publish date,
+     *        null when unknown; null if the repository couldn't be read, which leaves the data as it is
+     * @param bomUrl a build's BOM in the vendor's repository
+     */
+    public static Releases applyVendorMicros(Releases data, String provider, Map<String, LocalDate> builds,
+            Function<String, String> bomUrl) {
+        if (builds == null) {
+            Log.warnf("Keeping the %s builds already in the data", provider);
+            return data;
+        }
+        Map<String, List<String>> byMinor = new HashMap<>();
+        for (String version : builds.keySet()) {
+            String minor = EnterpriseReleaseDates.minorOf(version);
+            if (minor != null) {
+                byMinor.computeIfAbsent(minor, k -> new ArrayList<>()).add(version);
+            }
+        }
+        List<Releases.Entry> releases = new ArrayList<>();
+        for (Releases.Entry release : data.releases()) {
+            List<String> versions = byMinor.get(release.version());
+            if (release.upcoming() || versions == null) {
+                releases.add(release);
+                continue;
+            }
+            List<Releases.MicroEntry> micros = versions.stream().sorted(Lineage.VENDOR_ORDER.reversed())
+                    .map(v -> new Releases.MicroEntry(v, builds.get(v) == null ? null : builds.get(v).toString(), null,
+                            bomUrl.apply(v), false, false, false, null))
+                    .toList();
+            Releases.EnterpriseDates existing = providerDates(release, provider);
+            Releases.EnterpriseDates block = existing == null
+                    ? new Releases.EnterpriseDates(null, null, null, false, false, micros)
+                    : new Releases.EnterpriseDates(existing.releaseDate(), existing.eolDate(), existing.parentRelease(),
+                            existing.openEnded(), existing.lastInMajor(), micros);
+            releases.add(withProviderDates(release, provider, block));
+        }
+        return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
+    }
+
+    // ---- Parents ----
+
+    /**
+     * Fills in parent_release for every micro, community and vendor, and for vendor blocks (see {@link Lineage}). A
+     * parent already in {@code previous} is kept, so hand-edited values are never overwritten and git is only asked
+     * about micros it hasn't answered for yet. Finals get their parent from the versions; pre-releases, and the first
+     * micro of each minor, from git. If git can't be asked (e.g. the GitHub rate limit), those are left without a parent
+     * for a later run.
+     *
+     * @param previous the data as read, before this run
+     */
+    public static Releases applyParents(Releases data, Releases previous, Lineage.Ancestry ancestry) {
+        Map<String, String> known = new HashMap<>();
+        for (Releases.Entry release : previous.releases()) {
+            allMicros(release).filter(m -> m.parentRelease() != null)
+                    .forEach(m -> known.put(m.version(), m.parentRelease()));
+        }
+        Set<String> community = data.releases().stream().filter(r -> r.micros() != null)
+                .flatMap(r -> r.micros().stream()).map(Releases.MicroEntry::version).collect(Collectors.toSet());
+        // Nearest earlier minors first: the data lists releases newest first
+        List<Releases.Entry> withMicros = data.releases().stream()
+                .filter(r -> r.micros() != null && !r.micros().isEmpty()).toList();
+
+        boolean[] gitAvailable = { true };
+        List<Releases.Entry> releases = new ArrayList<>();
+        for (Releases.Entry release : data.releases()) {
+            List<Releases.MicroEntry> micros = release.micros();
+            if (micros != null && !micros.isEmpty()) {
+                Map<String, String> computed = Lineage.communityParents(micros);
+                String first = Lineage.firstMicro(micros);
+                micros = micros.stream().map(m -> {
+                    String parent = known.get(m.version());
+                    if (parent != null) {
+                        return m.withParentRelease(parent);
+                    }
+                    parent = computed.get(m.version());
+                    // Pre-releases need git: they aren't always built on each other (see Lineage)
+                    boolean needsGit = m.version().equals(first) || Micro.isPreRelease(m.version());
+                    if (!needsGit) {
+                        return m.withParentRelease(parent);
+                    }
+                    String previousMicro = parent;
+                    parent = null;
+                    if (m.githubUrl() != null && gitAvailable[0]) {
+                        int index = withMicros.indexOf(release);
+                        List<List<Releases.MicroEntry>> earlier = withMicros.subList(index + 1, withMicros.size())
+                                .stream().map(Releases.Entry::micros).toList();
+                        try {
+                            parent = Lineage.preReleaseParent(m.version(), previousMicro, earlier, ancestry);
+                            if (parent == null) {
+                                Log.warnf("No earlier micro found in %s; leaving its parent_release blank", m.version());
+                            } else if (!parent.equals(previousMicro)) {
+                                Log.infof("%s descends from %s", m.version(), parent);
+                            }
+                        } catch (Exception e) {
+                            Log.warnf("Could not work out the parent of %s (%s); leaving the rest for a later run",
+                                    m.version(), e.getMessage());
+                            gitAvailable[0] = false;
+                        }
+                    }
+                    return m.withParentRelease(parent);
+                }).toList();
+            }
+            Releases.Entry updated = new Releases.Entry(release.version(), release.releaseDate(), release.plannedDate(),
+                    release.eolDate(), release.lts(), release.upcoming(), release.proposal(), release.link(),
+                    release.rhbq(), release.ibm(), release.herodevs(), release.parentRelease(), micros);
+            for (String provider : PROVIDERS) {
+                Releases.EnterpriseDates block = providerDates(updated, provider);
+                if (block != null && block.micros() != null && !block.micros().isEmpty()) {
+                    updated = withProviderDates(updated, provider, withVendorParents(block, known, community));
+                }
+            }
+            releases.add(updated);
+        }
+        return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
+    }
+
+    /**
+     * The block's builds with their parents, and the block's own parent_release, if not set, filled in with the
+     * community micro its first build is based on.
+     */
+    private static Releases.EnterpriseDates withVendorParents(Releases.EnterpriseDates block, Map<String, String> known,
+            Set<String> community) {
+        Map<String, String> computed = Lineage.vendorParents(block.micros(), community);
+        List<Releases.MicroEntry> micros = block.micros().stream()
+                .map(m -> m.withParentRelease(known.getOrDefault(m.version(), computed.get(m.version())))).toList();
+        String parent = block.parentRelease();
+        if (parent == null) {
+            parent = micros.stream().map(Releases.MicroEntry::version).min(Lineage.VENDOR_ORDER)
+                    .map(v -> Lineage.communityBase(v, community)).orElse(null);
+        }
+        return new Releases.EnterpriseDates(block.releaseDate(), block.eolDate(), parent, block.openEnded(), block.lastInMajor(), micros);
+    }
+
+    private static java.util.stream.Stream<Releases.MicroEntry> allMicros(Releases.Entry release) {
+        java.util.stream.Stream<Releases.MicroEntry> micros = release.micros() == null ? java.util.stream.Stream.empty()
+                : release.micros().stream();
+        for (Releases.EnterpriseDates block : java.util.Arrays.asList(release.rhbq(), release.ibm(), release.herodevs())) {
+            if (block != null && block.micros() != null) {
+                micros = java.util.stream.Stream.concat(micros, block.micros().stream());
+            }
+        }
+        return micros;
+    }
+
+    /**
+     * Micros dated before the micro they were built from, which can't be right: a release can't predate its
+     * parent_release. This is how a release published to GitHub long after it was tagged shows up. Checks community
+     * and vendor micros alike, whatever minor each parent is in; a parent that isn't listed is skipped.
+     *
+     * @return one description per problem, empty if the dates are consistent
+     */
+    public static List<String> microsBeforeTheirParents(Releases data) {
+        Map<String, LocalDate> dates = new HashMap<>();
+        data.releases().forEach(r -> allMicros(r).forEach(m -> {
+            LocalDate date = parseDateOrNull(m.releaseDate());
+            if (date != null) {
+                dates.put(m.version(), date);
+            }
+        }));
+        List<String> problems = new ArrayList<>();
+        data.releases().forEach(r -> allMicros(r).forEach(m -> {
+            LocalDate date = dates.get(m.version());
+            LocalDate parent = m.parentRelease() == null ? null : dates.get(m.parentRelease());
+            if (date != null && parent != null && date.isBefore(parent)) {
+                problems.add("%s (%s) is dated before its parent_release %s (%s)".formatted(m.version(), date,
+                        m.parentRelease(), parent));
+            }
+        }));
+        return problems;
     }
 
     /**
@@ -326,6 +516,66 @@ public final class ReleasesSync {
         }
     }
 
+    /**
+     * For the Red Hat and IBM builds: marks a minor as the vendor's last of its major stream once the vendor
+     * has shipped a newer major (unless a minor of that stream is already marked, by hand), then fills in any
+     * missing eol_date from the support policy and warns about an existing one that disagrees with it. An
+     * existing eol_date is kept, except where a later release fixes it (see
+     * {@link EnterpriseReleaseDates#eolDateToRecord}). Red Hat's last minor, until the next major, is a hand-edited
+     * placeholder. See {@link EnterpriseReleaseDates#computeEolDate}.
+     */
+    public static Releases applyEnterpriseEolDates(Releases data) {
+        Map<String, Map<String, Releases.EnterpriseDates>> updated = new LinkedHashMap<>();
+        for (String provider : List.of("rhbq", "ibm")) {
+            Map<String, EnterpriseReleaseDates.Build> builds = new LinkedHashMap<>();
+            for (Releases.Entry r : data.releases()) {
+                Releases.EnterpriseDates dates = providerDates(r, provider);
+                LocalDate released = dates == null ? null : parseDateOrNull(dates.releaseDate());
+                if (released != null) {
+                    builds.put(r.version(), new EnterpriseReleaseDates.Build(released, dates.lastInMajor()));
+                }
+            }
+            Set<String> newlyLast = EnterpriseReleaseDates.newlyLastInMajor(builds);
+            newlyLast.forEach(v -> {
+                Log.infof("Marking %s %s as the last of its major stream: the vendor has released a newer major", provider, v);
+                builds.put(v, new EnterpriseReleaseDates.Build(builds.get(v).releaseDate(), true));
+            });
+            Map<String, Releases.EnterpriseDates> result = new LinkedHashMap<>();
+            for (Releases.Entry r : data.releases()) {
+                Releases.EnterpriseDates dates = providerDates(r, provider);
+                if (dates == null || !builds.containsKey(r.version())) {
+                    continue;
+                }
+                String eol = dates.eolDate();
+                LocalDate actual = parseDateOrNull(eol);
+                eol = EnterpriseReleaseDates.eolDateToRecord(provider, r.version(), builds, actual)
+                        .map(LocalDate::toString).orElse(eol);
+                if (actual != null && !actual.toString().equals(eol)) {
+                    Log.infof("Setting %s %s eol_date to %s (was %s): a later release fixes it", provider, r.version(),
+                            eol, actual);
+                } else if (actual != null) {
+                    EnterpriseReleaseDates.checkEolDate(provider, r.version(), builds, actual)
+                            .ifPresent(problem -> Log.warnf("Check this hand-edited date: %s", problem));
+                }
+                result.put(r.version(), new Releases.EnterpriseDates(dates.releaseDate(), eol, dates.parentRelease(),
+                        dates.openEnded(), builds.get(r.version()).lastInMajor(), dates.micros()));
+            }
+            updated.put(provider, result);
+        }
+        List<Releases.Entry> releases = new ArrayList<>();
+        for (Releases.Entry r : data.releases()) {
+            Releases.Entry e = r;
+            for (String provider : List.of("rhbq", "ibm")) {
+                Releases.EnterpriseDates dates = updated.get(provider).get(r.version());
+                if (dates != null) {
+                    e = withProviderDates(e, provider, dates);
+                }
+            }
+            releases.add(e);
+        }
+        return new Releases(data.policy(), data.supportProviders(), data.eolSupport(), releases);
+    }
+
     private static Releases.EnterpriseDates providerDates(Releases.Entry release, String provider) {
         return switch (provider) {
             case "rhbq" -> release.rhbq();
@@ -339,7 +589,7 @@ public final class ReleasesSync {
         return new Releases.Entry(r.version(), r.releaseDate(), r.plannedDate(), r.eolDate(), r.lts(), r.upcoming(),
                 r.proposal(), r.link(),
                 provider.equals("rhbq") ? dates : r.rhbq(), provider.equals("ibm") ? dates : r.ibm(),
-                provider.equals("herodevs") ? dates : r.herodevs(), r.branchedFrom(), r.micros());
+                provider.equals("herodevs") ? dates : r.herodevs(), r.parentRelease(), r.micros());
     }
 
     /**
@@ -402,7 +652,7 @@ public final class ReleasesSync {
         /**
          * The version this release branched from (hand-edited, or filled in for LTS releases).
          */
-        String branchedFrom;
+        String parentRelease;
         Releases.EnterpriseDates rhbq;
         Releases.EnterpriseDates ibm;
         Releases.EnterpriseDates herodevs;
@@ -422,7 +672,7 @@ public final class ReleasesSync {
             release.upcoming = entry.upcoming();
             release.proposal = entry.proposal();
             release.link = entry.link();
-            release.branchedFrom = entry.branchedFrom();
+            release.parentRelease = entry.parentRelease();
             release.rhbq = entry.rhbq();
             release.ibm = entry.ibm();
             release.herodevs = entry.herodevs();
@@ -452,7 +702,7 @@ public final class ReleasesSync {
                 release.eolDate = existing.eolDate;
                 release.hasExplicitEolDate = existing.hasExplicitEolDate;
                 release.link = existing.link;
-                release.branchedFrom = existing.branchedFrom;
+                release.parentRelease = existing.parentRelease;
                 release.rhbq = existing.rhbq;
                 release.ibm = existing.ibm;
                 release.herodevs = existing.herodevs;
@@ -482,7 +732,7 @@ public final class ReleasesSync {
             boolean isUpcoming = Boolean.TRUE.equals(upcoming);
             return new Releases.Entry(version, string(releaseDate), string(plannedDate), string(eolDate),
                     Boolean.TRUE.equals(lts), isUpcoming, isUpcoming && Boolean.TRUE.equals(proposal),
-                    link, rhbq, ibm, herodevs, branchedFrom, micros == null || micros.isEmpty() ? null : micros);
+                    link, rhbq, ibm, herodevs, parentRelease, micros == null || micros.isEmpty() ? null : micros);
         }
 
         private static LocalDate date(String value) {

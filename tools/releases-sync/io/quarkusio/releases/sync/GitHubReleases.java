@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,14 +16,25 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 /**
- * Reads releases, milestones, branch merge-bases and the release planning wiki from GitHub.
+ * Reads releases, milestones, branch merge-bases, tag ancestry and the release planning wiki from GitHub.
  */
 public class GitHubReleases {
 
     private static final String USER_AGENT = "Quarkus-Website-Release-Sync/1.0";
     private static final int MAX_ATTEMPTS = 3;
+    /** More commits than this between two tags can't all be release bookkeeping, so aren't listed. */
+    private static final int MAX_RELEASE_COMMITS = 10;
 
     /**
+     * A GitHub release published more than this long after its tag commit wasn't published when it came out. Normal
+     * releases are published within days of the tag commit (the longest of 529 quarkusio/quarkus releases was 23
+     * days, a 3.0 candidate); 2.11.0.Final was published 399 days late, which made it look newer than 2.11.1.Final.
+     */
+    static final Duration MAX_PUBLISH_DELAY = Duration.ofDays(60);
+
+    /**
+     * @param publishedAt when the release came out, as an ISO date-time: GitHub's published_at, except when that is
+     *        implausibly late (see {@link #releaseTime}); can be null
      * @param htmlUrl the release's page on GitHub, can be null
      */
     public record GitHubRelease(String tagName, String publishedAt, boolean prerelease, String htmlUrl) {
@@ -79,7 +91,8 @@ public class GitHubReleases {
             }
             for (JsonNode json : array) {
                 String tagName = json.path("tag_name").asText(null);
-                String publishedAt = json.path("published_at").asText(null);
+                String publishedAt = releaseTime(json.path("created_at").asText(null),
+                        json.path("published_at").asText(null), tagName);
                 if (tagName == null || publishedAt == null || json.path("draft").asBoolean(false)) {
                     continue;
                 }
@@ -91,6 +104,29 @@ public class GitHubReleases {
         }
         Log.warnf("Reached page limit (100), stopping pagination");
         return new FetchResult(releases, preReleases);
+    }
+
+    /**
+     * When a release came out. That is normally when GitHub says it was published, but a release can be created at
+     * the time of its tag and only published long afterwards (2.11.0.Final: tagged 2022-07-20, published
+     * 2023-08-23). GitHub's created_at is the date of the tagged commit, so when the two are more than
+     * {@link #MAX_PUBLISH_DELAY} apart, that is the date used. A smaller difference is normal (the tag commit comes
+     * a few days before the release), and using the earlier of the two always would move those dates too.
+     *
+     * @param createdAt the release's created_at, can be null
+     * @param publishedAt the release's published_at, can be null
+     * @return an ISO date-time, null if publishedAt is
+     */
+    static String releaseTime(String createdAt, String publishedAt, String tagName) {
+        if (createdAt == null || publishedAt == null) {
+            return publishedAt;
+        }
+        if (Duration.between(Instant.parse(createdAt), Instant.parse(publishedAt)).compareTo(MAX_PUBLISH_DELAY) > 0) {
+            Log.warnf("GitHub release %s was published (%s) long after its tag commit (%s); using the commit date",
+                    tagName, publishedAt, createdAt);
+            return createdAt;
+        }
+        return publishedAt;
     }
 
     public List<GitHubMilestone> fetchOpenMilestones() throws IOException, InterruptedException {
@@ -126,6 +162,33 @@ public class GitHubReleases {
         }
         return new BranchLineage.MergeBase(commit.path("sha").asText(),
                 Instant.parse(commit.path("commit").path("committer").path("date").asText()));
+    }
+
+    /**
+     * Whether release tag {@code earlier} is contained in release tag {@code micro}, judged by
+     * {@link Lineage#contained} from the commits of {@code earlier} that {@code micro} doesn't have.
+     *
+     * @return false if either tag doesn't exist
+     */
+    public boolean contains(String micro, String earlier) throws IOException, InterruptedException {
+        String url = "https://api.github.com/repos/%s/%s/compare/%s...%s".formatted(org, repo, micro, earlier);
+        HttpResponse<String> response = send(api(url + "?per_page=" + MAX_RELEASE_COMMITS));
+        if (response.statusCode() == 404) {
+            return false;
+        }
+        if (response.statusCode() != 200) {
+            throw new IOException("HTTP " + response.statusCode() + " comparing " + micro + " with " + earlier);
+        }
+        JsonNode json = mapper.readTree(response.body());
+        // ahead_by: commits in earlier that aren't in micro; listed oldest first
+        int extra = json.path("ahead_by").asInt();
+        List<String> messages = new ArrayList<>();
+        if (extra <= MAX_RELEASE_COMMITS) {
+            for (JsonNode commit : json.path("commits")) {
+                messages.add(commit.path("commit").path("message").asText("").lines().findFirst().orElse(""));
+            }
+        }
+        return Lineage.contained(earlier, extra, messages);
     }
 
     /**

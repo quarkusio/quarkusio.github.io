@@ -55,7 +55,7 @@ public class ReleaseTimelineFactory {
         if (catalog.all().stream().anyMatch(r -> finalMicroDates(r).stream()
                 .anyMatch(d -> r.releaseDate() != null && d.isAfter(r.releaseDate())))) {
             items.add(new LegendItem(RELEASE_KIND, "micro", "Micro release",
-                    "Faint line across a community bar: a micro release, with fixes for that minor."));
+                    "Faint line across a bar: a micro or emergency fix release."));
         }
         items.addAll(List.of(
                 new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
@@ -121,7 +121,7 @@ public class ReleaseTimelineFactory {
         LocalDate earliest = null;
         if (communityBarShown(r, today, true)) {
             earliest = earlier(earliest, r.releaseDate());
-            Release from = catalog.find(r.branchedFromVersion()).orElse(null);
+            Release from = catalog.find(r.parentRelease()).orElse(null);
             if (r.lts() && from != null && !from.lts()) {
                 earliest = earlier(earliest, from.releaseDate());
             }
@@ -154,7 +154,7 @@ public class ReleaseTimelineFactory {
     }
 
     /**
-     * Draws branched_from: an LTS from the non-LTS release before it (straight down from the left edge of
+     * Draws parent_release: an LTS from the non-LTS release before it (straight down from the left edge of
      * the stream bar it branched from, then into the LTS bar horizontally), and a non-LTS that follows a gap in the stream, where an LTS took the slot, from
      * that LTS (rising from the left of its bar, an S-curve and a rise into the gap, then into the non-LTS bar horizontally).
      * LTS releases that are on the chart are only connected while a support offering is running on the build date,
@@ -172,14 +172,14 @@ public class ReleaseTimelineFactory {
             }
             // an LTS with no row of its own is drawn as lines vanishing off the bottom of the chart
             String row = onChart ? r.version() : GanttTimelineBuilder.BOTTOM;
-            Release from = catalog.find(r.branchedFromVersion()).orElse(null);
+            Release from = catalog.find(r.parentRelease()).orElse(null);
             if (from != null && !from.lts() && from.releaseDate() != null) {
                 // leaves the left edge of the release it branches from, drops, then turns to enter the LTS bar horizontally
                 b.link("stream", row, from.releaseDate(), r.releaseDate());
             }
             for (Release next : catalog.all()) {
                 if (!next.upcoming() && !next.lts() && next.releaseDate() != null
-                        && r.version().equals(next.branchedFromVersion())) {
+                        && r.version().equals(next.parentRelease())) {
                     // rises from the left of the LTS bar, like the vendor connectors, and S-curves over to the non-LTS bar
                     b.rise(row, "stream", r.releaseDate(), next.releaseDate());
                 }
@@ -304,7 +304,8 @@ public class ReleaseTimelineFactory {
                 LocalDate from = enterpriseStart(r, r.rhbq());
                 row.segment("enterprise", "rhbq", lane, from, r.rhbq().eolDate(), catalog.providerUrl("rhbq"),
                         name + ": Red Hat build of Quarkus",
-                        enterpriseLines("Red Hat", r.rhbq().releaseDate(), r.rhbq().eolDate()), r.version());
+                        enterpriseLines("Red Hat", r.rhbq()), r.version())
+                        .ticks(finalMicroDates(r.rhbq()));
                 row.branch(lane, catalog.branchPoint(r, r.rhbq()));
             }
             if (r.ibm() != null && r.ibm().hasEndDate()) {
@@ -313,7 +314,8 @@ public class ReleaseTimelineFactory {
                     LocalDate from = enterpriseStart(r, r.ibm());
                     row.segment("enterprise", "ibm", lane, from, r.ibm().eolDate(), catalog.providerUrl("ibm"),
                             name + ": IBM Enterprise Build of Quarkus",
-                            enterpriseLines("IBM", r.ibm().releaseDate(), r.ibm().eolDate()), r.version());
+                            enterpriseLines("IBM", r.ibm()), r.version())
+                            .ticks(finalMicroDates(r.ibm()));
                     row.branch(lane, catalog.branchPoint(r, r.ibm()));
                 }
                 if (r.ibm().openEnded()) {
@@ -356,13 +358,22 @@ public class ReleaseTimelineFactory {
         return vendor.releaseDate() != null ? vendor.releaseDate() : r.eolDate();
     }
 
-    private static List<String> enterpriseLines(String vendor, LocalDate release, LocalDate end) {
+    private static List<String> enterpriseLines(String vendor, EnterpriseOffering offering) {
         List<String> lines = new ArrayList<>();
-        if (release != null) {
-            lines.add(vendor + " release " + DATE.format(release));
+        if (offering.releaseDate() != null) {
+            lines.add(vendor + " release " + DATE.format(offering.releaseDate()));
         }
-        lines.add(vendor + " support until " + DATE.format(end));
+        lines.add(vendor + " support until " + DATE.format(offering.eolDate()));
+        Micro latest = latestFinal(offering.micros());
+        if (latest != null) {
+            lines.add("Latest micro " + latest.version()
+                    + (latest.releaseDate() == null ? "" : " (" + DATE.format(latest.releaseDate()) + ")"));
+        }
         return lines;
+    }
+
+    private static Micro latestFinal(List<Micro> micros) {
+        return micros.stream().filter(Micro::isFinal).findFirst().orElse(null);
     }
 
     private String communityHref(Release r, LocalDate today) {
@@ -374,7 +385,15 @@ public class ReleaseTimelineFactory {
 
     /** When each final micro was released (not candidates, betas or alphas), for the marks on the community bar. */
     private static List<LocalDate> finalMicroDates(Release r) {
-        return r.micros().stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
+        return finalMicroDates(r.micros());
+    }
+
+    private static List<LocalDate> finalMicroDates(EnterpriseOffering vendor) {
+        return finalMicroDates(vendor.micros());
+    }
+
+    private static List<LocalDate> finalMicroDates(List<Micro> micros) {
+        return micros.stream().filter(Micro::isFinal).map(Micro::releaseDate).filter(d -> d != null).toList();
     }
 
     private List<String> communityLines(Release r) {

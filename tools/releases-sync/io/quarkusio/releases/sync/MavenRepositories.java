@@ -26,17 +26,21 @@ import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 
 /**
- * Reads release dates from the Red Hat and IBM Maven repositories. These are shared public servers (IBM's is
+ * Reads release dates and builds from the Red Hat and IBM Maven repositories. These are shared public servers (IBM's is
  * rate limited), so the clients retry transient failures with exponential backoff and then trip a circuit
  * breaker, which makes every further call for the rest of the run fail fast instead of hammering the server.
- * Callers only ask for the minors that still need a date, so a normal run makes no requests at all.
+ * Callers only ask for the minors that still need a date; listing the builds takes one request per repository, and
+ * the Red Hat repository one more for each new build (to date it).
  */
 @ApplicationScoped
 public class MavenRepositories {
 
     private static final long PAUSE_BETWEEN_REQUESTS_MS = 1_000;
+    private static final String RHBQ_URL = "https://maven.repository.redhat.com/ga/com/redhat/quarkus/platform/quarkus-bom";
+    // Note that there are several urls in this repo: io/quarkus/quarkus/platform/quarkus-bom/ sounds like it would be the right one, but com/redhat/quarkus/platform/quarkus-bom/ is the equivalent of the platform, and gets more patches
+    private static final String IBM_URL = "https://public.dhe.ibm.com/ibmdl/export/pub/software/appcafe/maven-repository/com/redhat/quarkus/platform/quarkus-bom/";
 
-    @RegisterRestClient(configKey = "rhbq-maven", baseUri = "https://maven.repository.redhat.com/ga/com/redhat/quarkus/platform/quarkus-bom")
+    @RegisterRestClient(configKey = "rhbq-maven", baseUri = RHBQ_URL)
     @Retry(maxRetries = 2, delay = 5, delayUnit = ChronoUnit.SECONDS, retryOn = {WebApplicationException.class, ProcessingException.class}, abortOn = NotFoundException.class)
     @ExponentialBackoff
     @CircuitBreaker(requestVolumeThreshold = 3, failureRatio = 1.0, delay = 1, delayUnit = ChronoUnit.HOURS, failOn = {WebApplicationException.class, ProcessingException.class}, skipOn = NotFoundException.class)
@@ -50,7 +54,7 @@ public class MavenRepositories {
         Response pom(@PathParam("version") String version);
     }
 
-    @RegisterRestClient(configKey = "ibm-maven", baseUri = "https://public.dhe.ibm.com/ibmdl/export/pub/software/appcafe/maven-repository/io/quarkus/quarkus-bom")
+    @RegisterRestClient(configKey = "ibm-maven", baseUri = IBM_URL)
     @Retry(maxRetries = 2, delay = 5, delayUnit = ChronoUnit.SECONDS, retryOn = {WebApplicationException.class, ProcessingException.class}, abortOn = NotFoundException.class)
     @ExponentialBackoff
     @CircuitBreaker(requestVolumeThreshold = 3, failureRatio = 1.0, delay = 1, delayUnit = ChronoUnit.HOURS, failOn = {WebApplicationException.class, ProcessingException.class}, skipOn = NotFoundException.class)
@@ -141,6 +145,71 @@ public class MavenRepositories {
         } catch (RuntimeException e) {
             Log.warnf("Stopped reading the IBM Maven repository: %s", e.toString());
             return Map.of();
+        }
+    }
+
+    public static String rhbqBomUrl(String version) {
+        return "%1$s/%2$s/quarkus-bom-%2$s.pom".formatted(RHBQ_URL, version);
+    }
+
+    public static String ibmBomUrl(String version) {
+        return "%1$s/%2$s/quarkus-bom-%2$s.pom".formatted(IBM_URL, version);
+    }
+
+    /**
+     * The latest build of each version in the Red Hat repository (see {@link Lineage#latestBuilds}), to the date it was
+     * published. Only builds not in {@code known} are dated, one request each; a build that can't be dated (the
+     * server stopped answering) maps to null, and is dated by a later run.
+     *
+     * @param known build version to its date, as already in the data
+     * @return null if the repository can't be read
+     */
+    public Map<String, LocalDate> rhbqBuilds(Map<String, LocalDate> known) {
+        java.util.List<String> builds;
+        try {
+            builds = Lineage.latestBuilds(EnterpriseReleaseDates.parseMetadata(rhbq.versions()));
+        } catch (RuntimeException e) {
+            Log.warnf("Could not list the builds in the Red Hat Maven repository: %s", e.toString());
+            return null;
+        }
+        Map<String, LocalDate> result = new LinkedHashMap<>();
+        boolean reachable = true;
+        for (String version : builds) {
+            LocalDate date = known.get(version);
+            if (date == null && reachable) {
+                try {
+                    Thread.sleep(PAUSE_BETWEEN_REQUESTS_MS);
+                    date = rhbq.pom(version).getLastModified().toInstant().atZone(ZoneOffset.UTC).toLocalDate();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    reachable = false;
+                } catch (RuntimeException e) {
+                    Log.warnf("Stopped dating builds in the Red Hat Maven repository: %s", e.toString());
+                    reachable = false;
+                }
+            }
+            result.put(version, date);
+        }
+        return result;
+    }
+
+    /**
+     * The latest build of each version in the IBM repository (see {@link Lineage#latestBuilds}), to the date it was
+     * published (one request, the directory listing has the dates).
+     *
+     * @return null if the repository can't be read
+     */
+    public Map<String, LocalDate> ibmBuilds() {
+        try {
+            Map<String, LocalDate> listed = EnterpriseReleaseDates.parseListing(ibm.listing());
+            Map<String, LocalDate> result = new LinkedHashMap<>();
+            for (String version : Lineage.latestBuilds(listed.keySet())) {
+                result.put(version, listed.get(version));
+            }
+            return result;
+        } catch (RuntimeException e) {
+            Log.warnf("Could not list the builds in the IBM Maven repository: %s", e.toString());
+            return null;
         }
     }
 }
