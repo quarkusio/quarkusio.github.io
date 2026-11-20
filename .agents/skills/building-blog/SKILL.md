@@ -96,7 +96,11 @@ workaround is needed; production hides them until their date.
 ### Linking to a Future-Dated Post
 
 A link from a published post to a future-dated one is a 404 in
-production until the target's date, and the link checker will flag it.
+production until the target's date. The PR link crawler cannot catch
+this, because PR builds include future-dated posts, so
+`FutureDatedLinkCheckerTest` (part of `./mvnw test`) checks the post
+sources instead: it fails on any unguarded link to a post dated later
+than the linking post and not yet published.
 Make the link conditional on the target page existing:
 
 ```asciidoc
