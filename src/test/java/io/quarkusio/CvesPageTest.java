@@ -459,17 +459,20 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void timeSpanFollowsTheComponentsShown() {
         page.navigate(baseUrl + "/cves/");
-        String five = page.locator("#tl-exposure").getAttribute("data-range-start");
+        // compare the busiest component alone with everything: the default view already reaches back as far as the
+        // oldest CVEs now that the data covers every release, so it cannot be the one that gets brought in
+        setSlider("cve-min-count", maxCount());
+        String top = page.locator("#tl-exposure").getAttribute("data-range-start");
         String firstTick = page.locator("#tl-exposure .tl-grid text").first().textContent();
         setSlider("cve-min-count", 1);
         String one = page.locator("#tl-exposure").getAttribute("data-range-start");
-        assertTrue(one.compareTo(five) < 0, "Bringing in older CVEs should start the axis earlier: " + one + " vs " + five);
+        assertTrue(one.compareTo(top) < 0, "Bringing in older CVEs should start the axis earlier: " + one + " vs " + top);
         assertNotEquals(firstTick, page.locator("#tl-exposure .tl-grid text").first().textContent(), "The axis labels follow the span");
         assertEquals(page.locator("#tl-exposure").getAttribute("data-range-end").substring(0, 4),
                 page.locator("#tl-exposure .tl-grid text").last().textContent().replaceAll(".* ", "").substring(0, 4).replace("2027", "2027"),
                 "The end of the axis does not move");
-        setSlider("cve-min-count", 5);
-        assertEquals(five, page.locator("#tl-exposure").getAttribute("data-range-start"), "and it goes back again");
+        setSlider("cve-min-count", maxCount());
+        assertEquals(top, page.locator("#tl-exposure").getAttribute("data-range-start"), "and it goes back again");
     }
 
     @Test
