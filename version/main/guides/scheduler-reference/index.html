@@ -1649,6 +1649,7 @@
           
           
           
+          
 
     <details class="guide-nav-cat" >
       <summary>Operations</summary>
@@ -1764,6 +1765,7 @@
           
             
             
+            
 
           <details class="guide-nav-subcat" >
             <summary>Resilience</summary>
@@ -1773,6 +1775,9 @@
                     </li>
                     <li >
                       <a href="/version/main/guides/load-shedding-reference/">Load shedding reference guide</a>
+                    </li>
+                    <li >
+                      <a href="/version/main/guides/http-rate-limit-reference/">HTTP rate limit reference guide</a>
                     </li>
             </ul>
           </details>
@@ -2226,7 +2231,11 @@
 </li>
 <li data-level="1"><a href="#metrics">6. Metrics</a></li>
 <li data-level="1"><a href="#opentelemetry-tracing">7. OpenTelemetry Tracing</a></li>
-<li data-level="1"><a href="#virtual_threads">8. Run @Scheduled methods on virtual threads</a></li>
+<li data-level="1"><a href="#virtual_threads">8. Run @Scheduled methods on virtual threads</a>
+<ul>
+<li data-level="2"><a href="#use-virtual-threads-for-every-scheduled-method">8.1. Use virtual threads for every scheduled method</a></li>
+</ul>
+</li>
 <li data-level="1"><a href="#assign-a-user-and-roles-to-a-scheduled-task">9. Assign a user and roles to a scheduled task</a></li>
 <li data-level="1"><a href="#configuration-reference">10. Configuration Reference</a></li>
 </ul>
@@ -3245,6 +3254,68 @@ In this case, the method is invoked on a virtual thread.</p>
 <p>The method must return <code>void</code> and your Java runtime must provide support for virtual threads.
 Read <a href="/version/main/guides/./virtual-threads/">the virtual thread guide</a> for more details.</p>
 </div>
+<div class="sect2">
+<h3 id="use-virtual-threads-for-every-scheduled-method"><a class="anchor" href="#use-virtual-threads-for-every-scheduled-method"></a>8.1. Use virtual threads for every scheduled method</h3>
+<div class="paragraph">
+<p>Instead of annotating every scheduled method, you can enable virtual threads for all of them with a single build-time property:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-properties hljs" data-lang="properties">quarkus.scheduler.blocking.signatures.execution.mode=virtual-thread</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When enabled, every scheduled method that would otherwise be executed on a worker thread is executed on a virtual thread instead.
+The regular execution model rules still apply:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Scheduled methods considered non-blocking, because they return <code>CompletionStage&lt;Void&gt;</code> or <code>Uni&lt;Void&gt;</code>, or are Kotlin suspend functions, keep running on the event loop.</p>
+</li>
+<li>
+<p>Explicit <code>@Blocking</code>, <code>@NonBlocking</code> and <code>@RunOnVirtualThread</code> annotations on the scheduled method or its declaring class always take precedence, and an annotation on the method wins over one on the class.
+So, if a specific scheduled method is not safe to run on a virtual thread, annotate it with <code>@Blocking</code> to keep it on a worker thread.</p>
+</li>
+<li>
+<p>Jobs created programmatically with <code>Scheduler#newJob()</code> do not honor this property.
+Use <code>JobDefinition#setTask(Consumer&lt;ScheduledExecution&gt;, boolean)</code> to run such a job on a virtual thread.</p>
+</li>
+<li>
+<p>Scheduled methods declared with the <a href="/version/main/guides/./spring-scheduled/">Spring Scheduled compatibility layer</a> do not honor this property.</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Before enabling this property, make sure your application and its dependencies do not suffer from thread pinning or carrier thread monopolization.
+For more information, see the Quarkus <a href="/version/main/guides/./virtual-threads/">Virtual thread support reference</a> guide.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>When the <a href="/version/main/guides/./quartz/">Quartz extension</a> is used with <code>quarkus.quartz.run-blocking-scheduled-method-on-quartz-thread=true</code>, scheduled methods marked to run on virtual threads are executed on a Quartz thread instead.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -3419,16 +3490,48 @@ The <code>@RunAsUser</code> annotation creates an identity for scheduled tasks. 
 </tr>
 <tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
+<p><span class="icon"><i class="fa fa-lock" title="Fixed at build time"></i></span> <a id="quarkus-scheduler_quarkus-scheduler-blocking-signatures-execution-mode"></a> <span class="property-path"><a href="#quarkus-scheduler_quarkus-scheduler-blocking-signatures-execution-mode"><code>quarkus.scheduler.blocking.signatures.execution.mode</code></a></span>
+<button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.scheduler.blocking.signatures.execution.mode' title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
+<div class="content">
+<div class="paragraph">
+<p>The execution mode used for blocking scheduled methods without an explicit <code>@Blocking</code>, <code>@NonBlocking</code> or <code>@RunOnVirtualThread</code> annotation.</p>
+</div>
+<div class="paragraph">
+<p>When set to <code>virtual-thread</code>, such scheduled methods are executed on virtual threads instead of worker threads. Scheduled methods considered non-blocking, for instance because they return <code>CompletionStage</code> or <code>Uni</code>, keep running on the event loop, and explicit annotations on the scheduled method or its declaring class always take precedence.</p>
+</div>
+<div class="paragraph">
+<p>Jobs created programmatically with <code>Scheduler#newJob()</code> do not honor this property; use <code>JobDefinition#setTask(Consumer, boolean)</code> to run such a job on a virtual thread.</p>
+</div>
+<div class="paragraph">
+<p>Before changing this, make sure the application does not suffer from thread pinning (mostly resolved since JDK 24) or carrier thread monopolization. See the virtual threads guide for more details on how to monitor this with JFR events.</p>
+</div>
+<div class="paragraph">
+<p>Environment variable: <code id="env-var-5">QUARKUS_SCHEDULER_BLOCKING_SIGNATURES_EXECUTION_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5" title="Copy to clipboard" do-not-collapse="true"></button></p>
+</div>
+</div>
+</div>
+<div class="paragraph description-decoration">
+<p><i class="fa fa-chevron-down"></i><span>Show more</span></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><div class="content"><div class="paragraph">
+<p><code>worker</code>, <code>virtual-thread</code></p>
+</div></div></td>
+<td class="tableblock halign-left valign-middle"><p class="tableblock"><code>worker</code></p></td>
+</tr>
+<tr class="row-collapsible row-collapsed row-with-desc">
+<td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-scheduler_quarkus-scheduler-enabled"></a> <span class="property-path"><a href="#quarkus-scheduler_quarkus-scheduler-enabled"><code>quarkus.scheduler.enabled</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.scheduler.enabled' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-5" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>If schedulers are enabled.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-5">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-5" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-6">QUARKUS_SCHEDULER_ENABLED</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -3438,18 +3541,18 @@ The <code>@RunAsUser</code> annotation creates an identity for scheduled tasks. 
 <td class="tableblock halign-left valign-middle"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>true</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc">
+<tr class="row-collapsible row-collapsed row-with-desc odd">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-scheduler_quarkus-scheduler-overdue-grace-period"></a> <span class="property-path"><a href="#quarkus-scheduler_quarkus-scheduler-overdue-grace-period"><code>quarkus.scheduler.overdue-grace-period</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.scheduler.overdue-grace-period' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-6" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Scheduled task will be flagged as overdue if next execution time is exceeded by this period.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-6">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-6" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-7">QUARKUS_SCHEDULER_OVERDUE_GRACE_PERIOD</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
@@ -3459,18 +3562,18 @@ The <code>@RunAsUser</code> annotation creates an identity for scheduled tasks. 
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html">Duration</a> <a href="#duration-note-anchor-quarkus-scheduler_quarkus-scheduler"><span class="icon"><i class="fa fa-question-circle" title="More information about the Duration format"></i></span></a></p></td>
 <td class="tableblock halign-left valign-middle"><p class="tableblock"><code>1S</code></p></td>
 </tr>
-<tr class="row-collapsible row-collapsed row-with-desc odd">
+<tr class="row-collapsible row-collapsed row-with-desc">
 <td class="tableblock halign-left valign-top"><div class="content"><div class="paragraph">
 <p><a id="quarkus-scheduler_quarkus-scheduler-start-mode"></a> <span class="property-path"><a href="#quarkus-scheduler_quarkus-scheduler-start-mode"><code>quarkus.scheduler.start-mode</code></a></span>
 <button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-text='quarkus.scheduler.start-mode' title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
-<div id="conf-collapsible-desc-7" class="openblock description description-collapsed">
+<div id="conf-collapsible-desc-8" class="openblock description description-collapsed">
 <div class="content">
 <div class="paragraph">
 <p>Scheduler can be started in different modes. By default, the scheduler is not started unless a <code>io.quarkus.scheduler.Scheduled</code> business method is found.</p>
 </div>
 <div class="paragraph">
-<p>Environment variable: <code id="env-var-7">QUARKUS_SCHEDULER_START_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-7" title="Copy to clipboard" do-not-collapse="true"></button></p>
+<p>Environment variable: <code id="env-var-8">QUARKUS_SCHEDULER_START_MODE</code><button class="btn-copy fa fa-clipboard inline-btn-copy" data-clipboard-action="copy" data-clipboard-target="#env-var-8" title="Copy to clipboard" do-not-collapse="true"></button></p>
 </div>
 </div>
 </div>
