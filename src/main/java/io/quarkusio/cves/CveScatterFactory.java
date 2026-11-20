@@ -62,6 +62,8 @@ public class CveScatterFactory {
     }
 
     private final List<Item> items;
+    /** The oldest release line the data covers, e.g. "0.11", or null if there is none. */
+    private final String fromVersion;
 
     private final CveCategories categories;
 
@@ -77,6 +79,8 @@ public class CveScatterFactory {
     CveScatterFactory(Cves data, Lineage lineage, CveCategories categories) {
         this.categories = categories;
         this.items = items(data, lineage);
+        String oldest = lineage.horizonRelease(scanned(data, lineage));
+        this.fromVersion = oldest == null ? null : oldest.replaceFirst("^(\\d+\\.\\d+).*", "$1");
     }
 
     public List<LegendItem> legend() {
@@ -88,7 +92,8 @@ public class CveScatterFactory {
                 "Bar from the first release that contained it to the first release without it. The paler part is before it was published."));
         if (items.stream().anyMatch(Item::sinceAtLeast)) {
             legend.add(new LegendItem(MARK, "since", "Since at least",
-                    "Pale part ending in an arrow: it was already in the earliest release we have data for, so it may go back further."));
+                    "Pale part ending in an arrow: it was already in the earliest release we have data for"
+                            + (fromVersion == null ? "" : " (" + fromVersion + ")") + ", so it may go back further."));
         }
         legend.add(new LegendItem(MARK, "open", "Not fixed yet",
                 "Bar ending in a cross at the today line: no release is without it yet. In the Discovery view, the cross takes the place of the dot."));
@@ -268,7 +273,8 @@ public class CveScatterFactory {
         details.add(i.artifact());
         if (!dots && !i.pending() && start.isBefore(i.published())) {
             details.add(i.sinceAtLeast()
-                    ? "In releases since at least " + DATE.format(start) + ", the earliest we have data for, "
+                    ? "In releases since at least " + DATE.format(start) + ", the earliest we have data for"
+                            + (fromVersion == null ? "" : " (" + fromVersion + ")") + ", "
                             + days(start, i.published()) + " before it was published"
                     : "In releases since " + DATE.format(start) + ", " + days(start, i.published())
                             + " before it was published");
@@ -312,6 +318,12 @@ public class CveScatterFactory {
         return s == null || s.length() < 10 ? null : LocalDate.parse(s.substring(0, 10));
     }
 
+    /** The releases that were scanned for advisories; every release we have dates for when the data does not say. */
+    private static java.util.Collection<String> scanned(Cves data, Lineage lineage) {
+        return data == null || data.releases() == null ? lineage.dates().keySet()
+                : data.releases().stream().map(Cves.Scanned::version).toList();
+    }
+
     /**
      * One item per CVE per affected artifact (the data lists a component once per dependency version).
      * <p>
@@ -324,7 +336,7 @@ public class CveScatterFactory {
         if (data == null) {
             return out;
         }
-        LocalDate horizon = lineage.horizon();
+        LocalDate horizon = lineage.horizon(scanned(data, lineage));
         String newest = lineage.newest();
         if (data.advisories() != null) {
             data.advisories().forEach((ghsa, a) -> {

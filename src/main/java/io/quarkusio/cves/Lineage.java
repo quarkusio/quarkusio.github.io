@@ -44,9 +44,17 @@ record Lineage(Map<String, LocalDate> dates, Map<String, String> parents) {
         return dates.get(version);
     }
 
-    /** The oldest release the data has a date for: nothing is known about before it. */
-    LocalDate horizon() {
-        return dates.values().stream().min(LocalDate::compareTo).orElse(null);
+    /**
+     * The oldest of the given releases that has a date: nothing is known about before it. Pass the releases that were
+     * scanned, not every release in releases.yaml, which also lists releases too old to have a BOM to scan.
+     */
+    String horizonRelease(Collection<String> scanned) {
+        return scanned.stream().filter(dates::containsKey).min(java.util.Comparator.comparing(dates::get)).orElse(null);
+    }
+
+    LocalDate horizon(Collection<String> scanned) {
+        String release = horizonRelease(scanned);
+        return release == null ? null : dates.get(release);
     }
 
     private Map<String, List<String>> children() {

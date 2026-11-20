@@ -62,7 +62,7 @@ class CveScatterFactoryTest {
         advisories.forEach((ghsa, a) -> withReleases.put(ghsa,
                 new Cves.Advisory(a.cve(), a.severity(), a.published(), a.summary(), a.affectedComponents(),
                         new Cves.AffectedReleases(affected.getOrDefault(ghsa, List.of()), null))));
-        return new CveScatterFactory(new Cves(withReleases, pending), new Lineage(dates, parents));
+        return new CveScatterFactory(new Cves(withReleases, pending, null), new Lineage(dates, parents));
     }
 
     static CveScatterFactory factory(Map<String, Cves.Advisory> advisories) {
@@ -398,5 +398,41 @@ class CveScatterFactoryTest {
                 new Cves.Advisory("CVE-1", "HIGH", "2026-01-10T10:00:00Z", "a | b", List.of(new Cves.Component("a:one")), null));
         ScatterMark mark = marks(factory(m)).get(0);
         assertEquals(mark.details().size(), mark.tooltip().split("\\|").length);
+    }
+
+    @Test
+    void theDataBindsWithRoqsSnakeCaseMapper() throws Exception {
+        // Roq reads data files with a snake_case mapper, but cves.yaml is camelCase: without explicit names every
+        // advisory loses its components and releases, and the page silently shows only the pending CVEs
+        String json = """
+                {"advisories": {"GHSA-1": {"cve": "CVE-1", "severity": "HIGH", "published": "2026-03-10T10:00:00Z",
+                  "summary": "S", "affectedComponents": [{"component": "a:one", "range": "<1"}],
+                  "affectedReleases": {"list": ["v1"], "tree": [{"root": "v1", "cuts": ["v2"]}]}}},
+                 "releases": [{"version": "v1"}]}""";
+        Cves cves = new com.fasterxml.jackson.databind.ObjectMapper()
+                .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE)
+                .readValue(json, Cves.class);
+        Cves.Advisory a = cves.advisories().get("GHSA-1");
+        assertEquals("a:one", a.affectedComponents().get(0).component());
+        assertEquals(List.of("v1"), a.affectedReleases().list());
+        assertEquals("v2", a.affectedReleases().tree().get(0).cuts().get(0));
+        assertEquals("v1", cves.releases().get(0).version());
+    }
+
+    @Test
+    void theEarliestScannedReleaseBoundsSinceNotTheEarliestReleaseInTheLineage() {
+        // releases.yaml also lists releases too old to scan; they must not move the edge of what we know
+        Map<String, LocalDate> dates = Map.of("old", LocalDate.of(2018, 12, 1), "v1", LocalDate.of(2019, 3, 6), "v2",
+                LocalDate.of(2019, 4, 1));
+        Map<String, String> parents = Map.of("v1", "old", "v2", "v1");
+        var adv = new Cves.Advisory("CVE-1", "HIGH", "2020-01-01T00:00:00Z", "S", List.of(new Cves.Component("a:one")),
+                new Cves.AffectedReleases(List.of("v1"), null));
+        var f = new CveScatterFactory(
+                new Cves(Map.of("GHSA-1", adv), List.of(), List.of(new Cves.Scanned("v1"), new Cves.Scanned("v2"))),
+                new Lineage(dates, parents));
+        ScatterMark mark = marks(f).get(0);
+        assertTrue(mark.sinceAtLeast());
+        assertEquals(LocalDate.of(2019, 3, 6), mark.start());
+        assertTrue(f.legend().stream().anyMatch(l -> l.key().equals("since")), "the arrow is explained");
     }
 }
