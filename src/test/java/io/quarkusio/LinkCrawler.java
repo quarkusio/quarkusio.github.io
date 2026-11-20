@@ -293,6 +293,46 @@ final class LinkCrawler implements AutoCloseable {
         }
     }
 
+    void crawlAndCheckHreflangAlternates() throws InterruptedException {
+        CrawlResults results = getCrawlResults();
+
+        if (!results.hreflangProblems.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            results.hreflangProblems.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(e -> sb.append("- ").append(e.getKey()).append(": ").append(e.getValue()).append("\n"));
+            fail("Found " + results.hreflangProblems.size() + " page(s) with a malformed hreflang=en alternate:\n" + sb);
+        }
+    }
+
+    /**
+     * The English alternate must be the production URL of the page itself, e.g.
+     * https://quarkus.io/blog/ for /blog/ and https://quarkus.io/ for the home page.
+     *
+     * @param href the href of link[rel=alternate][hreflang=en], or null if the page has none
+     *             (redirect stubs and the like, which aren't built from the base layout)
+     * @return a description of the problem, or null if the alternate is fine or absent
+     */
+    static String checkEnglishAlternate(String pageUrl, String href) {
+        if (href == null) {
+            return null;
+        }
+        String prefix = "https://quarkus.io/";
+        if (!href.startsWith(prefix)) {
+            return "href '" + href + "' does not start with " + prefix;
+        }
+        String hrefPath = href.substring(prefix.length() - 1);
+        if (hrefPath.contains("//")) {
+            return "href '" + href + "' contains a doubled slash";
+        }
+        String pagePath = URI.create(pageUrl).getRawPath();
+        // A missing or extra trailing slash is tolerated here; the doubled-slash check above is what matters.
+        if (!hrefPath.replaceAll("/$", "").equals(pagePath.replaceAll("/$", ""))) {
+            return "href '" + href + "' does not match page path '" + pagePath + "'";
+        }
+        return null;
+    }
+
     // Status codes that are uncheckable - printed but don't fail the build or raise defects
     private static boolean isUncheckableStatus(int status) {
         return status == 401 || status == 403 || status == 410;
@@ -395,6 +435,8 @@ final class LinkCrawler implements AutoCloseable {
         // Collected during crawl to determine if content is old and should be
         // excluded from external link checking.
         Map<String, java.time.LocalDate> publishDates = new ConcurrentHashMap<>();
+        // Pages whose English hreflang alternate is malformed, keyed by page URL.
+        Map<String, String> hreflangProblems = new ConcurrentHashMap<>();
         AtomicInteger crawledCount = new AtomicInteger();
 
         Set<String> seedUrls = ConcurrentHashMap.newKeySet();
@@ -432,7 +474,7 @@ final class LinkCrawler implements AutoCloseable {
                     p.setDefaultNavigationTimeout(60_000);
 
                     crawLoop(p, queue, visited, brokenLinks, brokenImages, referrers,
-                            checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, crawledCount, maxPages,
+                            checkedExternal, checkedImages, fragmentLinks, pageIds, publishDates, hreflangProblems, crawledCount, maxPages,
                             checkInternal, checkExternal, excludePaths, includePaths, excludeSelectors, excludeUrls, seedUrls,
                             startUrls, pendingWork, done);
 
@@ -623,7 +665,7 @@ final class LinkCrawler implements AutoCloseable {
         } catch (IOException ignored) {
         }
 
-        return new CrawlResults(brokenLinks, brokenImages, brokenFragments, publishDates);
+        return new CrawlResults(brokenLinks, brokenImages, brokenFragments, publishDates, hreflangProblems);
     }
 
     private void crawLoop(Page p,
@@ -637,6 +679,7 @@ final class LinkCrawler implements AutoCloseable {
                           Map<String, FragmentLink> fragmentLinks,
                           Map<String, Set<String>> pageIds,
                           Map<String, java.time.LocalDate> publishDates,
+                          Map<String, String> hreflangProblems,
                           AtomicInteger crawledCount,
                           int maxPages,
                           boolean checkInternal,
@@ -761,6 +804,14 @@ final class LinkCrawler implements AutoCloseable {
                     var idResult = (List<String>) p.evaluate(
                             "() => [...document.querySelectorAll('[id]')].map(e => e.id)");
                     pageIds.put(normalizedUrl, new HashSet<>(idResult));
+
+                    // Only 'en' is checked: the other languages point at localized sites
+                    // that don't have every page (#2695), so they'd be noisy.
+                    String hreflangProblem = checkEnglishAlternate(pageUrl,
+                            (String) p.evaluate("() => document.querySelector('link[rel=alternate][hreflang=en]')?.getAttribute('href') ?? null"));
+                    if (hreflangProblem != null) {
+                        hreflangProblems.put(pageUrl, hreflangProblem);
+                    }
 
                     // Extract publish date from blog posts and newsletters for old content filtering
                     extractPublishDate(p, normalizedUrl, publishDates);
@@ -1698,6 +1749,7 @@ summary.put("totalBrokenLinks", reportable.size() + uncheckable.size() + oldCont
     }
 
     record CrawlResults(Map<String, BrokenLink> brokenLinks, Map<String, BrokenImage> brokenImages,
-                         Map<String, FragmentLink> brokenFragments, Map<String, java.time.LocalDate> publishDates) {
+                         Map<String, FragmentLink> brokenFragments, Map<String, java.time.LocalDate> publishDates,
+                         Map<String, String> hreflangProblems) {
     }
 }
