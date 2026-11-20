@@ -1,0 +1,50 @@
+# The internals (and a few externals) of Quarkus test classloading have changed
+
+## What's changing?
+
+The internals of Quarkus test classloading have been rewritten in 3.22. It does not affect production and dev modes, or some Quarkus test modes, such as `@QuarkusIntegrationTest`, `@QuarkusComponentTest`. However, `@QuarkusTest` has changed. This change should make Quarkus testing work better, and it allowed us to fix a pile of longstanding bugs. It will also allow us to improve the integration with test frameworks such as Pact. However, it did introduce a few bugs we know about, and most likely also some bugs we don't yet know about. We're keen to get feedback from the community so that we can get fixing.
+
+## Why?
+
+In previous versions, Quarkus tests were invoked using the default JUnit classloader, and then executed in a different, Quarkus-aware, classloader.
+
+This mostly worked very well, and meant that `QuarkusTest` tests mostly behaved as if they were part of the same application as the code under test. The Quarkus test framework could start and stop Quarkus instances at the right point in the test lifecycle, inject CDI dependencies, and do other useful Quarkus bytecode manipulation. However, some use cases didn't work. Tests using advanced JUnit 5 features like `@TestTemplate` and `@ParameterizedTest` sometimes found that the same test code might appear to run in several classloaders in a single test, or that injected dependencies weren't always available.
+
+While Quarkus extensions can do all sorts of marvellous bytecode manipulation to improve the developer experience, they cannot manipulate test classes with the same freedom that they do normal application classes.
+
+Over time, test-related defects were building up that couldn't be changed without a fundamental rewrite of how Quarkus loads and executes tests. The Quarkus test code itself was also growing ever-more complex as it tried to work around various JUnit edge cases. Moving test instances from one classloader to another involved serializing and deserialization, which is harder to implement on newer JVM versions with tighter class security. For example, Quarkus used to use XStream as the serialization provider, but XStream no longer works with Java 17 and higher, because of reflection restrictions in the newer JVMs.
+
+What if, instead, Quarkus tests were simply run in the same classloader used to to load them?
+
+## What you need to do
+
+From Quarkus 3.22 onwards, this is exactly how `@QuarkusTest` classloading works. What do your tests need to change in order to work with the new architecture? **Nothing** (hopefully!).
+
+One of the goals of this change was that the rewrite didn't touch any tests in our test suite, to make sure they'd all continue working without updates. In practice, there have been a few hiccups and we've also discovered some edge cases in the broader ecosystem.
+
+### Known regressions
+
+- **All dev services now start in the JUnit discovery phase**. [Quarkus Dev Services](https://quarkus.io/guides/dev-services) are currently started during [the augmentation phase](https://quarkus.io/guides/reaugmentation#what-is-augmentation), along with bytecode manipulation and other application initialization steps. With the new testing design, all augmentation happens at the beginning of the test run, during the JUnit discovery phase. This means all Dev Services also start at the beginning of the test run. If several test classes with different Dev Service configuration are augmented before any tests are run, multiple differently-configured Dev Services may be running at the same time. This can cause port conflicts and cross-talk on configuration values. We're hoping to have a [fix](https://github.com/quarkusio/quarkus/issues/45785) for this in the next release. As a workaround, splitting conflicting tests into separate projects should fix symptoms.
+- **Config access from JUnit conditions**. Using a `ConfigProvider` from a custom JUnit condition will [trigger a `ServiceConfigurationError`](https://github.com/quarkusio/quarkus/issues/47081). The workaround is to set the thread context classloader to `this.getClass().getClassLoader()` before reading config, and then set it back afterwards. This is fixed in 3.23.
+- **Nested test issues**. If nested `@QuarkusTest` tests are mixed in the same project with plain tests, the plain tests [will not be able to access Quarkus config](https://github.com/quarkusio/quarkus/issues/47657), because the thread context classloader does not get correctly reset. As a workaround, you can manually set the thread context classloader to the system classloader in the plain tests. The nested tests also [have problems in dev mode](https://github.com/quarkusio/quarkus/issues/47671). Most of these issues are fixed in 3.23, and the remaining cases are sorted out in 3.24.
+- **junit-platform.properties** Including a `junit-platform.properties` in a project [causes problems](https://github.com/quarkusio/quarkus/issues/47646) for tests using `@QuarkusTest`. This is fixed in 3.24, but note that `junit-platform.properties` files can also [interfere with multi-profile tests](https://github.com/quarkusio/quarkus/issues/48125). To register a class orderer, it is best to [configure the orderer](https://quarkus.io/guides/getting-started-testing#testing_different_profiles) in the Quarkus application properties.
+- **Gradle source sets**. In some cases classes in one gradle source set [cannot access package-private fields and classes in a different source set](https://github.com/quarkusio/quarkus/issues/47760). This causes an `IllegalAccessError`. The workaround is to switch from package-private to public. This is fixed in 3.24.
+- **IDE support**. Running `QuarkusTest` tests from the Eclipse IDE is [more challenging](https://github.com/quarkusio/quarkus/issues/47656). Running a class as a JUnit test gives an error. To workaround, you can individual test methods, or run a whole package also works, or add `-uniqueId [engine:junit-jupiter]/[class:<your.class.name.here>]` to the program arguments in the run configuration. This is fixed in Eclipse 4.37. Similar, in Visual Studio Code, running all tests in a class or package [will fail](https://github.com/quarkusio/quarkus/issues/48014), but running individual test methods will work.
+- **Increased memory footprint running tests.** For suites using multiple profiles and resources, more heap or metaspace may be needed.
+
+### Things to watch out for
+
+- **Test order change**. As part of the rewrite, the execution order of some tests has swapped around. Of course, we all know tests should not depend on execution order if they don't set an order explicitly. However, it's easy to not notice that a test requires a certain order... until the order changes. We discovered some tests in our own suite that were sensitive to the execution order, and other people may make similar discoveries.
+- **Test timing change**. We also discovered that the rewrite exposed some timing issues in tests. Because classloading is frontloaded at the beginning of the test run, rather than between test executions, there's less time for asynchronous operations to finish between tests. For example, there may no longer be time for external state to 'reset' before the next test starts. This might expose some heisenbugs in test suites.
+
+### Dropped support
+
+- **`@TestProfile` on `@Nested` tests.** Mixing different test profiles and test resources on `@Nested` tests is no longer supported. By definition, every `@TestProfile` must get its own Quarkus application and classloader. Having multiple classloaders execute one test isn't compatible with loading the test with the classloader used to run it.
+- **Version 2.x of the Maven Surefire plugin**. Versions below 3.x of the Maven Surefire plugin will no longer work with `@QuarkusTest`. Version 3 of the Surefire plugin was released in 2023, so version 2 is now rather old.
+- **Parallel test execution.** Running Quarkus tests in parallel has [never been supported](https://github.com/quarkusio/quarkus/issues/42296), but it would work in some circumstances. It is now less likely to work.
+
+## Next steps
+
+The main work of the test classloading rewrite has been delivered in 3.22, and has unlocked a bunch of possible improvements. Some test defects weren't directly fixed by the main change, but the architecture is now in place to enable a fix. More excitingly, test-related extensions, like the Pact extensions, can now add new features to reduce test boilerplate.
+
+As always, if you spot issues or oddities, please let us know on [zulip](https://quarkusio.zulipchat.com/) or [raise an issue](https://github.com/quarkusio/quarkus/issues). The [working group for test classloading](https://github.com/orgs/quarkusio/projects/30) is still underway, and welcomes contributions.

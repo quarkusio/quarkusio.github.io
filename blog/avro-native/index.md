@@ -1,0 +1,82 @@
+# Using Avro in a native executable
+
+A few months back, I blogged about [Quarkus, Kafka, and Avro](https://quarkus.io/blog/kafka-avro/) (using the Apicurio schema registry).
+
+We developed a simple application, receives HTTP requests, writes Kafka records, and reads them from Kafka. It uses Avro to serialize and deserialize the records.
+
+![architecture](/assets/images/posts/kafka-avro/architecture.webp)
+
+At that time, the [application](https://github.com/cescoffier/quarkus-kafka-and-avro) was **NOT** working in native mode.
+
+With Quarkus 1.10.2, it's now working in native mode!
+
+## Why didn't it work?
+
+The native compiler does not support everything that is possible to do in Java. There are cases not yet supported, and Avro is using some of these unsupported constructs. Fortunately, we can implement *substitutions* (to replace unsupported constructs in the code directly) and use Quarkus extensions to configure the compiler correctly. As a result, your application does not have to configure anything, "it just works™️".
+
+Let's come back to Avro. Avro uses [method handles](https://docs.oracle.com/javase/9/docs/api/java/lang/invoke/MethodHandles.html) that are not supported by the GraalVM native compiler.
+
+To workaround the unsupported constructs used by Avro, we implemented a set of [substitutions](https://github.com/quarkusio/quarkus/blob/main/extensions/avro/runtime/src/main/java/io/quarkus/avro/runtime/graal/AvroSubstitutions.java). We replaced method handles with reflection.
+
+The `GenericDatumReader` also needs a bit of work as it touches threads at build time.
+
+Finally, in the Quarkus Avro Processor (part of the Quarkus extension), we register for reflection all the classes annotated with `@AvroGenerated`, as we are using reflection to create new instances of them.
+
+## Show me!
+
+Check out the [code](https://github.com/cescoffier/quarkus-kafka-and-avro) of the application, and make sure you have GraalVM installed. Then, build the native executable using:
+
+```bash
+mvn package -Pnative
+```
+
+Grab a coffee or tea, as it may take a few minutes
+
+Start the Kafka broker and the schema registry using:
+
+```bash
+docker-compose up -d
+```
+
+Finally, run the application with `./target/kafka-and-avro-1.0.0-SNAPSHOT-runner`.
+
+Send some movies to the application:
+
+```bash
+curl --header "Content-Type: application/json" \
+--request POST \
+--data '{"title":"The Shawshank Redemption","year":1994}' \
+http://localhost:8080/movies
+
+curl --header "Content-Type: application/json" \
+--request POST \
+--data '{"title":"The Godfather","year":1972}' \
+http://localhost:8080/movies
+
+curl --header "Content-Type: application/json" \
+--request POST \
+--data '{"title":"The Dark Knight","year":2008}' \
+http://localhost:8080/movies
+
+curl --header "Content-Type: application/json" \
+--request POST \
+--data '{"title":"12 Angry Men","year":1957}' \
+http://localhost:8080/movies
+```
+
+Check they are processed successfully in the application log output:
+
+```bash
+2020-12-02 11:06:32,699 INFO  [MovieResource] (executor-thread-1) Sending movie 12 Angry Men to Kafka
+2020-12-02 11:06:33,230 INFO  [MovieConsumer] (vert.x-eventloop-thread-0) Received movie: 12 Angry Men (1957)
+2020-12-02 11:07:01,325 INFO  [MovieResource] (executor-thread-1) Sending movie The Shawshank Redemption to Kafka
+2020-12-02 11:07:01,345 INFO  [MovieConsumer] (vert.x-eventloop-thread-0) Received movie: The Shawshank Redemption (1994)
+2020-12-02 11:07:01,350 INFO  [MovieResource] (executor-thread-1) Sending movie The Godfather to Kafka
+2020-12-02 11:07:01,361 INFO  [MovieConsumer] (vert.x-eventloop-thread-0) Received movie: The Godfather (1972)
+2020-12-02 11:07:01,368 INFO  [MovieResource] (executor-thread-1) Sending movie The Dark Knight to Kafka
+2020-12-02 11:07:01,378 INFO  [MovieConsumer] (vert.x-eventloop-thread-0) Received movie: The Dark Knight (2008)
+2020-12-02 11:07:01,388 INFO  [MovieResource] (executor-thread-1) Sending movie 12 Angry Men to Kafka
+2020-12-02 11:07:01,396 INFO  [MovieConsumer] (vert.x-eventloop-thread-0) Received movie: 12 Angry Men (1957)
+```
+
+The Avro support in native is still experimental. In the last Quarkus version, we made significant progress, but there may be some uncovered areas. Let us know if you find anything [odd](https://github.com/quarkusio/quarkus/issues/new/choose)!

@@ -1,0 +1,1126 @@
+# Application data caching
+
+In this guide, you will learn how to enable application data caching in any CDI managed bean of your Quarkus application.
+
+## Prerequisites
+
+To complete this guide, you need:
+
+- Roughly 15 minutes
+- An IDE
+- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- Apache Maven 3.9.16
+- Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
+- Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
+
+## Scenario
+
+Let's imagine you want to expose in your Quarkus application a REST API that allows users to retrieve the weather forecast for the next three days. The problem is that you have to rely on an external meteorological service which only accepts requests for one day at a time and takes forever to answer. Since the weather forecast is updated once every twelve hours, caching the service responses would definitely improve your API performances.
+
+We'll do that using a single Quarkus annotation.
+
+> [!NOTE]
+> In this guide, we use the default Quarkus Cache backend (Caffeine). You can use Infinispan or Redis instead. Refer to the [Infinispan cache backend reference](/guides/cache-infinispan-reference/index.md) to configure the Infinispan backend. Refer to the [Redis cache backend reference](/guides/cache-redis-reference/index.md) to configure the Redis backend.
+
+## Solution
+
+We recommend that you follow the instructions in the next sections and create the application step by step. However, you can go right to the completed example.
+
+Clone the Git repository: `git clone https://github.com/quarkusio/quarkus-quickstarts.git`, or download an [archive](https://github.com/quarkusio/quarkus-quickstarts/archive/main.zip).
+
+The solution is located in the `cache-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/cache-quickstart).
+
+## Creating the Maven project
+
+First, we need to create a new Quarkus project with the following command:
+
+**CLI**
+
+```bash
+quarkus create app org.acme:cache-quickstart \
+    --extension='cache,rest-jackson' \
+    --no-code
+cd cache-quickstart
+```
+
+To create a Gradle project, add the `--gradle` or `--gradle-kotlin-dsl` option.
+
+For more information about how to install and use the Quarkus CLI, see the [Quarkus CLI](/guides/cli-tooling/index.md) guide.
+
+**Maven**
+
+```bash
+mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+    -DprojectGroupId=org.acme \
+    -DprojectArtifactId=cache-quickstart \
+    -Dextensions='cache,rest-jackson' \
+    -DnoCode
+cd cache-quickstart
+```
+
+To create a Gradle project, add the `-DbuildTool=gradle` or `-DbuildTool=gradle-kotlin-dsl` option.
+
+For Windows users:
+
+- If using Powershell, wrap `-D` parameters in double quotes e.g. `"-DprojectArtifactId=cache-quickstart"`
+
+This command generates the project and imports the `cache` and `rest-jackson` extensions.
+
+If you already have your Quarkus project configured, you can add the `cache` extension to your project by running the following command in your project base directory:
+
+**CLI**
+
+```bash
+quarkus extension add cache
+```
+
+**Maven**
+
+```bash
+./mvnw quarkus:add-extension -Dextensions='cache'
+```
+
+**Gradle**
+
+```bash
+./gradlew addExtension --extensions='cache'
+```
+
+This will add the following to your build file:
+
+**pom.xml**
+
+```xml
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-cache</artifactId>
+</dependency>
+```
+
+**build.gradle**
+
+```gradle
+implementation("io.quarkus:quarkus-cache")
+```
+
+## Creating the REST API
+
+Let's start by creating a service that will simulate an extremely slow call to the external meteorological service. Create `src/main/java/org/acme/cache/WeatherForecastService.java` with the following content:
+
+```java
+package org.acme.cache;
+
+import java.time.LocalDate;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class WeatherForecastService {
+
+    public String getDailyForecast(LocalDate date, String city) {
+        try {
+            Thread.sleep(2000L); <1>
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return date.getDayOfWeek() + " will be " + getDailyResult(date.getDayOfMonth() % 4) + " in " + city;
+    }
+
+    private String getDailyResult(int dayOfMonthModuloFour) {
+        switch (dayOfMonthModuloFour) {
+            case 0:
+                return "sunny";
+            case 1:
+                return "cloudy";
+            case 2:
+                return "chilly";
+            case 3:
+                return "rainy";
+            default:
+                throw new IllegalArgumentException();
+        }
+    }
+}
+```
+
+1. This is where the slowness comes from.
+
+We also need a class that will contain the response sent to the users when they ask for the next three days weather forecast. Create `src/main/java/org/acme/cache/WeatherForecast.java` this way:
+
+```java
+package org.acme.cache;
+
+import java.util.List;
+
+public class WeatherForecast {
+
+    private List<String> dailyForecasts;
+
+    private long executionTimeInMs;
+
+    public WeatherForecast(List<String> dailyForecasts, long executionTimeInMs) {
+        this.dailyForecasts = dailyForecasts;
+        this.executionTimeInMs = executionTimeInMs;
+    }
+
+    public List<String> getDailyForecasts() {
+        return dailyForecasts;
+    }
+
+    public long getExecutionTimeInMs() {
+        return executionTimeInMs;
+    }
+}
+```
+
+Now, we just need to create the REST resource. Create the `src/main/java/org/acme/cache/WeatherForecastResource.java` file with this content:
+
+```java
+package org.acme.cache;
+
+import java.time.LocalDate;
+import java.util.Arrays;
+import java.util.List;
+
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.MediaType;
+
+import org.jboss.resteasy.reactive.RestQuery;
+
+@Path("/weather")
+public class WeatherForecastResource {
+
+    @Inject
+    WeatherForecastService service;
+
+    @GET
+    public WeatherForecast getForecast(@RestQuery String city, @RestQuery long daysInFuture) { <1>
+        long executionStart = System.currentTimeMillis();
+        List<String> dailyForecasts = Arrays.asList(
+                service.getDailyForecast(LocalDate.now().plusDays(daysInFuture), city),
+                service.getDailyForecast(LocalDate.now().plusDays(daysInFuture + 1L), city),
+                service.getDailyForecast(LocalDate.now().plusDays(daysInFuture + 2L), city));
+        long executionEnd = System.currentTimeMillis();
+        return new WeatherForecast(dailyForecasts, executionEnd - executionStart);
+    }
+}
+```
+
+1. If the `daysInFuture` query parameter is omitted, the three days weather forecast will start from the current day. Otherwise, it will start from the current day plus the `daysInFuture` value.
+
+We're all done! Let's check if everything's working.
+
+First, run the application using dev mode from the project directory:
+
+**CLI**
+
+```bash
+quarkus dev
+```
+
+**Maven**
+
+```bash
+./mvnw quarkus:dev
+```
+
+**Gradle**
+
+```bash
+./gradlew --console=plain quarkusDev
+```
+
+Then, call `http://localhost:8080/weather?city=Raleigh` from a browser. After six long seconds, the application will answer something like this:
+
+```json
+{"dailyForecasts":["MONDAY will be cloudy in Raleigh","TUESDAY will be chilly in Raleigh","WEDNESDAY will be rainy in Raleigh"],"executionTimeInMs":6001}
+```
+
+> [!TIP]
+> The response content may vary depending on the day you run the code.
+
+You can try calling the same URL again and again, it will always take six seconds to answer.
+
+## Enabling the cache
+
+Now that your Quarkus application is up and running, let's tremendously improve its response time by caching the external meteorological service responses. Update the `WeatherForecastService` class like this:
+
+```java
+package org.acme.cache;
+
+import java.time.LocalDate;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.CacheResult;
+
+@ApplicationScoped
+public class WeatherForecastService {
+
+    @CacheResult(cacheName = "weather-cache") <1>
+    public String getDailyForecast(LocalDate date, String city) {
+        try {
+            Thread.sleep(2000L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return date.getDayOfWeek() + " will be " + getDailyResult(date.getDayOfMonth() % 4) + " in " + city;
+    }
+
+    private String getDailyResult(int dayOfMonthModuloFour) {
+        switch (dayOfMonthModuloFour) {
+            case 0:
+                return "sunny";
+            case 1:
+                return "cloudy";
+            case 2:
+                return "chilly";
+            case 3:
+                return "rainy";
+            default:
+                throw new IllegalArgumentException();
+        }
+    }
+}
+```
+
+1. We only added this annotation (and the associated import of course).
+
+Let's try to call `http://localhost:8080/weather?city=Raleigh` again. You're still waiting a long time before receiving an answer. This is normal since the server just restarted and the cache was empty.
+
+Wait a second! The server restarted by itself after the `WeatherForecastService` update? Yes, this is one of Quarkus amazing features for developers called `live coding`.
+
+Now that the cache was loaded during the previous call, try calling the same URL. This time, you should get a super fast answer with an `executionTimeInMs` value close to 0.
+
+Let's see what happens if we start from one day in the future using the `http://localhost:8080/weather?city=Raleigh&daysInFuture=1` URL. You should get an answer two seconds later since two of the requested days were already loaded in the cache.
+
+You can also try calling the same URL with a different city and see the cache in action again. The first call will take six seconds, and the following ones will be answered immediately.
+
+Congratulations! You just added application data caching to your Quarkus application with a single line of code!
+
+Do you want to learn more about the Quarkus application data caching abilities? The following sections will show you everything there is to know about it.
+
+<a id="annotations-api"></a>
+## Caching using annotations
+
+Quarkus offers a set of annotations that can be used in a CDI managed bean to enable caching abilities.
+
+> [!WARNING]
+> Caching annotations are not allowed on private methods. They will work fine with any other access modifier including package-private (no explicit modifier).
+
+### @CacheResult
+
+Loads a method result from the cache without executing the method body whenever possible.
+
+When a method annotated with `@CacheResult` is invoked, Quarkus will compute a cache key and use it to check in the cache whether the method has been already invoked. See the [Cache keys building logic](#cache-keys-building-logic) section of this guide to learn how the cache key is computed. If a value is found in the cache, it is returned, and the annotated method is never actually executed. If no value is found, the annotated method is invoked, and the returned value is stored in the cache using the computed key.
+
+A method annotated with `CacheResult` is protected by a lock on cache miss mechanism. If several concurrent invocations try to retrieve a cache value from the same missing key, the method will only be invoked once. The first concurrent invocation will trigger the method invocation, while the subsequent concurrent invocations will wait for the end of the method invocation to get the cached result. The `lockTimeout` parameter can be used to interrupt the lock after a given delay. The lock timeout is disabled by default, meaning the lock is never interrupted. See the parameter Javadoc for more details.
+
+This annotation cannot be used on a method returning `void`.
+
+> [!NOTE]
+> Quarkus is able to also cache `null` values unlike the underlying Caffeine provider. See [more on this topic below](#negative-cache).
+
+### @CacheInvalidate
+
+Removes an entry from the cache.
+
+When a method annotated with `@CacheInvalidate` is invoked, Quarkus will compute a cache key and use it to try to remove an existing entry from the cache. See the [Cache keys building logic](#cache-keys-building-logic) section of this guide to learn how the cache key is computed. If the key does not identify any cache entry, nothing will happen.
+
+### @CacheInvalidateAll
+
+When a method annotated with `@CacheInvalidateAll` is invoked, Quarkus will remove all entries from the cache.
+
+Cache invalidation is performed **after** the annotated method completes successfully. If the method throws an exception, the cache will **not** be invalidated.
+
+### @CacheKey
+
+When a method argument is annotated with `@CacheKey`, it is identified as a part of the cache key during an invocation of a method annotated with `@CacheResult` or `@CacheInvalidate`.
+
+This annotation is optional and should only be used when some method arguments are NOT part of the cache key.
+
+<a id="cache-keys-building-logic"></a>
+### Cache keys building logic
+
+Cache keys are built by the annotations API using the following logic:
+
+- If an `io.quarkus.cache.CacheKeyGenerator` is declared in a `@CacheResult` or a `@CacheInvalidate` annotation, then it is used to generate the cache key. The `@CacheKey` annotations that might be present on some method arguments are ignored.
+- Otherwise, if the method has no arguments, then the cache key is an instance of `io.quarkus.cache.DefaultCacheKey` built from the cache name.
+- Otherwise, if the method has exactly one argument, then that argument is the cache key.
+- Otherwise, if the method has multiple arguments but only one annotated with `@CacheKey`, then that annotated argument is the cache key.
+- Otherwise, if the method has multiple arguments annotated with `@CacheKey`, then the cache key is an instance of `io.quarkus.cache.CompositeCacheKey` built from these annotated arguments.
+- Otherwise, if the method has multiple arguments and none of them are annotated with `@CacheKey`, the cache key is an instance of `io.quarkus.cache.CompositeCacheKey` built from all the method arguments.
+
+> [!WARNING]
+> Each non-primitive method argument that is part of the key must implement `equals()` and `hashCode()` correctly for the cache to work as expected.
+
+When a cache key is built from several method arguments, whether they are explicitly identified with `@CacheKey` or not, the building logic depends on the order of these arguments in the method signature. On the other hand, the arguments names are not used at all and do not have any effect on the cache key.
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheResult;
+
+@ApplicationScoped
+public class CachedService {
+
+    @CacheResult(cacheName = "foo")
+    public Object load(String keyElement1, Integer keyElement2) {
+        // Call expensive service here.
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate1(String keyElement2, Integer keyElement1) { <1>
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate2(Integer keyElement2, String keyElement1) { <2>
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate3(Object notPartOfTheKey, @CacheKey String keyElement1, @CacheKey Integer keyElement2) { <3>
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate4(Object notPartOfTheKey, @CacheKey Integer keyElement2, @CacheKey String keyElement1) { <4>
+    }
+}
+```
+
+1. Calling this method WILL invalidate values cached by the `load` method even if the key elements names have been swapped.
+2. Calling this method WILL NOT invalidate values cached by the `load` method because the key elements order is different.
+3. Calling this method WILL invalidate values cached by the `load` method because the key elements order is the same.
+4. Calling this method WILL NOT invalidate values cached by the `load` method because the key elements order is different.
+
+### Generating a cache key with `CacheKeyGenerator`
+
+You may want to include more than the arguments of a method into a cache key. This can be done by implementing the `io.quarkus.cache.CacheKeyGenerator` interface and declaring that implementation in the `keyGenerator` field of a `@CacheResult` or `@CacheInvalidate` annotation.
+
+The class must either represent a CDI bean or declare a public no-args constructor. If it represents a CDI bean, then the key generator will be injected during the cache key computation. Otherwise, a new instance of the key generator will be created using its default constructor for each cache key computation.
+
+In case of CDI, there must be exactly one bean that has the class in its set of bean types, otherwise the build fails. The context associated with the scope of the bean must be active when the `CacheKeyGenerator#generate()` method is invoked. If the scope is `@Dependent` then the bean instance is destroyed when the `CacheKeyGenerator#generate()` method completes.
+
+The following key generator will be injected as a CDI bean:
+
+```java
+package org.acme.cache;
+
+import java.lang.reflect.Method;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import io.quarkus.cache.CacheKeyGenerator;
+import io.quarkus.cache.CompositeCacheKey;
+
+@ApplicationScoped
+public class ApplicationScopedKeyGen implements CacheKeyGenerator {
+
+    @Inject
+    AnythingYouNeedHere anythingYouNeedHere; <1>
+
+    @Override
+    public Object generate(Method method, Object... methodParams) { <2>
+        return new CompositeCacheKey(anythingYouNeedHere.getData(), methodParams[1]); <3>
+    }
+}
+```
+
+1. External data can be included into the cache key by injecting a CDI bean in the key generator.
+2. Be careful while using `Method`, some of its methods can be expensive.
+3. Make sure the method has enough arguments before accessing them from their index. Otherwise, an `IndexOutOfBoundsException` may be thrown during the cache key computation.
+
+The following key generator will be instantiated using its default constructor:
+
+```java
+package org.acme.cache;
+
+import java.lang.reflect.Method;
+
+import io.quarkus.cache.CacheKeyGenerator;
+import io.quarkus.cache.CompositeCacheKey;
+
+public class NotABeanKeyGen implements CacheKeyGenerator {
+
+    // CDI injections won't work here because it's not a CDI bean.
+
+    @Override
+    public Object generate(Method method, Object... methodParams) {
+        return new CompositeCacheKey(method.getName(), methodParams[0]); <1>
+    }
+}
+```
+
+1. Including the method name into the cache key is not expensive, unlike other methods from `Method`.
+
+Both kinds of key generators can be used in a similar way:
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.acme.cache.ApplicationScopedKeyGen;
+import org.acme.cache.NotABeanKeyGen;
+
+import io.quarkus.cache.CacheKey;
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheResult;
+
+@ApplicationScoped
+public class CachedService {
+
+    @CacheResult(cacheName = "foo", keyGenerator = ApplicationScopedKeyGen.class) <1>
+    public Object load(@CacheKey Object notUsedInKey, String keyElement) { <2>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidate(cacheName = "foo", keyGenerator = NotABeanKeyGen.class) <3>
+    public void invalidate(Object keyElement) {
+    }
+
+    @CacheInvalidate(cacheName = "foo", keyGenerator = NotABeanKeyGen.class)
+    @CacheInvalidate(cacheName = "bar")
+    public void invalidate(Integer param0, @CacheKey BigDecimal param1) { <4>
+    }
+}
+```
+
+1. This key generator is a CDI bean.
+2. The `@CacheKey` annotation will be ignored because a key generator is declared in the `@CacheResult` annotation.
+3. This key generator is not a CDI bean.
+4. The `@CacheKey` annotation will be ignored when the `foo` cache data is invalidated, but `param1` will be the cache key when the `bar` cache data is invalidated.
+
+### @CachedResults
+
+> [!WARNING]
+> This API is experimental and may change in the future.
+
+The `@io.quarkus.cache.CachedResults` qualifier may be applied to injection points to instruct the container to inject a *generated wrapper bean* that delegates all method invocations to the original bean but the return values of selected business methods are cached. By default, all non-void non-static business methods are included. However, it is possible to exclude methods whose names match one of the regular expressions defined by `@CachedResults#exclude()`. The injected class must be either an interface or declare a no-args constructor.
+
+```java
+package org.example.cache;
+
+import org.example.PingService;
+
+import io.quarkus.cache.CachedResults;
+import jakarta.enterprise.context.ApplicationScoped;
+
+@ApplicationScoped
+public class MyBean {
+
+    @Inject
+    @CachedResults
+    PingService service; <1>
+
+    int ping() {
+        return service.ping(); <2>
+    }
+}
+```
+
+1. A *generated wrapper bean* is injected instead of the original bean that implements the `PingService`.
+2. The return value of the `service.ping()` invocation will be cached. The cache will be named like `org.example.PingService#ping()`.
+
+<a id="programmatic-api"></a>
+## Caching using the programmatic API
+
+Quarkus also offers a programmatic API which can be used to store, retrieve or delete values from any cache declared using the annotations API. All operations from the programmatic API are non-blocking and rely on [Mutiny](https://smallrye.io/smallrye-mutiny/) under the hood.
+
+Before accessing programmatically the cached data, you need to retrieve an `io.quarkus.cache.Cache` instance. The following sections will show you how to do that.
+
+### Injecting a `Cache` with the `@CacheName` annotation
+
+`io.quarkus.cache.CacheName` can be used on a field, a constructor parameter or a method parameter to inject a `Cache`:
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.smallrye.mutiny.Uni;
+
+@ApplicationScoped
+public class CachedExpensiveService {
+
+    @Inject // <1>
+    @CacheName("my-cache")
+    Cache cache;
+
+    public Uni<String> getNonBlockingExpensiveValue(Object key) { // <2>
+        return cache.get(key, k -> { // <3>
+            /*
+             * Put an expensive call here.
+             * It will be executed only if the key is not already associated with a value in the cache.
+             */
+        });
+    }
+
+    public String getBlockingExpensiveValue(Object key) {
+        return cache.get(key, k -> {
+            // Put an expensive call here.
+        }).await().indefinitely(); // <4>
+    }
+}
+```
+
+1. This is optional.
+2. This method returns the `Uni<String>` type which is non-blocking.
+3. The `k` argument contains the cache key value.
+4. If you don't need the call to be non-blocking, this is how you can retrieve the cache value in a blocking way.
+
+### Retrieving a `Cache` from the `CacheManager`
+
+Another way to retrieve a `Cache` instance consists in injecting the `io.quarkus.cache.CacheManager` first and then retrieving the desired `Cache` from its name:
+
+```java
+package org.acme.cache;
+
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheManager;
+
+import java.util.Optional;
+
+@Singleton
+public class CacheClearer {
+
+    private final CacheManager cacheManager;
+
+    public CacheClearer(CacheManager cacheManager) {
+        this.cacheManager = cacheManager;
+    }
+
+    public void clearCache(String cacheName) {
+        Optional<Cache> cache = cacheManager.getCache(cacheName);
+        if (cache.isPresent()) {
+            cache.get().invalidateAll().await().indefinitely();
+        }
+    }
+}
+```
+
+### Building a programmatic cache key
+
+Before building a programmatic cache key, you need to know how cache keys are built by the annotations API when an annotated method is invoked. This is explained in the [Cache keys building logic](#cache-keys-building-logic) section of this guide.
+
+Now, if you want to retrieve or delete, using the programmatic API, a cache value that was stored using the annotations API, you just need to make sure the same key is used with both APIs.
+
+### Retrieving all keys from a `CaffeineCache`
+
+The cache keys from a specific `CaffeineCache` can be retrieved as an unmodifiable `Set` as shown below. If the cache entries are modified while an iteration over the set is in progress, the set will remain unchanged.
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.quarkus.cache.CaffeineCache;
+
+import java.util.Set;
+
+@ApplicationScoped
+public class CacheKeysService {
+
+    @CacheName("my-cache")
+    Cache cache;
+
+    public Set<Object> getAllCacheKeys() {
+        return cache.as(CaffeineCache.class).keySet();
+    }
+}
+```
+
+### Populating a `CaffeineCache`
+
+You can populate a `CaffeineCache` using the `CaffeineCache#put(Object, CompletableFuture)` method. This method associates the `CompletableFuture` with the given key in the cache. If the cache previously contained a value associated with the key, the old value is replaced by this `CompletableFuture`. If the asynchronous computation fails, the entry will be automatically removed.
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.quarkus.cache.CaffeineCache;
+
+import java.util.concurrent.CompletableFuture;
+
+@ApplicationScoped
+public class CacheService {
+
+    @CacheName("my-cache")
+    Cache cache;
+
+    @PostConstruct
+    public void initialize() {
+        cache.as(CaffeineCache.class).put("foo", CompletableFuture.completedFuture("bar"));
+    }
+}
+```
+
+### Retrieving a value if a key is present from a `CaffeineCache`
+
+The cache value from a specific `CaffeineCache` can be retrieved if present as shown below. If the given key is contained in the cache, the method will return the `CompletableFuture` the specified key is mapped to. That `CompletableFuture` may be computing or may already be completed. Otherwise, the method will return `null`.
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheName;
+import io.quarkus.cache.CaffeineCache;
+
+import java.util.concurrent.CompletableFuture;
+
+@ApplicationScoped
+public class CacheKeysService {
+
+    @CacheName("my-cache")
+    Cache cache;
+
+    public CompletableFuture<Object> getIfPresent(Object key) {
+        return cache.as(CaffeineCache.class).getIfPresent(key);
+    }
+}
+```
+
+### Changing the expiration policy or the maximum size of a `CaffeineCache` in real time
+
+The expiration policy of a `CaffeineCache` can be changed while a Quarkus app is running if that policy was initially specified in the Quarkus configuration. Similarly, the maximum size of a `CaffeineCache` can be changed in real time if the cache was built with an initial maximum size defined in the configuration.
+
+```java
+package org.acme.cache;
+
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+import io.quarkus.cache.Cache;
+import io.quarkus.cache.CacheManager;
+import io.quarkus.cache.CaffeineCache;
+
+import java.time.Duration;
+import java.util.Optional;
+
+@Singleton
+public class CacheConfigManager {
+
+    private final CacheManager cacheManager;
+
+    public CacheConfigManager(CacheManager cacheManager) {
+        this.cacheManager = cacheManager;
+    }
+
+    public void setExpireAfterAccess(String cacheName, Duration duration) {
+        Optional<Cache> cache = cacheManager.getCache(cacheName);
+        if (cache.isPresent()) {
+            cache.get().as(CaffeineCache.class).setExpireAfterAccess(duration); <1>
+        }
+    }
+
+    public void setExpireAfterWrite(String cacheName, Duration duration) {
+        Optional<Cache> cache = cacheManager.getCache(cacheName);
+        if (cache.isPresent()) {
+            cache.get().as(CaffeineCache.class).setExpireAfterWrite(duration); <2>
+        }
+    }
+
+    public void setMaximumSize(String cacheName, long maximumSize) {
+        Optional<Cache> cache = cacheManager.getCache(cacheName);
+        if (cache.isPresent()) {
+            cache.get().as(CaffeineCache.class).setMaximumSize(maximumSize); <3>
+        }
+    }
+}
+```
+
+1. This line will only work if the cache was constructed with an `expire-after-access` configuration value. Otherwise, an `IllegalStateException` will be thrown.
+2. This line will only work if the cache was constructed with an `expire-after-write` configuration value. Otherwise, an `IllegalStateException` will be thrown.
+3. This line will only work if the cache was constructed with a `maximum-size` configuration value. Otherwise, an `IllegalStateException` will be thrown.
+
+> [!WARNING]
+> The `setExpireAfterAccess`, `setExpireAfterWrite` and `setMaximumSize` methods from `CaffeineCache` must never be invoked from within an atomic scope of a cache operation.
+
+## Configuring the underlying caching provider
+
+This extension uses [Caffeine](https://github.com/ben-manes/caffeine) as its underlying caching provider. Caffeine is a high performance, near optimal caching library.
+
+## Multiple Backends Simultaneously
+
+This extension can be configured to use multiple backends simultaneously, allowing different caches to leverage either in-memory providers (like Caffeine) or distributed providers (like Redis) as needed, for example:
+
+```properties
+# default cache backend
+quarkus.cache.type=caffeine
+
+# change the cache backend for "weather-cache" to Redis.
+quarkus.cache.weather-cache.type=redis
+```
+
+> [!NOTE]
+> The syntax for the property name is `quarkus.cache."cache-name".type`. If no explicit backend is defined for a cache, the default backend is used. For details on configuring a specific backend, refer to its guide.
+
+### Caffeine configuration properties
+
+Each of the Caffeine caches backing up the Quarkus application data caching extension can be configured using the following properties in the `application.properties` file. By default, caches do not perform any type of eviction if not configured.
+
+> [!TIP]
+> You need to replace `cache-name` in all the following properties with the real name of the cache you want to configure.
+
+[lock] Configuration property fixed at build time - All other configuration properties are overridable at runtime
+
+|  |  |  |
+| --- | --- | --- |
+| <mark>Configuration property</mark> | Type | Default |
+| [lock] <a id="quarkus-cache_quarkus-cache-type"></a> [`quarkus.cache.type`](#quarkus-cache_quarkus-cache-type) config_property_copy_button:+++quarkus.cache.type+++[]<br><br>Default cache type (backend provider). If no explicit type is defined for a cache, this type will be used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_TYPE+++[] | string | `caffeine` |
+| <a id="quarkus-cache_quarkus-cache-enabled"></a> [`quarkus.cache.enabled`](#quarkus-cache_quarkus-cache-enabled) config_property_copy_button:+++quarkus.cache.enabled+++[]<br><br>Whether or not the cache extension is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_ENABLED+++[] | boolean | `true` |
+| <a id="quarkus-cache_section_quarkus-cache"></a> [Configuration that allows customizing cache names to use a different type](#quarkus-cache_section_quarkus-cache) | Type | Default |
+| [lock] <a id="quarkus-cache_quarkus-cache-cache-name-type"></a> [`quarkus.cache."cache-name".type`](#quarkus-cache_quarkus-cache-cache-name-type) config_property_copy_button:+++quarkus.cache."cache-name".type+++[]<br><br>Cache type to be used for the cache name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE__CACHE_NAME__TYPE+++[] | string | `caffeine` |
+| <a id="quarkus-cache_section_quarkus-cache-caffeine"></a> [Default configuration applied to all Caffeine caches (lowest precedence)](#quarkus-cache_section_quarkus-cache-caffeine) | Type | Default |
+| <a id="quarkus-cache_quarkus-cache-caffeine-initial-capacity"></a> [`quarkus.cache.caffeine.initial-capacity`](#quarkus-cache_quarkus-cache-caffeine-initial-capacity) config_property_copy_button:+++quarkus.cache.caffeine.initial-capacity+++[]<br><br>Minimum total size for the internal data structures. Providing a large enough estimate at construction time avoids the need for expensive resizing operations later, but setting this value unnecessarily high wastes memory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_INITIAL_CAPACITY+++[] | int |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-maximum-size"></a> [`quarkus.cache.caffeine.maximum-size`](#quarkus-cache_quarkus-cache-caffeine-maximum-size) config_property_copy_button:+++quarkus.cache.caffeine.maximum-size+++[]<br><br>Maximum number of entries the cache may contain. Note that the cache **may evict an entry before this limit is exceeded or temporarily exceed the threshold while evicting**. As the cache size grows close to the maximum, the cache evicts entries that are less likely to be used again. For example, the cache may evict an entry because it hasn't been used recently or very often.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_MAXIMUM_SIZE+++[] | long |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-expire-after-write"></a> [`quarkus.cache.caffeine.expire-after-write`](#quarkus-cache_quarkus-cache-caffeine-expire-after-write) config_property_copy_button:+++quarkus.cache.caffeine.expire-after-write+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, or the most recent replacement of its value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_EXPIRE_AFTER_WRITE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-expire-after-access"></a> [`quarkus.cache.caffeine.expire-after-access`](#quarkus-cache_quarkus-cache-caffeine-expire-after-access) config_property_copy_button:+++quarkus.cache.caffeine.expire-after-access+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, the most recent replacement of its value, or its last read.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_EXPIRE_AFTER_ACCESS+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-metrics-enabled"></a> [`quarkus.cache.caffeine.metrics-enabled`](#quarkus-cache_quarkus-cache-caffeine-metrics-enabled) config_property_copy_button:+++quarkus.cache.caffeine.metrics-enabled+++[]<br><br>Whether or not metrics are recorded if the application depends on the Micrometer extension. Setting this value to `true` will enable the accumulation of cache stats inside Caffeine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_METRICS_ENABLED+++[] | boolean |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-initial-capacity"></a> [`quarkus.cache.caffeine."cache-name".initial-capacity`](#quarkus-cache_quarkus-cache-caffeine-cache-name-initial-capacity) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".initial-capacity+++[]<br><br>Minimum total size for the internal data structures. Providing a large enough estimate at construction time avoids the need for expensive resizing operations later, but setting this value unnecessarily high wastes memory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__INITIAL_CAPACITY+++[] | int |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-maximum-size"></a> [`quarkus.cache.caffeine."cache-name".maximum-size`](#quarkus-cache_quarkus-cache-caffeine-cache-name-maximum-size) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".maximum-size+++[]<br><br>Maximum number of entries the cache may contain. Note that the cache **may evict an entry before this limit is exceeded or temporarily exceed the threshold while evicting**. As the cache size grows close to the maximum, the cache evicts entries that are less likely to be used again. For example, the cache may evict an entry because it hasn't been used recently or very often.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__MAXIMUM_SIZE+++[] | long |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-write"></a> [`quarkus.cache.caffeine."cache-name".expire-after-write`](#quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-write) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".expire-after-write+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, or the most recent replacement of its value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__EXPIRE_AFTER_WRITE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-access"></a> [`quarkus.cache.caffeine."cache-name".expire-after-access`](#quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-access) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".expire-after-access+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, the most recent replacement of its value, or its last read.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__EXPIRE_AFTER_ACCESS+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-metrics-enabled"></a> [`quarkus.cache.caffeine."cache-name".metrics-enabled`](#quarkus-cache_quarkus-cache-caffeine-cache-name-metrics-enabled) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".metrics-enabled+++[]<br><br>Whether or not metrics are recorded if the application depends on the Micrometer extension. Setting this value to `true` will enable the accumulation of cache stats inside Caffeine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__METRICS_ENABLED+++[] | boolean |  |
+
+<a id="duration-note-anchor-quarkus-cache_quarkus-cache"></a>
+
+> [!NOTE]
+> **About the Duration format**
+>
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() Java API documentation](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+>
+> You can also use a simplified format, starting with a number:
+>
+> - If the value is only a number, it represents time in seconds.
+> - If the value is a number followed by `ms`, it represents time in milliseconds.
+>
+> In other cases, the simplified format is translated to the `java.time.Duration` format for parsing:
+>
+> - If the value is a number followed by `h`, `m`, or `s`, it is prefixed with `PT`.
+> - If the value is a number followed by `d`, it is prefixed with `P`.
+
+Here's what your cache configuration could look like:
+
+```properties
+quarkus.cache.caffeine."foo".initial-capacity=10 <1>
+quarkus.cache.caffeine."foo".maximum-size=20
+quarkus.cache.caffeine."foo".expire-after-write=60S
+quarkus.cache.caffeine."bar".maximum-size=1000 <2>
+```
+
+1. The `foo` cache is being configured.
+2. The `bar` cache is being configured.
+
+## Enabling Micrometer metrics
+
+Each cache declared using the [annotations caching API](#annotations-api) can be monitored using Micrometer metrics.
+
+> [!NOTE]
+> The cache metrics collection will only work if your application depends on a `quarkus-micrometer-registry-*` extension. See the [Micrometer metrics guide](/guides/telemetry-micrometer/index.md) to learn how to use Micrometer in Quarkus.
+
+The cache metrics collection is disabled by default. It can be enabled from the `application.properties` file:
+
+```properties
+quarkus.cache.caffeine."foo".metrics-enabled=true
+```
+
+> [!WARNING]
+> Like all instrumentation methods, collecting metrics comes with a small overhead that can impact the application performances.
+
+The collected metrics contain cache statistics such as:
+
+- the approximate current number of entries in the cache
+- the number of entries that were added to the cache
+- the number of times a cache lookup has been performed, including information about hits and misses
+- the number of evictions and the weight of the evicted entries
+
+Here is an example of cache metrics available for an application that depends on the `quarkus-micrometer-registry-prometheus` extension:
+
+```
+# HELP cache_size The number of entries in this cache. This may be an approximation, depending on the type of cache.
+# TYPE cache_size gauge
+cache_size{cache="foo",} 8.0
+# HELP cache_puts_total The number of entries added to the cache
+# TYPE cache_puts_total counter
+cache_puts_total{cache="foo",} 12.0
+# HELP cache_gets_total The number of times cache lookup methods have returned a cached value.
+# TYPE cache_gets_total counter
+cache_gets_total{cache="foo",result="hit",} 53.0
+cache_gets_total{cache="foo",result="miss",} 12.0
+# HELP cache_evictions_total cache evictions
+# TYPE cache_evictions_total counter
+cache_evictions_total{cache="foo",} 4.0
+# HELP cache_eviction_weight_total The sum of weights of evicted entries. This total does not include manual invalidations.
+# TYPE cache_eviction_weight_total counter
+cache_eviction_weight_total{cache="foo",} 540.0
+```
+
+## Annotated beans examples
+
+### Implicit simple cache key
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheInvalidateAll;
+import io.quarkus.cache.CacheResult;
+
+@ApplicationScoped
+public class CachedService {
+
+    @CacheResult(cacheName = "foo")
+    public Object load(Object key) { <1>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate(Object key) { <1>
+    }
+
+    @CacheInvalidateAll(cacheName = "foo")
+    public void invalidateAll() {
+    }
+}
+```
+
+1. The cache key is implicit since there's no `@CacheKey` annotation.
+
+### Explicit composite cache key
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.Dependent;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheInvalidateAll;
+import io.quarkus.cache.CacheKey;
+import io.quarkus.cache.CacheResult;
+
+@Dependent
+public class CachedService {
+
+    @CacheResult(cacheName = "foo")
+    public String load(@CacheKey Object keyElement1, @CacheKey Object keyElement2, Object notPartOfTheKey) { <1>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate(@CacheKey Object keyElement1, @CacheKey Object keyElement2, Object notPartOfTheKey) { <1>
+    }
+
+    @CacheInvalidateAll(cacheName = "foo")
+    public void invalidateAll() {
+    }
+}
+```
+
+1. The cache key is explicitly composed of two elements. The method signature also contains a third argument which is not part of the key.
+
+### Default cache key
+
+```java
+package org.acme.cache;
+
+import jakarta.enterprise.context.Dependent;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheInvalidateAll;
+import io.quarkus.cache.CacheResult;
+
+@Dependent
+public class CachedService {
+
+    @CacheResult(cacheName = "foo")
+    public String load() { <1>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidate(cacheName = "foo")
+    public void invalidate() { <1>
+    }
+
+    @CacheInvalidateAll(cacheName = "foo")
+    public void invalidateAll() {
+    }
+}
+```
+
+1. A unique default cache key derived from the cache name is used because the method has no arguments.
+
+### Multiple annotations on a single method
+
+```java
+package org.acme.cache;
+
+import jakarta.inject.Singleton;
+
+import io.quarkus.cache.CacheInvalidate;
+import io.quarkus.cache.CacheInvalidateAll;
+import io.quarkus.cache.CacheResult;
+
+@Singleton
+public class CachedService {
+
+    @CacheInvalidate(cacheName = "foo")
+    @CacheResult(cacheName = "foo")
+    public String forceCacheEntryRefresh(Object key) { <1>
+        // Call expensive service here.
+    }
+
+    @CacheInvalidateAll(cacheName = "foo")
+    @CacheInvalidateAll(cacheName = "bar")
+    public void multipleInvalidateAll(Object key) { <2>
+    }
+}
+```
+
+1. This method can be used to force a refresh of the cache entry corresponding to the given key.
+2. This method will invalidate all entries from the `foo` and `bar` caches with a single call.
+
+### Clear all application caches
+
+```java
+package org.acme.cache;
+
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+import io.quarkus.cache.CacheManager;
+
+@Singleton
+public class CacheClearer {
+
+    private final CacheManager cacheManager;
+
+    public CacheClearer(CacheManager cacheManager) {
+        this.cacheManager = cacheManager;
+    }
+
+    public void clearAllCaches() {
+        for (String cacheName : cacheManager.getCacheNames()) {
+            cacheManager.getCache(cacheName).get().invalidateAll().await().indefinitely();
+        }
+    }
+}
+```
+
+<a id="negative-cache"></a>
+## Negative caching and nulls
+
+Sometimes one wants to cache the result of an (expensive) remote call. If the remote call fails, one may not want to cache the result or exception, but rather re-try the remote call on the next invocation.
+
+A simple approach could be to catch the exception and return `null`, so that the caller can act accordingly:
+
+**Sample code**
+
+```java
+    public void caller(int val) {
+
+        Integer result = callRemote(val); // <1>
+        if (result != null) {
+            System.out.println("Result is " + result);
+        else {
+            System.out.println("Got an exception");
+        }
+    }
+
+    @CacheResult(cacheName = "foo")
+    public Integer callRemote(int val)  {
+
+        try {
+            Integer val = remoteWebServer.getResult(val); // <2>
+            return val;
+        } catch (Exception e) {
+            return null; // <3>
+        }
+    }
+```
+
+1. Call the method to call the remote
+2. Do the remote call and return its result
+3. Return in case of exception
+
+This approach has an unfortunate side effect: as we said before, Quarkus can also cache `null` values. Which means that the next call to `callRemote()` with the same parameter value will be answered out of the cache, returning `null` and no remote call will be done. This may be desired in some scenarios, but usually one wants to retry the remote call until it returns a result.
+
+### Let exceptions bubble up
+
+To prevent the cache from caching (marker) results from a remote call, we need to let the exception bubble out of the called method and catch it at the caller side:
+
+**With Exception bubbling up**
+
+```java
+   public void caller(int val) {
+       try {
+           Integer result = callRemote(val);  // <1>
+           System.out.println("Result is " + result);
+       } catch (Exception e) {
+           System.out.println("Got an exception");
+   }
+
+   @CacheResult(cacheName = "foo")
+   public Integer callRemote(int val) throws Exception { // <2>
+
+      Integer val = remoteWebServer.getResult(val);  // <3>
+      return val;
+
+   }
+```
+
+1. Call the method to call the remote
+2. Exceptions may bubble up
+3. This can throw all kinds of remote exceptions
+
+When the call to the remote throws an exception, the cache does not store the result, so that a subsequent call to `callRemote()` with the same parameter value will not be answered out of the cache. It will instead result in another attempt to call the remote.
+
+## Going native
+
+The Cache extension supports building native executables.
+
+However, to optimize runtime memory, Caffeine embarks many cache implementation classes that are selected depending on the cache configuration. We are not registering all of them for reflection (and the ones not registered are not included into the native executables) as registering all of them would be very costly.
+
+We are registering the most common implementations but, depending on your cache configuration, you might encounter errors like:
+
+```
+2021-12-08 02:32:02,108 ERROR [io.qua.run.Application] (main) Failed to start application (with profile prod): java.lang.ClassNotFoundException: com.github.benmanes.caffeine.cache.PSAMS <1>
+        at java.lang.Class.forName(DynamicHub.java:1433)
+        at java.lang.Class.forName(DynamicHub.java:1408)
+        at com.github.benmanes.caffeine.cache.NodeFactory.newFactory(NodeFactory.java:111)
+        at com.github.benmanes.caffeine.cache.BoundedLocalCache.<init>(BoundedLocalCache.java:240)
+        at com.github.benmanes.caffeine.cache.SS.<init>(SS.java:31)
+        at com.github.benmanes.caffeine.cache.SSMS.<init>(SSMS.java:64)
+        at com.github.benmanes.caffeine.cache.SSMSA.<init>(SSMSA.java:43)
+```
+
+1. `PSAMS` is one of the many cache implementation classes of Caffeine so this part may vary.
+
+When you encounter this error, you can easily fix it by adding the following annotation to any of your application classes (or you can create a new class, such as `Reflections` just to host this annotation if you prefer):
+
+```java
+@RegisterForReflection(classNames = { "com.github.benmanes.caffeine.cache.PSAMS" }) <1>
+```
+
+1. It is an array, so you can register several cache implementations in one go if your configuration requires several of them.
+
+This annotation will register the cache implementation classes for reflection and this will include the classes into the native executable. More details about the `@RegisterForReflection` annotation can be found on  the [native application tips](/guides/writing-native-applications-tips/index.md#registerForReflection) page.

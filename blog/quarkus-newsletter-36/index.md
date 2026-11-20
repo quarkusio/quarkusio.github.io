@@ -1,0 +1,9 @@
+# Quarkus Newsletter #36 - September
+
+Explore how we can use the Testcontainers Desktop app while building a Quarkus application by reading "Joyful Quarkus Application Development using Testcontainers Desktop" by Siva Katamreddy. Extensions can significantly increase the application's performance, help developers be more productive while developing their applications, integrate complex dependencies much easier, and simplify the application's source code. Kevin Dubois shows you how to tap into this superpower in "Quarkus extensions give Java dependencies superpowers". Explore how to integrate OpenAI API with Quarkus in "Generate AI-based Images with Quarkus and OpenAI DALL.E" by Antonio Perrone. In "How to use Cryostat agent to profile Java workloads", Andrew Azores gives a brief overview of what the Cryostat agent does, reasons to instrument your containerized applications with the Cryostat agent, and finally, an example of how to include the Cryostat agent into a Quarkus application. In today's data-driven world, the ability to seamlessly integrate and manage data from diverse sources is crucial for the success of modern applications. Otavio Santana & Michael Relich shows you how in "Leveraging Eclipse JNoSQL 1.0.0: Quarkus Integration and Building a Pet-Friendly REST API". "Java Quarkus application working with IRIS" by Dmitry Maslennikov creates an example of an application on Java working with Hibernate dialect for IRIS, wanted to use RealWorld application, and found realization for Quarkus.
+
+You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #36: August](https://quarkus.io/newsletter/36/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

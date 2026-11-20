@@ -1,0 +1,9 @@
+# Quarkus Newsletter #31 - April
+
+It's time for the April Newsletter. Read Willem Meints's article "Quarkus: Jave revisited!" where shares his experience with Java using Quarkus after a long hiatus. Learn why Sebastian Daschner thinks Quarkus is a great choice for Enterprise Java in his great video. Learn how to deploy a Quarkus application to Elastic Beanstalk and take a closer look at some of the key benefits and best practices for using these two technologies together in Ricardo Mello's great article. Check out Guillaume Smet's blog post about the Quarkus 3.0.0.CR1 release. We return to Ricardo Mello with a three part look at Quarkus + Angular with Keycloak. These three articles aim to delve into the authentication mechanism of Keycloak, and the creation of a daily-quotes application using Angular + Quarkus. Experience a great learning module from Antonio Goncalves "Deploy a Quarkus application to Azure Container Apps" where you will create a Quarkus application, connect it to a PostgreSQL database, and then deploy to Azure Container Apps.
+
+You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #31](https://quarkus.io/newsletter/31/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

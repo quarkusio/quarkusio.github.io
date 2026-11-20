@@ -1,0 +1,32 @@
+# Quarkus 3.26.3 - Maintenance release
+
+Today, we released Quarkus 3.26.3, a regular maintenance release.
+
+It contains some bug fixes, CVE fixes and documentation improvements, as we continue strengthening Quarkus 3.26 to prepare for Quarkus 3.27 LTS. 3.27 LTS will be a continuation of the 3.26 branch. See the [blog](https://quarkus.io/blog/lts-releases/) for more information about LTS releases.
+
+## Update
+
+To update to Quarkus 3.26, we recommend updating to the latest version of the Quarkus CLI and run:
+
+```bash
+quarkus update
+```
+
+Note that `quarkus update` can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.26.
+
+For more information about the adjustments you need to make to your applications, please refer to the [Quarkus 3.26 migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.26).
+
+## Full changelog
+
+You can get the full changelog of [3.26.3](https://github.com/quarkusio/quarkus/releases/tag/3.26.3) on GitHub.
+
+## Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+- provide feedback on [GitHub](https://github.com/quarkusio/quarkus/issues);
+- craft some code and [push a PR](https://github.com/quarkusio/quarkus/pulls);
+- discuss with us on [Zulip](https://quarkusio.zulipchat.com/) and on the [mailing list](https://groups.google.com/d/forum/quarkus-dev);
+- ask your questions on [Stack Overflow](https://stackoverflow.com/questions/tagged/quarkus).

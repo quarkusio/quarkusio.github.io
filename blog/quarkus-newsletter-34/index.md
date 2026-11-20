@@ -1,0 +1,9 @@
+# Quarkus Newsletter #34 - July
+
+Read "Quarkus 3.2.0.Final released - New security features, @QuarkusComponentTest" by Guillaume Smet" to learn about major changes like; various new security features, the ability to test CDI components with @QuarkusComponentTest and new build time analytics. Kevin Dubois' article "Managing Java containers with Quarkus and Podman Desktop" shows how to build Java containers using Quarkus, a modern cloud-native Java stack, and Podman Desktop, a desktop solution for managing containers locally. Roberto Cortez was kind enough to share his experience on 11 more Java-related questions in "Learn from Java Champion Roberto Cortez: Quarkus and Spring: Cloud-Native Java Development" by Dreamix Team. Start using JFR to debug, profile, and monitor Quarkus native executables after reading Robert Toyonaga's article; "How to monitor Quarkus native executables with JFR". "Explore a new way of testing CDI components in Quarkus" by Martin Kouba goes in depth on an experimental feature to ease the testing of CDI components and mocking of their dependencies. Don't miss "Building a MongoDB-Powered RESTful Application With Quarkus and Eclipse JNoSQL" by Otavio Santana.
+
+You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #34: July](https://quarkus.io/newsletter/34/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

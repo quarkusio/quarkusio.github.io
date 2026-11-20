@@ -1,0 +1,20 @@
+# Quarkus Tools for IntelliJ 1.3.0 released!
+
+We are very pleased to announce the 1.3.0 release of Quarkus Tools for IntelliJ. This release brings codestarts support in the Quarkus project wizard.
+
+## Codestarts
+
+The Quarkus project wizard adds a new codestarts option, allowing to enable/disable codestarts generation for Quarkus extensions that support this feature.
+
+![quarkus tools1](/assets/images/posts/intellij-quarkus-tools-1.3.0/quarkus-tools1.webp)
+
+## Moving Forward
+
+If you have any questions, suggestions or feedback, by all means please [open an issue](https://github.com/redhat-developer/intellij-quarkus/issues).
+
+Thank you for reading and stay tuned for the next release!
+
+## Links
+
+- GitHub repository: <https://github.com/redhat-developer/intellij-quarkus>
+- Open an issue: <https://github.com/redhat-developer/intellij-quarkus/issues>

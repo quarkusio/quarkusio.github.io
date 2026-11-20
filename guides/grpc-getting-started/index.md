@@ -1,0 +1,260 @@
+# Getting started with gRPC
+
+This page explains how to start using gRPC in your Quarkus application. While this page describes how to configure it with Maven, it is also possible to use Gradle.
+
+Let's imagine you have a regular Quarkus project, generated from the [Quarkus project generator](https://code.quarkus.io). The default configuration is enough, but you can also select some extensions if you want.
+
+## Solution
+
+We recommend that you follow the instructions in the next sections and create the application step by step. However, you can go right to the completed example.
+
+Clone the Git repository: `git clone https://github.com/quarkusio/quarkus-quickstarts.git`, or download an [archive](https://github.com/quarkusio/quarkus-quickstarts/archive/main.zip).
+
+The solution is located in the `grpc-plain-text-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/grpc-plain-text-quickstart).
+
+## Configuring your project
+
+Add the Quarkus gRPC extension to your build file:
+
+**pom.xml**
+
+```xml
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-grpc</artifactId>
+</dependency>
+```
+
+**build.gradle**
+
+```gradle
+implementation("io.quarkus:quarkus-grpc")
+```
+
+By default, the `quarkus-grpc` extension relies on the reactive programming model. In this guide we will follow a reactive approach. Under the `dependencies` section of your `pom.xml` file, make sure you have the Quarkus REST (formerly RESTEasy Reactive) dependency:
+
+**pom.xml**
+
+```xml
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-rest</artifactId>
+</dependency>
+```
+
+**build.gradle**
+
+```gradle
+implementation("io.quarkus:quarkus-rest")
+```
+
+Whether you use Maven or Gradle, the code generation goals/tasks are automatically executed when using the default lifecycle of the plugins.
+
+You can put your service and message definitions in the `src/main/proto` directory. `quarkus-maven-plugin` will generate Java files from your `proto` files.
+
+`quarkus-maven-plugin` retrieves a version of `protoc` (the protobuf compiler) from Maven repositories. The retrieved version matches your operating system and CPU architecture. If this retrieved version does not work in your context, you can either force to use a different OS classifier with `-Dquarkus.grpc.protoc-os-classifier=your-os-classifier` (e.g. `osx-x86_64`). You can also download the suitable binary and specify the location via `-Dquarkus.grpc.protoc-path=/path/to/protoc`.
+
+Let's start with a simple *Hello* service. Create the `src/main/proto/helloworld.proto` file with the following content:
+
+```javascript
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "io.quarkus.example";
+option java_outer_classname = "HelloWorldProto";
+
+package helloworld;
+
+// The greeting service definition.
+service Greeter {
+    // Sends a greeting
+    rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+// The request message containing the user's name.
+message HelloRequest {
+    string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+    string message = 1;
+}
+```
+
+This `proto` file defines a simple service interface with a single method (`SayHello`), and the exchanged messages (`HelloRequest` containing the name and `HelloReply` containing the greeting message).
+
+> [!NOTE]
+> Your `proto` file must not contain `option java_generic_services = true;`. [Generic services are deprecated](https://developers.google.com/protocol-buffers/docs/reference/java-generated?hl=en#service) and are not compatible with Quarkus code generation plugins.
+
+Before coding, we need to generate the classes used to implement and consume gRPC services. In a terminal, run:
+
+```shell
+$ mvn compile
+```
+
+Once generated, you can look at the `target/generated-sources/grpc` directory:
+
+```txt
+target/generated-sources/grpc
+└── io
+    └── quarkus
+        └── example
+            ├── Greeter.java
+            ├── GreeterBean.java
+            ├── GreeterClient.java
+            ├── GreeterGrpc.java
+            ├── HelloReply.java
+            ├── HelloReplyOrBuilder.java
+            ├── HelloRequest.java
+            ├── HelloRequestOrBuilder.java
+            ├── HelloWorldProto.java
+            └── MutinyGreeterGrpc.java
+```
+
+These are the classes we are going to use.
+
+## Different gRPC implementations / types
+
+Another thing to take note as well is that Quarkus' gRPC support currently includes 3 different types of gRPC usage:
+
+1. old Vert.x gRPC implementation with a separate gRPC server (default)
+2. new Vert.x gRPC implementation on top of the existing HTTP server
+3. [xDS gRPC](https://grpc.github.io/grpc/core/md_doc_grpc_xds_features.html) wrapper over [grpc-java](https://github.com/grpc/grpc-java) with a separate Netty based gRPC server
+
+Further docs explain how to enable and use each of them.
+
+## Implementing a gRPC service
+
+Now that we have the generated classes let's implement our *hello* service.
+
+With Quarkus, implementing a service requires to implement the generated service interface based on Mutiny, a Reactive Programming API integrated in Quarkus, and expose it as a CDI bean. Learn more about Mutiny on the [Mutiny guide](/guides/mutiny-primer/index.md). The service class must be annotated with the `@io.quarkus.grpc.GrpcService` annotation.
+
+### Implementing a service
+
+Create the `src/main/java/org/acme/HelloService.java` file with the following content:
+
+```java
+package org.acme;
+
+import io.quarkus.example.Greeter;
+import io.quarkus.example.HelloReply;
+import io.quarkus.example.HelloRequest;
+import io.quarkus.grpc.GrpcService;
+import io.smallrye.mutiny.Uni;
+
+@GrpcService <1>
+public class HelloService implements Greeter { <2>
+
+    @Override
+    public Uni<HelloReply> sayHello(HelloRequest request) { <3>
+        return Uni.createFrom().item(() ->
+                HelloReply.newBuilder().setMessage("Hello " + request.getName()).build()
+        );
+    }
+}
+```
+
+1. Expose your implementation as a bean.
+2. Implement the generated service interface.
+3. Implement the methods defined in the service definition (here we have a single method).
+
+You can also use the default gRPC API instead of Mutiny:
+
+```java
+package org.acme;
+
+import io.grpc.stub.StreamObserver;
+import io.quarkus.example.GreeterGrpc;
+import io.quarkus.example.HelloReply;
+import io.quarkus.example.HelloRequest;
+import io.quarkus.grpc.GrpcService;
+
+@GrpcService <1>
+public class HelloService extends GreeterGrpc.GreeterImplBase { <2>
+
+    @Override
+    public void sayHello(HelloRequest request, StreamObserver<HelloReply> responseObserver) { <3>
+        String name = request.getName();
+        String message = "Hello " + name;
+        responseObserver.onNext(HelloReply.newBuilder().setMessage(message).build()); <4>
+        responseObserver.onCompleted(); <5>
+    }
+}
+```
+
+1. Expose your implementation as a bean.
+2. Extends the `ImplBase` class. This is a generated class.
+3. Implement the methods defined in the service definition (here we have a single method).
+4. Build and send the response.
+5. Close the response.
+
+> [!NOTE]
+> If your service implementation logic is blocking (use blocking I/O for example), annotate your method with `@Blocking`. The `io.smallrye.common.annotation.Blocking` annotation instructs the framework to invoke the annotated method on a worker thread instead of the I/O thread (event-loop).
+
+### The gRPC server
+
+The services are *served* by a *server*. Available services (*CDI beans*) are automatically registered and exposed.
+
+By default, the server is exposed on `localhost:9000`, and uses *plain-text* (so no TLS) when running normally, and `localhost:9001` for tests.
+
+Run the application using: `mvn quarkus:dev`.
+
+## Consuming a gRPC service
+
+In this section, we are going to consume the service we expose. To simplify, we are going to consume the service from the same application, which in the real world, does not make sense.
+
+Open the existing `org.acme.ExampleResource` class, and edit the content to become:
+
+```java
+package org.acme;
+
+import io.quarkus.example.Greeter;
+import io.quarkus.example.HelloRequest;
+import io.quarkus.grpc.GrpcClient;
+import io.smallrye.mutiny.Uni;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+@Path("/hello")
+public class ExampleResource {
+
+    @GrpcClient                               // <1>
+    Greeter hello;                            // <2>
+
+    @GET
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "hello";
+    }
+
+    @GET
+    @Path("/{name}")
+    public Uni<String> hello(String name) {
+        return hello.sayHello(HelloRequest.newBuilder().setName(name).build())
+                .onItem().transform(helloReply -> helloReply.getMessage());  // <3>
+    }
+}
+```
+
+1. Inject the service and configure its name. The name is used in the application configuration. If not specified then the field name is used instead: `hello` in this particular case.
+2. Use the generated service interface based on Mutiny API.
+3. Invoke the service.
+
+We need to configure the application to indicate where the `hello` service is found. In the `src/main/resources/application.properties` file, add the following property:
+
+```properties
+quarkus.grpc.clients.hello.host=localhost
+```
+
+- `hello` is the name used in the `@GrpcClient` annotation.
+- `host` configures the service host (here it's localhost).
+
+Then, open <http://localhost:8080/hello/quarkus> in a browser, and you should get `Hello quarkus`!
+
+## Packaging the application
+
+Like any other Quarkus applications, you can package it with: `mvn package`. You can also package the application into a native executable with: `mvn package -Dnative`.

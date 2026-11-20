@@ -1,0 +1,9 @@
+# Quarkus Newsletter #73 - October
+
+Check out "IBM Bob ACP in Quarkus: A Local Control Plane, Not a Shared Chat App" by Markus Eisele to how permission futures, workspace bounds, and loopback binding show why this client stays on one machine until you add auth, quotas, and audit. JobRunr v9 draws every attempt and every durable step of a job on a chart. JobRunr Pro v9 adds Job Analytics to the dashboard, can pause and resume a batch halfway and starts jobs within milliseconds on Postgres, without multicast. Get the details in "JobRunr & JobRunr Pro v9: See Inside Every Background Job" by the JobRunr Team. The quarkus.io site is now built with Quarkus Roq. Read Holly Cummins's blog post to learn how we migrated quarkus.io from Jekyll to Quarkus Roq by converting 40,000 files, delivering faster builds, quicker page loads, and simplified Java-based local development. Fouad Almalki's "Build AWT and Swing desktop applications with Quarkus Desktop" shows how Quarkus Desktop brings AWT and Swing applications to Quarkus, in JVM mode and as native executables on Windows, Linux, and macOS. Read "Quarkus Goblin: Learn Chaos Engineering on One REST Call" by Markus Eisele to learn how to build a quote API that calls inventory, inject latency and HTTP 503s, and watch timeout, retry, and fallback take over.
+
+You will also see the latest Quarkus Insights episodes, top social posts and upcoming Quarkus attended events.
+
+Check out [Newsletter #73: October](https://quarkus.io/newsletter/73/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

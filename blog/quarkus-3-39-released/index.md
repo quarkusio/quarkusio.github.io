@@ -1,0 +1,73 @@
+# Quarkus 3.39 - Post-quantum cryptography support in TLS registry
+
+We're pleased to announce the release of Quarkus 3.39.
+
+Quarkus 3.39 will be the base for our next 3.40 LTS release, so we encourage everyone to migrate to this version as soon as possible to help us identify and fix any remaining issues before the LTS release.
+
+As most of the development effort for new features and major upgrades is now focused on Quarkus 4, this release is lighter on features than usual. It still comes with the following notable changes:
+
+- [#55629](https://github.com/quarkusio/quarkus/pull/55629) - Add post-quantum cryptography (PQC) support to TLS registry
+- [#56072](https://github.com/quarkusio/quarkus/pull/56072) - Revert "Enable reflection-free Jackson serializers by default"
+
+## Update
+
+To update to Quarkus 3.39, we recommend updating to the latest version of the Quarkus CLI and run:
+
+```bash
+quarkus update
+```
+
+Note that `quarkus update` can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.39.
+
+For more information about the adjustments you need to make to your applications, please refer to the [Quarkus 3.39 migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.39).
+
+## What's new?
+
+### Post-quantum cryptography (PQC) support in TLS registry
+
+Quarkus 3.39 introduces support for post-quantum cryptography (PQC) in the TLS registry, wiring the Vert.x PQC API through the HTTP server, HTTP client, REST client, and mailer.
+
+Three new configuration properties are available:
+
+- `quarkus.tls.key-exchange-groups`: an ordered list of TLS key exchange groups, allowing you to specify post-quantum key exchange algorithms such as ML-KEM.
+- `quarkus.tls.pqc-enforcement-policy`: controls how strictly PQC is enforced, with three modes: `strict` (PQC required), `client-negotiated` (prefer PQC but fall back to classical), and `relaxed` (no enforcement).
+- `quarkus.tls.ssl-engine`: allows overriding the auto-selection of the SSL engine (`openssl` or `jdkssl`), useful when specific PQC algorithms are only available in one engine.
+
+This lays the groundwork for quantum-resistant TLS connections as post-quantum standards are being adopted.
+
+### Reflection-free Jackson serializers reverted to opt-in
+
+The reflection-free Jackson serializers, which were enabled by default in a previous release, have been reverted to opt-in in Quarkus 3.39.
+
+While significant progress has been made in stabilizing this feature, some issues remain and it was not considered ready to be the default for the upcoming LTS release. If you were relying on the reflection-free serializers, you can re-enable them by setting `quarkus.rest.jackson.optimization.enable-reflection-free-serializers` to `true` in your `application.properties`.
+
+### Platform updates
+
+#### Component upgrades
+
+Various Platform components were upgraded including:
+
+- Camel Quarkus to 3.39.0
+- Quarkus CXF to 3.39.1 ([3.39.0 release notes](https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.39.0.html), [3.39.1 release notes](https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.39.1.html))
+- Quarkus Flow to 1.0.0
+- Quarkus LangChain4j to 1.13.0
+- Quarkus Operator SDK to 7.8.0
+- Quarkus Qpid JMS to 2.13.0
+
+## Full changelog
+
+You can get the full changelog of [3.39.0.CR1](https://github.com/quarkusio/quarkus/releases/tag/3.39.0.CR1) and [3.39.0](https://github.com/quarkusio/quarkus/releases/tag/3.39.0) on GitHub.
+
+## Contributors
+
+The Quarkus community is growing and has now [1230](https://github.com/quarkusio/quarkus/graphs/contributors) contributors. Many many thanks to each and everyone of them.
+
+In particular for the 3.39 release, thanks to aarti-1108, Adrian Pauli, Alexandre Dutra, Alexey Loubyansky, Andreas Maechler, Aurea Munoz, cfitzw, Charles Moulliard, Clement Escoffier, cnbehr, Cristiano Nicolai, Eric Deandrea, Finn Petersen, Fouad Almalki, Gaelle Fournier, George Gastaldi, Georgios Andrianakis, Guillaume Smet, Holly Cummins, Jakub Jedlicka, James R. Perkins, Jan Martiska, jnbdz, Julien Ponge, Kamil Krzywanski, Katia Aresti, Keshav Deshpande, Ladislav Thon, luneo7, mariofusco, marko-bekhta, Martin Kouba, Martin Panzer, Matej Novotny, MdTanwer, Michal Maléř, Michal Vavřík, Moritz Heine, Ozan Gunalp, Peter Zaoral, Phillip Krüger, PrabinDevkota, Robert Stupp, Robert Toyonaga, Rolfe Dlugy-Hegwer, Sakshi Chitnis, Samuel Ferreira, Sanne Grinovero, Sergey Beryozkin, Severin Gehwolf, Simon Wick, simrankhanna, Steve Hawkins, Ståle Pedersen, Stéphane Épardaud, Teymur Babayev, Timur Rakhmatullin, Tom Fenwick, Willem Jan Glerum, xstefank, and Yoann Rodière.
+
+## Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+\* provide feedback on [GitHub](https://github.com/quarkusio/quarkus/issues); \* craft some code and [push a PR](https://github.com/quarkusio/quarkus/pulls); \* discuss with us on [Zulip](https://quarkusio.zulipchat.com/) and on the [mailing list](https://groups.google.com/d/forum/quarkus-dev); \* ask your questions on [Stack Overflow](https://stackoverflow.com/questions/tagged/quarkus).

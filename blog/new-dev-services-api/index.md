@@ -1,0 +1,228 @@
+# A Better Way of Creating Dev Services
+
+In Quarkus 3.25, a new API for creating [Dev Services](https://quarkus.io/guides/dev-services) was introduced. This new model fixes a problem where all Dev Services for all tests would start in the JUnit discovery phase, potentially causing port conflicts, configuration cross-talk, and excessive resource usage. This issue was a side effect of the [test classloading rewrite](/blog/test-classloading-rewrite) in Quarkus 3.22. As well as reducing resource consumption, we also hope the API makes it simpler for extension authors to create Dev Services, and moves some of the heavy lifting around managing discovery and container re-use to Quarkus core.
+
+## What changes for users?
+
+No action is needed for users.
+
+If you have test suites which use multiple profiles or test resources, you should find that you no longer see duplicate containers active at the same time. The containers should launch one after the other.
+
+However, this depends on the extension, as each needs to be converted to the new model. The Redis, Lambda, Narayana, and Kafka extensions have been converted so far. You can track progress on conversions by following the sub-issues in [#45785](https://github.com/quarkusio/quarkus/issues/45785). As a workaround, if extensions you depend on have not yet been converted, splitting conflicting tests into separate projects should fix symptoms.
+
+As always, if you spot issues or oddities, please let us know on [zulip](https://quarkusio.zulipchat.com/) or [raise an issue](https://github.com/quarkusio/quarkus/issues).
+
+### Background
+
+All dev services using the old API start in the JUnit discovery phase (as of Quarkus 3.22). This is because they are started during [the augmentation phase](https://quarkus.io/guides/reaugmentation#what-is-augmentation), along with bytecode manipulation and other application initialization steps. When the testing design changed, all augmentation happened at the beginning of the test run, during the JUnit discovery phase. This means all Dev Services also start at the beginning of the test run. If several test classes with different Dev Service configuration are augmented before any tests are run, multiple differently-configured Dev Services may be running at the same time.
+
+In the new model, Dev Services are started after the augmentation but before the application's actual launch.
+
+## What changes for extension owners?
+
+The new Dev Services model maintains backwards compatibility with the old one, so extension owners don't *need* to do anything. In fact, for the first few releases of the new model, we recommended extension owners definitely did not do anything, while the API stabilised.
+
+Now is a good time for extensions to start moving, so they can take advantage of the more concise programming model and reduced resource usage. This will also resolve some deprecation warnings triggered by the old model. Be aware that extensions which have moved to the new API will no longer work with old versions of Quarkus. 3.25 would be the minimum possible version, and we would recommend setting 3.27 or 3.28 as the minimum version (more on that below).
+
+### Principles of the new design
+
+- Dev Services are prepped at build time, but the actual `start()` call happens post-build, pre-runtime
+- Do not use static variables in the extension processor
+- Dev Service creation is handled by a builder (and there are different builders for connecting to an externally-managed instance and creating a new service)
+- Config which is only known after the service is started can be passed in using a `configProvider()`
+
+### Migration checklist
+
+- Update your extension's build file so it depends on both the `quarkus-devservices` runtime and `quarkus-devservices-deployment` modules (but see [the discussion of choosing a Quarkus version](#version-dilemma) for implications of this).
+- Provide [an implementation](#startable) of `io.quarkus.deployment.builditem.Startable` which has methods for starting and stopping the new service. For container-based services, extending `GenericContainer` and implementing `Startable` is a good pattern.
+- Instead of directly constructing a `DevServicesResultBuildItem`, switch to use the `discovered()` and `owned()` [builders](#the-builder) on `DevServicesResultBuildItem`  \*\* It is not necessary to call all methods on the builder, but either for owned services, `startable()`, `serviceName()`, `configProvider()`, and [`serviceConfig()`](#eligibility-for-reuse) are almost always needed
+- Check code for anti-patterns \*\* Extension code should never stop or start the Dev Service \*\* Remove shutdown listeners; cleanup should be handled in the `stop()` method of the service's `Startable`  \*\* The `RunningDevService` type should never be used in the new model \*\* Remove [static variables](#static-fields) in the extension processor (such as pointers to a service instance) \*\* Do not try and set configuration for accessing the new service directly using system properties or other overrides; use `configProvider()` instead
+
+### More migration details
+
+<a id="static-fields"></a>
+#### Get rid of static fields on the extension processor
+
+Extension authors should not rely on static variables for cross-instance communication. They should not assume that the invocation order of processors will be the same as the run order of applications.
+
+The [extension writing guide](https://quarkus.io/guides/writing-extensions#injection) says “State should only be communicated between build steps by way of build items, even if the steps are on the same class.” However, almost every Dev Service implementation broke this rule, and used a static field to track previously-created services.
+
+A good heuristic when migrating to the new model is that all static fields should go away. For example, remove all fields like these ones:
+
+```java
+private static volatile RunningDevService devService;
+private static volatile MyDevServicesConfig capturedDevServicesConfiguration;
+private static volatile boolean first = true;
+
+```
+
+Deciding whether to re-use or replace a service is now [handled centrally](#eligibility-for-reuse), based on a diff of the configuration.
+
+#### Get rid of shutdown logic
+
+Because service lifecycle is handled centrally, any shutdown listeners or other logic for stopping services should also be removed.
+
+### Remove any references to `RunningDevService`
+
+Because the processor does not handle starting the service, it should never return a `RunningDevService`.
+
+<a id="the-builder"></a>
+#### Use the builder
+
+Instead of direct construction, use the new builder API. Choose `owned()` for services which are to be created, or `discovered()` to register externally-managed services which have been discovered.
+
+For example,
+
+```java
+    DevServicesResultBuildItem = DevServicesResultBuildItem.owned()
+                    .feature(MY_FEATURE_NAME)
+                    .serviceName(name)
+                    .serviceConfig(myConfig)
+                    .startable(() -> new MyContainer(
+                            myImageName,
+                            myConfig.port(),
+                            useSharedNetwork)
+                            .withEnv(myConfig.containerEnv())
+                     .configProvider(
+                            Map.of(someProp, s -> s.getConnectionInfo()))
+                    .build());
+```
+
+<a id="eligibility-for-reuse"></a>
+#### Eligibility for re-use
+
+How does the central lifecycle management decide whether a service can be re-used? This is based on 'sameness keys' (the config objects) passed in to the builder to use as the basis for the comparison.
+
+The key method is `.serviceConfig(myConfig)`. The current config is compared reflectively to the config of running services each restart.
+
+<a id="startable"></a>
+#### The `Startable`
+
+In order to support lazy starting, pass an implementation of `Startable` to the builder. (In case it's not obvious, do **not** call `start()` on your `Startable`. The Quarkus infrastructure will start your service at the appropriate time.) (In case it's not obvious, do **not** call `start()` on your `Startable`. The Quarkus infrastructure will start your service at the appropriate time.)
+
+For container-based services, it's usually convenient to extend `GenericContainer`. In that case, there's not even any need to implement `start()`. Most Dev Services implementations already provide a subclass of `GenericContainer`, so the diff is just to add `implements Startable` and then add a `close()` method. The `close` method can delegate to the superclass.
+
+For example,
+
+```java
+private static class MyContainer extends GenericContainer<MyContainer> implements Startable {
+
+        private final OptionalInt fixedExposedPort;
+
+        private final String hostName;
+
+        public MyContainer(String imageName, OptionalInt fixedExposedPort) {
+            super(imageName);
+            this.fixedExposedPort = fixedExposedPort;
+
+            this.hostName =  ...
+
+        }
+
+        @Override
+        protected void configure() {
+            super.configure();
+
+            if (fixedExposedPort.isPresent()) {
+                addFixedExposedPort(fixedExposedPort.getAsInt(), DEFAULT_PORT);
+            } else {
+                addExposedPort(DEFAULT_PORT);
+            }
+        }
+
+        public int getPort() {
+            if (fixedExposedPort.isPresent()) {
+                return fixedExposedPort.getAsInt();
+            }
+            return super.getFirstMappedPort();
+        }
+
+        // This looks strange, but is needed to satisfy the interface
+        @Override
+        public void close() {
+            super.close();
+        }
+
+        @Override
+        public String getConnectionInfo() {
+            return getHost() + ":" + getPort();
+        }
+```
+
+<a id="version-dilemma"></a>
+#### Dependency changes and setting a minimum Quarkus version
+
+This bit is a bit awkward, unfortunately! In Quarkus 3.28, a new `devservices` runtime module was introduced. Most extensions have both a deployment and a runtime module, but historically, Dev Services only had a deployment module. The associated runtime classes lived in other modules. A runtime module was added in 3.28. Because it was a potentially disruptive change, it was done post-LTS. That seemed like a good idea, but it had some unexpected consequences. The introduction of the new module was done in a way which preserved backwards compatibility, but not forward compatibility. That means extensions built against 3.27 will work with the 3.27 LTS, but not 3.28 or later versions. Extensions built with 3.28 will work with 3.27, and also 3.28 and later versions.
+
+For this reason, you should either create branches for 3.27 and 3.28+ versions of the extension, or just build against 3.28. If you build against 3.28, you will need to manually set the minimum Quarkus version in the extension metadata, so that the Quarkus tooling recognises the extension as compatible with 3.27.
+
+```yaml
+  requires-quarkus-core: "[3.27,)"
+```
+
+If you do decide to build against 3.28, add the following to the `pom.xml` of your runtime module:
+
+```xml
+<dependency>
+  <groupId>io.quarkus</groupId>
+  <artifactId>quarkus-devservices</artifactId>
+</dependency>
+```
+
+### FAQs
+
+#### How can I have a build step do something after a Dev Service is started?
+
+This isn’t possible, because a dev service would never be started in the build phase. However, the `postStartHook` on the builder allows you to take actions once the dev service is started. To pass configuration to the application, you can [use recorders](https://quarkus.io/guides/writing-extensions#injecting-configuration-into-recorders).
+
+In general, the Quarkus philosophy is to move work from application start to build-time, not the other way round. If you do need to move work into a `postStartHook` or recorder, try to move as little as possible, to avoid negative performance impacts. Often, code needs to know that a Dev Service **will** be created, but not the actual address. This can be handled as part of the normal build flow using a marker build item, leaving the bare minimum to execute as part of the hook.
+
+#### How can I publish links to my service in the Dev UI?
+
+If your service has an admin console, it's a nice pattern to publish a link to it in the Dev UI. With the old Dev Services model, you might customise your extensions's card with code something like this:
+
+```java
+   @BuildStep(onlyIf = IsDevelopment.class)
+   public CardPageBuildItem pages(List<SomeRelevantBuildItem> containers) {
+      CardPageBuildItem cardPageBuildItem = new CardPageBuildItem();
+
+      for (SomeRelevantBuildItem container : containers) {
+         cardPageBuildItem.addPage(Page.externalPageBuilder("My Extension Name")
+               .url(container.getTheUrl())
+               .staticLabel(container.label());
+      }
+
+      return cardPageBuildItem;
+   }
+```
+
+This will no longer work, because the url isn't known at build time. Instead, replace the `url` method with `dynamicUrlJsonRPCMethodName`, [passing in an RPC method name](/guides/dev-ui#runtime-external-links).
+
+```java
+     .dynamicUrlJsonRPCMethodName("getMyUrl")
+```
+
+From 3.32, you can also pass through parameters on the method call. For example,
+
+```java
+     .dynamicUrlJsonRPCMethodName("getMyUrl", Map.of("name", "service-name", "configKey", "some-key");
+```
+
+Add a build step to register the providing class:
+
+```java
+    @BuildStep(onlyIf = IsLocalDevelopment.class)
+    public JsonRPCProvidersBuildItem createJsonRPCService() {
+     return new JsonRPCProvidersBuildItem(MyJsonRPCService.class, BuiltinScope.SINGLETON.getName());
+    }
+```
+
+In your extension's runtime module, create a `MyJsonRPCService` class with a `getMyUrl` method.
+
+### Examples
+
+Sometimes it's easier to see what needs to be done in a diff.
+
+For an example using a dev service which isn’t container-based, see the [Lambda conversion](https://github.com/quarkusio/quarkus/pull/48753/files). For a more complex conversion which uses compose, reuses existing external containers, and does post-start configuration, see just the `KafkaDevServicesProcessor` part of the [Kafka conversion](https://github.com/quarkusio/quarkus/pull/48445/files#diff-77328c7968b5b6e5280c55994dd56cd1da637e84b1fecd751d6130e78840aefd).
+
+The [working group for Dev Services lifecycle](https://github.com/orgs/quarkusio/projects/49) is still underway, and welcomes contributions.

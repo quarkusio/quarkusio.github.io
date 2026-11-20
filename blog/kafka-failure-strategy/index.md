@@ -1,0 +1,194 @@
+# Kafka - How to fail gracefully
+
+Failures are inevitable. There is nothing we can do about that, and that also applies to Kafka applications. Your application may contain a faulty component misbehaving once in a while, or unable to process a specific Kafka record. In this post, we are going to see how we can manage these failures.
+
+## Ack and Nack
+
+But, first, we need to explain how it works under the hood. When using reactive messaging, your application receives [Messages](https://smallrye.io/smallrye-reactive-messaging/latest/concepts/concepts/#messages). Even if your method handles *payloads*, there are Messages under the hood, and it unwraps the payload just before calling your method.
+
+![messages](/assets/images/posts/kafka-failure-strategy/messages.webp)
+
+A message can be *acked* or *nacked*. If the message processing completes successfully, the message is acknowledged. You can manually trigger the acknowledgment (by calling the `ack()` method) or let the framework handle it automatically. In general, it's the outbound connector that acknowledges the message once the outgoing message has been sent to the broker successfully. If not configured otherwise, acknowledging a message acknowledges the *source* message, acknowledging its source, until we reach the root message, most probably created by an inbound connector:
+
+![Acknowledgement chain](/assets/images/posts/kafka-failure-strategy/ack-chain.webp)
+
+When the inbound connector receives the acknowledgment, it can act upon it and, for example, indicate to the broker that the message processing succeeded. In the context of Kafka, there are various commit strategies. We will cover these in a future post.
+
+But as said earlier, failures are inevitable. For example, you may have a misbehaving component throwing exceptions, or the outbound connector cannot send the messages because the remote broker is unavailable. In these cases, the message is *nacked*, indicating that the processing failed. Similarly to successful acknowledgment, negative acknowledgment can be triggered manually (using the `nack` method) or handled automatically. For example, if your method throws an exception, the message is nacked. As with *ack*, nacking a message nacks its source, and the nack is propagated until the inbound connector:
+
+![Negative acknowledgment chain](/assets/images/posts/kafka-failure-strategy/nack-chain.webp)
+
+It's the responsibility of the connector to decide how to react in this case. The Kafka connector proposes three failure handling strategies, and that's what we are going to detail now.
+
+## The "Fail-Fast" strategy
+
+The first strategy is the simplest, but not sure we can qualify it with "smoothly." It's the default strategy. As soon as a message is nacked, the connector reports the failure, and the application stops. If you use the health checks extension, the application is marked as unhealthy, and your orchestrator may restart the application.
+
+![Fail-Fast](/assets/images/posts/kafka-failure-strategy/fail-fast.webp)
+
+But, it's time to demonstrate it. I've created a simple application receiving movie titles from Kafka and failing (with an exception) if the title contains a `'` or `,`. You can check the code on this [Gist](https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a#file-kafkafailfast-java), or run it using:
+
+```bash
+jbang https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a/raw/9b0a114b2d5825543f2890d2071b9387441e008b/KafkaFailFast.java
+```
+
+> [!NOTE]
+> Starting the application starts a Kafka broker using Docker. The first start may require downloading the appropriate container image.
+
+If you ran the application and check the log, you will see:
+
+```
+ERROR [io.sma.rea.mes.provider] (vert.x-eventloop-thread-0) SRMSG00200: The method foo.KafkaFailFast$MovieProcessor#consume has thrown an exception: java.lang.IllegalArgumentException: I don't like movies with ' in their title: Schindler's List
+    at foo.KafkaFailFast$MovieProcessor.consume(KafkaFailFast.java:47)
+```
+
+Now, if you open your browser to <http://localhost:8080/health>, you will see that the failure has been caught and the application is unhealthy:
+
+```json
+{
+    "status": "DOWN",
+    "checks": [
+        {
+            "name": "SmallRye Reactive Messaging - liveness check",
+            "status": "DOWN",
+            "data": {
+                "movies": "[KO] - I don't like movies with ' in their title: Schindler's List",
+                "movies-out": "[OK]"
+            }
+        },
+        {
+            "name": "SmallRye Reactive Messaging - readiness check",
+            "status": "DOWN",
+            "data": {
+                "movies": "[OK]",
+                "movies-out": "[OK]"
+            }
+        }
+    ]
+}
+```
+
+This approach works well with sporadic, network-related issues. Still, if the source of the failure is your application code, you may enter a restart loop. Indeed, when the application restarts, it may again receive the message (the red one from the previous picture) that would produce the same failure again and again.
+
+## The "Ignore" strategy
+
+The second strategy is also straightforward: just close your eyes. When a message is nacked, it ignores the failure and continues the processing:
+
+![Ignore strategy](/assets/images/posts/kafka-failure-strategy/ignore.webp)
+
+The log indicates the failure, but it continues the processing with the next one. You can only use this strategy if you don't need to manage all the messages or if your application is handling the failure internally.
+
+To enable this strategy, configure the channel with:
+
+```text
+mp.messaging.incoming.movies.failure-strategy=ignore
+```
+
+You can try this strategy with [Gist](https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a#file-kafkaignorefailure-java), or run it using:
+
+```bash
+jbang https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a/raw/0a1a8cd9a0cbed69d8025004cd5feab8c044d097/KafkaIgnoreFailure.java
+```
+
+If you ran the application and check the log, you will see two exceptions:
+
+```
+ERROR [io.sma.rea.mes.provider] (vert.x-eventloop-thread-0) SRMSG00200: The method foo.KafkaFailFast$MovieProcessor#consume has thrown an exception: java.lang.IllegalArgumentException: I don't like movies with ' in their title: Schindler's List
+    at foo.KafkaFailFast$MovieProcessor.consume(KafkaFailFast.java:47)
+...
+ERROR [io.sma.rea.mes.provider] (vert.x-eventloop-thread-0) SRMSG00200: The method foo.KafkaIgnoreFailure$MovieProcessor#consume has thrown an exception: java.lang.IllegalArgumentException: I don't like movies with , in their title: The Good, the Bad and the Ugly
+    at foo.KafkaIgnoreFailure$MovieProcessor.consume(KafkaIgnoreFailure.java:51)    
+...
+WARN  [io.sma.rea.mes.kafka] (vert.x-eventloop-thread-0) SRMSG18204: A message sent to channel `movies` has been nacked, ignored failure is: I don't like movies with , in their title: The Good, the Bad and the Ugly.
+INFO  [Kafka-Ignore] (vert.x-eventloop-thread-0) Receiving movie The Lord of the Rings: The Fellowship of the Ring    
+```
+
+Look at the last line. As explained, it continues the processing with the next message.
+
+If you check the health of the application (using <http://localhost:8080/health>), everything is fine:
+
+```json
+{
+    "status": "UP",
+    "checks": [
+        {
+            "name": "SmallRye Reactive Messaging - liveness check",
+            "status": "UP",
+            "data": {
+                "movies": "[OK]",
+                "movies-out": "[OK]"
+            }
+        },
+        {
+            "name": "SmallRye Reactive Messaging - readiness check",
+            "status": "UP",
+            "data": {
+                "movies": "[OK]",
+                "movies-out": "[OK]"
+            }
+        }
+    ]
+}
+```
+
+## The "Dead-Letter Topic" strategy
+
+The [dead-letter queue](https://en.wikipedia.org/wiki/Dead_letter_queue) is a well-known pattern to handle message processing failure. Instead of failing fast or ignoring and continuing the processing, it stores the failing messages into a specific destination: a dead letter. An administrator, human or software, can review the failing messages and decide what can be done (retry, skip, etc.). Note that you can only apply this strategy if the ordering is not essential to the application.
+
+You can, later, review the failing messages:
+
+![Dead-letter topic](/assets/images/posts/kafka-failure-strategy/dead-letter-topic.webp)
+
+To enable this strategy, you need to add the following attribute to your configuration:
+
+```text
+mp.messaging.incoming.movies.failure-strategy=dead-letter-queue
+```
+
+By default, it writes to the `dead-letter-topic-$topic-name` topic. In our demo, it's `dead-letter-topic-movies`. But you can also configure the topic by setting the `dead-letter-queue.topic` attribute.
+
+> [!NOTE]
+> Depending on your Kafka configuration, you may have to create the topic beforehand and configure the replication factor.
+
+Let's try it! The [KafkaDeadLetterTopic.java](https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a#file-kafkadeadlettertopic-java) file extends our previous application. It uses the dead-letter-topic failure strategy and contains a component reading the dead-letter topic (`dead-letter-topic-movies`).
+
+You can run the application using:
+
+```bash
+jbang https://gist.github.com/cescoffier/23ca7b2bcc8c49cee3db29b3f2b59e4a/raw/f33365cbb42f6a514777b7527ef5e35b62740f5b/KafkaDeadLetterTopic.java
+```
+
+If you check the log, you will see the two expected exceptions and that all the titles are processed. You will also notice:
+
+```text
+INFO  [Kafka-Dead-Letter-Topic] (vert.x-eventloop-thread-0) The message 'The Good, the Bad and the Ugly' has been rejected and sent to the DLT. The reason is: 'I don't like movies with , in their title: The Good, the Bad and the Ugly'.
+```
+
+This log is written by the component reading the dead-letter topic:
+
+```java
+@ApplicationScoped
+public static class DeadLetterTopicReader {
+    @Incoming("dead-letter-topic-movies")
+    public CompletionStage<Void> dead(Message<String> rejected) {
+        IncomingKafkaRecordMetadata<String, String> metadata = rejected.getMetadata(IncomingKafkaRecordMetadata.class)
+                .orElseThrow(() -> new IllegalArgumentException("Expected a message coming from Kafka"));
+        String reason = new String(metadata.getHeaders().lastHeader("dead-letter-reason").value());
+        LOGGER.infof("The message '%s' has been rejected and sent to the DLT. The reason is: '%s'.", rejected.getPayload(), reason);
+
+        return rejected.ack();
+    }
+}
+```
+
+When reading messages from the dead-letter topic, you can retrieve the failure reason by reading the `dead-letter-reason` header.
+
+## Conclusion
+
+The Kafka connector proposes three strategies to handle failures.
+
+- `fail-fast` (default) stops the application and marks it unhealthy
+- `ignore` continues the processing even if there are failures.
+- `dead-letter-queue` sends failing messages to another Kafka topic for further investigation.
+
+Next time, we will talk about the commit strategies because failures are inevitable, but successful processing happens sometimes! Stay tuned!

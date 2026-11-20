@@ -1,0 +1,99 @@
+# Quarkus 3.26 - Hibernate updates, named persistence units in Hibernate Reactive, Dev UI as MCP functions, and more.
+
+Quarkus 3.26 is an important milestone towards our next LTS release: it marks the feature freeze for Quarkus 3.27 LTS, which will be based on 3.26 and released at the end of September.
+
+We urge you to upgrade to this release and report any issues you may find, so we can address them before the LTS release.
+
+Quarkus 3.26 introduces the following notable changes:
+
+- [#49429](https://github.com/quarkusio/quarkus/pull/49429) - Update to Hibernate ORM 7.1, Hibernate Search 8.1, and Hibernate Reactive 3.1
+- [#48007](https://github.com/quarkusio/quarkus/pull/48007) - Support named persistence units and data sources in Hibernate Reactive
+- [#49408](https://github.com/quarkusio/quarkus/pull/49408) - Offline startup and dialect configuration for Hibernate ORM
+- [#49165](https://github.com/quarkusio/quarkus/pull/49165) - Dev UI HQL console redesign + Hibernate Assistant functionality
+- [#47414](https://github.com/quarkusio/quarkus/pull/47414) - Expose Dev UI's capabilities as MCP functions
+- [#49003](https://github.com/quarkusio/quarkus/pull/49003) - OIDC Client filter - allow to trigger token refresh when REST client request results in 401
+- [#49042](https://github.com/quarkusio/quarkus/pull/49042) - Support for customizing request and response body in OIDC filters
+- [#48687](https://github.com/quarkusio/quarkus/pull/48687) - Add functionality to capture Quarkus application runtime data using JFR extension
+- [#49256](https://github.com/quarkusio/quarkus/pull/49256) - Bump Gradle version to 9.0
+
+In addition, Quarkus 3.26 drops support for legacy config classes entirely, so make sure you update your third-party extensions to the latest, as their new versions should already have been moved to `@ConfigMapping` interfaces.
+
+## Update
+
+To update to Quarkus 3.26, we recommend updating to the latest version of the Quarkus CLI and run:
+
+```bash
+quarkus update
+```
+
+Note that `quarkus update` can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.26.
+
+For more information about the adjustments you need to make to your applications, please refer to the [Quarkus 3.26 migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.26).
+
+## What's new?
+
+### Hibernate
+
+The Hibernate extensions got several improvements in this release:
+
+- We updated to Hibernate ORM 7.1, Hibernate Search 8.1, and Hibernate Reactive 3.1
+- The Hibernate Reactive extension now supports named persistence units and data sources - which was a long-awaited feature
+- The Hibernate ORM extension now supports offline startup and dialect configuration - which allows to start up even if the database is not reachable at startup time
+- The Dev UI HQL console has been redesigned and now includes Hibernate Assistant functionality: we are looking forward to your feedback on this new feature!
+
+### Dev UI
+
+Apart from the improvements mentioned above, we started exposing the Dev UI's capabilities as MCP functions, meaning you can now pilot the Dev UI from your favorite AI tooling.
+
+### OIDC
+
+The OIDC extension now allows to trigger token refresh when a REST client request results in 401.
+
+Also, you can now customize the request and response body in OIDC filters.
+
+### JFR
+
+Using the JFR extension, you can now capture Quarkus application runtime data such as application name, application version, and the list of active extensions.
+
+### Gradle
+
+The Gradle version used by default when creating a new project has been bumped to 9.0.
+
+Gradle 8.14 is still supported but some earlier 8.x versions might not work anymore, due to the changes we made to support Gradle 9.
+
+### Platform component upgrades
+
+#### Quarkus LangChain4j
+
+Quarkus LangChain4j was updated to 1.1.2.
+
+#### Camel Quarkus
+
+Camel Quarkus has been upgraded to [3.26.0](https://camel.apache.org/blog/2025/08/camel-quarkus-3.26.0/).
+
+#### Quarkus CXF
+
+Quarkus CXF has been upgraded to 3.26.1.
+
+Release notes are available for:
+
+- [3.26.0](https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.26.0.html)
+- [3.26.1](https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.26.1.html)
+
+## Full changelog
+
+You can get the full changelog of [3.26.0.CR1](https://github.com/quarkusio/quarkus/releases/tag/3.26.0.CR1) and [3.26.0](https://github.com/quarkusio/quarkus/releases/tag/3.26.0) on GitHub.
+
+## Contributors
+
+The Quarkus community is growing and has now [1115](https://github.com/quarkusio/quarkus/graphs/contributors). Many many thanks to each and everyone of them.
+
+In particular for the 3.26 release, thanks to Alex Bevilacqua, Alexey Loubyansky, Ali Hamzayev, Andy Damevin, ayagmar, Ayden Chance, azerr, Bruno Baptista, Chihiro Ito, Chris Laprun, Christian Beikov, Clement Escoffier, David M. Lloyd, Erik Mattheis, Fouad Almalki, George Gastaldi, Georgios Andrianakis, Guillaume Nodet, Guillaume Smet, Holly Cummins, Ioannis Canellos, Jakub Jedlicka, Jan Martiska, Jonathan Dowland, Joseph Zhang, Julien Ponge, Justin Bertram, Karm Michal Babacek, Katia Aresti, Ladislav Thon, Lars Andringa, Luca Molteni, Marco Belladelli, marko-bekhta, Martin Bartoš, Martin Kouba, Matheus Cruz, Michael Edgar, Michal Vavřík, Mikhail Polivakha, mposolda, Pavel Rappo, Phillip Krüger, Roberto Cortez, Rolfe Dlugy-Hegwer, Rostislav Svoboda, Sanne Grinovero, Sebastian Zieja, Sergey Beryozkin, Severin Gehwolf, shjones, Stéphane Épardaud, Teymur Babayev, viktor, Vincent Sevel, xstefank, and Yoann Rodière.
+
+## Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+\* provide feedback on [GitHub](https://github.com/quarkusio/quarkus/issues); \* craft some code and [push a PR](https://github.com/quarkusio/quarkus/pulls); \* discuss with us on [Zulip](https://quarkusio.zulipchat.com/) and on the [mailing list](https://groups.google.com/d/forum/quarkus-dev); \* ask your questions on [Stack Overflow](https://stackoverflow.com/questions/tagged/quarkus).

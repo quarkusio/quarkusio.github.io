@@ -1,0 +1,9 @@
+# Quarkus Newsletter #45 - June
+
+The June newsletter includes some great new articles. Discover the simple and easy way to quickly get up and running with containerized LLMs and AI-infused Quarkus applications in Java with "GenAI in Java With Merlinite, Quarkus, and Podman Desktop AI Lab" by Markus Eisele. Read "Quarkus Java framework adds dev extensions for observability" by Paul Krill to learn about the latest update to the Kubernetes-native Java stack introduces dev extensions for Grafana, Jaeger, OTel, and VictoriaMetrics. Reza Ganji's article: "The Magic of Quarkus With Vert.x in Reactive Programming" will explore reactive programming in Quarkus, along with detailed insights and practical examples in Java to illustrate its transformative capabilities. Follow this step-by-step guide on deploying the Serverless Quarkus Book app in Knative Minikube (Kubernetes) in "Deploying Serverless Quarkus JPA App in Knative Minikube (Kubernetes)" by Ivan Franchin
+
+You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #45: June](https://quarkus.io/newsletter/45/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

@@ -1,0 +1,53 @@
+# Quarkus World Tour - Calling All Roadies
+
+# Calling All Roadies for the Quarkus World Tour
+
+![callingallroadies](/assets/images/posts/world-tour-roadies/callingallroadies.png)
+
+The Quarkus World Tour kicked off in March to provide a unique, hands-on Quarkus experience for Java developers across the globe. The goal of the tour is to introduce Quarkus to Java developers and set them down the path of creating applications and participating in the community.
+
+Since the tour began, we have performed for crowds of developers from **15+** JUGs across the world with many more tour stops being added every day.
+
+## Bands Make It “Rock”, Roadies Make It “Roll”
+
+A global world tour takes an entire community to ensure its success. We have a great group of roadies that have made the world tour a success so far but we need your help.
+
+### Ways You Can Help
+
+Much like a concert, we want each tour stop to be a unique experience for the audience. Each performer is encouraged to demo or talk about what they are passionate about with Quarkus. You **DO NOT** have to be an expert or know everything there is about Quarkus. The event organizer will work with you ahead of time to set the agenda and organize the demo setlist so you have time to prepare (see sample setlist below). It will be fun, we promise.
+
+**Performers are needed for the following roles:**
+
+- **MC** (kick things off, transition between demos, monitor chat and questions, etc.)
+- **Presenter** (demo Quarkus feature/capability of your choosing)
+- **Q&A** (monitor chat and answer any questions behind the scenes or live)
+- **Organizer** (help arrange logistics, agenda, JUG communication, etc.)
+
+#### Did we mention that you will get some pretty cool swag too?
+
+![worldtourswag](/assets/images/posts/world-tour-roadies/worldtourswag.png)
+
+[Sign Up](https://forms.gle/qJi2eVq8sSc3xv2Z9) or send us an [email](mailto:worldtour@quarkus.io) to help.
+
+## Watch a World Tour Stop
+
+[Q4rihuLyFh4](Q4rihuLyFh4)
+
+### Sample Setlist
+
+Here is an example setlist for a tour stop.
+
+- Introduction to Quarkus (5-10 mins)
+  - Set the stage, why Quarkus is relevant
+- Demo 1 - Hello, World!
+- Demo 2 - Developer tooling & productivity
+- Demo 3 - JVM & Native performance stats
+- Take Requests - Open ended
+  - 
+    - Remote dev
+    - Automated deployment (Kubernetes/OpenShift)
+    - Metrics with Micrometer
+    - Swagger API w/ Developer UI
+    - Reactive applications
+    - CRUD w/ Hibernate
+    - Single-command Kubernetes deployment

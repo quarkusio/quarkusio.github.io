@@ -1,0 +1,9 @@
+# Quarkus Newsletter #39 - December
+
+Large language models (LLMs) are reshaping the world of software, altering the way we interact with users and develop business logic. See how to use the just released quarkus-langchain4j 0.1 extension to integrate LLMs in Quarkus applications. Additionally, learn how Quarkus integrates the virtual thread for Java developers to run blocking applications with a single @RunOnVirtualThread annotation in "Quarkus 3: The Future of Java Microservices With Virtual Threads and Beyond" by Daniel Oh. He also wrote another great article, "Demystifying Virtual Thread Performance: Unveiling the Truth Beyond the Buzz" where you can learn how virtual threads can provide high enough performance and resource efficiency based on your concurrency goal but also let you have a simple development model. Read "Revolutionize Data Management: Unleashing the Potential of Quarkus and HarperDB for Maximum Efficiency" by the Java Code Geeks to explore the seamless integration of Quarkus with HarperDB, a powerful and high-performance database solution. Build a MongoDB-powered RESTful app with Quarkus and Eclipse JNoSQL: generate, configure, create entities, implement services, and expose API by reading "Building a MongoDB-Powered RESTful Application With Quarkus and Eclipse JNoSQL" by Otavio Santana.
+
+You will also see the latest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #39: December](https://quarkus.io/newsletter/39/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.

@@ -1,0 +1,13 @@
+# Quarkus Newsletter #20 - May
+
+The May newsletter is out!
+
+Read the great article "Native Java in the Real World" describing how Microservices on Kubernetes are the business case sweet spot for native Java because they have the most significant framework and Java runtime overhead. As well as How to use Camel extensions for Quarkus to build powerful Java Integrations. There is a cool short step-by-step guide to create a new microservice in "Reactive Timer Microservice with Java Quartz, DynamoDB and Quarkus". Get the baseline knowledge and understanding Reactive Messaging with Apache Kafka with "Getting Started to Quarkus Reactive Messaging with Apache Kafka". "Process Formula 1 telemetry with Quarkus and OpenShift Streams for Apache Kafka" is a great article showing how race team engineers can exploit multiple software technologies to process telemetry data in a Java application in real time. Follow up with "3 Reasons Why All Java Developers Should Consider Quarkus".
+
+You will also see the lastest Quarkus Insights episodes, top tweets and upcoming Quarkus attended events.
+
+Check out [Newsletter #20](https://quarkus.io/newsletter/20/)!
+
+Want to get newsletters in your inbox? [Sign up for the newsletter](https://quarkus.io/newsletter) using the on page form.
+
+We've also included the list of the newest found online stories. Give it a read and if you feel something is missing or have an article coming out for future Quarkus Newsletter install the [bookmarklet](https://github.com/quarkusio/url2quarkuspub) on your laptop and phone to easily submit a story. If you prefer the manual way please [open an issue](https://github.com/quarkusio/quarkusio.github.io/issues) with a short description and a url.

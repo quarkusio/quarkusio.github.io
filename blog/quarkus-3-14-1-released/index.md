@@ -1,0 +1,158 @@
+# Quarkus 3.14 - Hibernate ORM 6.6, Let's encrypt, faster reflection-free Jackson serializers...
+
+It is our pleasure to announce the release of Quarkus 3.14.1 (we skipped the release of 3.14.0 so 3.14.1 is actually the first 3.14 release).
+
+We have been busy improving Quarkus in August and this version brings a lot of interesting new features:
+
+- [#41359](https://github.com/quarkusio/quarkus/pull/41359) - Upgrade to Hibernate ORM 6.6 / Search 7.2 / Reactive 2.4
+- [#40329](https://github.com/quarkusio/quarkus/pull/40329) - Speedup Hibernate ORM's enhancement of large models
+- [#42105](https://github.com/quarkusio/quarkus/pull/42105) - Let's Encrypt Support
+- [#41063](https://github.com/quarkusio/quarkus/pull/41063) - Generate faster reflection-free Jackson serializers
+- [#41249](https://github.com/quarkusio/quarkus/pull/41249) - Initial gRPC CLI
+- [#42097](https://github.com/quarkusio/quarkus/pull/42097) - Update UBI images to 1.20/8.10
+- [#37034](https://github.com/quarkusio/quarkus/pull/37034) - Decorate stacktraces in dev mode error page
+- [#42409](https://github.com/quarkusio/quarkus/pull/42409) - Vert.x HTTP: execute custom logic when HTTP server is started
+- [#42519](https://github.com/quarkusio/quarkus/pull/42519) - Accept signed OIDC UserInfo
+- [#42445](https://github.com/quarkusio/quarkus/pull/42445) - Upgrade MongoDB client to 5.1.3
+- [#42141](https://github.com/quarkusio/quarkus/pull/42141) - Reimplement the extension annotation processor
+- [#41648](https://github.com/quarkusio/quarkus/pull/41648) - Make mvnd 1.x work and require Maven 3.9.6 to build Quarkus
+
+Also, if you already updated to Quarkus 3.13 and moved to `@WithTestResource`, please have a look at [this section](#withtestresourcequarkustestresource).
+
+## Update
+
+To update to Quarkus 3.14, we recommend updating to the latest version of the Quarkus CLI and run:
+
+```bash
+quarkus update
+```
+
+Note that `quarkus update` can update your applications from any version of Quarkus (including 2.x) to Quarkus 3.14.
+
+For more information about the adjustments you need to make to your applications, please refer to the [Quarkus 3.14 migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.14).
+
+## What's new?
+
+### Toward Quarkus 3.15 LTS
+
+We announced it already, the next LTS version of Quarkus will be Quarkus 3.15.
+
+It will be branched directly from the 3.14 branch and will be the direct continuation of our 3.14 work.
+
+So don't expect new features in 3.15, we will focus on bugfixes.
+
+### Hibernate ORM 6.6 / Search 7.2 / Reactive 2.4
+
+We upgraded the Hibernate stack to the latest and greatest:
+
+- [Hibernate ORM 6.6](https://in.relation.to/2024/08/08/orm-660/)
+- [Hibernate Search 7.2](https://in.relation.to/2024/08/09/hibernate-search-7-2-0-Final/)
+- [Hibernate Reactive 2.4](https://in.relation.to/2024/08/09/hibernate-reactive-2_4_0_Final/)
+
+Given it's new minor versions coming with new features and some behavioral changes, we highly recommend to have a look at the [Quarkus 3.14 migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.14) if you are using the Hibernate stack in your Quarkus applications.
+
+Thanks to a contributor who provided a large entity model under an Open Source license, we were also able to optimize the Hibernate ORM bootstrap for large models and you should see significant improvements in the Hibernate ORM boot time if you have a large entity model.
+
+### Let's encrypt
+
+The TLS registry we introduced recently has gained easy management of Let's encrypt certificates, in part thanks to a nice Quarkus CLI plugin allowing to generate Let's encrypt certificates.
+
+Learn more about it in our [TLS registry reference](https://quarkus.io/guides/tls-registry-reference#lets-encrypt) guide.
+
+### Faster reflection-free Jackson serializers
+
+We all love our code running fast. And Jackson default serialization, while very efficient, is using reflection which introduces some overhead.
+
+In Quarkus 3.14, you have the ability to generate faster reflection-free serializers for the the types that will be serialized by Quarkus REST. Jackson has a ton of features and not all of them are supported but this new feature is smart enough that it default to standard Jackson serialization if your classes are using Jackson features we don't support.
+
+This option is still experimental and disabled by default but we would love for you to test it and report back (does it work for you? do we need to add one more feature for you to be able to use it?). You can find more information about it in the [REST reference](https://quarkus.io/guides/rest#reflection-free-jackson-serialization) guide.
+
+### gRPC CLI
+
+You know we are very concerned about the Dev Experience with Quarkus. A part of this amazing DevEx is the Quarkus CLI, that brings more and more features with each version.
+
+In 3.14, we introduced a gRPC CLI plugin, which may make your life a lot better if you are using the Quarkus gRPC extensions.
+
+You can see some examples of how to use it [here](https://quarkus.io/guides/grpc-cli).
+
+### UBI images
+
+We updated the default UBI images to 1.20/8.10.
+
+### Decorated stacktrace in dev mode
+
+When you are using dev mode, we try hard to make the stacktraces as meaningful and helpful as possible.
+
+In Quarkus 3.14, they are now decorated with more context, allowing to jump more quickly to the source of the problem.
+
+### Vert.x HTTP: execute custom logic when HTTP server is started
+
+This was a popular request and we now provide an easy way to execute some code after the HTTP server is started.
+
+You can find out all about it in the [HTTP reference](https://quarkus.io/guides/http-reference#how-to-execute-logic-when-http-server-started) guide.
+
+### Accept signed OIDC UserInfo
+
+Some OIDC providers returns the `UserInfo` as a signed JWT token. This is now supported transparently by Quarkus.
+
+### MongoDB client
+
+We updated the MongoDB client from 4.11.x to 5.1.x.
+
+### Extension annotation processor
+
+This is only of interest for extension developers but the extension annotation processor has been rewritten to have a cleaner architecture, especially for everything that concerns the generation of the configuration properties documentation.
+
+This new architecture generates a model of the configuration and we can then output this model in various formats (the Asciidoc output you know but also files for IDEs to consume...).
+
+You might have to adjust your extension build file - but the changes are very minor and are documented in the [migration guide](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.14#for-extension-developers).
+
+If you encounter any issue with this new extension annotation processor, please open an issue in [our tracker](https://github.com/quarkusio/quarkus/issues/new?assignees=&labels=kind%2Fbug&projects=&template=bug_report.yml).
+
+### Building Quarkus
+
+Building Quarkus itself (not your Quarkus apps) now requires Maven 3.9.6. Maven 3.9.9 is highly recommended as it contains some memory usage improvements targeting our specific use case.
+
+Mvnd 1.0.2 is also supported.
+
+As for your Quarkus apps, you can still build them with Maven 3.8.6+.
+
+### WithTestResource/QuarkusTestResource
+
+In Quarkus 3.13, we introduced `WithTestResource` to replace `QuarkusTestResource`, which we deprecated.
+
+The only difference between the two was that the test resources registered with `WithTestResource` were restricted to the annotated class by default (whereas you had to set it explicitly for `@QuarkusTestResource`). This new default behavior actually caused [several important issues](https://groups.google.com/g/quarkus-dev/c/rS8-WN6b7XQ) and we decided we needed some time to make it work better.
+
+While it is only the default value that is causing issues (you will get the same problem if you isolate all your test resources with `QuarkusTestResource`), a default value is important because it conveys the message that it is what we recommend. And in this case, having all your test resources isolated by default would make your tests unnecessarily slow and could consume a lot of memory.
+
+In 3.14, `WithTestResource` is still around but we undeprecated `QuarkusTestResource` and we recommend to use `QuarkusTestResource` for now. If you already migrated to `WithTestResource`, you don't have to revert this change, it will continue to work.
+
+A big thank you to the Quarkus users who reported this issue with amazing reproducers, it really helped a lot.
+
+### Platform component upgrades
+
+#### Camel Quarkus
+
+Camel Quarkus has been updated to 3.14. You can find everything you need to know about it in the [release notes](https://camel.apache.org/releases/q-3.14.0/).
+
+#### Quarkus CXF
+
+Quarkus CXF 3.14 was released and is now available in [Quarkus Platform 3.14](https://code.quarkus.io/?extension-search=origin:platform%20quarkus-cxf). Check [Quarkus CXF 3.14.0](https://docs.quarkiverse.io/quarkus-cxf/dev/release-notes/3.14.0.html) release notes for more information about what is new in this release.
+
+## Full changelog
+
+You can get the full changelog of [3.14.0.CR1](https://github.com/quarkusio/quarkus/releases/tag/3.14.0.CR1) and [3.14.0](https://github.com/quarkusio/quarkus/releases/tag/3.14.0), and [3.14.1](https://github.com/quarkusio/quarkus/releases/tag/3.14.1) on GitHub.
+
+## Contributors
+
+The Quarkus community is growing and has now [984 contributors](https://github.com/quarkusio/quarkus/graphs/contributors). Many many thanks to each and everyone of them.
+
+In particular for the 3.14 release, thanks to Ales Justin, Alex Martel, Alexey Loubyansky, Andy Damevin, Auri Munoz, bdeneuter, Bill Burke, Bruno Baptista, Chris Cranford, Christian Navolskyi, Clement Escoffier, Cristiano Nicolai, Danilo Piazzalunga, Diego Pedregal, Dmitry Kryukov, Eric Deandrea, Falko Modler, Felix König, fivecut, Foivos Zakkak, Fouad Almalki, franz1981, frne, Galder Zamarreño, George Gastaldi, Georgios Andrianakis, Guillaume Smet, Gunther C. Wenda, Holly Cummins, holomekc, Ioannis Canellos, Jakub Jedlicka, James Cobb, Jan Martiska, Jerome Prinet, Jimy Navarro Cordova, Jorge Solórzano, Katia Aresti, Konrad Durnoga, KS, Ladislav Thon, Laurent Broudoux, Lin Gao, Lorenzo De Francesco, Lu Jun, Luke Morfill, Marc Nuri, Marcelo Ataxexe Guimarães, Marco Bungart, Marek Skacelik, mariofusco, marko-bekhta, Martin Bartoš, Martin Kouba, Matej Novotny, Max Rydahl Andersen, Melloware, Michal Karm Babacek, Michal Vavřík, normalek, Ozan Gunalp, Peter Palaga, peubouzon, Phillip Kruger, Phillip Krüger, polarctos, Robert Stupp, Roberto Cortez, Rolfe Dlugy-Hegwer, Rostislav Svoboda, Sanne Grinovero, Sebastian Schuster, Sergey Beryozkin, Stuart Douglas, Thomas Canava, vsevel, Wel,  S.P.A. van der (Stef), xstefank, Yoann Rodière, and Zed Spencer-Milnes.
+
+## Come Join Us
+
+We value your feedback a lot so please report bugs, ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+\* provide feedback on [GitHub](https://github.com/quarkusio/quarkus/issues); \* craft some code and [push a PR](https://github.com/quarkusio/quarkus/pulls); \* discuss with us on [Zulip](https://quarkusio.zulipchat.com/) and on the [mailing list](https://groups.google.com/d/forum/quarkus-dev); \* ask your questions on [Stack Overflow](https://stackoverflow.com/questions/tagged/quarkus).
