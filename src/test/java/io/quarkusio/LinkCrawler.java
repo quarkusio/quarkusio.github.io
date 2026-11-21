@@ -674,8 +674,14 @@ final class LinkCrawler implements AutoCloseable {
 
                 Response response = navigateWithRetry(p, currentUrl);
                 if (response == null) {
+                    // The browser may have landed on a different real page (a download or
+                    // redirect), which is not a failure. A failed navigation leaves it on an
+                    // error page (chrome-error://...) or about:blank, so only skip when it is
+                    // on another http(s) URL; otherwise probe and report the link as broken.
                     try {
-                        if (!currentUrl.equals(normalize(p.url()))) {
+                        String landed = p.url();
+                        if ((landed.startsWith("http://") || landed.startsWith("https://"))
+                                && !currentUrl.equals(normalize(landed))) {
                             continue;
                         }
                     } catch (Exception ignored) {
