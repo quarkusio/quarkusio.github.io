@@ -36,6 +36,11 @@ public final class Retry {
     private Retry() {}
 
     public static <T> T call(String what, Supplier<T> action) {
+        return call(what, MAX_WAIT_MS, action);
+    }
+
+    /** As {@link #call(String, Supplier)}, but willing to sit out a rate limit of up to {@code maxWaitMs}. */
+    public static <T> T call(String what, long maxWaitMs, Supplier<T> action) {
         for (int attempt = 1; ; attempt++) {
             try {
                 return action.get();
@@ -47,7 +52,7 @@ public final class Retry {
                 long waitMs;
                 if (limited) {
                     waitMs = rateLimitWaitMs(r, attempt);
-                    if (waitMs > MAX_WAIT_MS) {
+                    if (waitMs > maxWaitMs) {
                         Instant reset = Instant.now().plusMillis(waitMs);
                         throw new RateLimitedException(what + ": rate limited, resets at " + reset + limitInfo(r), reset, e);
                     }

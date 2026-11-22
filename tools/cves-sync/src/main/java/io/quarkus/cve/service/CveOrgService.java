@@ -48,7 +48,12 @@ public class CveOrgService {
     private static final String MIRROR = "CVEProject/cvelistV5";
     private static final int PAGE_SIZE = 100;
     /** GitHub code search allows 10 requests a minute; keep the requests this far apart to stay under it. */
-    private static final long SEARCH_GAP_MS = 7_000;
+    static long searchGapMs = 7_000;
+    /**
+     * Code search has a small budget that other runs may be using (it is per token, and the workflow runs for
+     * several pull requests), and GitHub then says how long to wait. A nightly run can afford to wait.
+     */
+    private static final long SEARCH_MAX_WAIT_MS = 180_000;
     private static long lastSearchAt;
     /** GitHub returns at most 1000 results for a search. */
     private static final int MAX_PAGES = 10;
@@ -120,14 +125,30 @@ public class CveOrgService {
 
     /** CVE ids of every record from {@code fromYear} on whose text mentions Quarkus. */
     List<String> candidates(int fromYear) {
-        Set<String> ids = new TreeSet<>();
-        int thisYear = java.time.Year.now().getValue();
-        for (int year = fromYear; year <= thisYear; year++) ids.addAll(candidatesOf(year));
-        return List.copyOf(ids);
+        List<String> ids = new ArrayList<>();
+        for (String id : candidatesOfAllYears()) {
+            if (yearOf(id) >= fromYear) ids.add(id);
+        }
+        return ids;
     }
 
-    private List<String> candidatesOf(int year) {
-        String key = "quarkus-" + year;
+    /** The year in {@code CVE-2026-12345}; 0 if the id is not of that form. */
+    static int yearOf(String id) {
+        String[] parts = id.split("-");
+        if (parts.length != 3) return 0;
+        try {
+            return Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * One search for all years, not one per year: code search is limited to 10 requests a minute and the whole
+     * list is a couple of pages, so this takes 2 requests where a search per year took 8 or more.
+     */
+    private List<String> candidatesOfAllYears() {
+        String key = "quarkus";
         Optional<Cache.Entry<List<String>>> cached = Cache.read(NS_INDEX, key, IDS_TYPE);
         if (cached.isPresent() && cached.get().fresh(INDEX_TTL)) {
             Stats.cacheHit(Stats.GITHUB);
@@ -135,11 +156,11 @@ public class CveOrgService {
         }
         try {
             Set<String> ids = new TreeSet<>();
-            String query = "quarkus repo:" + MIRROR + " path:cves/" + year;
+            String query = "quarkus repo:" + MIRROR + " path:cves";
             for (int page = 1; page <= MAX_PAGES; page++) {
                 final int p = page;
                 paceSearch();
-                GitHubSearchClient.CodeSearchResult result = Retry.call("GitHub code search " + year + " page " + p,
+                GitHubSearchClient.CodeSearchResult result = Retry.call("GitHub code search page " + p, SEARCH_MAX_WAIT_MS,
                         () -> search.search(query, PAGE_SIZE, p));
                 if (result == null || result.items == null || result.items.isEmpty()) break;
                 for (GitHubSearchClient.Item item : result.items) {
@@ -148,8 +169,8 @@ public class CveOrgService {
                     }
                 }
                 if (result.items.size() < PAGE_SIZE) break;
-                if (page == MAX_PAGES) Log.warn("cve.org: more than %d CVE records of %d mention Quarkus; the list is cut off",
-                        MAX_PAGES * PAGE_SIZE, year);
+                if (page == MAX_PAGES) Log.warn("cve.org: more than %d CVE records mention Quarkus; the list is cut off",
+                        MAX_PAGES * PAGE_SIZE);
             }
             List<String> list = List.copyOf(ids);
             Cache.write(NS_INDEX, key, list, null);
@@ -157,17 +178,17 @@ public class CveOrgService {
         } catch (RuntimeException ex) {
             Optional<Cache.Entry<List<String>>> stale = Cache.readFallback(NS_INDEX, key, IDS_TYPE);
             if (stale.isPresent()) {
-                Log.log(1, "cve.org: GitHub code search for %d failed (%s); using the list from %s ago",
-                        year, ex.getMessage(), stale.get().ageText());
+                Log.log(1, "cve.org: GitHub code search failed (%s); using the list from %s ago",
+                        ex.getMessage(), stale.get().ageText());
                 return stale.get().data();
             }
-            Log.warn("could not search the CVE list for %d (%s); pending CVEs from that year are missing", year, ex.getMessage());
+            Log.warn("could not search the CVE list (%s); pending CVEs are missing", ex.getMessage());
             return List.of();
         }
     }
 
     private static synchronized void paceSearch() {
-        long wait = lastSearchAt + SEARCH_GAP_MS - System.currentTimeMillis();
+        long wait = lastSearchAt + searchGapMs - System.currentTimeMillis();
         if (lastSearchAt != 0 && wait > 0) {
             try {
                 Thread.sleep(wait);

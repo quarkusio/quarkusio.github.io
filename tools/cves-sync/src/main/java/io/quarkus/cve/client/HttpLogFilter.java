@@ -32,6 +32,13 @@ public class HttpLogFilter implements ClientRequestFilter, ClientResponseFilter 
     @Override
     public void filter(ClientRequestContext req, ClientResponseContext resp) throws IOException {
         if (resp.getStatus() == 304) Stats.notModified(req.getUri());
+        else if (resp.getStatus() >= 400) {
+            // GitHub also reports a rate limit as 403, with the budget used up or a Retry-After
+            boolean limited = resp.getStatus() == 429 || (resp.getStatus() == 403
+                    && ("0".equals(resp.getHeaders().getFirst("X-RateLimit-Remaining"))
+                            || resp.getHeaders().getFirst("Retry-After") != null));
+            Stats.rejected(req.getUri(), limited);
+        }
         if (!Log.enabled(4)) return;
         Object start = req.getProperty(START_PROP);
         long ms = start instanceof Long s ? (System.nanoTime() - s) / 1_000_000 : -1;

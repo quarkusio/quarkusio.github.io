@@ -92,6 +92,15 @@ public class ReleasesCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        try {
+            return run();
+        } finally {
+            // Whatever happened, say what was requested: the log is the evidence of a run that failed on a rate limit
+            Stats.summaryLines().forEach(line -> Log.log(1, "%s", line));
+        }
+    }
+
+    private Integer run() {
         if (parent != null) parent.applyVerbosity();
 
         OutputFormat outputFormat;

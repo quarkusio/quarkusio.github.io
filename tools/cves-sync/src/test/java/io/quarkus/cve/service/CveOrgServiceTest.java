@@ -5,10 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.cve.model.CveOrgRecord;
+import io.quarkus.cve.client.GitHubSearchClient;
 import io.quarkus.cve.model.ReleaseReport;
+import io.quarkus.cve.util.Cache;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class CveOrgServiceTest {
 
@@ -123,5 +130,67 @@ class CveOrgServiceTest {
                 record(t.formatted("CVE-2026-C", "2026-03-01T00:00:00Z")),
                 record(t.formatted("CVE-2026-A", "2026-01-01T00:00:00Z"))), MANAGED, Set.of());
         assertEquals(List.of("CVE-2026-C", "CVE-2026-A", "CVE-2026-B"), out.stream().map(p -> p.id).toList());
+    }
+
+    // -- discovery ----------------------------------------------------------------------------------------
+
+    @BeforeEach
+    void noPacing() {
+        CveOrgService.searchGapMs = 0;
+    }
+
+    @AfterEach
+    void resetCache() {
+        CveOrgService.searchGapMs = 7_000;
+        Cache.configure(null, Cache.Mode.NORMAL);
+    }
+
+    static GitHubSearchClient.CodeSearchResult page(String... names) {
+        GitHubSearchClient.CodeSearchResult r = new GitHubSearchClient.CodeSearchResult();
+        r.items = new ArrayList<>();
+        for (String n : names) {
+            GitHubSearchClient.Item item = new GitHubSearchClient.Item();
+            item.name = n;
+            r.items.add(item);
+        }
+        return r;
+    }
+
+    @Test
+    void yearComesFromTheCveId() {
+        assertEquals(2026, CveOrgService.yearOf("CVE-2026-87743"));
+        assertEquals(0, CveOrgService.yearOf("GHSA-xxxx-yyyy-zzzz1"));
+        assertEquals(0, CveOrgService.yearOf("nonsense"));
+    }
+
+    @Test
+    void oneSearchFindsTheCandidatesOfEveryYearAndTheOldOnesAreLeftOut(@TempDir Path dir) {
+        Cache.configure(dir, Cache.Mode.NORMAL);
+        List<String> queries = new ArrayList<>();
+        CveOrgService service = new CveOrgService();
+        service.search = (q, perPage, p) -> {
+            queries.add(q + " #" + p);
+            return page("CVE-2022-1.json", "CVE-2023-2.json", "CVE-2026-3.json", "README.md");
+        };
+        assertEquals(List.of("CVE-2023-2", "CVE-2026-3"), service.candidates(2023));
+        assertEquals(1, queries.size(), "all years are found with one search");
+        assertEquals("quarkus repo:CVEProject/cvelistV5 path:cves #1", queries.get(0));
+
+        // a second look, in the same run or the next, is answered from the cache
+        assertEquals(List.of("CVE-2026-3"), service.candidates(2026));
+        assertEquals(1, queries.size());
+    }
+
+    @Test
+    void aFailedSearchWithNoListYieldsNothingAndCachesNothing(@TempDir Path dir) {
+        Cache.configure(dir, Cache.Mode.NORMAL);
+        CveOrgService service = new CveOrgService();
+        service.search = (q, perPage, p) -> {
+            throw new IllegalStateException("boom");
+        };
+        // the run reports a warning, which makes the workflow refuse the output, and a failure is not remembered
+        assertEquals(List.of(), service.candidates(2023));
+        service.search = (q, perPage, p) -> page("CVE-2026-3.json");
+        assertEquals(List.of("CVE-2026-3"), service.candidates(2023));
     }
 }
