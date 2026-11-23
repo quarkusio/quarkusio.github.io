@@ -193,4 +193,11 @@ class CveOrgServiceTest {
         service.search = (q, perPage, p) -> page("CVE-2026-3.json");
         assertEquals(List.of("CVE-2026-3"), service.candidates(2023));
     }
+
+    @Test
+    void theWaitsSeenInCiFitTheLimitForCodeSearch() {
+        // GitHub asked for up to 736 s on a refused code search; giving up at that would leave pending CVEs out
+        assertTrue(CveOrgService.SEARCH_MAX_WAIT_MS >= 736_000);
+    }
+
 }

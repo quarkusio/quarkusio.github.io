@@ -50,10 +50,11 @@ public class CveOrgService {
     /** GitHub code search allows 10 requests a minute; keep the requests this far apart to stay under it. */
     static long searchGapMs = 7_000;
     /**
-     * Code search has a small budget that other runs may be using (it is per token, and the workflow runs for
-     * several pull requests), and GitHub then says how long to wait. A nightly run can afford to wait.
+     * When code search refuses a request GitHub says how long to wait, and the waits seen in CI run up to 736
+     * seconds. The list of pending CVEs is not worth a run without it, so wait that long (the workflow has a
+     * timeout to bound this) rather than give up and report a run with missing data.
      */
-    private static final long SEARCH_MAX_WAIT_MS = 180_000;
+    static final long SEARCH_MAX_WAIT_MS = 15 * 60_000;
     private static long lastSearchAt;
     /** GitHub returns at most 1000 results for a search. */
     private static final int MAX_PAGES = 10;
