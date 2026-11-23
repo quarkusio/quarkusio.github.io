@@ -13,8 +13,9 @@ defaults:
   run:
     shell: bash
 
-# GitHub code search (used to find new CVEs) allows only 10 requests a minute per token, so runs from several
-# pull requests and the nightly schedule must not overlap. A queued run waits, it is not cancelled.
+# A run reads what changed in the CVE list since _data/pending-cves.yaml was made. Only creating that file needs GitHub
+# code search, which allows 10 requests a minute and refuses this workflow's token for a long time, so see
+# tools/cves-sync/README.md for how to create it. Runs must not overlap: a queued run waits, it is not cancelled.
 concurrency:
   group: sync-cves
   cancel-in-progress: false
@@ -23,7 +24,7 @@ jobs:
   sync:
     if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # A run is about 2 minutes, but it waits as long as GitHub asks when code search is rate limited (up to 15
+    # A run is a few minutes, but it waits as long as GitHub asks when code search is rate limited (up to 15
     # minutes at a time), so allow for a few waits and no more: the concurrency group holds up other runs.
     timeout-minutes: 45
     environment: ${{ github.event_name != 'pull_request' && 'quarkus-push-website' || '' }}
@@ -72,7 +73,10 @@ jobs:
 
           # --output writes UTF-8 without a BOM itself, and leaves any existing file alone if the run fails
           set +e
-          jbang run.java releases --format yaml -v --releases-input "$RELEASES_INPUT" --output "$work/full.yaml" 2> "$work/stderr.log"
+          # The CVE index is read from the checked out file and written to the work directory, like the report, so that
+          # it only replaces the checked out one once the run is accepted.
+          if [ -f "$PENDING_INDEX" ]; then cp "$PENDING_INDEX" "$work/pending-cves.yaml"; fi
+          jbang run.java releases --format yaml -v --releases-input "$RELEASES_INPUT" --pending-index "$work/pending-cves.yaml" --output "$work/full.yaml" 2> "$work/stderr.log"
           status=$?
           set -e
           cat "$work/stderr.log" >&2
@@ -107,7 +111,12 @@ jobs:
             echo "::error::the data has lines po4a cannot read: $(grep -nE ': [[{]|\\$' "$work/cves.yaml" | head -3); $CVES_OUTPUT not updated"
             exit 1
           fi
+          if [ ! -f "$work/pending-cves.yaml" ] || grep -qE ': [[{]|\\$' "$work/pending-cves.yaml"; then
+            echo "::error::cve-util produced no usable CVE index; $CVES_OUTPUT and $PENDING_INDEX not updated"
+            exit 1
+          fi
           mv "$work/cves.yaml" "$CVES_OUTPUT"
+          mv "$work/pending-cves.yaml" "$PENDING_INDEX"
 
           {
             echo '### cve-util statistics'
@@ -119,6 +128,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || github.token }}
           CVE_UTIL_CACHE_DIR: ${{ runner.temp }}/cve-util-cache
           CVES_OUTPUT: ../../_data/cves.yaml
+          PENDING_INDEX: ../../_data/pending-cves.yaml
           # The release list, dates and lineage (parent_release) come from the checked out releases.yaml
           RELEASES_INPUT: ../../_data/releases.yaml
           # The commit this run was started for, shown at the top of the log to tell which version of the tool ran
@@ -138,7 +148,14 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add _data/cves.yaml
+          # The index changes every run (the time it was read up to). Commit that alone only now and then: it makes
+          # no difference to the site, and a delta is read from the index's time, so a week old is no problem.
+          idx=_data/pending-cves.yaml
+          if git cat-file -e "HEAD:$idx" 2>/dev/null && ! git diff -U0 -- "$idx" | grep -E '^[+-][^+-]' | grep -qv '^[+-]scanned:'; then
+            last=$(git show "HEAD:$idx" | sed -n 's/^scanned: "\(.*\)"/\1/p')
+            if [ "$(date -d "$last" +%s)" -gt "$(date -d '7 days ago' +%s)" ]; then git checkout -- "$idx"; fi
+          fi
+          git add _data/cves.yaml "$idx"
           if [ -n "$(git status --porcelain)" ]; then
             git commit -m "Sync CVEs data"
             git pull origin main --rebase

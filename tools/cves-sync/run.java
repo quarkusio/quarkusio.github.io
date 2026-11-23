@@ -23,6 +23,7 @@
 //SOURCES src/main/java/io/quarkus/cve/client/GitHubAdvisoryClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/GitHubSearchClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/CveOrgClient.java
+//SOURCES src/main/java/io/quarkus/cve/client/CveListZips.java
 //SOURCES src/main/java/io/quarkus/cve/client/GitHubAuthFilter.java
 //SOURCES src/main/java/io/quarkus/cve/client/HttpLogFilter.java
 //SOURCES src/main/java/io/quarkus/cve/model/UnifiedVuln.java
@@ -36,6 +37,8 @@
 //SOURCES src/main/java/io/quarkus/cve/service/CveOrgService.java
 //SOURCES src/main/java/io/quarkus/cve/util/Log.java
 //SOURCES src/main/java/io/quarkus/cve/util/Cache.java
+//SOURCES src/main/java/io/quarkus/cve/util/CveDelta.java
+//SOURCES src/main/java/io/quarkus/cve/util/PendingIndex.java
 //SOURCES src/main/java/io/quarkus/cve/util/Stats.java
 //SOURCES src/main/java/io/quarkus/cve/util/Retry.java
 //SOURCES src/main/java/io/quarkus/cve/util/Po4a.java

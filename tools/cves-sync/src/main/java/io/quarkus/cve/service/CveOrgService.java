@@ -1,20 +1,28 @@
 package io.quarkus.cve.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import io.quarkus.cve.client.CveListZips;
 import io.quarkus.cve.client.CveOrgClient;
 import io.quarkus.cve.client.GitHubSearchClient;
 import io.quarkus.cve.model.CveOrgRecord;
 import io.quarkus.cve.model.ReleaseReport;
 import io.quarkus.cve.model.UnifiedVuln;
 import io.quarkus.cve.util.Cache;
+import io.quarkus.cve.util.CveDelta;
 import io.quarkus.cve.util.Log;
+import io.quarkus.cve.util.PendingIndex;
 import io.quarkus.cve.util.Po4a;
 import io.quarkus.cve.util.Retry;
 import io.quarkus.cve.util.Stats;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
+import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -35,6 +43,11 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
  * Neither gives upstream version ranges: a record names the affected artifacts and lists a vendor's own
  * builds, so such a CVE is reported as pending and the ranges come once an advisory with version ranges
  * exists, derived from the managed artifact versions like every other one.
+ *
+ * Code search is limited to 10 requests a minute, and GitHub refuses it for a long time to a CI run, so with an
+ * index file ({@link #useIndex}) it is only used to create that file. A run then reads what changed in the CVE
+ * list since the index was made, from the hourly delta zips of the same repository ({@link CveDelta}), which
+ * needs no API. See {@link PendingIndex}.
  *
  * Lookups are cached: the candidate list for {@link #INDEX_TTL}, each record for {@link #RECORD_TTL}.
  */
@@ -69,6 +82,28 @@ public class CveOrgService {
     @RestClient
     CveOrgClient cveOrg;
 
+    /** Where the hourly delta zips come from. */
+    CveDelta.Source zips = new CveListZips();
+
+    Clock clock = Clock.systemUTC();
+
+    private Path indexFile;
+    private PendingIndex index;
+
+    /**
+     * Keeps the list of candidate CVEs in this file (see {@link PendingIndex}). The file is read here and
+     * not written: {@link #indexToWrite()} is the file to write once the whole run has succeeded.
+     */
+    public void useIndex(Path file) {
+        this.indexFile = file;
+        this.index = null;
+    }
+
+    /** The index as this run left it, to be written when the run succeeded; empty if there is none to write. */
+    public Optional<PendingIndex> indexToWrite() {
+        return Optional.ofNullable(index);
+    }
+
     /**
      * @param managed   every {@code group:artifact} any scanned release manages
      * @param known     the advisories that have version ranges; their CVEs are not pending
@@ -78,7 +113,9 @@ public class CveOrgService {
         List<CveOrgRecord> records = new ArrayList<>();
         int skipped = 0;
         Set<String> alreadyKnown = knownCves(known);
-        for (String id : candidates(fromYear)) {
+        List<String> candidates = candidates(fromYear);
+        if (index != null) index = index.without(alreadyKnown);
+        for (String id : candidates) {
             if (alreadyKnown.contains(id)) continue;
             Optional<CveOrgRecord> r = record(id);
             if (r.isPresent()) records.add(r.get());
@@ -149,6 +186,7 @@ public class CveOrgService {
      * list is a couple of pages, so this takes 2 requests where a search per year took 8 or more.
      */
     private List<String> candidatesOfAllYears() {
+        if (indexFile != null) return indexedCandidates();
         String key = "quarkus";
         Optional<Cache.Entry<List<String>>> cached = Cache.read(NS_INDEX, key, IDS_TYPE);
         if (cached.isPresent() && cached.get().fresh(INDEX_TTL)) {
@@ -156,24 +194,7 @@ public class CveOrgService {
             return cached.get().data();
         }
         try {
-            Set<String> ids = new TreeSet<>();
-            String query = "quarkus repo:" + MIRROR + " path:cves";
-            for (int page = 1; page <= MAX_PAGES; page++) {
-                final int p = page;
-                paceSearch();
-                GitHubSearchClient.CodeSearchResult result = Retry.call("GitHub code search page " + p, SEARCH_MAX_WAIT_MS,
-                        () -> search.search(query, PAGE_SIZE, p));
-                if (result == null || result.items == null || result.items.isEmpty()) break;
-                for (GitHubSearchClient.Item item : result.items) {
-                    if (item.name != null && item.name.startsWith("CVE-") && item.name.endsWith(".json")) {
-                        ids.add(item.name.substring(0, item.name.length() - ".json".length()));
-                    }
-                }
-                if (result.items.size() < PAGE_SIZE) break;
-                if (page == MAX_PAGES) Log.warn("cve.org: more than %d CVE records mention Quarkus; the list is cut off",
-                        MAX_PAGES * PAGE_SIZE);
-            }
-            List<String> list = List.copyOf(ids);
+            List<String> list = searchAllYears();
             Cache.write(NS_INDEX, key, list, null);
             return list;
         } catch (RuntimeException ex) {
@@ -183,6 +204,64 @@ public class CveOrgService {
                         ex.getMessage(), stale.get().ageText());
                 return stale.get().data();
             }
+            Log.warn("could not search the CVE list (%s); pending CVEs are missing", ex.getMessage());
+            return List.of();
+        }
+    }
+
+    /** Every CVE id whose record mentions Quarkus, by GitHub code search. Throws if the search cannot be completed. */
+    private List<String> searchAllYears() {
+        Set<String> ids = new TreeSet<>();
+        String query = "quarkus repo:" + MIRROR + " path:cves";
+        for (int page = 1; page <= MAX_PAGES; page++) {
+            final int p = page;
+            paceSearch();
+            GitHubSearchClient.CodeSearchResult result = Retry.call("GitHub code search page " + p, SEARCH_MAX_WAIT_MS,
+                    () -> search.search(query, PAGE_SIZE, p));
+            if (result == null || result.items == null || result.items.isEmpty()) break;
+            for (GitHubSearchClient.Item item : result.items) {
+                if (item.name != null && item.name.startsWith("CVE-") && item.name.endsWith(".json")) {
+                    ids.add(item.name.substring(0, item.name.length() - ".json".length()));
+                }
+            }
+            if (result.items.size() < PAGE_SIZE) break;
+            if (page == MAX_PAGES) Log.warn("cve.org: more than %d CVE records mention Quarkus; the list is cut off",
+                    MAX_PAGES * PAGE_SIZE);
+        }
+        return List.copyOf(ids);
+    }
+
+    /**
+     * The candidates from the index file, brought up to date with what changed in the CVE list since it was made.
+     * With no file, or one too old for that, a new one is made with code search. A failure leaves the file as it
+     * was and the run reports it (an empty list and a warning, which the workflow does not accept).
+     */
+    private List<String> indexedCandidates() {
+        Instant now = clock.instant();
+        LocalDate today = now.atZone(ZoneOffset.UTC).toLocalDate();
+        Optional<PendingIndex> existing = PendingIndex.read(indexFile);
+        if (existing.isPresent() && existing.get().usable(now)) {
+            PendingIndex before = existing.get();
+            CveDelta.Result delta = CveDelta.read(zips, before.scanned(), now);
+            index = before.apply(delta, today);
+            Log.log(1, "cvelistV5: read %d hourly delta zips (%.1f MB) since %s, %d CVEs changed, %d mention Quarkus; %d hours have no zip",
+                    delta.zips(), delta.bytes() / 1e6, before.scanned(), delta.mentionsQuarkus().size(),
+                    delta.mentionsQuarkus().values().stream().filter(b -> b).count(), delta.missing().size());
+            Log.log(1, "cvelistV5: %d candidate CVEs (%d before), scanned up to %s", index.ids().size(),
+                    before.ids().size(), index.scanned());
+            return List.copyOf(index.ids());
+        }
+        if (existing.isPresent()) {
+            Log.log(1, "cvelistV5: %s was last scanned %s, more than %d days ago; making a new list with code search",
+                    indexFile, existing.get().scanned(), PendingIndex.MAX_AGE.toDays());
+        } else {
+            Log.log(1, "cvelistV5: no %s; making it with code search", indexFile);
+        }
+        try {
+            List<String> ids = searchAllYears();
+            index = PendingIndex.seed(ids, now, today);
+            return ids;
+        } catch (RuntimeException ex) {
             Log.warn("could not search the CVE list (%s); pending CVEs are missing", ex.getMessage());
             return List.of();
         }

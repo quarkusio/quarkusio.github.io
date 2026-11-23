@@ -1,6 +1,7 @@
 package io.quarkus.cve.command;
 
 import io.quarkus.cve.model.ReleaseReport;
+import io.quarkus.cve.service.CveOrgService;
 import io.quarkus.cve.service.ReleaseReportService;
 import io.quarkus.cve.util.Log;
 import io.quarkus.cve.util.OutputFormat;
@@ -46,6 +47,9 @@ public class ReleasesCommand implements Callable<Integer> {
     @Inject
     ReleaseReportService reportService;
 
+    @Inject
+    CveOrgService cveOrgService;
+
     @ParentCommand
     CveUtilCommand parent;
 
@@ -74,6 +78,16 @@ public class ReleasesCommand implements Callable<Integer> {
         defaultValue = "_data/releases.yaml"
     )
     String releasesInput;
+
+    @Option(
+        names = {"--pending-index"},
+        paramLabel = "<file>",
+        description = "The list of CVEs that mention Quarkus and no advisory covers yet (_data/pending-cves.yaml), brought up "
+                + "from what changed in the CVE list since it was made, and rewritten when the run succeeds. If the file "
+                + "does not exist, or was made more than 30 days ago, a new one is made with GitHub code search, which "
+                + "needs a personal GITHUB_TOKEN (the token of a CI run is refused). Without this option every run uses code search."
+    )
+    Path pendingIndex;
 
     @Option(
         names = {"--json"},
@@ -111,6 +125,7 @@ public class ReleasesCommand implements Callable<Integer> {
             return 2;
         }
 
+        if (pendingIndex != null) cveOrgService.useIndex(pendingIndex);
         ReleaseReport report;
         try {
             report = reportService.build(resolveReleasesFile(releasesInput));
@@ -148,7 +163,7 @@ public class ReleasesCommand implements Callable<Integer> {
         if (output == null) {
             System.out.write(bytes, 0, bytes.length);
             System.out.flush();
-            return 0;
+            return writeIndex();
         }
         try {
             writeAtomically(output, bytes);
@@ -160,7 +175,22 @@ public class ReleasesCommand implements Callable<Integer> {
             return 1;
         }
         Log.log(1, "Wrote %s report to %s (%d bytes)", outputFormat.cliName, output, bytes.length);
-        return 0;
+        return writeIndex();
+    }
+
+    /** Only once the report is complete: a run that failed leaves the index as it was. */
+    private Integer writeIndex() {
+        if (pendingIndex == null) return 0;
+        return cveOrgService.indexToWrite().map(index -> {
+            try {
+                writeAtomically(pendingIndex, index.bytes());
+            } catch (IOException ex) {
+                System.err.println("Error: could not write " + pendingIndex + ": " + ex.getMessage());
+                return 1;
+            }
+            Log.log(1, "Wrote %s: %d CVEs, scanned up to %s", pendingIndex, index.ids().size(), index.scanned());
+            return 0;
+        }).orElse(0);
     }
 
     /** Temp file in the target directory + move, so an interrupted or failed run never leaves a half-written file. */
