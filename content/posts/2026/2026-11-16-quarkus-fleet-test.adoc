@@ -1,0 +1,319 @@
+---
+layout: post
+title: 'It worked with one replica: introducing Quarkus Fleet Test'
+date: 2026-11-16
+tags: extension testing
+synopsis: 'A login lost on the next request, a payment charged twice, and errors during a rolling deployment: test what changes when your Quarkus application runs on more than one instance.'
+author: geoand
+---
+:imagesdir: /assets/images/posts/quarkus-fleet-test
+
+Your shop is getting busier, so you add a second replica.
+Same application, same configuration, same database.
+The tests are green, and both instances report healthy.
+
+Then a customer logs in and gets sent straight back to the login page.
+Another retries a payment and is charged twice.
+Later, a routine deployment produces a burst of connection errors, even though you only restart one instance at a time.
+
+Nothing here requires a broken dependency.
+Each instance can be working exactly as configured.
+The problem is what happens when a request moves from one to another.
+
+https://github.com/quarkiverse/quarkus-fleet-test[Quarkus Fleet Test] brings that second instance into your test suite.
+A `@QuarkusFleetTest` starts several processes of your packaged application behind a TCP load balancer.
+You choose where requests go and when an instance stops, starts, crashes or pauses.
+
+Let's follow that shop from its first login to its next deployment.
+The code below comes from three separate https://github.com/quarkiverse/quarkus-fleet-test/tree/main/samples[sample applications], each with a broken configuration and a test profile that fixes it.
+They illustrate the same journey without requiring a whole shop to reproduce it.
+
+== 1. The customer just logged in. Why are we asking again?
+
+With one instance, form authentication works: the customer submits credentials, receives a cookie, and uses it to open their account page.
+With two instances, the next connection can reach a different process.
+
+If no session encryption key is configured, each instance generates its own.
+Instance 1 cannot decrypt the cookie that instance 0 issued.
+The customer sees another login prompt.
+
+image::login-across-replicas.svg[alt="A customer receives a login cookie from instance 0, then sends it to instance 1, which cannot decrypt it when each instance uses a different key",width=900,align=center]
+
+A test that logs in and visits the account page on one instance cannot expose this mismatch.
+The fleet test deliberately crosses the boundary:
+
+[source,java]
+----
+@QuarkusFleetTest(instances = 2)
+@TestProfile(SharedKeyProfile.class)
+class LoginSharedAcrossInstancesIT {
+
+    @InjectFleet
+    Fleet fleet;
+
+    @Test
+    void theCookieOfOneInstanceIsAcceptedByTheOther() {
+        fleet.pin(0);
+        String cookie = given()
+                .redirects().follow(false)
+                .formParam("j_username", "alice")
+                .formParam("j_password", "secret")
+                .post("/j_security_check")
+                .then().statusCode(302)
+                .extract().cookie("quarkus-credential");
+
+        fleet.pin(1);
+        given()
+                .redirects().follow(false)
+                .cookie("quarkus-credential", cookie)
+                .get("/account")
+                .then().statusCode(200);
+    }
+}
+----
+
+RestAssured points at the load balancer automatically.
+`fleet.pin(0)` sends new connections to instance 0; `fleet.pin(1)` sends them to instance 1.
+Disabling redirects makes an unexpected trip back to the login page visible as a failed assertion.
+
+The fix in the https://github.com/quarkiverse/quarkus-fleet-test/tree/main/samples/form-auth[form-auth sample] is a shared key, supplied to both processes by the test profile:
+
+[source,java]
+----
+public class SharedKeyProfile implements QuarkusTestProfile {
+    @Override
+    public Map<String, String> getConfigOverrides() {
+        return Map.of("quarkus.http.auth.session.encryption-key",
+                "the-same-key-on-every-instance");
+    }
+}
+----
+
+That literal is a test key; a deployment should supply its shared key through secret configuration.
+Remove the profile and the second request redirects instead of returning `200`.
+We now have a regression test for a login that survives a change of instance.
+
+== Give the test a fleet
+
+The extension runs the artifact produced by your build, like `@QuarkusIntegrationTest`, rather than starting the application inside the test JVM.
+Add it as a test dependency:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.fleettest</groupId>
+    <artifactId>quarkus-fleet-test</artifactId>
+    <version>0.1.2</version>
+    <scope>test</scope>
+</dependency>
+----
+
+Name the test `*IT` and so it runs as part of the integration test suite.
+If your project does not already bind Failsafe's goals, add them using the plugin version managed by your build:
+
+[source,xml]
+----
+<plugin>
+    <artifactId>maven-failsafe-plugin</artifactId>
+    <executions>
+        <execution>
+            <goals>
+                <goal>integration-test</goal>
+                <goal>verify</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>
+----
+
+Run `./mvnw verify` with integration tests enabled (`-DskipITs=false` if your project skips them by default).
+The application must be packaged by the Quarkus Maven plugin before the tests run.
+The https://github.com/quarkiverse/quarkus-fleet-test/blob/main/samples/pom.xml[samples' parent POM] shows the complete setup, including the test libraries used in these examples.
+
+Each test class gets its own fleet.
+Dev Services start once and their connection properties reach every instance: two application processes share one database or broker.
+JARs, native executables and container images use Quarkus's artifact launchers.
+The extension requires Java 21 and Quarkus 4.
+
+There is one detail worth keeping in mind: the balancer chooses an instance per *connection*, not per HTTP request.
+A keep-alive connection stays with the instance it reached, even after `pin()` changes the destination for new connections.
+Use fresh connections when testing a routing change, or address an instance directly with `fleet.instance(i).url()`.
+
+== 2. The retry has the same key. Why did we charge twice?
+
+The customer can now log in on either instance and make a payment.
+Their client sends an `Idempotency-Key`, so repeating the same payment should return the original result.
+
+That protection has state of its own: someone has to remember which keys have already been processed.
+The https://github.com/quarkiverse/quarkus-fleet-test/tree/main/samples/idempotency[idempotency sample] uses Quarkus HTTP Idempotency.
+Its default in-memory store remembers a payment in the process that handled it.
+A retry on the other instance encounters an empty store.
+
+image::shared-idempotency.svg[alt="A payment and its retry reach different instances; with a shared JDBC idempotency store both instances can recognize the same key and return one payment result",width=900,align=center]
+
+The test sends the same key and payload to both instances, then checks the stored payment count:
+
+[source,java]
+----
+@QuarkusFleetTest(instances = 2)
+@TestProfile(JdbcStoreProfile.class)
+class PaymentChargedOnceIT {
+
+    @InjectFleet
+    Fleet fleet;
+
+    @Test
+    void aRetryOnTheOtherInstanceIsReplayed() {
+        String key = Payments.newKey();
+        fleet.pin(0);
+        Response first = Payments.pay(key, 100);
+        assertThat(first.statusCode()).isEqualTo(200);
+        long before = Payments.count();
+
+        fleet.pin(1);
+        Response retry = Payments.pay(key, 100);
+        assertThat(retry.statusCode()).isEqualTo(200);
+        assertThat(retry.header("Idempotent-Replayed")).isEqualTo("true");
+        assertThat(retry.body().asString()).isEqualTo(first.body().asString());
+        assertThat(Payments.count()).isEqualTo(before);
+    }
+}
+----
+
+`Payments` is a small helper from the sample: `newKey()` creates a UUID, `pay()` posts an account and amount to `/payments` with that key, and `count()` reads the number of recorded payments.
+The profile sets:
+
+[source,properties]
+----
+quarkus.idempotency.store=jdbc
+----
+
+The sample supplies the datasource and schema setup; both instances use the same database.
+With the shared store, the second instance replays the result.
+With the in-memory store, the retry creates another payment.
+Checking only that both requests return `200` would miss the bug entirely.
+
+The same question applies to other state that looks shared in a single-process test: cached prices, rate-limit counters, or files uploaded to a local directory.
+Once there are two JVMs, each has its own memory and may have its own filesystem.
+
+== 3. We only restart one instance. Why are requests failing?
+
+Login and checkout now survive a change of instance.
+It is time to deploy a new version.
+You stop one replica while the other keeps serving.
+
+Suppose the load balancer is sending connections to instances 0 and 1.
+Instance 0 receives the signal to shut down and stops accepting new connections.
+But removing it from the load balancer's destinations takes time: its readiness change must be detected and the routing update must take effect.
+
+During that gap, a customer opens their account page.
+If their connection goes to instance 1, it works.
+If it goes to instance 0, it fails.
+Having a healthy replica available does not help a request that was sent to the stopping one.
+
+The fix is to give the load balancer time to catch up.
+Instance 0 first reports that it is no longer ready, but keeps serving requests for a short period.
+Once the balancer has stopped sending it new connections, it can stop accepting them and let existing requests finish.
+
+image::shutdown-window.svg[alt="During endpoint-removal propagation, a stopping instance can still receive requests; a shutdown delay keeps it serving until the balancer stops routing to it",width=900,align=center]
+
+The https://github.com/quarkiverse/quarkus-fleet-test/tree/main/samples/rolling-restart[rolling-restart sample] tests that handoff.
+It keeps sending requests while stopping instance 0, and deliberately makes the balancer slow to remove it.
+
+The `readiness` attribute configures *the test load balancer*: how it discovers that an instance should stop receiving traffic, and how long that routing change takes.
+It does not add a readiness endpoint to the application; the sample exposes `/q/health/ready` through SmallRye Health.
+Here the balancer checks that endpoint every 100 milliseconds, considers the instance unready after one failed check, and keeps routing to it for another second.
+That last setting creates the very window we want to test: the application says “stop sending me traffic”, but new connections can still arrive.
+
+`Traffic` is a helper provided by Fleet Test.
+`Traffic.during(...)` repeatedly sends HTTP `GET` requests through the load balancer on a background thread, opening a new connection for each request.
+After the first response arrives, `Traffic.during` calls `fleet.instance(0).stop()` to shut down instance 0.
+The background thread keeps sending requests during shutdown.
+
+The returned `Traffic.Outcome` is just a pair of counters:
+
+* `succeeded()`: how many requests returned HTTP `200`.
+* `failed()`: how many returned another status or encountered a connection error.
+
+For example, an outcome with 120 successes and 3 failures means three requests encountered a problem during the test.
+We want some successful requests and zero failures:
+
+[source,java]
+----
+@QuarkusFleetTest(instances = 2, readiness = @Readiness(
+        path = "/q/health/ready",       // Ask each instance whether it is ready
+        intervalMillis = 100,           // Check every 100 ms
+        failureThreshold = 1,           // One failed check marks it unready
+        deregistrationLagMillis = 1000)) // Still route to it for another second
+@TestProfile(ShutdownDelayProfile.class)
+class NoRequestDroppedOnRestartIT {
+
+    @InjectFleet
+    Fleet fleet;
+
+    @Test
+    void stoppingAnInstanceFailsNoRequest() throws Exception {
+        Traffic.Outcome outcome = Traffic.during(
+                fleet,                       // Send requests through this fleet's load balancer
+                "/work",                     // Call GET /work for each request
+                Duration.ofSeconds(3),       // Send requests for a three-second window
+                () -> fleet.instance(0).stop()); // After the first response, stop instance 0 while requests continue
+
+        assertThat(outcome.succeeded()).isGreaterThan(0);
+        assertThat(outcome.failed()).isZero();
+    }
+}
+----
+
+The annotation and the test body supply the two halves of the scenario.
+`readiness` models the delayed routing update; `fleet.instance(0).stop()` triggers shutdown while requests are arriving.
+The assertion then asks whether the application's shutdown configuration keeps those requests working through that delay.
+
+There are two different waits on the application side.
+The *shutdown delay* keeps the instance accepting late arrivals while routing catches up.
+The *shutdown timeout* gives requests already accepted time to finish.
+The sample enables the first mechanism at build time and configures the second:
+
+[source,properties]
+----
+quarkus.shutdown.delay-enabled=true
+quarkus.shutdown.timeout=PT10S
+----
+
+`ShutdownDelayProfile` sets `quarkus.shutdown.delay=PT2S`: keep accepting requests for two seconds while reporting unready.
+That covers the sample's readiness detection and one-second routing delay.
+Remove that profile and instance 0 stops accepting connections too soon, so the test observes failed requests.
+Increasing the ten-second shutdown timeout would not fix that gap: it helps requests already accepted, not new connections arriving at a closed listener.
+
+The test covers the shutdown handoff within a rolling restart; it does not deploy a replacement version.
+
+Two seconds is a test setting, not a universal deployment recommendation.
+Choose the delay against your deployment's probe timing and endpoint propagation behavior.
+The fleet reproduces that timing model locally; it does not run a Kubernetes cluster or prove every aspect of a production rollout.
+
+== When it fails, which instance did what?
+
+An assertion saying “expected zero failures” is only the beginning of diagnosing a rollout problem.
+On failure, Fleet Test reports each instance's state, a timestamped timeline of routing and lifecycle events, and the tail of each instance's log.
+It also writes the report under `target/fleet-test/` for CI artifacts.
+
+That lets you connect a failed request to an instance stopping, becoming unready, or being removed from routing, then follow the matching application log.
+You do not have to infer the whole sequence from interleaved output from several processes.
+
+== What changes when you add the next replica?
+
+Our customer can stay logged in, retry a payment, and keep using the shop during the tested shutdown window.
+There are more questions worth asking before scaling further:
+
+* *A Kafka consumer ships an order and crashes before committing its offset. Will the survivor ship it again?* The `crash-redelivery` sample uses `kill()` to exercise redelivery and an idempotent consumer.
+* *A job leader freezes until its lease expires. What happens when it wakes up after another instance takes over?* The `zombie-leader` sample uses `pause()` and `resume()` to show why writes need fencing tokens.
+* *Every replica has a sensible database pool size. Do all those pools fit in one database?* The `pool-exhaustion` sample tests the connection budget shared by the fleet.
+
+The https://github.com/quarkiverse/quarkus-fleet-test/tree/main/samples[sample catalog] includes these scenarios, with broken and fixed configurations, plus cache invalidation, duplicate scheduled jobs and database concurrency bugs.
+The repository also includes a https://github.com/quarkiverse/quarkus-fleet-test/tree/main/skills/quarkus-fleet-test[guide for coding agents] that maps application dependencies to useful fleet tests.
+
+Quarkus Resiliency Testing asks how your application handles a failing dependency.
+Fleet Test asks what changes when there is more than one copy of the application.
+They cover different failure boundaries.
+
+Try https://github.com/quarkiverse/quarkus-fleet-test[Quarkus Fleet Test] and tell us which assumption broke in your application through a https://github.com/quarkiverse/quarkus-fleet-test/issues[GitHub issue] or on https://quarkusio.zulipchat.com/[Zulip].
