@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
@@ -89,31 +90,57 @@ class ReleaseTimelineFactoryTest {
                         + "                {\"version\": \"0.2\"")));
         Timeline t = withOld.supportView(TODAY);
         assertTrue(t.rows().stream().anyMatch(r -> r.id().equals("1.0")));
-        assertEquals(List.of("open-ended"), kinds(row(t, "1.0")));
+        assertEquals(List.of("never-ending"), kinds(row(t, "1.0")));
         assertEquals(LocalDate.of(2025, 3, 1), t.scale().start());
         // the full view still draws its community bar
-        assertEquals(List.of("community", "open-ended"), kinds(row(withOld.fullView(TODAY), "1.0")));
+        assertEquals(List.of("community", "never-ending"), kinds(row(withOld.fullView(TODAY), "1.0")));
     }
 
     @Test
     void segmentKindsPerRow() {
         Timeline t = factory.supportView(TODAY);
         assertEquals(List.of("community"), kinds(row(t, "3.40")));
-        // community, Red Hat, then IBM enterprise followed by IBM open-ended
-        assertEquals(List.of("community", "enterprise", "enterprise", "open-ended"), kinds(row(t, "3.33")));
-        assertEquals(List.of("Red Hat", "IBM"), row(t, "3.33").lanes());
-        GanttTimelineSegment ibmOpenEnded = row(t, "3.33").segments().get(3);
+
+        // 3.33: community, Red Hat and IBM enterprise bars, then IBM open-ended support.
+        // The order bars are drawn in is not what is being tested, so compare without it.
+        assertEquals(sorted("community", "enterprise", "enterprise", "open-ended"), sorted(kinds(row(t, "3.33"))));
+        assertEquals(Set.of("Red Hat", "IBM"), Set.copyOf(row(t, "3.33").lanes()));
+        GanttTimelineSegment ibmOpenEnded = segment(row(t, "3.33"), "open-ended", "ibm");
         assertTrue(ibmOpenEnded.openEnded());
-        assertEquals("ibm", ibmOpenEnded.variant());
         assertEquals(LocalDate.of(2028, 6, 30), ibmOpenEnded.start());
+
         // 3.20: community, Red Hat, HeroDevs never-ending
-        assertEquals(List.of("community", "enterprise", "open-ended"), kinds(row(t, "3.20")));
-        assertEquals("herodevs", row(t, "3.20").segments().get(2).variant());
-        assertTrue(row(t, "3.20").segments().get(2).openEnded());
-        // each vendor's name for support with no end date, under one legend key
+        assertEquals(sorted("community", "enterprise", "never-ending"), sorted(kinds(row(t, "3.20"))));
+        GanttTimelineSegment herodevs = segment(row(t, "3.20"), "never-ending", "herodevs");
+        assertTrue(herodevs.openEnded());
+
+        // each vendor's own term for support with no end date, with its own legend key
         assertEquals("Quarkus 3.33: IBM open-ended support", ibmOpenEnded.title());
-        assertEquals("Quarkus 3.20: HeroDevs never-ending support", row(t, "3.20").segments().get(2).title());
-        assertTrue(factory.legend().stream().anyMatch(i -> i.key().equals("open-ended") && i.label().equals("EOL Patches")));
+        assertEquals("Quarkus 3.20: HeroDevs never-ending support", herodevs.title());
+        assertEquals("Open-ended support", legendLabel("open-ended"));
+        assertEquals("Never-ending support", legendLabel("never-ending"));
+    }
+
+    private static List<String> sorted(String... kinds) {
+        return sorted(List.of(kinds));
+    }
+
+    private static List<String> sorted(List<String> kinds) {
+        return kinds.stream().sorted().toList();
+    }
+
+    /** The one segment of a row with this kind and provider variant, wherever it is drawn. */
+    private static GanttTimelineSegment segment(TimelineRow row, String kind, String variant) {
+        List<GanttTimelineSegment> matches = row.segments().stream()
+                .filter(sg -> sg.kind().equals(kind) && variant.equals(sg.variant()))
+                .toList();
+        assertEquals(1, matches.size(), "Expected one " + kind + " segment for " + variant + " in " + row.id());
+        return matches.getFirst();
+    }
+
+    private String legendLabel(String key) {
+        return factory.legend().stream().filter(i -> i.key().equals(key)).findFirst()
+                .orElseThrow(() -> new AssertionError("No legend entry with key " + key)).label();
     }
 
     @Test

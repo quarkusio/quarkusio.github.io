@@ -239,7 +239,7 @@ public class ReleasesPageTest extends BrowserTest {
     @Test
     void openEndedTimelineBarsUseFadeGradient() {
         page.navigate(baseUrl + "/releases/");
-        Locator bars = page.locator("#tl-support .tl-seg--open-ended rect");
+        Locator bars = page.locator("#tl-support :is(.tl-seg--open-ended, .tl-seg--never-ending) rect");
         org.junit.jupiter.api.Assumptions.assumeTrue(bars.count() > 0, "No open-ended bars in the data");
         for (int i = 0; i < bars.count(); i++) {
             String fill = bars.nth(i).getAttribute("fill");

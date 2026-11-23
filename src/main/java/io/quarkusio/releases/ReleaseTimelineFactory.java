@@ -57,14 +57,17 @@ public class ReleaseTimelineFactory {
             items.add(new LegendItem(RELEASE_KIND, "micro", "Micro release",
                     "Faint line across a bar: a micro or emergency fix release."));
         }
-        items.addAll(List.of(
-                new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
-                        "Bordered bar: paid support with an end date, from Red Hat and IBM."),
-                new LegendItem(RELEASE_KIND, "open-ended", "EOL Patches",
-                        "Fading bar: paid patches with no end date, from IBM and HeroDevs.")));
         if (catalog.all().stream().anyMatch(Release::upcoming)) {
             items.add(new LegendItem(RELEASE_KIND, "upcoming", "Upcoming", "Planned release."));
         }
+        items.addAll(List.of(
+                new LegendItem(RELEASE_KIND,"enterprise", "Enterprise support",
+                        "Bordered bar: paid support with an end date, from Red Hat and IBM."),
+                new LegendItem(RELEASE_KIND, "open-ended", "Open-ended support",
+                        "Dashed fading bar: IBM answers support requests for any 3.x version, "
+                                + "but may ask you to update to an officially supported version."),
+                new LegendItem(RELEASE_KIND, "never-ending", "Never-ending support",
+                        "Fading bar: security patches with no end date, from HeroDevs.")));
         items.add(new LegendItem(PROVIDER, "rhbq", "Red Hat", "Red Hat build of Quarkus"));
         items.add(new LegendItem(PROVIDER,"ibm", "IBM", "IBM Enterprise Build of Quarkus"));
         items.add(new LegendItem(PROVIDER,"herodevs", "HeroDevs", "HeroDevs Never-Ending Support"));
@@ -319,23 +322,27 @@ public class ReleaseTimelineFactory {
                     row.branch(lane, catalog.branchPoint(r, r.ibm()));
                 }
                 if (r.ibm().openEnded()) {
-                    openEndedSegment(row, lane, "ibm", "IBM open-ended support", r.openEndedStart(r.ibm()), name,
-                            r.version());
+                    openEndedSegment(row, lane, "open-ended", "ibm", "IBM open-ended support",
+                            r.openEndedStart(r.ibm()), name, r.version(),
+                            "Support requests answered, but you may be asked to update to a supported version");
                 }
             }
             if (r.herodevs() != null && r.herodevs().openEnded()) {
-                openEndedSegment(row, row.lane("HeroDevs"), "herodevs", "HeroDevs never-ending support",
-                        r.openEndedStart(r.herodevs()), name, r.version());
+                openEndedSegment(row, row.lane("HeroDevs"), "never-ending", "herodevs", "HeroDevs never-ending support",
+                        r.openEndedStart(r.herodevs()), name, r.version(), "No end date");
             }
         }
         row.add();
     }
 
-    /** Draws a bar for support with no end date, e.g. "IBM open-ended support", starting on from. */
-    private void openEndedSegment(GanttTimelineBuilder.RowBuilder row, int lane, String provider, String description,
-            LocalDate from, String name, String version) {
-        row.segment("open-ended", provider, lane, from, null, catalog.providerUrl(provider), name + ": " + description,
-                List.of(description + " after " + DATE.format(from), "No end date"), version);
+    /**
+     * Draws a bar for support with no end date, starting on from. The kind keeps IBM's open-ended support
+     * (requests answered, maybe with a request to update) apart from HeroDevs' never-ending support (patches).
+     */
+    private void openEndedSegment(GanttTimelineBuilder.RowBuilder row, int lane, String kind, String provider,
+            String description, LocalDate from, String name, String version, String note) {
+        row.segment(kind, provider, lane, from, null, catalog.providerUrl(provider), name + ": " + description,
+                List.of(description + " after " + DATE.format(from), note), version);
     }
 
     /**
