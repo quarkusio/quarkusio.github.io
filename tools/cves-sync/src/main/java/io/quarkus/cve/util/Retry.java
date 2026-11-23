@@ -22,6 +22,12 @@ public final class Retry {
     /** If an upstream asks us to wait longer than this, stop instead of sleeping. */
     private static final long MAX_WAIT_MS = 60_000;
     private static final Set<Integer> RETRYABLE_STATUS = Set.of(500, 502, 503, 504);
+    /**
+     * GitHub's advice for a secondary rate limit: wait at least a minute, then back off exponentially. Applied
+     * when we are refused again after having waited as told, and only for callers willing to wait that long.
+     * Not final so that tests need not sleep for minutes.
+     */
+    static long secondaryLimitBackoffMs = 60_000;
 
     /** Thrown when the upstream is rate limiting us for longer than we are willing to wait. */
     public static class RateLimitedException extends RuntimeException {
@@ -41,6 +47,10 @@ public final class Retry {
 
     /** As {@link #call(String, Supplier)}, but willing to sit out a rate limit of up to {@code maxWaitMs}. */
     public static <T> T call(String what, long maxWaitMs, Supplier<T> action) {
+        // A caller prepared to wait out a rate limit is bound by the time it will wait, not by the attempt count.
+        boolean patient = maxWaitMs > MAX_WAIT_MS;
+        long waitedMs = 0;
+        int refusals = 0;
         for (int attempt = 1; ; attempt++) {
             try {
                 return action.get();
@@ -51,10 +61,16 @@ public final class Retry {
 
                 long waitMs;
                 if (limited) {
+                    refusals++;
                     waitMs = rateLimitWaitMs(r, attempt);
-                    if (waitMs > maxWaitMs) {
+                    if (patient && refusals > 1) {
+                        // Refused again after waiting as told: not a plain per-minute limit.
+                        waitMs = Math.max(waitMs, secondaryLimitBackoffMs << (refusals - 2));
+                    }
+                    if (waitMs > maxWaitMs || (patient && waitedMs + waitMs > maxWaitMs)) {
                         Instant reset = Instant.now().plusMillis(waitMs);
-                        throw new RateLimitedException(what + ": rate limited, resets at " + reset + limitInfo(r), reset, e);
+                        throw new RateLimitedException(what + ": rate limited, resets at " + reset + limitInfo(r)
+                                + " after " + refusals + " refusals and " + waitedMs / 1000 + "s of waiting" + body(r), reset, e);
                     }
                 } else if (RETRYABLE_STATUS.contains(status) || (status == -1 && isTransient(e))) {
                     long ra = retryAfterMs(r);
@@ -63,16 +79,18 @@ public final class Retry {
                     throw e;
                 }
 
-                if (attempt >= MAX_ATTEMPTS) {
+                if (attempt >= MAX_ATTEMPTS && !(limited && patient)) {
                     if (limited) {
                         throw new RateLimitedException(what + ": still rate limited after " + attempt + " attempts" + limitInfo(r),
                                 Instant.now().plusMillis(waitMs), e);
                     }
                     throw e;
                 }
-                Log.log(1, "%s: %s; retrying in %.1fs (attempt %d/%d)",
-                        what, describe(e, status), waitMs / 1000.0, attempt + 1, MAX_ATTEMPTS);
+                Log.log(1, "%s: %s; retrying in %.1fs (attempt %d%s)%s",
+                        what, describe(e, status), waitMs / 1000.0, attempt + 1,
+                        limited && patient ? "" : "/" + MAX_ATTEMPTS, limited ? limitInfo(r) + body(r) : "");
                 sleep(waitMs);
+                waitedMs += waitMs;
             }
         }
     }
@@ -82,6 +100,20 @@ public final class Retry {
         if (r == null) return "";
         return " [resource=" + r.getHeaderString("X-RateLimit-Resource") + ", remaining="
                 + r.getHeaderString("X-RateLimit-Remaining") + ", retry-after=" + r.getHeaderString("Retry-After") + "]";
+    }
+
+    /** What GitHub said about a refusal, to tell a primary from a secondary limit. Empty if there is no readable body. */
+    private static String body(Response r) {
+        if (r == null) return "";
+        try {
+            if (!r.hasEntity()) return "";
+            String s = r.readEntity(String.class);
+            if (s == null || s.isBlank()) return "";
+            s = s.replaceAll("\\s+", " ").trim();
+            return " body: " + (s.length() > 300 ? s.substring(0, 300) + "..." : s);
+        } catch (RuntimeException ex) {
+            return "";
+        }
     }
 
     private static boolean looksRateLimited(Response r) {

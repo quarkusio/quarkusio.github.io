@@ -55,4 +55,57 @@ class RetryTest {
         }));
         assertEquals(1, calls.get());
     }
-}
+
+    @Test
+    void aPatientCallerKeepsWaitingThroughRepeatedRefusalsInsteadOfStoppingAfterFourAttempts() {
+        long saved = Retry.secondaryLimitBackoffMs;
+        Retry.secondaryLimitBackoffMs = 10;
+        try {
+            AtomicInteger calls = new AtomicInteger();
+            String result = Retry.call("test", 15 * 60_000, () -> {
+                if (calls.incrementAndGet() <= 6) throw limited(429, "0", "10");
+                return "ok";
+            });
+            assertEquals("ok", result);
+            assertEquals(7, calls.get());
+        } finally {
+            Retry.secondaryLimitBackoffMs = saved;
+        }
+    }
+
+    @Test
+    void aPatientCallerRefusedAgainAfterWaitingBacksOffForAtLeastTheSecondaryLimitMinimum() {
+        long saved = Retry.secondaryLimitBackoffMs;
+        Retry.secondaryLimitBackoffMs = 100;
+        try {
+            AtomicInteger calls = new AtomicInteger();
+            long start = System.nanoTime();
+            String result = Retry.call("test", 15 * 60_000, () -> {
+                if (calls.incrementAndGet() <= 2) throw limited(429, "0", "10");
+                return "ok";
+            });
+            long waitedMs = (System.nanoTime() - start) / 1_000_000;
+            assertEquals("ok", result);
+            // refusal 1 waits Retry-After (0), refusal 2 waits the minimum even though Retry-After says 0
+            assertTrue(waitedMs >= 100, "waited " + waitedMs + " ms");
+        } finally {
+            Retry.secondaryLimitBackoffMs = saved;
+        }
+    }
+
+    @Test
+    void aPatientCallerStopsWhenTheNextBackoffWouldExceedWhatItIsWillingToWait() {
+        long saved = Retry.secondaryLimitBackoffMs;
+        Retry.secondaryLimitBackoffMs = 100_000;
+        try {
+            AtomicInteger calls = new AtomicInteger();
+            Retry.RateLimitedException e = assertThrows(Retry.RateLimitedException.class, () -> Retry.call("test", 61_000, () -> {
+                calls.incrementAndGet();
+                throw limited(429, "0", "10");
+            }));
+            assertEquals(2, calls.get());
+            assertTrue(e.getMessage().contains("2 refusals"), e.getMessage());
+        } finally {
+            Retry.secondaryLimitBackoffMs = saved;
+        }
+    }}
