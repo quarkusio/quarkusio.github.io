@@ -20,15 +20,20 @@ jobs:
       packages: read
       # this is unfortunately needed to be able to write comments on pull requests
       pull-requests: write
-    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
     steps:
+    # A red build (for example dead links) still gets a preview, but only if it got as far as
+    # publishing the site artifact. For a green build the artifact must be there.
     - name: Download PR Artifact
+      id: download
+      continue-on-error: ${{ github.event.workflow_run.conclusion == 'failure' }}
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         run-id: ${{ github.event.workflow_run.id }}
         name: site
         github-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Store PR id as variable
+      if: steps.download.outcome == 'success'
       id: pr
       run: |
         pr=$(<pr-id.txt)
@@ -39,6 +44,7 @@ jobs:
         echo "id=${pr}" >> $GITHUB_OUTPUT
         rm -f pr-id.txt
     - name: List changed pages
+      if: steps.download.outcome == 'success'
       id: pages
       run: |
         base="https://quarkus-website-pr-${PR_ID}-preview.surge.sh"
@@ -97,12 +103,14 @@ jobs:
         PR_ID: ${{ steps.pr.outputs.id }}
 
     - name: Publishing to surge for preview
+      if: steps.download.outcome == 'success'
       id: deploy
       run: npx surge@0.23.1 ./ --domain https://quarkus-website-pr-${PR_ID}-preview.surge.sh --token ${{ secrets.SURGE_TOKEN }}
       env:
         PR_ID: ${{  steps.pr.outputs.id }}
 
     - name: Update PR status comment on success
+      if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
       uses: quarkusio/action-helpers@main
       with:
         action: maintain-one-comment
@@ -110,6 +118,23 @@ jobs:
         pr-number: ${{ steps.pr.outputs.id }}
         body: |
           🚀 PR Preview ${{ github.sha }} has been successfully built and deployed to https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          ${{ steps.pages.outputs.links }}
+
+          - ✂️ Images of blog posts older than 3 months are not available.
+          - ✂️ Newsletters older than 3 months are not available.
+
+          <img width="300" src="https://user-images.githubusercontent.com/507615/90250366-88233900-de6e-11ea-95a5-84f0762ffd39.png">
+        body-marker: <!-- Preview status comment marker -->
+    - name: Update PR status comment when CI is red
+      if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'failure'
+      uses: quarkusio/action-helpers@main
+      with:
+        action: maintain-one-comment
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr-number: ${{ steps.pr.outputs.id }}
+        body: |
+          🚧 CI is red for this PR (for example because of dead links), but here is the preview anyway: https://quarkus-website-pr-${{ steps.pr.outputs.id }}-preview.surge.sh
+          Preview of ${{ github.event.workflow_run.head_sha }}. Check the Build workflow for what failed.
           ${{ steps.pages.outputs.links }}
 
           - ✂️ Images of blog posts older than 3 months are not available.
