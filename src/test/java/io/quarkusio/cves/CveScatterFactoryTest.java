@@ -95,6 +95,28 @@ class CveScatterFactoryTest {
     }
 
     @Test
+    void responsivenessViewRunsOnlyFromPublicationToTheFix() {
+        Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-03-10T10:00:00Z", "a:one"),
+                "GHSA-2", adv("CVE-2", "LOW", "2026-04-10T10:00:00Z", "a:one"));
+        var f = factory(m, List.of(),
+                line(rel("2026-01-05", "GHSA-1"), rel("2026-03-20", "GHSA-2"), rel("2026-05-01", "GHSA-2")));
+        ScatterPlot plot = f.build("r", TODAY, 1, CveScatterFactory.Mode.RESPONSIVENESS);
+        Map<String, ScatterMark> byCve = new java.util.HashMap<>();
+        plot.rows().get(0).marks().forEach(mk -> byCve.put(mk.title().split(" ")[0], mk));
+        ScatterMark fixed = byCve.get("CVE-1");
+        assertFalse(fixed.dot());
+        assertEquals(LocalDate.of(2026, 3, 10), fixed.start(), "Starts at publication, not at the first release with it");
+        assertEquals(fixed.start(), fixed.found());
+        assertEquals("0.000", fixed.preWPct(), "Nothing before publication");
+        assertFalse(fixed.sinceAtLeast());
+        assertFalse(fixed.open());
+        assertTrue(byCve.get("CVE-2").open(), "Not fixed yet still ends in a cross");
+        assertEquals(LocalDate.of(2026, 2, 1), plot.scale().start(), "The span starts at the earliest publication");
+        assertTrue(f.build("e", TODAY, 1).rows().get(0).marks().stream().anyMatch(mk -> mk.start().isBefore(mk.found())),
+                "The exposure view still has the time before publication");
+    }
+
+    @Test
     void barRunsFromFirstReleaseThroughPublicationToFirstReleaseWithoutIt() {
         Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-03-10T10:00:00Z", "a:one"));
         var f = factory(m, List.of(),

@@ -477,6 +477,40 @@ public class CvesPageTest extends BrowserTest {
         assertTrue(tip.isHidden(), "It goes when the pointer leaves it");
     }
 
+    @Test
+    void responsivenessTabSitsBetweenExposureAndDiscoveryAndHasNoTimeBeforePublication() {
+        page.navigate(baseUrl + "/cves/");
+        var tabs = page.locator(".tl-toolbar .tl-toggle").allTextContents();
+        assertEquals(java.util.List.of("Exposure", "Responsiveness", "Discovery"), tabs);
+
+        allSeverities();
+        setSlider("cve-min-count", 1);
+        allTime();
+        page.locator("[data-timeline-toggle=responsiveness]").click();
+        assertTrue(page.locator("#tl-responsiveness").isVisible());
+        assertTrue(page.locator("#tl-exposure").isHidden());
+        assertEquals(0, page.locator("#tl-responsiveness .tl-mark:not([display=none]) .tl-mark-pre").count(),
+                "No paler part before publication");
+        assertEquals(0, page.locator("#tl-responsiveness .tl-more").count(), "No arrows");
+        assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() > 0);
+        assertTrue(query().contains("view=responsiveness"), query());
+
+        // the filters apply to it too
+        int all = page.locator("#tl-responsiveness .tl-mark:not([display=none])").count();
+        setSlider("cve-min-severity", 4);
+        assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
+        setSlider("cve-min-severity", 1);
+        setSlider("cve-window", 7);
+        assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
+    }
+
+    @Test
+    void theResponsivenessViewCanBeOpenedFromTheAddress() {
+        page.navigate(baseUrl + "/cves/?view=responsiveness");
+        assertTrue(page.locator("#tl-responsiveness").isVisible());
+        assertEquals("true", page.locator("[data-timeline-toggle=responsiveness]").getAttribute("aria-pressed"));
+    }
+
     // ---- the address
 
     @Test

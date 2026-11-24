@@ -153,17 +153,35 @@ public class CveScatterFactory {
         return build("exposure", now.toLocalDate(), defaultMin());
     }
 
+    /** The responsiveness view: only the time from publication to the fix, whenever it first shipped. */
+    public ScatterPlot responsivenessPlot(LocalDateTime now) {
+        return build("responsiveness", now.toLocalDate(), defaultMin(), Mode.RESPONSIVENESS);
+    }
+
     /** The discovery view: the same rows, with a dot (or a cross, if not fixed yet) on each publication date. */
     public ScatterPlot dotPlot(LocalDateTime now) {
         return build("discovered", now.toLocalDate(), defaultMin(), true);
     }
 
     ScatterPlot build(String id, LocalDate today, int minShown) {
-        return build(id, today, minShown, false);
+        return build(id, today, minShown, Mode.EXPOSURE);
     }
 
-    /** With dots, a mark is a point on the publication date instead of a bar from first release to fix. */
     ScatterPlot build(String id, LocalDate today, int minShown, boolean dots) {
+        return build(id, today, minShown, dots ? Mode.DISCOVERY : Mode.EXPOSURE);
+    }
+
+    /** What a mark is: the bar of the whole exposure, the part of it from publication to fix, or a point. */
+    enum Mode {
+        /** A bar from the first release that had the CVE to the fix, the time before it was published paler. */
+        EXPOSURE,
+        /** A bar from publication to the fix: how long it took us once the world knew. */
+        RESPONSIVENESS,
+        /** A point (a cross, if not fixed yet) on the publication date. */
+        DISCOVERY
+    }
+
+    ScatterPlot build(String id, LocalDate today, int minShown, Mode mode) {
         Map<String, List<Item>> byArtifact = new LinkedHashMap<>();
         items.forEach(i -> byArtifact.computeIfAbsent(i.artifact(), k -> new ArrayList<>()).add(i));
         List<Map.Entry<String, List<Item>>> all = byArtifact.entrySet().stream()
@@ -176,13 +194,13 @@ public class CveScatterFactory {
         // the earliest start of a bar (the paler part included) to the end of the month after next, so the
         // "today" tag, which is centred on today's line, is not clipped by the right edge. The page script
         // does the same when the slider brings in more artifacts.
-        LocalDate first = shown.stream().flatMap(e -> e.getValue().stream()).map(i -> barStart(i, dots))
+        LocalDate first = shown.stream().flatMap(e -> e.getValue().stream()).map(i -> barStart(i, mode))
                 .min(LocalDate::compareTo).orElse(today);
         LocalDate end = today.plusMonths(2);
         TimeScale scale = new TimeScale(first.minusMonths(1).withDayOfMonth(1), end.withDayOfMonth(end.lengthOfMonth()));
 
         List<ScatterRow> rows = all.stream()
-                .map(e -> row(e.getKey(), e.getValue(), scale, today, e.getValue().size() >= minShown, dots)).toList();
+                .map(e -> row(e.getKey(), e.getValue(), scale, today, e.getValue().size() >= minShown, mode)).toList();
         return new ScatterPlot(id, scale, rows, legend());
     }
 
@@ -190,8 +208,8 @@ public class CveScatterFactory {
     }
 
     private ScatterRow row(String artifact, List<Item> artifactItems, TimeScale scale, LocalDate today,
-            boolean shown, boolean dots) {
-        List<Placed> placed = artifactItems.stream().map(i -> place(i, today, dots))
+            boolean shown, Mode mode) {
+        List<Placed> placed = artifactItems.stream().map(i -> place(i, today, mode))
                 .sorted(Comparator.comparing(Placed::from).thenComparing(p -> p.item().published())
                         .thenComparing(p -> p.item().id()))
                 .toList();
@@ -221,7 +239,7 @@ public class CveScatterFactory {
         int height = ScatterRow.heightFor(lanes);
         List<ScatterMark> marks = new ArrayList<>();
         for (int i = 0; i < placed.size(); i++) {
-            marks.add(mark(placed.get(i), laneOf[i], lanes, height, scale, today, dots));
+            marks.add(mark(placed.get(i), laneOf[i], lanes, height, scale, today, mode));
         }
         int colon = artifact.indexOf(':');
         String shortLabel = colon < 0 ? artifact : artifact.substring(colon + 1);
@@ -230,18 +248,18 @@ public class CveScatterFactory {
     }
 
     /** The span of time a mark occupies, for packing into sub-lanes. */
-    private static Placed place(Item i, LocalDate today, boolean dots) {
-        if (dots) {
+    private static Placed place(Item i, LocalDate today, Mode mode) {
+        if (mode == Mode.DISCOVERY) {
             // a dot or cross is centred on its date and about as wide as a cross
             return new Placed(i, i.published().minusDays(ScatterRow.CROSS_HALF_DAYS),
                     i.published().plusDays(ScatterRow.CROSS_HALF_DAYS));
         }
         // the cross at the end of an open bar sticks out past it
-        return new Placed(i, barStart(i, false), barEnd(i, today).plusDays(i.fixed() == null ? ScatterRow.CROSS_HALF_DAYS : 0));
+        return new Placed(i, barStart(i, mode), barEnd(i, today).plusDays(i.fixed() == null ? ScatterRow.CROSS_HALF_DAYS : 0));
     }
 
-    private static LocalDate barStart(Item i, boolean dots) {
-        if (dots) {
+    private static LocalDate barStart(Item i, Mode mode) {
+        if (mode != Mode.EXPOSURE) {
             return i.published();
         }
         if (i.pending()) {
@@ -255,12 +273,13 @@ public class CveScatterFactory {
     }
 
     private ScatterMark mark(Placed p, int lane, int lanes, int height, TimeScale scale, LocalDate today,
-            boolean dots) {
+            Mode mode) {
+        boolean dots = mode == Mode.DISCOVERY;
         Item i = p.item();
         int y = ScatterRow.barY(lane, height, lanes);
         int cy = y + ScatterRow.BAR_H / 2;
         String title = i.id() + " · " + i.severity().label();
-        LocalDate start = barStart(i, dots);
+        LocalDate start = barStart(i, mode);
         LocalDate end = dots ? i.published() : barEnd(i, today);
         double sx = scale.percent(start);
         double fx = scale.percent(i.published());
@@ -288,7 +307,7 @@ public class CveScatterFactory {
             details.add("First release without it: " + DATE.format(i.fixed()) + ", " + days(i.published(), i.fixed())
                     + " after it was published");
         }
-        return new ScatterMark(i.severity().key(), i.fixed() == null, i.pending(), i.sinceAtLeast() && !dots, dots, lane, start,
+        return new ScatterMark(i.severity().key(), i.fixed() == null, i.pending(), i.sinceAtLeast() && mode == Mode.EXPOSURE, dots, lane, start,
                 i.published(), end,
                 fmt(sx), fmt(pre), fmt(sx + pre), fmt(post), fmt(ex), y, cy, i.link(), title, details);
     }
