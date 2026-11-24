@@ -388,28 +388,32 @@ public class CvesPageTest extends BrowserTest {
     }
 
     @Test
-    void lanesAreTightByDefaultAndSpreadOutWhileHoveringAComponent() {
+    void hoveringAComponentDoesNotMoveAnythingOnThePage() {
         page.navigate(baseUrl + "/cves/");
         Locator first = page.locator(ROWS).first();
-        double tight = plotHeight();
-        assertEquals(7, laneSpacing(), "Neighbouring lanes are one bar height plus 1px apart");
-
         first.scrollIntoViewIfNeeded();
+        double height = plotHeight();
+        assertEquals(11, laneSpacing(), "Neighbouring lanes are one bar height plus 5px apart");
+
         var label = page.locator("#tl-exposure .tl-labels li:not([hidden])").first().boundingBox();
         page.mouse().move(label.x + 5, label.y + label.height / 2);
-        page.waitForTimeout(100);
-        assertTrue(plotHeight() > tight, "Hovering a component should spread its lanes out");
+        page.waitForTimeout(150);
+        assertEquals(height, plotHeight(), 0.5, "Hovering a component must not change the layout");
         assertEquals(11, laneSpacing());
 
-        // between the bars of the hovered row still counts as hovering it
         var plotBox = first.boundingBox();
         page.mouse().move(plotBox.x + plotBox.width / 2, plotBox.y + 1);
-        page.waitForTimeout(100);
-        assertTrue(plotHeight() > tight, "The row stays spread out while the pointer is within it");
-
-        page.mouse().move(0, 0);
         page.waitForTimeout(150);
-        assertEquals(tight, plotHeight(), 0.5, "Lanes close again when the pointer leaves");
+        assertEquals(height, plotHeight(), 0.5);
+    }
+
+    @Test
+    void sliderSaysHowManyComponentsAreHiddenAndHowToShowThem() {
+        page.navigate(baseUrl + "/cves/");
+        String hint = page.locator("#cve-min-count-hint").textContent();
+        assertTrue(hint.contains("hidden") && hint.contains("Drag left"), hint);
+        setSlider("cve-min-count", 1);
+        assertEquals("Every component is shown.", page.locator("#cve-min-count-hint").textContent());
     }
 
     // ---- the sliders
@@ -418,14 +422,14 @@ public class CvesPageTest extends BrowserTest {
     void sliderStartsAtFiveAndShowsMoreComponentsWhenMovedDown() {
         page.navigate(baseUrl + "/cves/");
         assertEquals("5", page.locator("#cve-min-count").inputValue());
-        assertTrue(page.locator("#cve-min-count-value").textContent().contains("at least 5 CVEs"));
+        assertTrue(page.locator("#cve-min-count-value").textContent().contains("5 or more CVEs"));
         int five = visibleRows();
         assertTrue(five > 0);
         assertTrue(allCountsAtLeast(5), "Only components with at least 5 CVEs are shown at first");
 
         setSlider("cve-min-count", 1);
         assertTrue(visibleRows() > five, "Moving the slider down brings in more components");
-        assertEquals("at least 1 CVE", page.locator("#cve-min-count-value").textContent());
+        assertEquals("1 CVE", page.locator("#cve-min-count-value").textContent());
 
         setSlider("cve-min-count", maxCount());
         assertTrue(visibleRows() < five, "Moving it all the way up leaves just the busiest");

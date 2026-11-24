@@ -17,10 +17,8 @@ public record ScatterRow(String id, String label, String shortLabel, List<Scatte
         return marks.size();
     }
 
-    /** Vertical distance between sub-lanes, in pixels: bars are 1px apart. */
-    public static final int LANE_PITCH = 7;
-    /** The distance while the pointer is over the row, set by the page script, which spreads the lanes out. */
-    public static final int HOVER_PITCH = 11;
+    /** Vertical distance between sub-lanes, in pixels, with a gap between neighbouring bars. */
+    public static final int LANE_PITCH = 11;
     /** Height of the part of a bar from publication on, in pixels. */
     public static final int BAR_H = 6;
     /** Height of the paler part before publication, in pixels; centred on the bar. */

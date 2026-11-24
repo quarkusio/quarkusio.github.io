@@ -16,10 +16,6 @@ public record ScatterPlot(String id, TimeScale scale, List<ScatterRow> rows, Lis
         return ScatterRow.LANE_PITCH;
     }
 
-    public int hoverPitch() {
-        return ScatterRow.HOVER_PITCH;
-    }
-
     public int barH() {
         return ScatterRow.BAR_H;
     }
