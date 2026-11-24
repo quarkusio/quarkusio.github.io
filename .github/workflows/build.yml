@@ -204,6 +204,82 @@ jobs:
             echo "Targeted check: $PATHS"
           fi
 
+      # The preview is published before the (slow, and allowed to fail) Lighthouse and link crawler steps,
+      # so that the preview job can still deploy it when those are red. It is trimmed to fit surge
+      # in a copy, as the server below, which Lighthouse audits, must serve the complete site.
+      - name: Copy the site for the PR preview
+        run: cp -a target/roq target/preview
+
+      - name: Store PR id
+        run: echo ${{ github.event.number }} > ./target/preview/pr-id.txt
+
+      # Same changed-page detection as the link crawler uses, so the preview job can report on it:
+      # the first line is the scope (skip, full or partial), the second the comma separated pages
+      - name: Store changed pages
+        env:
+          PAGES_MODE: ${{ steps.link_scope.outputs.pages }}
+          CHANGED_PATHS: ${{ steps.link_scope.outputs.paths }}
+          CHANGED_COUNT: ${{ steps.link_scope.outputs.count }}
+          INFRA: ${{ steps.link_scope.outputs.infra }}
+          REASON: ${{ steps.link_scope.outputs.reason }}
+        run: |
+          if [ -n "$PAGES_MODE" ]; then
+            printf '%s\n%s\n%s\n%s\n%s\n' "$PAGES_MODE" "$CHANGED_PATHS" "$CHANGED_COUNT" "$INFRA" "$REASON" > ./target/preview/changed-pages.txt
+          fi
+
+      - name: Reduce the size of the website to be compatible with surge
+        run: |
+          SITE_DIR="target/preview"
+          # Keep only the 10 most recent newsletter editions (by number)
+          if [ -d "$SITE_DIR/newsletter" ]; then
+            ls -1 "$SITE_DIR/newsletter" | sort -n | head -n -10 | while read -r dir; do
+              rm -rf "$SITE_DIR/newsletter/$dir"
+            done
+          fi
+          # Remove post images only referenced by blog posts older than ~2 months.
+          # Uses filename dates instead of mtime (which breaks after file moves/migrations).
+          CUTOFF=$(date -d '50 days ago' +%Y-%m-%d)
+          RECENT_IMGS=$(mktemp)
+          OLD_IMGS=$(mktemp)
+          POSTS_DIR=content/posts
+          [ -d _posts ] && POSTS_DIR=_posts
+          # Posts may sit directly in the posts dir or in year sub-folders, and be .adoc or .md.
+          shopt -s nullglob globstar
+          for post in "$POSTS_DIR"/**/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.{adoc,asciidoc,md}; do
+            POST_DATE=$(basename "$post" | grep -oP '^\d{4}-\d{2}-\d{2}' || true)
+            [ -z "$POST_DATE" ] && continue
+            if [ "$POST_DATE" \> "$CUTOFF" ]; then
+              grep -oP 'images/posts/\K[^/\["\]]+' "$post" >> "$RECENT_IMGS" 2>/dev/null || true
+            else
+              grep -oP 'images/posts/\K[^/\["\]]+' "$post" >> "$OLD_IMGS" 2>/dev/null || true
+            fi
+          done
+          comm -23 <(sort -u "$OLD_IMGS") <(sort -u "$RECENT_IMGS") | while read -r imgdir;
+          do
+           rm -rf "$SITE_DIR/assets/images/posts/$imgdir"
+          done
+          rm -f "$RECENT_IMGS" "$OLD_IMGS"
+          rm -rf "$SITE_DIR"/assets/stickers
+          rm -rf "$SITE_DIR"/assets/images/desktopwallpapers
+          rm -rf "$SITE_DIR"/assets/images/stickers
+          # Keep main and the newest numbered version, drop the rest
+          if [ -d "$SITE_DIR/version" ]; then
+            NEWEST=$(ls -1 "$SITE_DIR/version" | grep -v main | sort -t. -k1,1n -k2,2n | tail -1)
+            for v in "$SITE_DIR/version"/*/; do
+              NAME=$(basename "$v")
+              if [ "$NAME" != "main" ] && [ "$NAME" != "$NEWEST" ]; then
+                rm -rf "$v"
+              fi
+            done
+          fi
+
+      - name: Publishing directory for PR preview
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: ./target/preview
+          retention-days: 3
+
       # The server is only needed by Lighthouse, so start it right before and stop it right after,
       # rather than leaving a JVM running next to the smoke tests and the link crawler.
       - name: Cache jbang
@@ -349,76 +425,6 @@ jobs:
               cat target/crawl-summary.txt
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Store PR id
-        run: echo ${{ github.event.number }} > ./target/roq/pr-id.txt
-
-      # Same changed-page detection as the link crawler uses, so the preview job can report on it:
-      # the first line is the scope (skip, full or partial), the second the comma separated pages
-      - name: Store changed pages
-        env:
-          PAGES_MODE: ${{ steps.link_scope.outputs.pages }}
-          CHANGED_PATHS: ${{ steps.link_scope.outputs.paths }}
-          CHANGED_COUNT: ${{ steps.link_scope.outputs.count }}
-          INFRA: ${{ steps.link_scope.outputs.infra }}
-          REASON: ${{ steps.link_scope.outputs.reason }}
-        run: |
-          if [ -n "$PAGES_MODE" ]; then
-            printf '%s\n%s\n%s\n%s\n%s\n' "$PAGES_MODE" "$CHANGED_PATHS" "$CHANGED_COUNT" "$INFRA" "$REASON" > ./target/roq/changed-pages.txt
-          fi
-
-      - name: Reduce the size of the website to be compatible with surge
-        run: |
-          SITE_DIR="target/roq"
-          # Keep only the 10 most recent newsletter editions (by number)
-          if [ -d "$SITE_DIR/newsletter" ]; then
-            ls -1 "$SITE_DIR/newsletter" | sort -n | head -n -10 | while read -r dir; do
-              rm -rf "$SITE_DIR/newsletter/$dir"
-            done
-          fi
-          # Remove post images only referenced by blog posts older than ~2 months.
-          # Uses filename dates instead of mtime (which breaks after file moves/migrations).
-          CUTOFF=$(date -d '50 days ago' +%Y-%m-%d)
-          RECENT_IMGS=$(mktemp)
-          OLD_IMGS=$(mktemp)
-          POSTS_DIR=content/posts
-          [ -d _posts ] && POSTS_DIR=_posts
-          # Posts may sit directly in the posts dir or in year sub-folders, and be .adoc or .md.
-          shopt -s nullglob globstar
-          for post in "$POSTS_DIR"/**/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.{adoc,asciidoc,md}; do
-            POST_DATE=$(basename "$post" | grep -oP '^\d{4}-\d{2}-\d{2}' || true)
-            [ -z "$POST_DATE" ] && continue
-            if [ "$POST_DATE" \> "$CUTOFF" ]; then
-              grep -oP 'images/posts/\K[^/\["\]]+' "$post" >> "$RECENT_IMGS" 2>/dev/null || true
-            else
-              grep -oP 'images/posts/\K[^/\["\]]+' "$post" >> "$OLD_IMGS" 2>/dev/null || true
-            fi
-          done
-          comm -23 <(sort -u "$OLD_IMGS") <(sort -u "$RECENT_IMGS") | while read -r imgdir;
-          do
-           rm -rf "$SITE_DIR/assets/images/posts/$imgdir"
-          done
-          rm -f "$RECENT_IMGS" "$OLD_IMGS"
-          rm -rf "$SITE_DIR"/assets/stickers
-          rm -rf "$SITE_DIR"/assets/images/desktopwallpapers
-          rm -rf "$SITE_DIR"/assets/images/stickers
-          # Keep main and the newest numbered version, drop the rest
-          if [ -d "$SITE_DIR/version" ]; then
-            NEWEST=$(ls -1 "$SITE_DIR/version" | grep -v main | sort -t. -k1,1n -k2,2n | tail -1)
-            for v in "$SITE_DIR/version"/*/; do
-              NAME=$(basename "$v")
-              if [ "$NAME" != "main" ] && [ "$NAME" != "$NEWEST" ]; then
-                rm -rf "$v"
-              fi
-            done
-          fi
-
-      - name: Publishing directory for PR preview
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: site
-          path: ./target/roq
-          retention-days: 3
 
   theme:
     name: Theme
