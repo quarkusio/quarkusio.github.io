@@ -89,16 +89,16 @@ public class CveScatterFactory {
             legend.add(new LegendItem(SEVERITY, s.key(), s.label(), ""));
         }
         legend.add(new LegendItem(MARK, "span", "Fixed",
-                "Bar from the first release that contained it to the first release without it. The paler part is before it was published."));
+                "Solid bar from when it was published to the first release without it. The dashed, paler part before it is the time before anyone knew about it, back to the first release that contained it."));
         if (items.stream().anyMatch(Item::sinceAtLeast)) {
             legend.add(new LegendItem(MARK, "since", "Since at least",
-                    "Pale part ending in an arrow: it was already in the earliest release we have data for"
+                    "Dashed, pale part ending in an arrow: it was already in the earliest release we have data for"
                             + (fromVersion == null ? "" : " (" + fromVersion + ")") + ", so it may go back further."));
         }
         legend.add(new LegendItem(MARK, "open", "Not fixed yet",
-                "Bar ending in a cross at the today line: no release is without it yet. In the Discovery view, the cross takes the place of the dot."));
+                "Solid bar running to the today line and ending in a cross: no release is without it yet. In the Discovery view, the cross takes the place of the dot."));
         legend.add(new LegendItem(MARK, "pending", "Pending",
-                "Bar fading in from the left: published, but not yet assessed against Quarkus releases, so we do not know since when it affected them. Not fixed yet either, so it ends in a cross."));
+                "Bar fading in from the left, with no dashed part: published, but not yet assessed against Quarkus releases, so we do not know since when it affected them. It is not fixed yet either, so it ends in a cross."));
         return legend;
     }
 

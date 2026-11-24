@@ -69,6 +69,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void filtersApplyToBothViews() {
         page.navigate(baseUrl + "/cves/");
+        allTime();
         setSlider("cve-min-count", 1);
         page.locator("#cve-unresolved").check();
         page.locator("[data-timeline-toggle=discovered]").click();
@@ -130,6 +131,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void switchingOffThirdPartyDependenciesLeavesOnlyQuarkusLibrariesLitAndFiltersBothPlots() {
         page.navigate(baseUrl + "/cves/");
+        allTime();
         setSlider("cve-min-count", 1);
         assertTrue(page.locator("[data-cve-origin=external]").isChecked(), "All switches start on");
         page.locator("[data-cve-origin=external]").uncheck();
@@ -163,6 +165,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void aCategorySwitchedOnAloneLightsUpOnlyItsComponents() {
         page.navigate(baseUrl + "/cves/");
+        allTime();
         setSlider("cve-min-count", 1);
         page.locator("[data-cve-set=category][data-cve-select=none]").click();
         page.locator("[data-cve-category=Security]").check();
@@ -416,6 +419,59 @@ public class CvesPageTest extends BrowserTest {
         assertEquals("Every component is shown.", page.locator("#cve-min-count-hint").textContent());
     }
 
+    @Test
+    void thePlotLooksBackOnlyEighteenMonthsAtFirstAndTheSliderWidensIt() {
+        page.navigate(baseUrl + "/cves/");
+        assertEquals("2", page.locator("#cve-window").inputValue());
+        assertEquals("The last 18 months", page.locator("#cve-window-value").textContent());
+        setSlider("cve-min-count", 1);
+        String recent = page.locator("#tl-exposure").getAttribute("data-range-start");
+        int recentMarks = page.locator("#tl-exposure .tl-mark:not([display=none])").count();
+        int cutoffYear = java.time.LocalDate.now().minusMonths(18).getYear();
+        assertTrue(recent.compareTo(java.time.LocalDate.now().minusMonths(19).toString()) >= 0,
+                "The axis starts no earlier than the window: " + recent);
+        assertTrue(Integer.parseInt(recent.substring(0, 4)) >= cutoffYear);
+
+        allTime();
+        assertEquals("Since the beginning of the data", page.locator("#cve-window-value").textContent());
+        assertTrue(page.locator("#tl-exposure").getAttribute("data-range-start").compareTo(recent) < 0,
+                "All time starts earlier");
+        assertTrue(page.locator("#tl-exposure .tl-mark:not([display=none])").count() > recentMarks,
+                "Looking further back brings in more CVEs");
+        assertTrue(page.locator(".cve-slider-status").textContent().contains("beginning of the data"));
+
+        setSlider("cve-window", 0);
+        assertEquals("The last 6 months", page.locator("#cve-window-value").textContent());
+        assertTrue(page.locator("#tl-exposure .tl-mark:not([display=none])").count() <= recentMarks);
+    }
+
+    @Test
+    void theWindowFiltersTheDiscoveryViewToo() {
+        page.navigate(baseUrl + "/cves/");
+        setSlider("cve-min-count", 1);
+        page.locator("[data-timeline-toggle=discovered]").click();
+        int recent = page.locator("#tl-discovered .tl-mark:not([display=none])").count();
+        allTime();
+        assertTrue(page.locator("#tl-discovered .tl-mark:not([display=none])").count() > recent);
+    }
+
+    @Test
+    void theTooltipStaysWhileThePointerIsOnIt() {
+        page.navigate(baseUrl + "/cves/");
+        Locator mark = page.locator(ROWS).first().locator("a.tl-mark:not([display=none])").first();
+        mark.scrollIntoViewIfNeeded();
+        hoverSteadily(mark.locator("rect.tl-hit"));
+        Locator tip = page.locator(".tl-tooltip");
+        assertTrue(tip.isVisible());
+        var box = tip.boundingBox();
+        page.mouse().move(box.x + box.width / 2, box.y + box.height / 2);
+        page.waitForTimeout(500);
+        assertTrue(tip.isVisible(), "The tooltip stays while the pointer is on it, so its text can be copied");
+        page.mouse().move(0, 0);
+        page.waitForTimeout(500);
+        assertTrue(tip.isHidden(), "It goes when the pointer leaves it");
+    }
+
     // ---- the sliders
 
     @Test
@@ -463,6 +519,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void timeSpanFollowsTheComponentsShown() {
         page.navigate(baseUrl + "/cves/");
+        allTime();
         // compare the busiest component alone with everything: the default view already reaches back as far as the
         // oldest CVEs now that the data covers every release, so it cannot be the one that gets brought in
         setSlider("cve-min-count", maxCount());
@@ -554,6 +611,7 @@ public class CvesPageTest extends BrowserTest {
             String serverTicks = String.join(",", server.locator("#tl-exposure .tl-grid text").allTextContents());
 
             page.navigate(baseUrl + "/cves/");
+            allTime(); // the server lays out all of the data; the script does the same for the same controls
             assertEquals(serverStart, page.locator("#tl-exposure").getAttribute("data-range-start"));
             assertEquals(serverHeight, page.locator("#tl-exposure .tl-plot").getAttribute("height"), "plot height");
             assertEquals(rows, visibleRows(), "rows shown");
@@ -572,6 +630,11 @@ public class CvesPageTest extends BrowserTest {
     private void setSlider(String id, int value) {
         page.evaluate("([id, value]) => { const e = document.getElementById(id); e.value = value;"
                 + " e.dispatchEvent(new Event('input', { bubbles: true })); }", new Object[] { id, value });
+    }
+
+    /** The window slider's last step: the whole history, which is how the server lays the page out. */
+    private void allTime() {
+        setSlider("cve-window", 6);
     }
 
     private int maxCount() {
