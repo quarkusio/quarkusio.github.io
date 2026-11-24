@@ -56,6 +56,8 @@ Then, in the site:
 - load the site's own assets with `site.url.fromRoot('/assets/...')` in templates. A URL written with a
   leading slash points at the server root, which is not the site root when the site is served under a
   `quarkus.http.root-path` (a GitHub Pages project site, for example). The theme's own assets already do this.
+  A stylesheet cannot, so the footer background image is a custom property: set
+  `--project-footer-background-image` to the site's own URL of the image when it is served under a root path.
 
 `example-minimal-site/` is a complete minimal site.
 
