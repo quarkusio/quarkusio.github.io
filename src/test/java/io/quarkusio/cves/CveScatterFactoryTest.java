@@ -321,20 +321,20 @@ class CveScatterFactoryTest {
     }
 
     @Test
-    void theSliderStartsAtFiveOrMoreCves() {
-        assertEquals(5, CveScatterFactory.MIN_FOR_TOP_VIEW);
+    void theSliderStartsAtSixOrMoreCves() {
+        assertEquals(6, CveScatterFactory.MIN_FOR_TOP_VIEW);
         Map<String, Cves.Advisory> m = new LinkedHashMap<>();
-        for (int i = 0; i < 6; i++) {
-            m.put("GHSA-a" + i, adv("CVE-a" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:six"));
+        for (int i = 0; i < 7; i++) {
+            m.put("GHSA-a" + i, adv("CVE-a" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:many"));
         }
         for (int i = 0; i < 4; i++) {
             m.put("GHSA-b" + i, adv("CVE-b" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:four"));
         }
         var f = factory(m);
-        assertEquals(6, f.maxCount());
-        assertEquals(5, f.defaultMin());
+        assertEquals(7, f.maxCount());
+        assertEquals(6, f.defaultMin());
         ScatterPlot plot = f.plot(TODAY.atStartOfDay());
-        assertEquals(List.of("a:six", "a:four"), plot.rows().stream().map(ScatterRow::id).toList());
+        assertEquals(List.of("a:many", "a:four"), plot.rows().stream().map(ScatterRow::id).toList());
         assertEquals(List.of(true, false), plot.rows().stream().map(ScatterRow::shown).toList());
     }
 

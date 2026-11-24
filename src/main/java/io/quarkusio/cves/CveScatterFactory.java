@@ -42,7 +42,7 @@ public class CveScatterFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
     /** The compact view keeps artifacts with at least this many CVEs. */
-    static final int MIN_FOR_TOP_VIEW = 5;
+    static final int MIN_FOR_TOP_VIEW = 6;
     /** Narrowest bar, in percent of the axis. */
     static final double MIN_BAR_PCT = 0.5;
     /** A pending CVE fades in from this many days before its publication: we do not know when it first shipped. */
@@ -89,16 +89,16 @@ public class CveScatterFactory {
             legend.add(new LegendItem(SEVERITY, s.key(), s.label(), ""));
         }
         legend.add(new LegendItem(MARK, "span", "Fixed",
-                "Solid bar from when it was published to the first release without it. The dashed, paler part before it is the time before anyone knew about it, back to the first release that contained it."));
+                "Solid bar from when it was published to the first release without it. The paler part before it is the time before anyone knew about it, back to the first release that contained it."));
         if (items.stream().anyMatch(Item::sinceAtLeast)) {
             legend.add(new LegendItem(MARK, "since", "Since at least",
-                    "Dashed, pale part ending in an arrow: it was already in the earliest release we have data for"
+                    "Pale part ending in an arrow: it was already in the earliest release we have data for"
                             + (fromVersion == null ? "" : " (" + fromVersion + ")") + ", so it may go back further."));
         }
         legend.add(new LegendItem(MARK, "open", "Not fixed yet",
                 "Solid bar running to the today line and ending in a cross: no release is without it yet. In the Discovery view, the cross takes the place of the dot."));
         legend.add(new LegendItem(MARK, "pending", "Pending",
-                "Bar fading in from the left, with no dashed part: published, but not yet assessed against Quarkus releases, so we do not know since when it affected them. It is not fixed yet either, so it ends in a cross."));
+                "Bar fading in from the left: published, but not yet assessed against Quarkus releases, so we do not know since when it affected them. It is not fixed yet either, so it ends in a cross."));
         return legend;
     }
 
