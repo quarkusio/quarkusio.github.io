@@ -1,7 +1,8 @@
 #!/bin/bash
 # Checks that the example site generated with the packaged theme jar renders the theme.
-# Usage: verify.sh <generated site dir>
+# Usage: verify.sh [generated site dir] [root path the site was built with, e.g. /foo]
 SITE=${1:-target/roq}
+ROOT_PATH=${2%/}
 INDEX="$SITE/index.html"
 status=0
 check() {
@@ -22,6 +23,11 @@ check "minimal footer" 'class="content cf-footer"' "$INDEX"
 check "theme styles" '.nav-wrapper' "$(ls "$SITE"/static/bundle/*.css | head -1)"
 check "theme scripts" 'function setTheme' "$SITE/assets/javascript/colormode.js"
 check "theme images" '' "$SITE/assets/images/quarkus_logo_horizontal_rgb_reverse.svg"
+# The theme assets have to resolve under the site root path, not only at the domain root
+check "colour mode script url" "src=\"$ROOT_PATH/assets/javascript/colormode.js\"" "$INDEX"
+check "mobile nav script url" "src=\"$ROOT_PATH/assets/javascript/mobile-nav.js\"" "$INDEX"
+check "header logo url" "src=\"$ROOT_PATH/assets/images/quarkus_logo_horizontal_rgb_600px_reverse.webp\"" "$INDEX"
+check "footer logo url" "src=\"$ROOT_PATH/assets/images/quarkus_logo_horizontal_rgb_reverse.svg\"" "$INDEX"
 if grep -q '{=' "$INDEX"; then
   echo "FAIL: unprocessed {=...} expressions (is templates/.qute missing from the jar?)"
   status=1
