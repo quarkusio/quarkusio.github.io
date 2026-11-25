@@ -2136,7 +2136,7 @@
                   <a href="/version/main/guides/writing-extensions/">Writing your own extension</a>
                 </li>
                 <li >
-                  <a href="/version/main/guides/recorders-to-services-migration/">Recorders-to-Services Migration Guide</a>
+                  <a href="/version/main/guides/recorders-to-services-migration/">Migrating extensions from recorders to services</a>
                 </li>
                 <li >
                   <a href="/version/main/guides/building-my-first-extension/">Building my first extension</a>
@@ -2238,12 +2238,6 @@
 </ul>
 </li>
 <li data-level="1"><a href="#visualizing-the-data">Visualizing the data</a></li>
-<li data-level="1"><a href="#dev-services-for-opentelemetry-with-the-lgtm-stack">Dev Services for OpenTelemetry with the LGTM stack</a>
-<ul>
-<li data-level="2"><a href="#enabling-disabling-dev-services-for-opentelemetry">Enabling / Disabling Dev Services for OpenTelemetry</a></li>
-<li data-level="2"><a href="#full-dev-services-for-opentelemetry-reference">Full Dev Services for OpenTelemetry reference</a></li>
-</ul>
-</li>
 <li data-level="1"><a href="#configuration-reference">OpenTelemetry Configuration Reference</a></li>
 </ul>
 </nav>
@@ -2601,7 +2595,14 @@ of the entity that is producing telemetry, it adds attributes to the exported tr
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">service.name</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">"opentelemetry-quickstart"</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Value comes from the artifactId, from the <code>quarkus.application.name</code> property or from <code>quarkus.otel.resource.attributes=service.name=cart</code> property.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Value comes from the following configurations, the first one to be set wins:</p>
+<p class="tableblock">The <code>quarkus.otel.service.name</code> property, then from <code>quarkus.otel.resource.attributes=service.name=cart</code> property, from the <code>OTEL_SERVICE_NAME</code> environment variable or the <code>otel.service.name</code> system property and finally, the <code>quarkus.application.name</code> property is used with the default being the name of the project.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service.instance.id</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">"8a3c60f7-9b2e-4c1d-&#8230;&#8203;"</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A random identifier the OpenTelemetry SDK generates at startup. It is regenerated on every start, so it identifies a run of the application rather than a deployment of it.
+Set <code>quarkus.otel.resource.attributes=service.instance.id=&#8230;&#8203;</code> to supply your own.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">host.name</p></td>
@@ -2656,6 +2657,21 @@ is described in the <a href="/version/main/guides/config-reference/#configuratio
 <div class="paragraph">
 <p>This will add the attributes for <code>deployment.environment</code>, <code>service.name</code> and <code>service.namespace</code> to the resource and be included in traces and metrics.</p>
 </div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Setting <code>service.instance.id</code> through <code>quarkus.otel.resource.attributes</code> keeps the attribute value, but the resource then carries no <code>service.instance</code> resource entity.
+The OpenTelemetry SDK builds that entity from an identifier it generates itself, and a value you supply would conflict with it, so Quarkus switches the SDK provider off instead.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
 </div>
 <div class="sect3">
 <h4 id="using-cdi-beans"><a class="anchor" href="#using-cdi-beans"></a>Using CDI beans</h4>
@@ -2681,6 +2697,52 @@ public class CustomConfiguration {
     }
 }</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>Resources coming from the SDK extensions may carry <strong>resource entities</strong> of their own, which Quarkus does not manage.
+These are the OpenTelemetry kind of entity, described in the <a href="https://opentelemetry.io/docs/specs/otel/entities/data-model/">entities data model</a> — they have nothing to do with JPA entities.
+If one of your producers writes an attribute that identifies such a resource entity, the entity association is dropped and the OpenTelemetry SDK logs a warning.</p>
+</div>
+<div class="paragraph">
+<p>For example, the SDK builds a <code>service</code> resource entity that is identified by <code>service.name</code>.
+A producer writing that same attribute as an ordinary attribute changes a value the entity owns:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-java hljs" data-lang="java">@Produces
+@ApplicationScoped
+public Resource serviceNameResource() {
+    return Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "cart"));
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The exported resource still carries <code>service.name=cart</code>, but it no longer carries the <code>service</code> resource entity, and the SDK logs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>WARNING [io.opentelemetry.sdk.resources.ResourceBuilder] Removing entity association [service] because resource
+attributes change the value or type of its attributes. Other attributes are retained as unassociated.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Use <code>quarkus.otel.service.name</code> or <code>quarkus.otel.resource.attributes</code> to set the service name instead.
+Quarkus resolves those before the SDK builds the resource, so the entity is built with the value you asked for and nothing overwrites it afterwards.</p>
+</div>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Quarkus does not support OpenTelemetry resource entities yet.
+There is no Quarkus configuration or API to declare, rename or extend one: the only resource entities you get are the ones the SDK itself builds, and Quarkus limits itself to not breaking them.</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect3">
@@ -3091,26 +3153,6 @@ quarkus.otel.traces.exporter=logging <i class="conum" data-value="3"></i><b>(3)<
 </div>
 <div class="paragraph">
 <p>You can also use the <a href="#logging-exporter-for-debugging">logging exporter</a> to output all traces and metrics to the console.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="dev-services-for-opentelemetry-with-the-lgtm-stack"><a class="anchor" href="#dev-services-for-opentelemetry-with-the-lgtm-stack"></a>Dev Services for OpenTelemetry with the LGTM stack</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>The OpenTelemetry extension provides a Dev Service that automatically starts a Grafana OTel LGTM stack when the application is started in development mode. This allows you to easily visualize the telemetry data generated by your application without needing to set up an external observability stack.</p>
-</div>
-<div class="sect2">
-<h3 id="enabling-disabling-dev-services-for-opentelemetry"><a class="anchor" href="#enabling-disabling-dev-services-for-opentelemetry"></a>Enabling / Disabling Dev Services for OpenTelemetry</h3>
-<div class="paragraph">
-<p>Dev Services for OpenTelemetry is enabled by default. You can disable it by setting the <code>quarkus.observability.lgtm.enabled=false</code> or <code>quarkus.observability.dev-resources=false</code> properties in your configuration.</p>
-</div>
-</div>
-<div class="sect2">
-<h3 id="full-dev-services-for-opentelemetry-reference"><a class="anchor" href="#full-dev-services-for-opentelemetry-reference"></a>Full Dev Services for OpenTelemetry reference</h3>
-<div class="paragraph">
-<p>The Observability Dev Services guide provides a full reference for all the properties related to Dev Services for OpenTelemetry with the LGTM stack. You can find it at <a href="/version/main/guides/observability-devservices-lgtm/">Observability Dev Services with Grafana OTel LGTM</a>.</p>
-</div>
 </div>
 </div>
 </div>

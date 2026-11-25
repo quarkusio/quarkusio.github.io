@@ -2136,7 +2136,7 @@
                   <a href="/version/main/guides/writing-extensions/">Writing your own extension</a>
                 </li>
                 <li >
-                  <a href="/version/main/guides/recorders-to-services-migration/">Recorders-to-Services Migration Guide</a>
+                  <a href="/version/main/guides/recorders-to-services-migration/">Migrating extensions from recorders to services</a>
                 </li>
                 <li >
                   <a href="/version/main/guides/building-my-first-extension/">Building my first extension</a>
@@ -4837,6 +4837,83 @@ void setup(ServiceRegistrar reg) {
 </div>
 <div class="paragraph">
 <p>Use <code>.optional()</code> for services that may legitimately have nothing to produce based on configuration or runtime conditions.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="service-addresses"><a class="anchor" href="#service-addresses"></a>2.6.4.6. Service Addresses</h5>
+<div class="paragraph">
+<p>Services that listen on sockets publish where they can be reached as an <code>io.quarkus.runtime.Address</code>, a named service
+value holding the protocol and the socket addresses the service is bound to. For example, the HTTP server publishes
+the <code>vertx-http</code>, <code>vertx-https</code> and <code>vertx-management</code> addresses
+(see the <a href="/version/main/guides/http-reference/#addresses">HTTP reference</a>).</p>
+</div>
+<div class="paragraph">
+<p>To connect to a service of the same application, depend on its <code>Address</code> by name instead of reading its configured
+host and port, which may differ from the bound ones (for example, with a random port):</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">reg.forService("io.quarkus.my-client")
+   .request(Address.class, "vertx-http")
+   .onStart((ctx, address) -&gt; {
+       address.flatMap(Address::inet).ifPresent(socket -&gt; {
+           // Connect to socket.getHostString() and socket.getPort()
+       });
+   });</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Prefer <code>request()</code> over <code>require()</code>, since an <code>Address</code> is only available when the service is bound (for example,
+<code>vertx-https</code> requires TLS).</p>
+</div>
+<div class="paragraph">
+<p>A URL read from configuration may reference an <code>Address</code> as <code>quarkus://&lt;name&gt;/path</code>. Use
+<code>io.quarkus.runtime.AddressResolver.resolve(String)</code> to resolve it. Plain URLs are returned unchanged, so the same
+code path handles both. <code>AddressResolver</code> looks up the <code>Address</code> as a <code>@Named</code> CDI bean, so it can only be called
+after the target service is bound.</p>
+</div>
+<div class="paragraph">
+<p>To publish the <code>Address</code> of your own service:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Register it after the sockets are bound, with the actual values (such as the resolved port) rather than the configured ones.</p>
+</li>
+<li>
+<p>Name the service after your server, and mark it <code>.optional()</code> if the server may not be bound depending on configuration.</p>
+</li>
+<li>
+<p>Expose it as a <code>@Named</code> synthetic bean, so that applications can inject it and <code>AddressResolver</code> can resolve it.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight nowrap"><code class="language-java hljs" data-lang="java">reg.forService(Address.class, "my-server")
+   .atPhase(Phase.BINDING)
+   .require(MyServer.class) <i class="conum" data-value="1"></i><b>(1)</b>
+   .optional()
+   .onStart((ctx, server) -&gt; server.isListening()
+           ? Optional.of(Address.of("http", server.boundSocketAddresses()))
+           : Optional.empty());
+
+SyntheticBeanBuildItem.configure(Address.class)
+   .setRuntimeInit()
+   .unremovable()
+   .scope(Singleton.class)
+   .addQualifier().annotation(DotNames.NAMED).addValue("value", "my-server").done()
+   .serviceValue(Address.class, "my-server")
+   .done();</code></pre>
+</div>
+</div>
+<div class="colist arabic">
+<table>
+<tr>
+<td><i class="conum" data-value="1"></i><b>1</b></td>
+<td>A service that starts once <code>MyServer</code> has bound its sockets.</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
