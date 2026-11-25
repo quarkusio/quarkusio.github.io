@@ -11,7 +11,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -44,7 +44,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=config-quickstart \
     -Dextensions='rest' \
@@ -109,7 +109,7 @@ public class GreetingResource {
 Quarkus uses [MicroProfile Config](https://microprofile.io/specifications/config/) annotations to inject the configuration properties in the application.
 
 ```java
-@ConfigProperty(name = "greeting.message") <1>
+@ConfigProperty(name = "greeting.message") // <1>
 String message;
 ```
 
@@ -121,14 +121,14 @@ String message;
 Edit the `org.acme.config.GreetingResource`, and introduce the following configuration properties:
 
 ```java
-@ConfigProperty(name = "greeting.message") <1>
+@ConfigProperty(name = "greeting.message") // <1>
 String message;
 
-@ConfigProperty(name = "greeting.suffix", defaultValue="!") <2>
+@ConfigProperty(name = "greeting.suffix", defaultValue="!") // <2>
 String suffix;
 
 @ConfigProperty(name = "greeting.name")
-Optional<String> name; <3>
+Optional<String> name; // <3>
 ```
 
 1. If you do not provide a value for this property, the application startup fails with `jakarta.enterprise.inject.spi.DeploymentException: No config value of type [class java.lang.String] exists for: greeting.message`.
@@ -264,11 +264,11 @@ quarkus build --native
 
 ## Programmatically access the configuration
 
-The `org.eclipse.microprofile.config.ConfigProvider.getConfig()` API allows access to the Config API programmatically. This API is mostly useful in situations where CDI injection is not available.
+The `io.smallrye.config.Config.get()` API allows access to the Config API programmatically. This API is mostly useful in situations where CDI injection is not available.
 
 ```java
-String databaseName = ConfigProvider.getConfig().getValue("database.name", String.class);
-Optional<String> maybeDatabaseName = ConfigProvider.getConfig().getOptionalValue("database.name", String.class);
+String databaseName = Config.get().getValue("database.name", String.class);
+Optional<String> maybeDatabaseName = Config.get().getOptionalValue("database.name", String.class);
 ```
 
 ## Configuring Quarkus
@@ -301,13 +301,15 @@ However, some extensions do define properties *overridable at runtime*. A simple
 Quarkus relies on [SmallRye Config](https://github.com/smallrye/smallrye-config/) and inherits its features:
 
 - Additional ``ConfigSource``s
+- Configurable sources with `ConfigSourceFactory`
 - Additional ``Converter``s
 - Indexed properties
-- Parent profile
+- Parent profile (with multi-level hierarchy support)
 - Interceptors for configuration value resolution
 - Relocate configuration properties
 - Fallback configuration properties
 - Logging
-- Hide secrets
+- Hide Secrets and `Secret<T>`
+- Customize the `Config` with `SmallRyeConfigBuilderCustomizer`
 
 For more information, please check the [SmallRye Config documentation](https://smallrye.io/smallrye-config/Main/).

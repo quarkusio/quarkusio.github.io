@@ -64,7 +64,7 @@ The Apicurio Dev Services supports [Compose Dev Services](/guides/compose-dev-se
 name: <application name>
 services:
   apicurio:
-    image: quay.io/apicurio/apicurio-registry:3.1.7
+    image: quay.io/apicurio/apicurio-registry:3.3.1
     ports:
       - "8080"
 ```

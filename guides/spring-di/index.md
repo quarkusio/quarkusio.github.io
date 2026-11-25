@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -43,7 +43,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=spring-di-quickstart \
     -Dextensions='rest,spring-di' \
@@ -301,7 +301,7 @@ You can of course create a native image using instructions similar to [this](/gu
 
 ## Important Technical Note
 
-Please note that the Spring support in Quarkus does not start a Spring Application Context nor are any Spring infrastructure classes run. Spring classes and annotations are only used for reading metadata and / or are used as user code method return types or parameter types. What that means for end users, is that adding arbitrary Spring libraries will not have any effect. Moreover, Spring infrastructure classes (like `org.springframework.beans.factory.config.BeanPostProcessor` , `org.springframework.context.ApplicationContext` for example) will not be executed. Regarding the dependency injection in particular, Quarkus uses a Dependency Injection mechanism (called ArC) based on the [Jakarta Contexts and Dependency Injection 4.1](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html) specification. If you want to learn more about it, we recommend you to read the [Quarkus introduction to CDI](/guides/cdi/index.md) and the [CDI reference guide](/guides/cdi-reference/index.md#arc-configuration-reference) The various Spring Boot test features are not supported by Quarkus. For testing purposes, please, check the [Quarkus testing guide](/guides/getting-started-testing/index.md).
+Please note that the Spring support in Quarkus does not start a Spring Application Context nor are any Spring infrastructure classes run. Spring classes and annotations are only used for reading metadata and / or are used as user code method return types or parameter types. What that means for end users, is that adding arbitrary Spring libraries will not have any effect. Moreover, Spring infrastructure classes (like `org.springframework.beans.factory.config.BeanPostProcessor` , `org.springframework.context.ApplicationContext` for example) will not be executed. Regarding the dependency injection in particular, Quarkus uses a Dependency Injection mechanism (called ArC) based on the [Jakarta Contexts and Dependency Injection 5.0](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html) specification. If you want to learn more about it, we recommend you to read the [Quarkus introduction to CDI](/guides/cdi/index.md) and the [CDI reference guide](/guides/cdi-reference/index.md#arc-configuration-reference) The various Spring Boot test features are not supported by Quarkus. For testing purposes, please, check the [Quarkus testing guide](/guides/getting-started-testing/index.md).
 
 Some known limitations:
 

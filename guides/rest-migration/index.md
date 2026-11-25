@@ -61,7 +61,7 @@ RESTEasy Classic supports determining providers at build time using Java's Servi
 HTTP Multipart support in Quarkus REST does **not** reuse the same types or annotations as RESTEasy Classic and thus users are encouraged to read [this](/guides/rest/index.md#multipart) part of the reference documentation.
 
 > [!NOTE]
-> Users migrating multipart resources to Quarkus REST should be aware of the configuration parameter `quarkus.http.limits.max-form-attribute-size`, as this poses an upper limit to the size of each part. Any request with a part size exceeding this configuration value will result in HTTP status code 413.
+> Users migrating multipart resources to Quarkus REST should be aware of the configuration parameter `quarkus.http.limits.max-form-attribute-size`, as this poses an upper limit to the size of each non-file part. File parts are bounded by `quarkus.http.limits.max-body-size` and, when set, by `quarkus.http.limits.max-multipart-file-size`. Any request with a part size exceeding these configuration values will result in HTTP status code 413.
 
 ### Default media types
 

@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -49,7 +49,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=microprofile-fault-tolerance-quickstart \
     -Dextensions='smallrye-fault-tolerance,rest-jackson' \
@@ -593,7 +593,7 @@ All that is needed to enable the fault tolerance features in Quarkus is:
 
 ## Additional resources
 
-SmallRye Fault Tolerance has more features than shown here. Please check the [SmallRye Fault Tolerance documentation](https://smallrye.io/docs/smallrye-fault-tolerance/6.11.4/index.html) to learn about them.
+SmallRye Fault Tolerance has more features than shown here. Please check the [SmallRye Fault Tolerance documentation](https://smallrye.io/docs/smallrye-fault-tolerance/7.1.1/index.html) to learn about them.
 
 In Quarkus, you can use the SmallRye Fault Tolerance optional features out of the box.
 
@@ -615,7 +615,7 @@ Non-compatible mode is enabled by default. This means that methods that return `
 > quarkus.fault-tolerance.mp-compatibility=true
 > ```
 
-The [programmatic API](https://smallrye.io/docs/smallrye-fault-tolerance/6.11.4/reference/programmatic-api.html) is present and integrated with the declarative, annotation-based API. You can use the `Guard`, `TypedGuard` and `@ApplyGuard` APIs out of the box.
+The [programmatic API](https://smallrye.io/docs/smallrye-fault-tolerance/7.1.1/reference/programmatic-api.html) is present and integrated with the declarative, annotation-based API. You can use the `Guard`, `TypedGuard` and `@ApplyGuard` APIs out of the box.
 
 Support for Kotlin is present (assuming you use the Quarkus extension for Kotlin), so you can guard your `suspend` functions with fault tolerance annotations.
 

@@ -17,6 +17,7 @@ Currently, the `Credentials Provider` interface is implemented by the `vault` ex
 - `oidc`
 - `oidc-client`
 - `messaging-rabbitmq`
+- `mailer`
 
 All extensions that rely on username/password authentication also allow setting configuration properties in the `application.properties` as an alternative. But the `Credentials Provider` is the only option if credentials are generated (e.g. `Vault Dynamic DB Credentials`) or if a custom credentials provider is required.
 

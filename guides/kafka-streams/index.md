@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -80,7 +80,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=kafka-streams-quickstart-producer \
     -Dextensions='kafka' \
@@ -265,7 +265,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=kafka-streams-quickstart-aggregator \
     -Dextensions='kafka-streams,rest-jackson' \
@@ -1164,7 +1164,14 @@ So as you can see, the status is `DOWN` as soon as one of the `quarkus.kafka-str
 
 If no topics are available, the `available_topics` key will not be present in the `data` field of the `Kafka Streams topics health check`. As well as if no topics are missing, the `missing_topics` key will not be present in the `data` field of the `Kafka Streams topics health check`.
 
-You can of course disable the health check of the `quarkus-kafka-streams` extension by setting the `quarkus.kafka-streams.health.enabled` property to `false` in your `application.properties`.
+If the application declares no `Topology`, Kafka Streams is not started and both checks report `UP`, the state check with `"state": "NOT_STARTED"`.
+
+You can of course disable the health check of the `quarkus-kafka-streams` extension by setting the `quarkus.kafka-streams.health.enabled` property to `false` in your `application.properties`. This property is fixed at build time. To turn the checks off at runtime, for example for one deployment of an image that is shared by several, use the generic SmallRye Health switch with the class names of the checks:
+
+```properties
+quarkus.smallrye-health.check."io.quarkus.kafka.streams.runtime.health.KafkaStreamsStateHealthCheck".enabled=false
+quarkus.smallrye-health.check."io.quarkus.kafka.streams.runtime.health.KafkaStreamsTopicsHealthCheck".enabled=false
+```
 
 Obviously you can create your liveness and readiness probes based on the respective endpoints `/q/health/live` and `/q/health/ready`.
 

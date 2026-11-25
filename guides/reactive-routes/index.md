@@ -624,6 +624,7 @@ public class MyFilters {
 1. The `RouteFilter#value()` defines the priority used to sort the filters - filters with higher priority are called first.
 2. The filter is likely required to call the `next()` method to continue the chain.
 
+<a id="http-compression"></a>
 ## HTTP Compression
 
 The body of an HTTP response is not compressed by default. You can enable the HTTP compression support by means of `quarkus.http.enable-compression=true`.
@@ -643,6 +644,11 @@ The response body is never compressed if:
 
 > [!NOTE]
 > If the client does not support HTTP compression then the response body is not compressed.
+
+You can also set a minimum response body size (in bytes) for compression using `quarkus.http.compression-content-size-threshold`, control the compression level with `quarkus.http.compression-level`, and enable Brotli by adding the `com.aayushatharva.brotli4j:brotli4j` dependency and `br` to `quarkus.http.compressors`.
+
+> [!TIP]
+> See the [HTTP reference guide](/guides/http-reference/index.md#http-compression) for the full list of compression configuration options including minimum response size, compression level, Brotli, and request decompression.
 
 ## Adding OpenAPI and Swagger UI
 

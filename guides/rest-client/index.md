@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -43,7 +43,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-client-quickstart \
     -Dextensions='rest-jackson,rest-client-jackson' \
@@ -59,10 +59,10 @@ For Windows users:
 
 This command generates the Maven project with a REST endpoint and imports:
 
-- the `rest-jackson` extension for the REST server support. Use `rest` instead if you do not wish to use Jackson;
-- the `rest-client-jackson` extension for the REST client support. Use `rest-client` instead if you do not wish to use Jackson
+- the `quarkus-rest-jackson` extension for the REST server support. Use `quarkus-rest-jsonb` if you prefer JSON-B, or `quarkus-rest` if you do not need JSON support;
+- the `quarkus-rest-client-jackson` extension for the REST client support. Use `quarkus-rest-client-jsonb` if you prefer JSON-B, or `quarkus-rest-client` if you do not need JSON support.
 
-If you already have your Quarkus project configured, you can add the `rest-client-jackson` extension to your project by running the following command in your project base directory:
+If you already have your Quarkus project configured, you can add the `quarkus-rest-client-jackson` extension to your project by running the following command in your project base directory:
 
 **CLI**
 
@@ -169,11 +169,13 @@ package org.acme.rest.client;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.jboss.resteasy.reactive.RestQuery;
+import org.jboss.resteasy.reactive.Separator;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MultivaluedMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Optional;
@@ -197,12 +199,16 @@ public interface ExtensionsService {
     @GET
     Set<Extension> getByFilters(@RestQuery MultivaluedMap<String, String> filters); <3>
 
+    @GET
+    Set<Extension> getByNamesDefiningSeparator(@Separator(",") @RestQuery List<String> names); <4>
+
 }
 ```
 
 1. @RestQuery will include parameter with key `name`
 2. Each `Map` entry represents exactly one query parameter
 3. `MultivaluedMap` allows you to send array values
+4. @Separator lets you specify a custom delimiter between the values of a collection-valued parameter
 
 #### Using @ClientQueryParam
 
@@ -251,12 +257,14 @@ package org.acme.rest.client;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.jboss.resteasy.reactive.RestForm;
+import org.jboss.resteasy.reactive.Separator;
 
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.core.MultivaluedMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -280,8 +288,16 @@ public interface ExtensionsService {
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     Set<Extension> postFilters(@RestForm MultivaluedMap<String, String> filters);
 
+    @POST
+    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    Set<Extension> postNames(@RestForm @Separator(",") List<String> names); <1>
+
 }
 ```
+
+1. Just like for query parameters, `@Separator` lets you specify a custom delimiter between the values of a collection-valued form parameter. In this example, the request body will be `names=first,second` instead of `names=first&names=second`.
+
+By default, multiple values of the same form parameter are sent as repeated `name=value` pairs. This can be changed for all the form parameters of a client using the `quarkus.rest-client.form-param-style` configuration property (or `quarkus.rest-client."config-key".form-param-style` for a specific client).
 
 #### Using @ClientFormParam
 
@@ -397,19 +413,51 @@ public interface ExtensionsService {
 }
 ```
 
-When the `url` parameter is non-null, it will override the base URL that is configured for the client (the default base URL configuration is still mandatory).
+When the `url` parameter is non-null, it will override the base URL that is configured for the client. A CDI client whose interface declares an `@Url` parameter can be used without a configured base URL; each call then has to pass a non-null URL, and a call that does not (a `null` argument, or a method without an `@Url` parameter) fails with the usual "Unable to determine the proper baseUrl/baseUri" error. A client built programmatically with `RestClientBuilder` still requires a base URL, as mandated by the MicroProfile REST Client specification.
 
 ### Sending large payloads
 
 The REST Client is capable of sending arbitrarily large HTTP bodies without buffering the contents in memory, if one of the following types is used:
 
 - `InputStream`
-- `Multi<io.vertx.mutiny.core.buffer.Buffer>`
+- `Multi<byte[]>`
+- `Multi<io.vertx.core.buffer.Buffer>`
+
+The `Multi` variants are consumed lazily, so a large body can be streamed from another source without buffering it in memory. For example, a `Multi<byte[]>` returned by another REST Client method can be passed directly as the request body.
 
 Furthermore, the client can also send arbitrarily large files if one of the following types is used:
 
 - `File`
 - `Path`
+
+### Receiving large payloads
+
+Symmetrically, the REST Client can receive arbitrarily large HTTP bodies without buffering the contents in memory, if the method returns one of the following types:
+
+- `InputStream`, read on a worker thread
+- `Multi<byte[]>`, each item being a chunk of the body as it is received
+- `Multi` of any type when the response is `application/x-ndjson` or `application/stream+json`, each item being one line of the body
+
+```java
+package org.acme.rest.client;
+
+import io.smallrye.mutiny.Multi;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@Path("/files")
+@RegisterRestClient
+public interface FilesService {
+
+    @GET
+    @Path("/large")
+    Multi<byte[]> download();
+}
+```
+
+The body is read according to the demand of the subscriber of the `Multi`: a subscriber that consumes the items slowly, for example by writing them to disk one at a time, slows down the reading of the response instead of causing its remaining content to accumulate in memory.
 
 ### Getting other response properties
 
@@ -566,6 +614,20 @@ quarkus.rest-client.alpn=true
 quarkus.rest-client.extensions-api.alpn=true
 ```
 
+<a id="http3"></a>
+### HTTP/3 Support
+
+The REST Client can connect to HTTP/3 servers when the `quarkus-http3` extension is on the classpath. HTTP/3 is disabled by default. To enable it:
+
+```properties
+// for all REST Clients:
+quarkus.rest-client.http3=true
+// or for a single REST Client:
+quarkus.rest-client.my-client.http3=true
+```
+
+The target server must support HTTP/3 and the connection must use TLS. See the [HTTP/3 reference guide](/guides/http3-reference/index.md) for server-side setup and additional details.
+
 ## Programmatic client creation with QuarkusRestClientBuilder
 
 Instead of annotating the client with `@RegisterRestClient`, and injecting a client with `@RestClient`, you can also create REST Client programmatically. You do that with the `QuarkusRestClientBuilder`.
@@ -717,6 +779,30 @@ public class ExtensionsResource {
 ```
 
 1. the client will use the registered HTTP Client options over the HTTP Client options provided via CDI if any.
+
+<a id="request-options"></a>
+## Options for a Single Request
+
+When configuring a REST Client with the Quarkus configuration options, the settings apply to all requests made by the client. In cases where some requests need to use different settings, `org.jboss.resteasy.reactive.client.api.ClientRequestOptions` can be used as method parameter.
+
+```java
+@Path("/reports")
+@RegisterRestClient(configKey = "reports-api")
+public interface ReportsService {
+
+    @GET
+    @Path("/{id}")
+    Report get(@PathParam("id") long id, ClientRequestOptions options); <1>
+}
+```
+
+1. The parameter is not sent with the request. Passing `null` keeps the client configuration.
+
+```java
+Report report = reportsService.get(id, ClientRequestOptions.builder()
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build());
+```
 
 <a id="redirection"></a>
 ## Redirection
@@ -1818,10 +1904,10 @@ An example configuration could be:
 
 ```properties
 # global configuration is used for all clients
-quarkus.rest-client.enable-compression=true
+quarkus.rest-client.enable-response-decompression=true
 
 # per-client configuration overrides the global settings for a specific client
-quarkus.rest-client.my-client.enable-compression=true
+quarkus.rest-client.my-client.enable-response-decompression=true
 ```
 
 The REST Client falls back onto the Quarkus wide `quarkus.http.enable-compression` configuration property (which defaults to `false`) if no REST Client specific property is set.
@@ -1908,6 +1994,21 @@ The port the proxy is listening can be found in startup logs. An example entry i
 ```
 Started HTTP proxy server on http://localhost:38227 for REST Client 'org.acme.SomeClient'
 ```
+
+## Unix domain socket
+
+The REST client can connect to a server listening on a Unix domain socket instead of using a network connection. This is useful when communicating with services co-located on the same host (for example, a local daemon or sidecar) without going through the network stack.
+
+To use a domain socket, set the `domain-socket` property to the path of the socket file:
+
+```properties
+quarkus.rest-client.my-client.domain-socket=/var/run/my-service.sock
+```
+
+The `url` (or `uri`) property is optional in this case, and defaults to `http://localhost`. If you set it, the connection still goes through the socket; the URL only provides the request path prefix and the HTTP `Host` header.
+
+> [!NOTE]
+> Unix domain sockets are not available on Windows.
 
 ## Package and run the application
 
@@ -2290,7 +2391,7 @@ The REST Client uses the Vert.x HTTP connection pool with a default size of `50`
 | [lock] <a id="quarkus-rest-client-config_quarkus-rest-client-scope"></a> [`quarkus.rest-client.scope`](#quarkus-rest-client-config_quarkus-rest-client-scope) config_property_copy_button:+++quarkus.rest-client.scope+++[]<br><br>The CDI scope to use for injection. This property can contain either a fully qualified class name of a CDI scope annotation (such as "jakarta.enterprise.context.ApplicationScoped") or its simple name (such as "ApplicationScoped"). By default, this is not set which means the interface is not registered as a bean unless it is annotated with `RegisterRestClient`. If an interface is not annotated with `RegisterRestClient` and this property is set, then Quarkus will make the interface a bean of the configured scope.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_SCOPE+++[] | string |  |
 | [lock] <a id="quarkus-rest-client-config_quarkus-rest-client-removes-trailing-slash"></a> [`quarkus.rest-client.removes-trailing-slash`](#quarkus-rest-client-config_quarkus-rest-client-removes-trailing-slash) config_property_copy_button:+++quarkus.rest-client.removes-trailing-slash+++[]<br><br>If true, the extension will automatically remove the trailing slash in the paths if any. This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_REMOVES_TRAILING_SLASH+++[] | boolean | `true` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-multipart-post-encoder-mode"></a> [`quarkus.rest-client.multipart-post-encoder-mode`](#quarkus-rest-client-config_quarkus-rest-client-multipart-post-encoder-mode) config_property_copy_button:+++quarkus.rest-client.multipart-post-encoder-mode+++[]<br><br>Mode in which the form data are encoded. Possible values are `HTML5`, `RFC1738` and `RFC3986`. The modes are described in the [Netty documentation](https://netty.io/4.1/api/io/netty/handler/codec/http/multipart/HttpPostRequestEncoder.EncoderMode.html)<br><br>By default, Rest Client Reactive uses RFC1738.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_MULTIPART_POST_ENCODER_MODE+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-configuration-name"></a> [`quarkus.rest-client.proxy-configuration-name`](#quarkus-rest-client-config_quarkus-rest-client-proxy-configuration-name) config_property_copy_button:+++quarkus.rest-client.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use; ignored if `quarkus.rest-client.proxy-address` is set.<br><br>If not set and the default proxy configuration is configured (`quarkus.proxy.*`) then that will be used. If the proxy configuration name is set, the configuration from `quarkus.proxy.<name>.*` will be used. If the proxy configuration name is set, but no proxy configuration is found with that name, then an error will be thrown at runtime.<br><br>Can be overwritten by client-specific settings.<br><br>Use the value `none` to disable using the default configuration defined via `quarkus.proxy.*`.<br><br>Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency) does not support this property.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_CONFIGURATION_NAME+++[] | string |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-configuration-name"></a> [`quarkus.rest-client.proxy-configuration-name`](#quarkus-rest-client-config_quarkus-rest-client-proxy-configuration-name) config_property_copy_button:+++quarkus.rest-client.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If not set and the default proxy configuration is configured (`quarkus.proxy.*`) then that will be used. If the proxy configuration name is set, the configuration from `quarkus.proxy.<name>.*` will be used. If the proxy configuration name is set, but no proxy configuration is found with that name, then an error will be thrown at runtime.<br><br>Can be overwritten by client-specific settings.<br><br>Use the value `none` to disable using the default configuration defined via `quarkus.proxy.*`.<br><br>Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency) does not support this property.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-connect-timeout"></a> [`quarkus.rest-client.connect-timeout`](#quarkus-rest-client-config_quarkus-rest-client-connect-timeout) config_property_copy_button:+++quarkus.rest-client.connect-timeout+++[]<br><br>A timeout in milliseconds that REST clients should wait to connect to the remote endpoint.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_CONNECT_TIMEOUT+++[] | long | `15000` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-read-timeout"></a> [`quarkus.rest-client.read-timeout`](#quarkus-rest-client-config_quarkus-rest-client-read-timeout) config_property_copy_button:+++quarkus.rest-client.read-timeout+++[]<br><br>A timeout in milliseconds that REST clients should wait for a response from the remote endpoint.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_READ_TIMEOUT+++[] | long | `30000` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-disable-contextual-error-messages"></a> [`quarkus.rest-client.disable-contextual-error-messages`](#quarkus-rest-client-config_quarkus-rest-client-disable-contextual-error-messages) config_property_copy_button:+++quarkus.rest-client.disable-contextual-error-messages+++[]<br><br>If true, the REST clients will not provide additional contextual information (like REST client class and method names) when exception occurs during a client invocation.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_DISABLE_CONTEXTUAL_ERROR_MESSAGES+++[] | boolean | `false` |
@@ -2302,10 +2403,9 @@ The REST Client uses the Vert.x HTTP connection pool with a default size of `50`
 | <a id="quarkus-rest-client-config_quarkus-rest-client-keep-alive-enabled"></a> [`quarkus.rest-client.keep-alive-enabled`](#quarkus-rest-client-config_quarkus-rest-client-keep-alive-enabled) config_property_copy_button:+++quarkus.rest-client.keep-alive-enabled+++[]<br><br>If set to false disables the keep alive completely.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_KEEP_ALIVE_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-max-redirects"></a> [`quarkus.rest-client.max-redirects`](#quarkus-rest-client-config_quarkus-rest-client-max-redirects) config_property_copy_button:+++quarkus.rest-client.max-redirects+++[]<br><br>The maximum number of redirection a request can follow.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_MAX_REDIRECTS+++[] | int |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-follow-redirects"></a> [`quarkus.rest-client.follow-redirects`](#quarkus-rest-client-config_quarkus-rest-client-follow-redirects) config_property_copy_button:+++quarkus.rest-client.follow-redirects+++[]<br><br>A boolean value used to determine whether the client should follow HTTP redirect responses.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_FOLLOW_REDIRECTS+++[] | boolean |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-same-origin-redirect-blocked-headers"></a> [`quarkus.rest-client.same-origin-redirect-blocked-headers`](#quarkus-rest-client-config_quarkus-rest-client-same-origin-redirect-blocked-headers) config_property_copy_button:+++quarkus.rest-client.same-origin-redirect-blocked-headers+++[]<br><br>The set of HTTP headers that are removed on same-origin redirect responses.<br><br>When not set, the Vert.x default is used.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_SAME_ORIGIN_REDIRECT_BLOCKED_HEADERS+++[] | list of string | `cookie`, `content-length` |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-cross-origin-redirect-blocked-headers"></a> [`quarkus.rest-client.cross-origin-redirect-blocked-headers`](#quarkus-rest-client-config_quarkus-rest-client-cross-origin-redirect-blocked-headers) config_property_copy_button:+++quarkus.rest-client.cross-origin-redirect-blocked-headers+++[]<br><br>The set of HTTP headers that are removed on cross-origin redirect responses.<br><br>When not set, the Vert.x default is used.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_CROSS_ORIGIN_REDIRECT_BLOCKED_HEADERS+++[] | list of string | `authorization`, `cookie`, `proxy-authorization`, `content-length` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-providers"></a> [`quarkus.rest-client.providers`](#quarkus-rest-client-config_quarkus-rest-client-providers) config_property_copy_button:+++quarkus.rest-client.providers+++[]<br><br>Fully-qualified provider classnames to include in the client. The equivalent of the `@RegisterProvider` annotation.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROVIDERS+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-query-param-style"></a> [`quarkus.rest-client.query-param-style`](#quarkus-rest-client-config_quarkus-rest-client-query-param-style) config_property_copy_button:+++quarkus.rest-client.query-param-style+++[]<br><br>An enumerated type string value with possible values of "MULTI_PAIRS" (default), "COMMA_SEPARATED", or "ARRAY_PAIRS" that specifies the format in which multiple values for the same query parameter is used.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_QUERY_PARAM_STYLE+++[] | `multi-pairs`, `comma-separated`, `array-pairs` |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-form-param-style"></a> [`quarkus.rest-client.form-param-style`](#quarkus-rest-client-config_quarkus-rest-client-form-param-style) config_property_copy_button:+++quarkus.rest-client.form-param-style+++[]<br><br>An enumerated type string value with possible values of "MULTI_PAIRS" (default), "COMMA_SEPARATED", or "ARRAY_PAIRS" that specifies the format in which multiple values for the same `application/x-www-form-urlencoded` form parameter is used.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_FORM_PARAM_STYLE+++[] | `multi-pairs`, `comma-separated`, `array-pairs` |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-verify-host"></a> [`quarkus.rest-client.verify-host`](#quarkus-rest-client-config_quarkus-rest-client-verify-host) config_property_copy_button:+++quarkus.rest-client.verify-host+++[]<br><br>Set whether hostname verification is enabled. Default is enabled. This setting should not be disabled in production as it makes the client vulnerable to MITM attacks.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_VERIFY_HOST+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-trust-store"></a> [`quarkus.rest-client.trust-store`](#quarkus-rest-client-config_quarkus-rest-client-trust-store) config_property_copy_button:+++quarkus.rest-client.trust-store+++[]<br><br>The trust store location. Can point to either a classpath resource or a file.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_TRUST_STORE+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-trust-store-password"></a> [`quarkus.rest-client.trust-store-password`](#quarkus-rest-client-config_quarkus-rest-client-trust-store-password) config_property_copy_button:+++quarkus.rest-client.trust-store-password+++[]<br><br>The trust store password.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_TRUST_STORE_PASSWORD+++[] | string |  |
@@ -2315,9 +2415,10 @@ The REST Client uses the Vert.x HTTP connection pool with a default size of `50`
 | <a id="quarkus-rest-client-config_quarkus-rest-client-key-store-type"></a> [`quarkus.rest-client.key-store-type`](#quarkus-rest-client-config_quarkus-rest-client-key-store-type) config_property_copy_button:+++quarkus.rest-client.key-store-type+++[]<br><br>The type of the key store. Defaults to "JKS".<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_KEY_STORE_TYPE+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-tls-configuration-name"></a> [`quarkus.rest-client.tls-configuration-name`](#quarkus-rest-client-config_quarkus-rest-client-tls-configuration-name) config_property_copy_button:+++quarkus.rest-client.tls-configuration-name+++[]<br><br>The name of the TLS configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.tls.<name>.*` If a name is configured, but no TLS configuration is found with that name then an error will be thrown. The default TLS configuration will be ignored.<br><br>If no named TLS configuration is set, then the key-store, trust-store, etc. properties will be used.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_TLS_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-http2"></a> [`quarkus.rest-client.http2`](#quarkus-rest-client-config_quarkus-rest-client-http2) config_property_copy_button:+++quarkus.rest-client.http2+++[]<br><br>If this is true then HTTP/2 will be enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_HTTP2+++[] | boolean | `false` |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-http3"></a> [`quarkus.rest-client.http3`](#quarkus-rest-client-config_quarkus-rest-client-http3) config_property_copy_button:+++quarkus.rest-client.http3+++[]<br><br>If this is true then HTTP/3 will be enabled. The target server must support HTTP/3 and the connection must use TLS.<br><br>This property is not applicable to the RESTEasy Classic Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_HTTP3+++[] | boolean | `false` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-http2-upgrade-max-content-length"></a> [`quarkus.rest-client.http2-upgrade-max-content-length`](#quarkus-rest-client-config_quarkus-rest-client-http2-upgrade-max-content-length) config_property_copy_button:+++quarkus.rest-client.http2-upgrade-max-content-length+++[]<br><br>Configures the HTTP/2 upgrade maximum length of the aggregated content in bytes.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_HTTP2_UPGRADE_MAX_CONTENT_LENGTH+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `64K` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-max-chunk-size"></a> [`quarkus.rest-client.max-chunk-size`](#quarkus-rest-client-config_quarkus-rest-client-max-chunk-size) config_property_copy_button:+++quarkus.rest-client.max-chunk-size+++[]<br><br>Configures two different things:<br><br>\* The max HTTP chunk size, up to `Integer.MAX_VALUE` bytes. \* The size of the chunk to be read when an `InputStream` is being used as an input<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_MAX_CHUNK_SIZE+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `8k` |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-enable-compression"></a> [`quarkus.rest-client.enable-compression`](#quarkus-rest-client-config_quarkus-rest-client-enable-compression) config_property_copy_button:+++quarkus.rest-client.enable-compression+++[]<br><br>Supports receiving compressed messages using GZIP. When this feature is enabled and a server returns a response that includes the header `Content-Encoding: gzip`, REST Client will automatically decode the content and proceed with the message handling.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_ENABLE_COMPRESSION+++[] | boolean |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-enable-response-decompression"></a> [`quarkus.rest-client.enable-response-decompression`](#quarkus-rest-client-config_quarkus-rest-client-enable-response-decompression) config_property_copy_button:+++quarkus.rest-client.enable-response-decompression+++[]<br><br>Supports receiving compressed messages using GZIP. When this feature is enabled and a server returns a response that includes the header `Content-Encoding: gzip`, REST Client will automatically decode the content and proceed with the message handling.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_ENABLE_RESPONSE_DECOMPRESSION+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-alpn"></a> [`quarkus.rest-client.alpn`](#quarkus-rest-client-config_quarkus-rest-client-alpn) config_property_copy_button:+++quarkus.rest-client.alpn+++[]<br><br>If the Application-Layer Protocol Negotiation is enabled, the client will negotiate which protocol to use over the protocols exposed by the server. By default, it will try to use HTTP/2 first and if it's not enabled, it will use HTTP/1.1. When the property `http2` is enabled, this flag will be automatically enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_ALPN+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-capture-stacktrace"></a> [`quarkus.rest-client.capture-stacktrace`](#quarkus-rest-client-config_quarkus-rest-client-capture-stacktrace) config_property_copy_button:+++quarkus.rest-client.capture-stacktrace+++[]<br><br>If `true`, the stacktrace of the invocation of the REST Client method is captured. This stacktrace will be used if the invocation throws an exception<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_CAPTURE_STACKTRACE+++[] | boolean | `false` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-logging-scope"></a> [`quarkus.rest-client.logging.scope`](#quarkus-rest-client-config_quarkus-rest-client-logging-scope) config_property_copy_button:+++quarkus.rest-client.logging.scope+++[]<br><br>Scope of logging for the client.<br><br>> [!WARNING]<br>> beware of logging sensitive data The possible values are:<br><br>\<br> \* `request-response` - enables logging request and responses, including redirect responses \* `all` - enables logging requests and responses and lower-level logging \* `none` - no additional logging<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_LOGGING_SCOPE+++[] | string |  |
@@ -2335,8 +2436,9 @@ The REST Client uses the Vert.x HTTP connection pool with a default size of `50`
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-read-timeout"></a> [`quarkus.rest-client."client".read-timeout`](#quarkus-rest-client-config_quarkus-rest-client-client-read-timeout) config_property_copy_button:+++quarkus.rest-client."client".read-timeout+++[]<br><br>Timeout specified in milliseconds to wait for a response from the remote endpoint.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__READ_TIMEOUT+++[] | long |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-follow-redirects"></a> [`quarkus.rest-client."client".follow-redirects`](#quarkus-rest-client-config_quarkus-rest-client-client-follow-redirects) config_property_copy_button:+++quarkus.rest-client."client".follow-redirects+++[]<br><br>A boolean value used to determine whether the client should follow HTTP redirect responses.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__FOLLOW_REDIRECTS+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-multipart-post-encoder-mode"></a> [`quarkus.rest-client."client".multipart-post-encoder-mode`](#quarkus-rest-client-config_quarkus-rest-client-client-multipart-post-encoder-mode) config_property_copy_button:+++quarkus.rest-client."client".multipart-post-encoder-mode+++[]<br><br>Mode in which the form data are encoded. Possible values are `HTML5`, `RFC1738` and `RFC3986`. The modes are described in the [Netty documentation](https://netty.io/4.1/api/io/netty/handler/codec/http/multipart/HttpPostRequestEncoder.EncoderMode.html)<br><br>By default, Rest Client Reactive uses RFC1738.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__MULTIPART_POST_ENCODER_MODE+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-configuration-name"></a> [`quarkus.rest-client."client".proxy-configuration-name`](#quarkus-rest-client-config_quarkus-rest-client-client-proxy-configuration-name) config_property_copy_button:+++quarkus.rest-client."client".proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use; ignored if `quarkus.rest-client."client".proxy-address` is set.<br><br>If not set and `quarkus.rest-client.proxy-configuration-name` or the default proxy configuration (`quarkus.proxy.*`) is set, then the first valid of them will get effective. If the proxy configuration name is set, the configuration from `quarkus.proxy.<name>.*` will be used. If the proxy configuration name is set, but no proxy configuration is found with that name, then an error will be thrown at runtime.<br><br>Use the value `none` to disable using the default configuration defined via `quarkus.rest-client.proxy-configuration-name` or `quarkus.proxy.*`.<br><br>Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency) does not support this property.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_CONFIGURATION_NAME+++[] | string |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-configuration-name"></a> [`quarkus.rest-client."client".proxy-configuration-name`](#quarkus-rest-client-config_quarkus-rest-client-client-proxy-configuration-name) config_property_copy_button:+++quarkus.rest-client."client".proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If not set and `quarkus.rest-client.proxy-configuration-name` or the default proxy configuration (`quarkus.proxy.*`) is set, then the first valid of them will get effective. If the proxy configuration name is set, the configuration from `quarkus.proxy.<name>.*` will be used. If the proxy configuration name is set, but no proxy configuration is found with that name, then an error will be thrown at runtime.<br><br>Use the value `none` to disable using the default configuration defined via `quarkus.rest-client.proxy-configuration-name` or `quarkus.proxy.*`.<br><br>Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency) does not support this property.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-query-param-style"></a> [`quarkus.rest-client."client".query-param-style`](#quarkus-rest-client-config_quarkus-rest-client-client-query-param-style) config_property_copy_button:+++quarkus.rest-client."client".query-param-style+++[]<br><br>An enumerated type string value with possible values of "MULTI_PAIRS" (default), "COMMA_SEPARATED", or "ARRAY_PAIRS" that specifies the format in which multiple values for the same query parameter is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__QUERY_PARAM_STYLE+++[] | `multi-pairs`, `comma-separated`, `array-pairs` |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-client-form-param-style"></a> [`quarkus.rest-client."client".form-param-style`](#quarkus-rest-client-config_quarkus-rest-client-client-form-param-style) config_property_copy_button:+++quarkus.rest-client."client".form-param-style+++[]<br><br>An enumerated type string value with possible values of "MULTI_PAIRS" (default), "COMMA_SEPARATED", or "ARRAY_PAIRS" that specifies the format in which multiple values for the same `application/x-www-form-urlencoded` form parameter is used.<br><br>Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency) does not support this property.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__FORM_PARAM_STYLE+++[] | `multi-pairs`, `comma-separated`, `array-pairs` |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-verify-host"></a> [`quarkus.rest-client."client".verify-host`](#quarkus-rest-client-config_quarkus-rest-client-client-verify-host) config_property_copy_button:+++quarkus.rest-client."client".verify-host+++[]<br><br>Set whether hostname verification is enabled. Default is enabled. This setting should not be disabled in production as it makes the client vulnerable to MITM attacks.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__VERIFY_HOST+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-trust-store"></a> [`quarkus.rest-client."client".trust-store`](#quarkus-rest-client-config_quarkus-rest-client-client-trust-store) config_property_copy_button:+++quarkus.rest-client."client".trust-store+++[]<br><br>The trust store location. Can point to either a classpath resource or a file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__TRUST_STORE+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-trust-store-password"></a> [`quarkus.rest-client."client".trust-store-password`](#quarkus-rest-client-config_quarkus-rest-client-client-trust-store-password) config_property_copy_button:+++quarkus.rest-client."client".trust-store-password+++[]<br><br>The trust store password.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__TRUST_STORE_PASSWORD+++[] | string |  |
@@ -2350,34 +2452,22 @@ The REST Client uses the Vert.x HTTP connection pool with a default size of `50`
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-connection-pool-size"></a> [`quarkus.rest-client."client".connection-pool-size`](#quarkus-rest-client-config_quarkus-rest-client-client-connection-pool-size) config_property_copy_button:+++quarkus.rest-client."client".connection-pool-size+++[]<br><br>The size of the connection pool for this client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__CONNECTION_POOL_SIZE+++[] | int | `50` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-keep-alive-enabled"></a> [`quarkus.rest-client."client".keep-alive-enabled`](#quarkus-rest-client-config_quarkus-rest-client-client-keep-alive-enabled) config_property_copy_button:+++quarkus.rest-client."client".keep-alive-enabled+++[]<br><br>If set to false disables the keep alive completely.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__KEEP_ALIVE_ENABLED+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-max-redirects"></a> [`quarkus.rest-client."client".max-redirects`](#quarkus-rest-client-config_quarkus-rest-client-client-max-redirects) config_property_copy_button:+++quarkus.rest-client."client".max-redirects+++[]<br><br>The maximum number of redirection a request can follow.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__MAX_REDIRECTS+++[] | int |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-same-origin-redirect-blocked-headers"></a> [`quarkus.rest-client."client".same-origin-redirect-blocked-headers`](#quarkus-rest-client-config_quarkus-rest-client-client-same-origin-redirect-blocked-headers) config_property_copy_button:+++quarkus.rest-client."client".same-origin-redirect-blocked-headers+++[]<br><br>The set of HTTP headers that are removed on same-origin redirect responses.<br><br>When not set, the global setting or the Vert.x default is used.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__SAME_ORIGIN_REDIRECT_BLOCKED_HEADERS+++[] | list of string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-cross-origin-redirect-blocked-headers"></a> [`quarkus.rest-client."client".cross-origin-redirect-blocked-headers`](#quarkus-rest-client-config_quarkus-rest-client-client-cross-origin-redirect-blocked-headers) config_property_copy_button:+++quarkus.rest-client."client".cross-origin-redirect-blocked-headers+++[]<br><br>The set of HTTP headers that are removed on cross-origin redirect responses.<br><br>When not set, the global setting or the Vert.x default is used.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__CROSS_ORIGIN_REDIRECT_BLOCKED_HEADERS+++[] | list of string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-headers-header-name"></a> [`quarkus.rest-client."client".headers."header-name"`](#quarkus-rest-client-config_quarkus-rest-client-client-headers-header-name) config_property_copy_button:+++quarkus.rest-client."client".headers."header-name"+++[]<br><br>The HTTP headers that should be applied to all requests of the rest client.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__HEADERS__HEADER_NAME_+++[] | Map\<String,String> |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-shared"></a> [`quarkus.rest-client."client".shared`](#quarkus-rest-client-config_quarkus-rest-client-client-shared) config_property_copy_button:+++quarkus.rest-client."client".shared+++[]<br><br>Set to true to share the HTTP client between REST clients. There can be multiple shared clients distinguished by *name*, when no specific name is set, the name `__vertx.DEFAULT` is used.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__SHARED+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-name"></a> [`quarkus.rest-client."client".name`](#quarkus-rest-client-config_quarkus-rest-client-client-name) config_property_copy_button:+++quarkus.rest-client."client".name+++[]<br><br>Set the HTTP client name, used when the client is shared, otherwise ignored.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__NAME+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-user-agent"></a> [`quarkus.rest-client."client".user-agent`](#quarkus-rest-client-config_quarkus-rest-client-client-user-agent) config_property_copy_button:+++quarkus.rest-client."client".user-agent+++[]<br><br>Configure the HTTP user-agent header to use.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__USER_AGENT+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-http2"></a> [`quarkus.rest-client."client".http2`](#quarkus-rest-client-config_quarkus-rest-client-client-http2) config_property_copy_button:+++quarkus.rest-client."client".http2+++[]<br><br>If this is true then HTTP/2 will be enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__HTTP2+++[] | boolean |  |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-client-http3"></a> [`quarkus.rest-client."client".http3`](#quarkus-rest-client-config_quarkus-rest-client-client-http3) config_property_copy_button:+++quarkus.rest-client."client".http3+++[]<br><br>If this is true then HTTP/3 will be enabled. The target server must support HTTP/3 and the connection must use TLS.<br><br>This property is not applicable to the RESTEasy Classic Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__HTTP3+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-http2-upgrade-max-content-length"></a> [`quarkus.rest-client."client".http2-upgrade-max-content-length`](#quarkus-rest-client-config_quarkus-rest-client-client-http2-upgrade-max-content-length) config_property_copy_button:+++quarkus.rest-client."client".http2-upgrade-max-content-length+++[]<br><br>Configures the HTTP/2 upgrade maximum length of the aggregated content in bytes.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__HTTP2_UPGRADE_MAX_CONTENT_LENGTH+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `64K` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-max-chunk-size"></a> [`quarkus.rest-client."client".max-chunk-size`](#quarkus-rest-client-config_quarkus-rest-client-client-max-chunk-size) config_property_copy_button:+++quarkus.rest-client."client".max-chunk-size+++[]<br><br>Configures two different things:<br><br>\* The max HTTP chunk size, up to `Integer.MAX_VALUE` bytes. \* The size of the chunk to be read when an `InputStream` is being read and sent to the server<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__MAX_CHUNK_SIZE+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `8K` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-enable-response-decompression"></a> [`quarkus.rest-client."client".enable-response-decompression`](#quarkus-rest-client-config_quarkus-rest-client-client-enable-response-decompression) config_property_copy_button:+++quarkus.rest-client."client".enable-response-decompression+++[]<br><br>Supports receiving compressed messages using GZIP. When this feature is enabled and a server returns a response that includes the header `Content-Encoding: gzip`, REST Client will automatically decode the content and proceed with the message handling.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__ENABLE_RESPONSE_DECOMPRESSION+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-alpn"></a> [`quarkus.rest-client."client".alpn`](#quarkus-rest-client-config_quarkus-rest-client-client-alpn) config_property_copy_button:+++quarkus.rest-client."client".alpn+++[]<br><br>If the Application-Layer Protocol Negotiation is enabled, the client will negotiate which protocol to use over the protocols exposed by the server. By default, it will try to use HTTP/2 first and if it's not enabled, it will use HTTP/1.1. When the property `http2` is enabled, this flag will be automatically enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__ALPN+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-capture-stacktrace"></a> [`quarkus.rest-client."client".capture-stacktrace`](#quarkus-rest-client-config_quarkus-rest-client-client-capture-stacktrace) config_property_copy_button:+++quarkus.rest-client."client".capture-stacktrace+++[]<br><br>If `true`, the stacktrace of the invocation of the REST Client method is captured. This stacktrace will be used if the invocation throws an exception<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__CAPTURE_STACKTRACE+++[] | boolean |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-disable-default-mapper"></a> [`quarkus.rest-client."client".disable-default-mapper`](#quarkus-rest-client-config_quarkus-rest-client-client-disable-default-mapper) config_property_copy_button:+++quarkus.rest-client."client".disable-default-mapper+++[]<br><br>If set to `true`, then this REST Client will not the default exception mapper which always throws an exception if HTTP response code >= 400.<br><br>This property is only taken into account if the REST Client returns `jakarta.ws.rs.core.Response` or `org.jboss.resteasy.reactive.RestResponse`<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__DISABLE_DEFAULT_MAPPER+++[] | boolean | `false` |
+| <a id="quarkus-rest-client-config_quarkus-rest-client-client-domain-socket"></a> [`quarkus.rest-client."client".domain-socket`](#quarkus-rest-client-config_quarkus-rest-client-client-domain-socket) config_property_copy_button:+++quarkus.rest-client."client".domain-socket+++[]<br><br>The path to a Unix domain socket. When set, the client connects to the server using a Unix domain socket instead of a network connection. The `url` or `uri` property is optional in this case: when set, it provides the scheme, the request path prefix and the HTTP `Host` header, otherwise `http://localhost` is used.<br><br>Unix domain sockets are not available on Windows.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__DOMAIN_SOCKET+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-logging-scope"></a> [`quarkus.rest-client."client".logging.scope`](#quarkus-rest-client-config_quarkus-rest-client-client-logging-scope) config_property_copy_button:+++quarkus.rest-client."client".logging.scope+++[]<br><br>Scope of logging for the client.<br><br>> [!WARNING]<br>> beware of logging sensitive data The possible values are:<br><br>\<br> \* `request-response` - enables logging request and responses, including redirect responses \* `all` - enables logging requests and responses and lower-level logging \* `none` - no additional logging<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__LOGGING_SCOPE+++[] | string |  |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-logging-body-limit"></a> [`quarkus.rest-client."client".logging.body-limit`](#quarkus-rest-client-config_quarkus-rest-client-client-logging-body-limit) config_property_copy_button:+++quarkus.rest-client."client".logging.body-limit+++[]<br><br>How many characters of the body should be logged. Message body can be large and can easily pollute the logs.<br><br>By default, set to 100.<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__LOGGING_BODY_LIMIT+++[] | int | `100` |
 | <a id="quarkus-rest-client-config_quarkus-rest-client-client-logging-masked-headers"></a> [`quarkus.rest-client."client".logging.masked-headers`](#quarkus-rest-client-config_quarkus-rest-client-client-logging-masked-headers) config_property_copy_button:+++quarkus.rest-client."client".logging.masked-headers+++[]<br><br>Which request and response headers values to mask in logs.<br><br>The value of any matching header will be replaced with `"<hidden>"`. The header name itself remains visible. E.g. `Authorization=<hidden>`<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__LOGGING_MASKED_HEADERS+++[] | list of string | `Authorization`, `Cookie` |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-address"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-proxy-address\[`quarkus.rest-client.proxy-address`\]</mark> config_property_copy_button:+++quarkus.rest-client.proxy-address+++[]<br><br>*This property is deprecated: use `quarkus.rest-client.proxy-configuration-name` instead.*<br><br>A string value in the form of `:` that specifies the HTTP proxy server hostname (or IP address) and port for requests of clients to use.<br><br>Can be overwritten by client-specific settings.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_ADDRESS+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-user"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-proxy-user\[`quarkus.rest-client.proxy-user`\]</mark> config_property_copy_button:+++quarkus.rest-client.proxy-user+++[]<br><br>*This property is deprecated: use `quarkus.rest-client.proxy-configuration-name` instead.*<br><br>Proxy username, equivalent to the http.proxy or https.proxy JVM settings. Honored only if `quarkus.rest-client.proxy-address` is set.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_USER+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-password"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-proxy-password\[`quarkus.rest-client.proxy-password`\]</mark> config_property_copy_button:+++quarkus.rest-client.proxy-password+++[]<br><br>*This property is deprecated: use `quarkus.rest-client.proxy-configuration-name` instead.*<br><br>Proxy password, equivalent to the http.proxyPassword or https.proxyPassword JVM settings. Honored only if `quarkus.rest-client.proxy-address` is set.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_PASSWORD+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-non-proxy-hosts"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-non-proxy-hosts\[`quarkus.rest-client.non-proxy-hosts`\]</mark> config_property_copy_button:+++quarkus.rest-client.non-proxy-hosts+++[]<br><br>*This property is deprecated: use `quarkus.rest-client.proxy-configuration-name` instead.*<br><br>Hosts to access without proxy, similar to the http.nonProxyHosts or https.nonProxyHosts JVM settings. Please note that unlike the JVM settings, this property is empty by default. Honored only if `quarkus.rest-client.proxy-address` is set.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_NON_PROXY_HOSTS+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-proxy-connect-timeout"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-proxy-connect-timeout\[`quarkus.rest-client.proxy-connect-timeout`\]</mark> config_property_copy_button:+++quarkus.rest-client.proxy-connect-timeout+++[]<br><br>*This property is deprecated: use `quarkus.rest-client.proxy-configuration-name` instead.*<br><br>Proxy connection timeout. Honored only if `quarkus.rest-client.proxy-address` is set.<br><br>Can be overwritten by client-specific settings.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_PROXY_CONNECT_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `10s` |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-multipart-max-chunk-size"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-multipart-max-chunk-size\[`quarkus.rest-client.multipart.max-chunk-size`\]</mark> config_property_copy_button:+++quarkus.rest-client.multipart.max-chunk-size+++[]<br><br>*This property is deprecated: Use `quarkus.rest-client.max-chunk-size` instead.*<br><br>The max HTTP chunk size (8096 bytes by default).<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT_MULTIPART_MAX_CHUNK_SIZE+++[] | int |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-multipart-max-chunk-size"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-multipart-max-chunk-size\[`quarkus.rest-client."client".multipart.max-chunk-size`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".multipart.max-chunk-size+++[]<br><br>*This property is deprecated: Use `quarkus.rest-client.max-chunk-size` instead.*<br><br>The max HTTP chunk size (8096 bytes by default).<br><br>This property is not applicable to the Quarkus RESTEasy client (provided by the quarkus-resteasy-client dependency).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__MULTIPART_MAX_CHUNK_SIZE+++[] | int |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-address"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-proxy-address\[`quarkus.rest-client."client".proxy-address`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".proxy-address+++[]<br><br>*This property is deprecated: use `quarkus.rest-client."client".proxy-configuration-name` instead.*<br><br>A string value in the form of `:` that specifies the HTTP proxy server hostname (or IP address) and port for requests of this client to use.<br><br>Use `none` to disable proxy<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_ADDRESS+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-user"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-proxy-user\[`quarkus.rest-client."client".proxy-user`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".proxy-user+++[]<br><br>*This property is deprecated: use `quarkus.rest-client."client".proxy-configuration-name` instead.*<br><br>Proxy username. Honored only if `quarkus.rest-client."client".proxy-address` is set.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_USER+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-password"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-proxy-password\[`quarkus.rest-client."client".proxy-password`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".proxy-password+++[]<br><br>*This property is deprecated: use `quarkus.rest-client."client".proxy-configuration-name` instead.*<br><br>Proxy password. Honored only if `quarkus.rest-client."client".proxy-address` is set.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_PASSWORD+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-non-proxy-hosts"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-non-proxy-hosts\[`quarkus.rest-client."client".non-proxy-hosts`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".non-proxy-hosts+++[]<br><br>*This property is deprecated: use `quarkus.rest-client."client".proxy-configuration-name` instead.*<br><br>Hosts to access without proxy. Honored only if `quarkus.rest-client."client".proxy-address` is set.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__NON_PROXY_HOSTS+++[] | string |  |
-| <a id="quarkus-rest-client-config_quarkus-rest-client-client-proxy-connect-timeout"></a> <mark>link:#quarkus-rest-client-config_quarkus-rest-client-client-proxy-connect-timeout\[`quarkus.rest-client."client".proxy-connect-timeout`\]</mark> config_property_copy_button:+++quarkus.rest-client."client".proxy-connect-timeout+++[]<br><br>*This property is deprecated: use `quarkus.rest-client."client".proxy-configuration-name` instead.*<br><br>Proxy connection timeout. Honored only if `quarkus.rest-client."client".proxy-address` is set.<br><br>This property is not applicable to the RESTEasy Client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_CLIENT__CLIENT__PROXY_CONNECT_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client) | `10s` |
 
 <a id="memory-size-note-anchor-quarkus-rest-client-config_quarkus-rest-client"></a>
 

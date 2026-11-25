@@ -322,6 +322,9 @@ You can also consider using a JSON Web Key (JWK) or JSON Web Key Set (JWK Set) f
 
 You can also use `io.smallrye.jwt.util.KeyUtils` to generate a pair of asymmetric RSA or EC keys. These keys can be stored in `JWK`, `JWK Set`, or `PEM` format.
 
+> [!TIP]
+> The Quarkus CLI can generate PEM-encoded RSA or EC key pairs and configure `application.properties` for you: `quarkus jwt generate-key`. See [Generating keys with the Quarkus CLI](/guides/security-jwt/index.md#generating-keys-with-the-quarkus-cli) for details.
+
 ## SmallRye JWT Builder configuration
 
 SmallRye JWT supports the following properties, which can be used to customize how claims are signed or encrypted:

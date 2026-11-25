@@ -347,7 +347,7 @@ For keystore types that require custom loading logic beyond `KeyStore.getInstanc
 ```java
 import io.quarkus.tls.KeyStoreAndKeyCertOptions;
 import io.quarkus.tls.KeyStoreFactory;
-import io.quarkus.tls.OtherKeyStoreConfigurationuration;
+import io.quarkus.tls.OtherKeyStoreConfiguration;
 import io.smallrye.common.annotation.Identifier;
 import io.vertx.core.Vertx;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -376,17 +376,16 @@ quarkus.tls.key-store.other.params.config-file=/etc/pkcs11/provider.cfg
 ```
 
 ```java
-import java.io.FileInputStream;
 import java.security.KeyStore;
 import java.security.Provider;
 import java.security.Security;
 
 import io.quarkus.tls.KeyStoreAndKeyCertOptions;
 import io.quarkus.tls.KeyStoreFactory;
-import io.quarkus.tls.OtherKeyStoreConfigurationuration;
+import io.quarkus.tls.OtherKeyStoreConfiguration;
 import io.smallrye.common.annotation.Identifier;
 import io.vertx.core.Vertx;
-import io.vertx.core.net.KeyStoreOptionsBase;
+import io.vertx.core.net.KeyStoreOptions;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -404,9 +403,9 @@ public class Pkcs11KeyStoreFactory implements KeyStoreFactory {
             char[] pin = config.password().map(String::toCharArray).orElse(null);
             ks.load(null, pin); // <3>
 
-            var options = new KeyStoreOptionsBase() {} // <4>
-                    .setKeyStoreType("PKCS11")
-                    .setProviderName(provider.getName())
+            KeyStoreOptions options = new KeyStoreOptions() // <4>
+                    .setType("PKCS11")
+                    .setProvider(provider.getName())
                     .setPassword(config.password().orElse(null));
 
             return new KeyStoreAndKeyCertOptions(ks, options);
@@ -420,7 +419,7 @@ public class Pkcs11KeyStoreFactory implements KeyStoreFactory {
 1. The `@Identifier` value must match the `type` in the configuration.
 2. Arbitrary parameters from `quarkus.tls.key-store.other.params.*` are available via `config.params()`.
 3. PKCS#11 keystores are loaded with `null` — the provider manages the underlying storage.
-4. Use `KeyStoreOptionsBase` to let Vert.x create a `KeyManagerFactory` from the provider-backed keystore.
+4. Use `KeyStoreOptions` with the type and the provider name, and no path, to let Vert.x create a `KeyManagerFactory` from the provider-backed keystore.
 
 <a id="sni"></a>
 #### SNI
@@ -678,47 +677,72 @@ The server advertises post-quantum groups and prefers them, but accepts connecti
 **`strict`**\
 The server only accepts connections that use a post-quantum key exchange group. Clients that do not negotiate a post-quantum group are rejected. Use this when all clients are known to support post-quantum cryptography.
 
-> [!IMPORTANT]
-> `pqc-enforcement-policy` does more than enforce post-quantum key exchange: it controls which SSL engine Vert.x selects. Setting `pqc-enforcement-policy` to `client-negotiated` or `strict` activates the native OpenSSL engine (requires OpenSSL 3.5+), which negotiates post-quantum key exchange groups. With the default `relaxed` policy, Vert.x uses the JDK SSL engine, which ignores any post-quantum key-exchange groups before JDK 27 — meaning that configuring post-quantum groups without also setting the enforcement policy results in no post-quantum key exchange at all. On JDK 27+, the JDK natively supports `X25519MLKEM768` and post-quantum key exchange works without changing the enforcement policy.
->
-> Quarkus logs a warning at startup if you configure a post-quantum group with `relaxed` policy to help catch this misconfiguration.
-
 > [!NOTE]
-> When using `client-negotiated` or `strict`, `quarkus.tls.key-exchange-groups` must include at least one post-quantum-capable group such as `X25519MLKEM768`. Vert.x validates this at startup and throws an exception if no compatible engine or group is configured.
+> When using `client-negotiated`, `quarkus.tls.key-exchange-groups` must include at least one post-quantum-capable group such as `X25519MLKEM768`. When using `strict`, `quarkus.tls.key-exchange-groups` must include only post-quantum-capable groups. Vert.x validates this at startup and overrides the specified set of groups if this condition is not respected. It will throw an exception if no compatible engine is available (see [PQC availability summary](#pqc-availability-summary)).
 
 > [!WARNING]
 > `strict` enforcement will reject any client that does not support the configured post-quantum group, including standard browsers and TLS clients that have not yet adopted post-quantum extensions. Ensure all clients are upgraded before enabling this mode.
 
-> [!NOTE]
-> Policy enforcement (`strict` and `client-negotiated`) is not supported when using the JDK SSL engine. If you are running on JDK 27+, or on JDK 25+ once the post-quantum backport ships (expected October 2026), you can still enable post-quantum key exchange by setting `quarkus.tls.key-exchange-groups` — the negotiation will work correctly without policy enforcement. For full enforcement, OpenSSL 3.5+ via the native SSL engine is required.
-
 > [!IMPORTANT]
-> Post-quantum enforcement (`client-negotiated` and `strict`) relies on a native OpenSSL 3.5+ library. Quarkus bundles this library only for **Linux x86_64** and **Linux aarch64**. In addition, `libapr-1` must be installed on the host OS (see [netty-tcnative prerequisites](https://netty.io/wiki/forked-tomcat-native.html)). Other operating systems and architectures (macOS, Windows, Alpine Linux, Linux on RISC-V, etc.) are **not supported**: attempting to use `client-negotiated` or `strict` on an unsupported platform will fail at runtime because the native OpenSSL engine is unavailable. On those platforms, use `relaxed` with JDK 27+ for post-quantum key exchange.
+> `pqc-enforcement-policy` does more than enforce post-quantum key exchange: it also controls which SSL engine Vert.x selects. When `pqc-enforcement-policy` is set to `client-negotiated` or `strict`, Quarkus first checks whether the JDK SSL engine supports post-quantum key exchange. If it does (JDK 27+), the JDK engine is used; otherwise Quarkus falls back to the native OpenSSL 3.5+ engine. With the default `relaxed` policy, Vert.x uses the JDK SSL engine, which ignores any post-quantum key-exchange groups before JDK 27. Thus, configuring post-quantum groups without also setting the enforcement policy may result in no post-quantum key exchange at all. Quarkus logs a warning at startup if you configure a post-quantum group with `relaxed` policy to help catch this misconfiguration.
+>
+> For platform requirements when OpenSSL is used as fallback, see [Using the OpenSSL engine for classical TLS](#openssl-engine-classical-tls). For a full overview of which engine is used in each configuration, see the [PQC availability summary](#pqc-availability-summary).
 
+<a id="pqc-ssl-engine-override"></a>
 ##### SSL engine override
 
-By default, Vert.x selects the SSL engine automatically based on the enforcement policy:
-
-- `client-negotiated` or `strict` activates the native OpenSSL engine (requires OpenSSL 3.5+).
-- `relaxed` uses the JDK SSL engine.
-
-You can override this selection with the `ssl-engine` property:
+You can override the automatic engine selection with the `ssl-engine` property:
 
 ```properties
 quarkus.tls.ssl-engine=openssl
 ```
 
-The supported values are `openssl` (requires netty-tcnative on the classpath) and `jdkssl` (the standard JDK SSL engine). This property is useful for testing or when you need explicit control over the engine — for example, forcing `jdkssl` on JDK 27+ where the JDK natively supports post-quantum groups.
+The supported values are `openssl` (requires netty-tcnative on the classpath) and `jdkssl` (the standard JDK SSL engine). This property is useful for testing or when you need explicit control over the engine.
+
+For using the OpenSSL engine on classical (non-PQC) TLS paths, see [Using the OpenSSL engine for classical TLS](#openssl-engine-classical-tls).
 
 ##### PQC and native mode
 
-In native mode, quantum-safe TLS is not available using OpenSSL. Thus, the only way to leverage PQC-compliant key exchange groups is to use a JDK SSL engine that supports them. This are not yet available in GraalVM/Mandrel, but should be available in the near future.
+The OpenSSL engine is unavailable in native mode (see [Native mode](#openssl-engine-native-mode)). The only way to leverage PQC-compliant key exchange groups in native images is to use a JDK SSL engine that supports them; these are not yet available in GraalVM/Mandrel but should be in the near future.
 
 ##### PQC in containerized environments
 
-When running in a container with a UBI image as the base, `libapr-1` isn't installed by default. So you need to install it explicitly. Without it, netty-tcnative cannot load the native OpenSSL engine at runtime, and PQC enforcement will fail even if OpenSSL 3.5+ is present.
+The `libapr-1` requirement and container setup are identical whether OpenSSL is used for PQC or classical TLS. See [Container setup](#openssl-engine-prerequisites) for installation instructions.
 
-Install `apr` explicitly in your `Containerfile`:
+<a id="pqc-availability-summary"></a>
+##### PQC availability summary
+
+| Mode | Java Runtime | SSL Engine | PQC support | PQC enforcement available | Prerequisites |
+| --- | --- | --- | --- | --- | --- |
+| JVM | Any | OpenSSL (netty-tcnative) | Yes | Yes | OpenSSL 3.5+; `libapr-1` (`microdnf install apr` on UBI) |
+| JVM | \< 27 (25\*) | JDK SSL | No | No | — |
+| JVM | 27+ (25+\*) | JDK SSL | Yes | Yes | JDK 27+ (or 25+ after backport) |
+| Native | Any | OpenSSL (netty-tcnative) | — | No | Engine unavailable in native mode |
+
+*{asterisk} JDK 25 support pending backport (expected October 2026).*
+
+<a id="openssl-engine-classical-tls"></a>
+#### Using the OpenSSL engine for classical TLS
+
+Quarkus can automatically select the SSL engine based on the Post-Quantum Cryptography configuration (see [SSL engine override](#pqc-ssl-engine-override)). However, even without post-quantum cryptography, you can configure Quarkus to use the native OpenSSL engine (via netty-tcnative) instead of the JDK SSL engine on classical TLS paths. The native engine can offer improved handshake throughput and hardware-accelerated cryptography on supported platforms.
+
+To force the OpenSSL engine for all TLS connections:
+
+```properties
+quarkus.tls.ssl-engine=openssl
+```
+
+##### Prerequisites
+
+The native OpenSSL engine has the same platform requirements whether it is used for PQC or classical TLS:
+
+- **Supported platforms only:** Linux x86_64 and Linux aarch64. macOS, Windows, Alpine Linux, and other architectures are not supported. Quarkus bundles netty-tcnative only for the two platforms listed above; the property is silently ignored on unsupported platforms.
+- **`libapr-1` must be installed on the host OS.**  Without `libapr-1`, netty-tcnative cannot load the native OpenSSL library at runtime and the engine will not be available.
+
+<a id="openssl-engine-prerequisites"></a>
+###### Container setup
+
+On UBI-based container images, `libapr-1` is not installed by default. Add it explicitly in your `Containerfile`:
 
 ```dockerfile
 FROM registry.access.redhat.com/ubi9/openjdk-21-runtime
@@ -751,16 +775,10 @@ ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]
 ```
 
-##### PQC availability summary
+<a id="openssl-engine-native-mode"></a>
+##### Native mode
 
-| Mode | Java Runtime | SSL Engine | PQC support | PQC enforcement available | Prerequisites |
-| --- | --- | --- | --- | --- | --- |
-| JVM | Any | OpenSSL (netty-tcnative) | Yes | Yes | OpenSSL 3.5+; `libapr-1` (`microdnf install apr` on UBI) |
-| JVM | \< 27 (25\*) | JDK SSL | No | No | — |
-| JVM | 27+ (25+\*) | JDK SSL | Yes | Yes | JDK 27+ (or 25+ after backport) |
-| Native | Any | OpenSSL (netty-tcnative) | — | No | Engine unavailable in native mode |
-
-*{asterisk} JDK 25 support pending backport (expected October 2026).*
+The OpenSSL engine is **not supported in native (GraalVM/Mandrel) mode**. netty-tcnative cannot be loaded inside a native image, so setting `ssl-engine=openssl` in a native application will cause a startup failure. In native mode, use the JDK SSL engine (the default) or leave `ssl-engine` unset.
 
 #### Certificate Revocation List (CRL)
 
@@ -886,7 +904,7 @@ The following table lists the supported properties:
 | <a id="quarkus-tls-registry_quarkus-tls-alpn"></a> [`quarkus.tls.alpn`](#quarkus-tls-registry_quarkus-tls-alpn) config_property_copy_button:+++quarkus.tls.alpn+++[]<br><br>Enables the Application-Layer Protocol Negotiation (ALPN).<br><br>Application-Layer Protocol Negotiation is a TLS extension that allows the client and server during the TLS handshake to negotiate which protocol they will use for communication. ALPN enables more efficient communication by allowing the client to indicate its preferred application protocol to the server before the TLS connection is established. This helps in scenarios such as HTTP/2 where multiple protocols may be available, allowing for faster protocol selection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_ALPN+++[] | boolean | `true` |
 | <a id="quarkus-tls-registry_quarkus-tls-pqc-enforcement-policy"></a> [`quarkus.tls.pqc-enforcement-policy`](#quarkus-tls-registry_quarkus-tls-pqc-enforcement-policy) config_property_copy_button:+++quarkus.tls.pqc-enforcement-policy+++[]<br><br>Sets the PQC enforcement policy.<br><br>`STRICT`: a connection will be refused unless both the client and the server support a PQC-capable group (`X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`). The server requires PQC-capable clients.<br><br>`CLIENT_NEGOTIATED`: the server advertises PQC groups but will not refuse a connection if the client does not support them, allowing fallback to classical key exchange.<br><br>`RELAXED`: no PQC enforcement; standard TLS key exchange negotiation applies.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_PQC_ENFORCEMENT_POLICY+++[] | tooltip:strict[A connection is refused unless both the client and the server negotiate a PQC key exchange (`X25519MLKEM768`,opts=`SecP256r1MLKEM768`,`SecP384r1MLKEM1024`). Clients that do not advertise PQC support are rejected during the TLS handshake.], tooltip:client-negotiated[The server advertises PQC key exchange groups but does not require the client to support them. If the client does not support PQC,opts=the handshake falls back to classical key exchange.], tooltip:relaxed[No PQC enforcement; standard TLS key exchange negotiation applies. The server neither advertises nor requires PQC groups.] | tooltip:relaxed[No PQC enforcement; standard TLS key exchange negotiation applies. The server neither advertises nor requires PQC groups.] |
 | <a id="quarkus-tls-registry_quarkus-tls-key-exchange-groups"></a> [`quarkus.tls.key-exchange-groups`](#quarkus-tls-registry_quarkus-tls-key-exchange-groups) config_property_copy_button:+++quarkus.tls.key-exchange-groups+++[]<br><br>Sets the ordered list of enabled TLS key exchange groups (supported groups). If not set, the default groups defined by the `SSLEngineOptions` in use are used.<br><br>Example values: `X25519MLKEM768`, `X25519`, `P-256`. When set, these groups take precedence over the engine defaults.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_KEY_EXCHANGE_GROUPS+++[] | list of string |  |
-| <a id="quarkus-tls-registry_quarkus-tls-ssl-engine"></a> [`quarkus.tls.ssl-engine`](#quarkus-tls-registry_quarkus-tls-ssl-engine) config_property_copy_button:+++quarkus.tls.ssl-engine+++[]<br><br>Forces the SSL engine to use.<br><br>When not set, Vert.x selects the engine automatically: if `pqc-enforcement-policy` is `strict` or `client-negotiated`, it prefers the JDK engine (JDK 27{plus}) or falls back to OpenSSL. For `relaxed` policy it uses the JDK engine by default.<br><br>Use `OPENSSL` to force netty-tcnative (requires the native library on the classpath). Use `JDKSSL` to force the standard JDK SSL engine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_SSL_ENGINE+++[] | tooltip:openssl[Use the OpenSsl Engine,opts=requires netty-tcnative.], tooltip:jdkssl[Use the default JdkSsl Engine.] |  |
+| <a id="quarkus-tls-registry_quarkus-tls-ssl-engine"></a> [`quarkus.tls.ssl-engine`](#quarkus-tls-registry_quarkus-tls-ssl-engine) config_property_copy_button:+++quarkus.tls.ssl-engine+++[]<br><br>Forces the SSL engine to use.<br><br>When not set, Vert.x selects the engine automatically: if `pqc-enforcement-policy` is `strict` or `client-negotiated`, it prefers the JDK engine (JDK 27{plus}) or falls back to OpenSSL. For `relaxed` policy it uses the JDK engine by default.<br><br>Use `OPENSSL` to force netty-tcnative (requires the native library on the classpath). Use `JDKSSL` to force the standard JDK SSL engine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_SSL_ENGINE+++[] | tooltip:openssl[Use the OpenSSL engine,opts=requires netty-tcnative.], tooltip:jdkssl[Use the default JDK SSL engine.] |  |
 | <a id="quarkus-tls-registry_quarkus-tls-certificate-revocation-list"></a> [`quarkus.tls.certificate-revocation-list`](#quarkus-tls-registry_quarkus-tls-certificate-revocation-list) config_property_copy_button:+++quarkus.tls.certificate-revocation-list+++[]<br><br>Sets the list of revoked certificates (paths to files).<br><br>A Certificate Revocation List (CRL) is a list of digital certificates that have been revoked by the issuing Certificate Authority (CA) before their scheduled expiration date. When a certificate is compromised, no longer needed, or deemed invalid for any reason, the CA adds it to the CRL to inform relying parties not to trust the certificate anymore.<br><br>Two formats are allowed: DER and PKCS++<mark>++7 (also known as P7B). When using the DER format, you must pass DER-encoded CRLs. When using the PKCS++</mark>++7 format, you must pass PKCS++#++7 `SignedData` object, with the only significant field being `crls`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_CERTIFICATE_REVOCATION_LIST+++[] | list of path |  |
 | <a id="quarkus-tls-registry_quarkus-tls-trust-all"></a> [`quarkus.tls.trust-all`](#quarkus-tls-registry_quarkus-tls-trust-all) config_property_copy_button:+++quarkus.tls.trust-all+++[]<br><br>If set to `true`, the server trusts all certificates.<br><br>This is useful for testing, but should not be used in production.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_TRUST_ALL+++[] | boolean | `false` |
 | <a id="quarkus-tls-registry_quarkus-tls-hostname-verification-algorithm"></a> [`quarkus.tls.hostname-verification-algorithm`](#quarkus-tls-registry_quarkus-tls-hostname-verification-algorithm) config_property_copy_button:+++quarkus.tls.hostname-verification-algorithm+++[]<br><br>The hostname verification algorithm to use in case the server's identity should be checked. Should be `HTTPS` (default), `LDAPS` or `NONE`.<br><br>If set to `NONE`, it does not verify the hostname.<br><br>If not set, the configured extension decides the default algorithm to use. For example, for HTTP, it will be "HTTPS". For TCP, it can depend on the protocol. Nevertheless, it is recommended to set it to "HTTPS" or "LDAPS".<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS_HOSTNAME_VERIFICATION_ALGORITHM+++[] | string |  |
@@ -946,7 +964,7 @@ The following table lists the supported properties:
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-alpn"></a> [`quarkus.tls."tls-bucket-name".alpn`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-alpn) config_property_copy_button:+++quarkus.tls."tls-bucket-name".alpn+++[]<br><br>Enables the Application-Layer Protocol Negotiation (ALPN).<br><br>Application-Layer Protocol Negotiation is a TLS extension that allows the client and server during the TLS handshake to negotiate which protocol they will use for communication. ALPN enables more efficient communication by allowing the client to indicate its preferred application protocol to the server before the TLS connection is established. This helps in scenarios such as HTTP/2 where multiple protocols may be available, allowing for faster protocol selection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__ALPN+++[] | boolean | `true` |
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-pqc-enforcement-policy"></a> [`quarkus.tls."tls-bucket-name".pqc-enforcement-policy`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-pqc-enforcement-policy) config_property_copy_button:+++quarkus.tls."tls-bucket-name".pqc-enforcement-policy+++[]<br><br>Sets the PQC enforcement policy.<br><br>`STRICT`: a connection will be refused unless both the client and the server support a PQC-capable group (`X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`). The server requires PQC-capable clients.<br><br>`CLIENT_NEGOTIATED`: the server advertises PQC groups but will not refuse a connection if the client does not support them, allowing fallback to classical key exchange.<br><br>`RELAXED`: no PQC enforcement; standard TLS key exchange negotiation applies.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__PQC_ENFORCEMENT_POLICY+++[] | tooltip:strict[A connection is refused unless both the client and the server negotiate a PQC key exchange (`X25519MLKEM768`,opts=`SecP256r1MLKEM768`,`SecP384r1MLKEM1024`). Clients that do not advertise PQC support are rejected during the TLS handshake.], tooltip:client-negotiated[The server advertises PQC key exchange groups but does not require the client to support them. If the client does not support PQC,opts=the handshake falls back to classical key exchange.], tooltip:relaxed[No PQC enforcement; standard TLS key exchange negotiation applies. The server neither advertises nor requires PQC groups.] | tooltip:relaxed[No PQC enforcement; standard TLS key exchange negotiation applies. The server neither advertises nor requires PQC groups.] |
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-key-exchange-groups"></a> [`quarkus.tls."tls-bucket-name".key-exchange-groups`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-key-exchange-groups) config_property_copy_button:+++quarkus.tls."tls-bucket-name".key-exchange-groups+++[]<br><br>Sets the ordered list of enabled TLS key exchange groups (supported groups). If not set, the default groups defined by the `SSLEngineOptions` in use are used.<br><br>Example values: `X25519MLKEM768`, `X25519`, `P-256`. When set, these groups take precedence over the engine defaults.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__KEY_EXCHANGE_GROUPS+++[] | list of string |  |
-| <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-ssl-engine"></a> [`quarkus.tls."tls-bucket-name".ssl-engine`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-ssl-engine) config_property_copy_button:+++quarkus.tls."tls-bucket-name".ssl-engine+++[]<br><br>Forces the SSL engine to use.<br><br>When not set, Vert.x selects the engine automatically: if `pqc-enforcement-policy` is `strict` or `client-negotiated`, it prefers the JDK engine (JDK 27{plus}) or falls back to OpenSSL. For `relaxed` policy it uses the JDK engine by default.<br><br>Use `OPENSSL` to force netty-tcnative (requires the native library on the classpath). Use `JDKSSL` to force the standard JDK SSL engine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__SSL_ENGINE+++[] | tooltip:openssl[Use the OpenSsl Engine,opts=requires netty-tcnative.], tooltip:jdkssl[Use the default JdkSsl Engine.] |  |
+| <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-ssl-engine"></a> [`quarkus.tls."tls-bucket-name".ssl-engine`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-ssl-engine) config_property_copy_button:+++quarkus.tls."tls-bucket-name".ssl-engine+++[]<br><br>Forces the SSL engine to use.<br><br>When not set, Vert.x selects the engine automatically: if `pqc-enforcement-policy` is `strict` or `client-negotiated`, it prefers the JDK engine (JDK 27{plus}) or falls back to OpenSSL. For `relaxed` policy it uses the JDK engine by default.<br><br>Use `OPENSSL` to force netty-tcnative (requires the native library on the classpath). Use `JDKSSL` to force the standard JDK SSL engine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__SSL_ENGINE+++[] | tooltip:openssl[Use the OpenSSL engine,opts=requires netty-tcnative.], tooltip:jdkssl[Use the default JDK SSL engine.] |  |
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-certificate-revocation-list"></a> [`quarkus.tls."tls-bucket-name".certificate-revocation-list`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-certificate-revocation-list) config_property_copy_button:+++quarkus.tls."tls-bucket-name".certificate-revocation-list+++[]<br><br>Sets the list of revoked certificates (paths to files).<br><br>A Certificate Revocation List (CRL) is a list of digital certificates that have been revoked by the issuing Certificate Authority (CA) before their scheduled expiration date. When a certificate is compromised, no longer needed, or deemed invalid for any reason, the CA adds it to the CRL to inform relying parties not to trust the certificate anymore.<br><br>Two formats are allowed: DER and PKCS++<mark>++7 (also known as P7B). When using the DER format, you must pass DER-encoded CRLs. When using the PKCS++</mark>++7 format, you must pass PKCS++#++7 `SignedData` object, with the only significant field being `crls`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__CERTIFICATE_REVOCATION_LIST+++[] | list of path |  |
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-trust-all"></a> [`quarkus.tls."tls-bucket-name".trust-all`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-trust-all) config_property_copy_button:+++quarkus.tls."tls-bucket-name".trust-all+++[]<br><br>If set to `true`, the server trusts all certificates.<br><br>This is useful for testing, but should not be used in production.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__TRUST_ALL+++[] | boolean | `false` |
 | <a id="quarkus-tls-registry_quarkus-tls-tls-bucket-name-hostname-verification-algorithm"></a> [`quarkus.tls."tls-bucket-name".hostname-verification-algorithm`](#quarkus-tls-registry_quarkus-tls-tls-bucket-name-hostname-verification-algorithm) config_property_copy_button:+++quarkus.tls."tls-bucket-name".hostname-verification-algorithm+++[]<br><br>The hostname verification algorithm to use in case the server's identity should be checked. Should be `HTTPS` (default), `LDAPS` or `NONE`.<br><br>If set to `NONE`, it does not verify the hostname.<br><br>If not set, the configured extension decides the default algorithm to use. For example, for HTTP, it will be "HTTPS". For TCP, it can depend on the protocol. Nevertheless, it is recommended to set it to "HTTPS" or "LDAPS".<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TLS__TLS_BUCKET_NAME__HOSTNAME_VERIFICATION_ALGORITHM+++[] | string |  |
@@ -1081,7 +1099,7 @@ private final io.vertx.core.http.HttpServer server;
 
 public void onCertificateUpdate(@Observes CertificateUpdatedEvent reload) {
     if ("name".equals(event.getName())) {
-        server.updateSSLOptions(reload.tlsConfiguration().getSSLOptions());
+        server.updateSSLOptions(reload.tlsConfiguration().getServerSSLOptions());
         // Or update the SSLContext.
     }
 
@@ -1736,7 +1754,7 @@ Before you request a Let's Encrypt certificate:
 
    1. Set your domain name.
    2. Provide your contact email address that Let's Encrypt can use to contact you in case of any issues with your Let's Encrypt account.
-   3. Set your application management URL, which you can use to handle ACME challenges. Use `https://localhost:8443/` if you choose not to enable a management router in the [Let's Encrypt prerequisites](#lets-encrypt-prerequisites) step.
+   3. Set your application management URL, which you can use to handle ACME challenges. Use `https://localhost:8443/` if you choose not to enable a management router in the [Let's Encrypt prerequisites](#lets-encrypt-prerequisites) step. If you set a custom root path, use the full Let's Encrypt endpoint URL. For example, with `quarkus.management.root-path=/admin`, use `https://localhost:9000/admin/lets-encrypt`. If the management interface is disabled and you set `quarkus.http.non-application-root-path=/internal`, use `https://localhost:8443/internal/lets-encrypt`.
 
    Additional options are available:
 
@@ -1783,6 +1801,8 @@ quarkus tls lets-encrypt renew-certificate \
   --domain=<domain-dns-name> \
   --management-url=https://localhost:9000
 ```
+
+If you use a custom root path, set `--management-url` to the full Let's Encrypt endpoint URL, as described in [Issue a certificate](#lets-encrypt-issue-certificate).
 
 During this command, the TLS registry CLI reads the Let's Encrypt account information recorded during the [Issue certificates with Let's Encrypt](#lets-encrypt-issue-certificate) step, issues a Let's Encrypt certificate request, and communicates with the Quarkus application to resolve ACME challenges.
 

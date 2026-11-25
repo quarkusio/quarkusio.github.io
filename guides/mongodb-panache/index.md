@@ -66,7 +66,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=mongodb-panache-quickstart \
     -Dextensions='rest-jackson,mongodb-panache' \
@@ -112,16 +112,16 @@ Then add the relevant configuration properties in `application.properties`.
 ```properties
 # configure the MongoDB client for a replica set of two nodes
 quarkus.mongodb.connection-string = mongodb://mongo1:27017,mongo2:27017
-# mandatory if you don't specify the name of the database using @MongoEntity
+# optional if the connection string or @MongoEntity specifies the database
 quarkus.mongodb.database = person
 ```
 
-The `quarkus.mongodb.database` property will be used by MongoDB with Panache to determine the name of the database where your entities will be persisted (if not overridden by `@MongoEntity`).
+The `quarkus.mongodb.database` property will be used by MongoDB with Panache to determine the name of the database where your entities will be persisted (if not overridden by `@MongoEntity`). If this property is not set, MongoDB with Panache uses the database from the connection string if any.
 
 The `@MongoEntity` annotation allows configuring:
 
 - the name of the client for multitenant application, see [Multiple MongoDB Clients](/guides/mongodb/index.md#multiple-mongodb-clients). Otherwise, the default client will be used.
-- the name of the database, otherwise the `quarkus.mongodb.database` property or a [`MongoDatabaseResolver`](https://www.mongodb.com/docs/drivers/java/sync/current#multitenancy) implementation will be used.
+- the name of the database, otherwise a [`MongoDatabaseResolver`](https://www.mongodb.com/docs/drivers/java/sync/current#multitenancy) implementation, the `quarkus.mongodb.database` property, or the database from the connection string will be used.
 - the name of the collection, otherwise the simple name of the class will be used.
 
 For advanced configuration of the MongoDB client, you can follow the [Configuring the MongoDB database guide](/guides/mongodb/index.md#configuring-the-mongodb-database).
@@ -554,12 +554,12 @@ The `Sort` class has plenty of methods for adding columns and specifying sort di
 
 Normally, MongoDB queries are of this form: `{'firstname': 'John', 'lastname':'Doe'}`, this is what we call MongoDB native queries.
 
-You can use them if you want, but we also support what we call **PanacheQL** that can be seen as a subset of [JPQL](https://docs.oracle.com/javaee/7/tutorial/persistence-querylanguage.htm#BNBTG) (or [HQL](https://docs.hibernate.org/orm/7.4/userguide/html_single/#hql)) and allows you to easily express a query. MongoDB with Panache will then map it to a MongoDB native query.
+You can use them if you want, but we also support what we call **PanacheQL** that can be seen as a subset of [JPQL](https://docs.oracle.com/javaee/7/tutorial/persistence-querylanguage.htm#BNBTG) (or [HQL](https://docs.hibernate.org/orm/8.0/userguide/html_single/#hql)) and allows you to easily express a query. MongoDB with Panache will then map it to a MongoDB native query.
 
 If your query does not start with `{`, we will consider it a PanacheQL query:
 
 - `<singlePropertyName>` (and single parameter) which will expand to `{'singleColumnName': '?1'}`
-- `<query>` will expand to `{<query>}` where we will map the PanacheQL query to MongoDB native query form. We support the following operators that will be mapped to the corresponding MongoDB operators: 'and', 'or' ( mixing 'and' and 'or' is not currently supported), '=', '>', '>=', '\<', '\<=', '!=', 'is null', 'is not null', and 'like' that is mapped to the MongoDB `$regex` operator (both String and JavaScript patterns are supported).
+- `<query>` will expand to `{<query>}` where we will map the PanacheQL query to MongoDB native query form. We support the following operators that will be mapped to the corresponding MongoDB operators: 'and', 'or' ( mixing 'and' and 'or' is not currently supported), '=', '>', '>=', '\<', '\<=', '!=', 'is null', 'is not null', 'in', 'not in', 'like' that is mapped to the MongoDB `$regex` operator (both String and JavaScript patterns are supported), 'not like', and 'not' to negate a condition.
 
 Here are some query examples:
 
@@ -568,6 +568,8 @@ Here are some query examples:
 - `lastname like ?1` will be mapped to `{'lastname': {'$regex': ?1}}`. Be careful that this will be [MongoDB regex](https://docs.mongodb.com/manual/reference/operator/query/regex/#op._S_regex) support and not SQL like pattern.
 - `lastname is not null` will be mapped to `{'lastname':{'$exists': true}}`
 - `status in ?1` will be mapped to `{'status':{$in: ?1}}`
+- `status not in ?1` will be mapped to `{'status':{$nin: ?1}}`
+- `not (status = ?1 or amount > ?2)` will be mapped to `{'$nor': [{'$or': [{'status': ?1}, {'amount': {'$gt': ?2}}]}]}`
 
 > [!WARNING]
 > MongoDB queries must be valid JSON documents, using the same field multiple times in a query is not allowed using PanacheQL as it would generate an invalid JSON (see [this issue on GitHub](https://github.com/quarkusio/quarkus/issues/12086)).
@@ -586,8 +588,8 @@ For these operations, you can express the update document the same way you expre
 - `<singlePropertyName>` (and single parameter) which will expand to the update document `{'$set' : {'singleColumnName': '?1'}}`
 - `firstname = ?1 and status = ?2` will be mapped to the update document `{'$set' : {'firstname': ?1, 'status': ?2}}`
 - `firstname = :firstname and status = :status` will be mapped to the update document `{'$set' : {'firstname': :firstname, 'status': :status}}`
-- `{'firstname' : ?1 and 'status' : ?2}` will be mapped to the update document `{'$set' : {'firstname': ?1, 'status': ?2}}`
-- `{'firstname' : :firstname and 'status' : :status}` will be mapped to the update document `{'$set' : {'firstname': :firstname, 'status': :status}}`
+- `{'firstname' : ?1, 'status' : ?2}` will be mapped to the update document `{'$set' : {'firstname': ?1, 'status': ?2}}`
+- `{'firstname' : :firstname, 'status' : :status}` will be mapped to the update document `{'$set' : {'firstname': :firstname, 'status': :status}}`
 - `{'$inc': {'cpt': ?1}}` will be used as-is
 
 ### Query parameters
@@ -1182,7 +1184,7 @@ public class CustomMongoDatabaseResolver implements MongoDatabaseResolver {
 1. The bean is made `@RequestScoped` as the tenant resolution depends on the incoming request.
 
 > [!IMPORTANT]
-> The database selection priority order is as follow: `@MongoEntity(database="mizain")`, `MongoDatabaseResolver`, and then `quarkus.mongodb.database` property.
+> The database selection priority order is as follows: `@MongoEntity(database="mizain")`, `MongoDatabaseResolver`, the `quarkus.mongodb.database` property, and then the database from the connection string.
 
 > [!NOTE]
 > If you also use [OIDC multitenancy](/guides/security-openid-connect-multitenancy/index.md), then if the OIDC tenantID and MongoDB database are the same, you can access the OIDC tenant id from a `RoutingContext` attribute like in the example below:

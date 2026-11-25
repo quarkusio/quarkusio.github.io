@@ -12,7 +12,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -62,7 +62,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=getting-started-dev-services \
     -Dextensions='rest'
@@ -245,16 +245,17 @@ Stop Quarkus and run `docker ps` again. You should see nothing running (it may t
 
 If you play with your code some more, you may notice that sometimes, after making an application change, <http://localhost:8080/hello/names> doesn't list any names. What's going on? By default, in dev mode, with a Dev Services database, Quarkus configures Hibernate ORM database schema management strategy to be `drop-and-create`. See the [Hibernate configuration reference](/guides/hibernate-orm/index.md#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-strategy) for more details. If a code change triggers an application restart, the database tables will be dropped (deleted) and then re-created.
 
-This is convenient, but what if you'd prefer the database to always have content? That would make testing easier. If you provide an `import.sql` file, Quarkus will use that to initialise the database on each start.
+This is convenient, but what if you'd prefer the database to always have content? That would make testing easier. If you provide a `data.sql` file, Quarkus will use that to initialise the database on each start.
 
-1. Make a `src/main/resources/import.sql` file in your project
+1. Make a `src/main/resources/data.sql` file in your project
 2. Add the following SQL statements:
 
 ```sql
-INSERT INTO Greeting(id, name)
-VALUES (nextval('Greeting_SEQ'), 'Alice');
-INSERT INTO Greeting(id, name)
-VALUES (nextval('Greeting_SEQ'), 'Bob');
+INSERT INTO Greeting(id, name) VALUES (1, 'Alice');
+INSERT INTO Greeting(id, name) VALUES (2, 'Bob');
+
+-- Set the sequence to the largest imported ID so the next generated ID does not collide.
+SELECT setval('Greeting_SEQ', (SELECT MAX(id) FROM Greeting));
 ```
 
 Now, hit `s` in your dev mode session, to force a full restart. Then visit <http://localhost:8080/hello/names>.
@@ -277,12 +278,14 @@ quarkus.datasource.jdbc.url = jdbc:postgresql://localhost:5432/mydatabase
 
 This tells Quarkus that you don't want it to start a Dev Service, because you have your own database. You don't need to worry about starting the database, because you're just seeing how to change the configuration.
 
-Visit <http://localhost:8080/hello/names>. Instead of a list of names, you'll get a red error screen. In the terminal where Quarkus is running. you'll see the following stack error message:
+Visit <http://localhost:8080/hello/names>. Instead of a list of names, you'll get a red error screen: the application fails to start, because on startup Quarkus tries to load `data.sql` into that database. In the terminal where Quarkus is running, you'll see an error message like this:
 
 ```
-2023-06-28 19:18:22,880 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /hello?name=fred failed, error id: 4f9b5ce6-3b08-41c5-af36-24eee4d1dd2b-2: org.hibernate.exception.JDBCConnectionException: Unable to acquire JDBC Connection [Connection to localhost:5432 refused. Check that the hostname and port are correct and that the postmaster is accepting TCP/IP connections.] [n/a]
-        at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:98)
-        at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:56)
+ERROR [io.quarkus.runtime.Application] (Quarkus Main Thread) Failed to start application [Error Occurred After Shutdown]: java.lang.RuntimeException: Failed to start quarkus
+...
+Caused by: jakarta.persistence.PersistenceException: [PersistenceUnit: <default>] Unable to build Hibernate SessionFactory
+...
+Caused by: org.hibernate.exception.JDBCConnectionException: Unable to open JDBC Connection for DDL execution [Connection to localhost:5432 refused. Check that the hostname and port are correct and that the postmaster is accepting TCP/IP connections.] [n/a]
 ...
 ```
 

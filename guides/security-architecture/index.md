@@ -9,12 +9,12 @@ When a client sends an HTTP request, Quarkus Security orchestrates security auth
 The sequential security validation process results in one of three outcomes:
 
 - The HTTP request gets authenticated and authorized, and access to the Quarkus application gets granted.
-- The HTTP request authentication fails, and the requester receives a challenge specific to the authentication mechanism, for example, a `401` error, a URL redirect to reauthenticate, or some other custom authentication challenge response. For practical examples of challenge responses, see the Quarkus [Security Tips and Tricks](/guides/security-customization/index.md) guide.
+- The HTTP request authentication fails, and the requester receives a challenge specific to the authentication mechanism, for example, a `401` error, a URL redirect to reauthenticate, or some other custom authentication challenge response. For practical examples of challenge responses, see the Quarkus [Security tips and tricks](/guides/security-customization/index.md) guide.
 - The HTTP request authorization fails, and the requester gets denied access to the Quarkus application.
 
 The following diagram steps through the detailed process flow of the Quarkus Security architecture:
 
-![Quarkus Security architecture process flow](/guides/images/security-architecture-overview.png)
+![Quarkus Security architecture overview](/guides/images/security-architecture-overview.png)
 *The Quarkus Security architecture and process flow*
 
 ## Core components of the Quarkus Security architecture
@@ -39,7 +39,7 @@ For more information, see the Quarkus [Identity providers](/guides/security-iden
 
 Because Quarkus Security is customizable, you can, for example, add authorization roles to `SecurityIdentity` and register and prioritize one or more `SecurityIdentityAugmentor` implementations.
 
-Registered instances of `SecurityIdentityAugmentor` are invoked during the final stage of the security authentication process. For more information, see the [Security Identity Customization](/guides/security-customization/index.md#security-identity-customization) section of the "Security Tips and Tricks" guide.
+Registered instances of `SecurityIdentityAugmentor` are invoked during the final stage of the security authentication process. For more information, see the [Security Identity Customization](/guides/security-customization/index.md#security-identity-customization) section of the "Security tips and tricks" guide.
 
 ## Supported authentication mechanisms
 
@@ -66,4 +66,4 @@ For more information about customizing Quarkus Security, including reactive secu
 - [Quarkus Security overview](/guides/security-overview/index.md)
 - [Other supported authentication mechanisms](/guides/security-authentication-mechanisms/index.md#other-supported-authentication-mechanisms)
 - [Identity providers](/guides/security-identity-providers/index.md)
-- [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)
+- [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)

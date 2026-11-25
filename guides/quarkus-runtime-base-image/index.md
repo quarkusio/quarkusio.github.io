@@ -1,8 +1,8 @@
 # Quarkus base runtime image
 
-To ease the containerization of native executables, Quarkus provides a base image providing the requirements to run these executables. The `ubi9-quarkus-micro-image:2.0` image is:
+To ease the containerization of native executables, Quarkus provides a base image providing the requirements to run these executables. The `ubi10-quarkus-micro-image:2.0` image is:
 
-- small (based on `ubi9-micro`)
+- small (based on `ubi10-micro`)
 - designed for containers
 - contains the right set of dependencies (glibc, libstdc++, zlib)
 - support upx-compressed executables (more details on the [enabling compression documentation](/guides/upx/index.md))
@@ -12,7 +12,7 @@ To ease the containerization of native executables, Quarkus provides a base imag
 In your `Dockerfile`, just use:
 
 ```dockerfile
-FROM quay.io/quarkus/ubi9-quarkus-micro-image:2.0
+FROM quay.io/quarkus/ubi10-quarkus-micro-image:2.0
 WORKDIR /work/
 COPY --chmod=0755 target/*-runner /work/application
 EXPOSE 8080
@@ -31,11 +31,11 @@ Your application may have additional requirements. For example, if you have an a
 
 ```dockerfile
 # First stage - install the dependencies in an intermediate container
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6 as nativelibs
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.3 as nativelibs
 RUN microdnf install -y freetype fontconfig expat
 
 # Second stage - copy the dependencies
-FROM quay.io/quarkus/ubi9-quarkus-micro-image:2.0
+FROM quay.io/quarkus/ubi10-quarkus-micro-image:2.0
 WORKDIR /work/
 COPY --from=nativelibs \
    /lib64/libz.so.1 \
@@ -83,12 +83,12 @@ ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
 
 ## Alternative - Using ubi-minimal
 
-If the micro image does not suit your requirements, you can use [ubi9-minimal](https://catalog.redhat.com/software/containers/ubi9-minimal/61832888c0d15aff4912fe0d). It's a bigger image, but contains more utilities and is closer to a full Linux distribution. Typically, it contains a package manager (`microdnf`), so you can install packages more easily.
+If the micro image does not suit your requirements, you can use [ubi10-minimal](https://catalog.redhat.com/en/software/containers/ubi10-minimal/66f16af45db83414cddcfc99). It's a bigger image, but contains more utilities and is closer to a full Linux distribution. Typically, it contains a package manager (`microdnf`), so you can install packages more easily.
 
 To use this base image, use the following `Dockerfile`:
 
 ```dockerfile
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.3
 WORKDIR /work/
 RUN chown 1001 /work \
     && chmod "g+rwX" /work \
@@ -104,7 +104,7 @@ CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]
 To make documents processing, graphics, PDFs, etc. available for the application, you can install the required libraries using `microdnf` without manually copying anything:
 
 ```dockerfile
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.3
 RUN microdnf install -y freetype fontconfig \
     && microdnf clean all
 

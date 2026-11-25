@@ -12,7 +12,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -40,7 +40,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=centralized-logging \
     -Dextensions='rest' \
@@ -130,7 +130,7 @@ and specify the host and port of your Logstash endpoint. To be ECS compliant, sp
 # to keep the logs in the usual format in the console
 quarkus.log.console.json.enabled=false
 
-quarkus.log.socket.enable=true
+quarkus.log.socket.enabled=true
 quarkus.log.socket.json.enabled=true
 quarkus.log.socket.endpoint=localhost:4560
 
@@ -282,7 +282,7 @@ networks:
 Finally, configure your application to send logs to EFK using Syslog:
 
 ```properties
-quarkus.log.syslog.enable=true
+quarkus.log.syslog.enabled=true
 quarkus.log.syslog.endpoint=localhost:5140
 quarkus.log.syslog.protocol=udp
 quarkus.log.syslog.app-name=quarkus
@@ -596,7 +596,7 @@ With log message parameters enabled, the first log message sent to Elasticsearch
 
 To work around this limitation, you can disable sending log message parameters via `logging-gelf` by configuring `quarkus.log.handler.gelf.include-log-message-parameters=false`, or you can configure your Elasticsearch index to store those fields as text or keyword, Elasticsearch will then automatically make the translation from int/boolean to a String.
 
-See the following documentation for Graylog (but the same issue exists for the other central logging stacks): [Custom Index Mappings](https://docs.graylog.org/en/3.2/pages/configuration/elasticsearch.html#custom-index-mappings).
+See the following documentation for Graylog (but the same issue exists for the other central logging stacks): link::<https://g> o2docs.graylog.org/current/setting_up_graylog/opensearch.htm#C ustomIndexMappings\[Custom Index Mapping\].
 
 <a id="configuration-reference"></a>
 ### Configuration Reference
@@ -631,4 +631,4 @@ Configuration is done through the usual `application.properties` file.
 | <a id="quarkus-logging-gelf_quarkus-log-handler-gelf-origin-host"></a> [`quarkus.log.handler.gelf.origin-host`](#quarkus-logging-gelf_quarkus-log-handler-gelf-origin-host) config_property_copy_button:+++quarkus.log.handler.gelf.origin-host+++[]<br><br>Origin hostname<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_LOG_HANDLER_GELF_ORIGIN_HOST+++[] | string |  |
 | <a id="quarkus-logging-gelf_quarkus-log-handler-gelf-skip-hostname-resolution"></a> [`quarkus.log.handler.gelf.skip-hostname-resolution`](#quarkus-logging-gelf_quarkus-log-handler-gelf-skip-hostname-resolution) config_property_copy_button:+++quarkus.log.handler.gelf.skip-hostname-resolution+++[]<br><br>Bypass hostname resolution. If you didn't set the `originHost` property, and resolution is disabled, the value “unknown” will be used as hostname<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_LOG_HANDLER_GELF_SKIP_HOSTNAME_RESOLUTION+++[] | boolean | `false` |
 
-This extension uses the `logstash-gelf` library that allow more configuration options via system properties, you can access its documentation here: <https://logging.paluch.biz/>.
+This extension uses the `logstash-gelf` library that allow more configuration options via system properties, you can access its documentation here: <https://github.com/mp911de/logstash-gelf>.

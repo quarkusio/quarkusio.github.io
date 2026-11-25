@@ -15,7 +15,7 @@ To complete this guide, you need:
 
 - Roughly 1 hour for all modalities
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -51,13 +51,13 @@ First, make sure to have an App Engine environment initialized for your Google C
 Then, you will need to create a `src/main/appengine/app.yaml` file, let's keep it minimalistic with only the selected engine:
 
 ```yaml
-runtime: java21
+runtime: java25
 ```
 
 This will create a default service for your App Engine application.
 
 > [!NOTE]
-> You can also use another Java runtime supported by App Engine, for example, for Java 17, use `runtime: java17` instead.
+> You can also use another Java runtime supported by App Engine, for example, for Java 21, use `runtime: java21` instead.
 
 App Engine Standard does not support the default Quarkus' specific packaging layout, therefore, you must set up your application to be packaged as an uber-jar via your `application.properties` file:
 
@@ -240,21 +240,10 @@ quarkus.datasource.jdbc.additional-jdbc-properties.socketFactory=com.google.clou
 
 ### Using Cloud SQL with a reactive SQL client
 
-You can also use one of our reactive SQL client instead of the JDBC client. To do so with Cloud SQL, add the following dependency (adjust the classifier depending on your platform):
-
-```xml
-<dependency>
-    <groupId>io.netty</groupId>
-    <artifactId>netty-transport-native-epoll</artifactId>
-    <classifier>linux-x86_64</classifier>
-</dependency>
-```
-
-Then configure your reactive datasource with no hostname and with the Netty native transport:
+You can also use one of our reactive SQL client instead of the JDBC client. Configure your reactive datasource with no hostname:
 
 ```properties
 quarkus.datasource.reactive.url=postgresql://:5432/db-name?host=/cloudsql/project-id:zone:db-name
-quarkus.vertx.prefer-native-transport=true
 ```
 
 > [!WARNING]

@@ -26,7 +26,7 @@ Other configuration needs have been automated: Quarkus will make some opinionate
 Add the following dependencies to your project:
 
 - the Hibernate ORM extension: `io.quarkus:quarkus-hibernate-orm`
-- your JDBC driver extension; the following options are available: - `quarkus-jdbc-db2` for [IBM DB2](https://www.ibm.com/products/db2-database)  - `quarkus-jdbc-h2` for [H2](https://www.h2database.com/html/main.html)  - `quarkus-jdbc-mariadb` for [MariaDB](https://mariadb.com/)  - `quarkus-jdbc-mssql` for [Microsoft SQL Server](https://www.microsoft.com/en-gb/sql-server/)  - `quarkus-jdbc-mysql` for [MySQL](https://www.mysql.com/)  - `quarkus-jdbc-oracle` for [Oracle Database](https://www.oracle.com/database/)  - `quarkus-jdbc-postgresql` for [PostgreSQL](https://www.postgresql.org/)
+- your JDBC driver extension; the following options are available: - `quarkus-jdbc-db2` for [IBM Db2](https://www.ibm.com/products/db2-database)  - `quarkus-jdbc-h2` for [H2](https://www.h2database.com/html/main.html)  - `quarkus-jdbc-mariadb` for [MariaDB](https://mariadb.com/)  - `quarkus-jdbc-mssql` for [Microsoft SQL Server](https://www.microsoft.com/en-gb/sql-server/)  - `quarkus-jdbc-mysql` for [MySQL](https://www.mysql.com/)  - `quarkus-jdbc-oracle` for [Oracle Database](https://www.oracle.com/database/)  - `quarkus-jdbc-postgresql` for [PostgreSQL](https://www.postgresql.org/)
 
 For instance:
 
@@ -61,15 +61,13 @@ Annotate your persistent objects with `@Entity`, then add the relevant configura
 **Example `application.properties`**
 
 ```properties
-quarkus.datasource.db-kind = postgresql <1>
-
-%prod.quarkus.datasource.username = hibernate
+%prod.quarkus.datasource.username = hibernate <1>
 %prod.quarkus.datasource.password = hibernate
 %prod.quarkus.datasource.jdbc.url = jdbc:postgresql://localhost:5432/hibernate_db
 %prod.quarkus.hibernate-orm.schema-management.strategy=create <2>
 ```
 
-1. [Configure the datasource](/guides/datasource/index.md) for production, relying on [Dev Services](/guides/datasource/index.md#dev-services) for connection information in tests / dev mode.
+1. [Configure the datasource](/guides/datasource/index.md) for production, relying on [Dev Services](/guides/datasource/index.md#dev-services) for connection information in tests / dev mode. Setting `db-kind` is only required if there is more than one database extension on the classpath.
 2. Configure Hibernate ORM to create the schema on startup in production, which is useful for experimentation, but rely on [convenient defaults in tests / dev mode](#dev-mode).
 
 Note that configuration properties for the Hibernate ORM Quarkus extension are not the same ones as in your typical Hibernate ORM configuration file. They will often map to Hibernate ORM configuration properties but could have different names and don't necessarily map 1:1 to each other.
@@ -78,11 +76,16 @@ Also, Quarkus will set many Hibernate ORM configuration settings automatically, 
 
 For a list of the items that you can set in `application.properties`, see [Configuration Reference for Hibernate ORM](#configuration-reference).
 
-An `EntityManagerFactory` will be created based on the Quarkus `datasource` configuration as long as the Hibernate ORM extension is listed among your project dependencies.
+A persistence unit (and its `SessionFactory`) will be created when Quarkus detects that one is needed. This happens when any of the following conditions is met:
+
+- JPA entities are detected in the application (the default persistence unit is created automatically).
+- Hibernate ORM configuration properties are set (e.g. `quarkus.hibernate-orm.schema-management.strategy`).
+
+Similarly, the datasource that the persistence unit points to is created automatically when it is referenced. See [Datasource detection](/guides/datasource/index.md#datasource-detection) for details.
 
 The dialect will be selected and configured automatically based on your datasource; you may want to [configure it to more precisely match your database](#hibernate-dialect).
 
-You can then happily inject your `EntityManager`:
+You can then happily inject your `Session`:
 
 **Example application bean using Hibernate**
 
@@ -90,19 +93,22 @@ You can then happily inject your `EntityManager`:
 @ApplicationScoped
 public class SantaClausService {
     @Inject
-    EntityManager em; <1>
+    Session session; <1>
 
     @Transactional <2>
     public void createGift(String giftDescription) {
         Gift gift = new Gift();
         gift.setName(giftDescription);
-        em.persist(gift);
+        session.persist(gift);
     }
 }
 ```
 
-1. Inject your entity manager and have fun
-2. Mark your CDI bean method as `@Transactional` and the `EntityManager` will enlist and flush at commit.
+1. Inject your Hibernate ORM session and have fun
+2. Mark your CDI bean method as `@Transactional` and the `Session` will enlist and flush at commit.
+
+> [!TIP]
+> If you prefer to stick to the Jakarta Persistence API, you can [inject an `EntityManager` instead of a `Session`](#injecting-entry-points).
 
 **Example Entity**
 
@@ -132,12 +138,33 @@ public class Gift {
 }
 ```
 
-To load SQL statements when Hibernate ORM starts, add an `import.sql` file to the root of your `resources` directory. This script can contain any SQL DML statements. Make sure to terminate each statement with a semicolon.
+> [!WARNING]
+> Make sure to wrap methods modifying your database (e.g. `session.persist(entity)`) within a transaction. Marking a CDI bean method `@Transactional` will do that for you and make that method a transaction boundary. We recommend doing so at your application entry point boundaries like your REST endpoint controllers.
+
+<a id="sql-init-scripts"></a>
+### SQL init scripts
+
+To execute SQL statements when Hibernate ORM starts, add SQL scripts to the root of your `resources` directory:
+
+**`schema.sql`**\
+Completes the schema generated by Hibernate ORM with database objects it cannot generate (constraints, views, functions, ...). + This script is only executed when Hibernate ORM creates the schema, i.e. when `quarkus.hibernate-orm.schema-management.strategy` is `create` or `drop-and-create`; it is executed before `data.sql`. + Use `quarkus.hibernate-orm.schema-management.init-script` to use other files.
+
+**`data.sql`**
+
+  Loads data (reference data, test data, ...). + By default, the script is executed in dev and test modes only. Set `quarkus.hibernate-orm.data-management.strategy` to `none` to disable its execution or to `create` to execute it in production as well, and `quarkus.hibernate-orm.data-management.init-script` to use other files. + This script is executed regardless of how the database schema is managed: if Hibernate ORM creates the schema (see `quarkus.hibernate-orm.schema-management.strategy`), the script is executed right after the schema has been created; otherwise, for example when the schema is managed by [Flyway](/guides/flyway/index.md) or [Liquibase](/guides/liquibase/index.md), the script is executed once Hibernate ORM has started. +
+
+  > [!WARNING]
+  > When the schema is not created by Hibernate ORM, the script is executed against a database that may already contain its data, on every start: in dev mode, that means on every live reload. Make the script idempotent (`MERGE`, `INSERT ... ON CONFLICT`, ...) if you do not want constraint violations to be reported on each restart, or set `quarkus.hibernate-orm.data-management.strategy` to `none`.
+
+These scripts can contain any SQL statements. Make sure to terminate each statement with a semicolon.
 
 This is useful to have a data set ready for your tests or demos.
 
-> [!WARNING]
-> Make sure to wrap methods modifying your database (e.g. `entity.persist()`) within a transaction. Marking a CDI bean method `@Transactional` will do that for you and make that method a transaction boundary. We recommend doing so at your application entry point boundaries like your REST endpoint controllers.
+> [!NOTE]
+> An `import.sql` file, which Quarkus used to pick up by default, enables a deprecated behavior instead, in dev and test modes only: the file is executed whenever Hibernate ORM creates the schema, and it cannot be combined with `schema.sql`, `data.sql`, the properties above set to a script, or `quarkus.hibernate-orm.data-management.strategy`. Move its statements to `data.sql` if they load data and/or to `schema.sql` if they complete the schema, then delete it.
+
+> [!NOTE]
+> With [multiple persistence units](#multiple-persistence-units), the default files (`schema.sql`/`data.sql`) are picked up by each of them, which suits persistence units mapping the same entities to different databases. If your persistence units map different entities, either (preferably) don't include SQL files with the default names in your app, or (if you need to) set `quarkus.hibernate-orm."<name>".data-management.init-script` and `quarkus.hibernate-orm."<name>".schema-management.init-script` explicitly for each persistence unit (to `no-file` where no script applies).
 
 <a id="hibernate-dialect"></a>
 ### Dialect
@@ -145,17 +172,26 @@ This is useful to have a data set ready for your tests or demos.
 <a id="hibernate-dialect-supported-databases"></a>
 #### Supported databases
 
-For [supported databases](/guides/datasource/index.md#extensions-and-database-drivers-reference), the [Hibernate ORM dialect](https://docs.hibernate.org/orm/7.4/userguide/html_single/#database-dialect) does not need to be set explicitly: it is selected automatically based on the datasource.
+For [supported databases](/guides/datasource/index.md#extensions-and-database-drivers-reference), the [Hibernate ORM dialect](https://docs.hibernate.org/orm/8.0/userguide/html_single/#database-dialect) does not need to be set explicitly: it is selected automatically based on the datasource.
 
-By default, the dialect is configured to target the minimum supported version of the database.
+Quarkus defaults to the latest, or close to latest, database version:
 
-In order for Hibernate ORM to generate more efficient SQL, to avoid workarounds and to take advantage of more database features, you can set the database version explicitly:
+- IBM Db2 12.1
+- MariaDB 11.4
+- Microsoft SQL Server 16
+- MySQL 8.4
+- Oracle Database 23
+- PostgreSQL 16
 
-**`application.properties` with an explicit `db-version`**
+These defaults enable all available features and best performance when using these versions. They also match the [Dev Services](/guides/databases-dev-services/index.md) container versions.
+
+If you intend to connect to an older database version, you must set the `db-version` explicitly to be lower than or equal to your actual database version:
+
+**`application.properties` with an explicit (older) `db-version`**
 
 ```properties
 quarkus.datasource.db-kind = postgresql
-quarkus.datasource.db-version = 18.1 <1>
+quarkus.datasource.db-version = 17.0 <1>
 
 %prod.quarkus.datasource.username = hibernate
 %prod.quarkus.datasource.password = hibernate
@@ -164,12 +200,10 @@ quarkus.datasource.db-version = 18.1 <1>
 
 1. Set the database version. The Hibernate ORM dialect will target that version.
 
-As a rule, the version set here should be as high as possible, but must be lower than or equal to the version of any database your application will connect to.
-
 > [!NOTE]
-> As described above, the version can either be preconfigured explicitly via a `quarkus.datasource.db-version` configuration property, or implicitly set by the Quarkus build process to a minimum supported version of the database. Quarkus will try to check this preconfigured version against the actual database version on startup, leading to a startup failure when the actual version is lower.
+> As described above, the version can either be set explicitly via a `quarkus.datasource.db-version` configuration property, or defaulted to the latest stable version. Quarkus will check the configured version against the actual database version on startup, leading to a startup failure when the actual version is lower than the configured version.
 >
-> This is a safeguard: for versions of the database older than what is configured, Hibernate ORM may generate SQL that is invalid which would lead to runtime exceptions.
+> This is a safeguard: for databases older than what is configured, Hibernate ORM may generate SQL that is invalid which would lead to runtime exceptions.
 >
 > If the database cannot be reached, a warning will be logged but startup will proceed. If you know the database won't be reachable on startup, consider configuring [offline startup](#offline), which will automatically disable the check and warning.
 >
@@ -178,7 +212,7 @@ As a rule, the version set here should be as high as possible, but must be lower
 <a id="hibernate-dialect-other-databases"></a>
 #### Other databases
 
-If [your database does not have a corresponding Quarkus extension](/guides/datasource/index.md#other-databases), or if the defaults do not match your needs for some reason, you will need to set the [Hibernate ORM dialect](https://docs.hibernate.org/orm/7.4/userguide/html_single/#database-dialect) explicitly:
+If [your database does not have a corresponding Quarkus extension](/guides/datasource/index.md#other-databases), or if the defaults do not match your needs for some reason, you will need to set the [Hibernate ORM dialect](https://docs.hibernate.org/orm/8.0/userguide/html_single/#database-dialect) explicitly:
 
 **`application.properties` with an explicit `dialect`**
 
@@ -194,7 +228,7 @@ quarkus.hibernate-orm.dialect=Cockroach <1>
 
 1. Set the Hibernate ORM dialect.
 
-   For built-in dialects, the expected value is one of the names in the [official list of dialects](https://docs.hibernate.org/orm/7.4/dialect/dialect.html), **without** the `Dialect` suffix, for example `Cockroach` for `CockroachDialect`.
+   For built-in dialects, the expected value is one of the names in the [official list of dialects](https://docs.hibernate.org/orm/8.0/dialect/dialect.html), **without** the `Dialect` suffix, for example `Cockroach` for `CockroachDialect`.
 
    For third-party dialects, the expected value is the fully-qualified class name, for example `com.acme.hibernate.AcmeDbDialect`.
 
@@ -232,7 +266,7 @@ When doing so, Quarkus will infer the database version and (if possible) dialect
 <a id="hibernate-configuration-properties"></a>
 ### Hibernate ORM configuration properties
 
-There are various optional properties useful to refine your `EntityManagerFactory` or guide guesses of Quarkus.
+There are various optional properties useful to refine your `SessionFactory` or guide guesses of Quarkus.
 
 There are no required properties, as long as a default datasource is configured.
 
@@ -256,27 +290,25 @@ The configuration properties listed in [Configuration Reference for Hibernate OR
 
 It is possible to define multiple persistence units using the Quarkus configuration properties.
 
-The properties at the root of the `quarkus.hibernate-orm.` namespace define the default persistence unit. For instance, the following snippet defines a default datasource and a default persistence unit:
+The properties at the root of the `quarkus.hibernate-orm.` namespace define the default persistence unit. For instance, the following snippet configures the `schema-management.strategy` property for the default persistence unit:
 
 ```properties
-quarkus.datasource.db-kind=h2
-quarkus.datasource.jdbc.url=jdbc:h2:mem:default;DB_CLOSE_DELAY=-1
-
-quarkus.hibernate-orm.schema-management.strategy=validate
+quarkus.hibernate-orm.schema-management.strategy=create
 ```
 
 Using a map based approach, it is possible to define named persistence units:
 
 ```properties
-quarkus.datasource."users".db-kind=h2 <1>
-quarkus.datasource."users".jdbc.url=jdbc:h2:mem:users;DB_CLOSE_DELAY=-1
+%prod.quarkus.datasource."users".username = hibernate <1>
+%prod.quarkus.datasource."users".password = hibernate
+%prod.quarkus.datasource."users".jdbc.url = jdbc:postgresql://localhost:26257/users_db
 
-quarkus.datasource."inventory".db-kind=h2 <2>
-quarkus.datasource."inventory".jdbc.url=jdbc:h2:mem:inventory;DB_CLOSE_DELAY=-1
+%prod.quarkus.datasource."inventory".username = hibernate <2>
+%prod.quarkus.datasource."inventory".password = hibernate
+%prod.quarkus.datasource."inventory".jdbc.url = jdbc:postgresql://localhost:26257/inventory_db
 
 quarkus.hibernate-orm."users".datasource=users <3>
 quarkus.hibernate-orm."users".packages=org.acme.model.user <4>
-
 quarkus.hibernate-orm."inventory".datasource=inventory <5>
 quarkus.hibernate-orm."inventory".packages=org.acme.model.inventory
 ```
@@ -298,12 +330,15 @@ quarkus.hibernate-orm."inventory".packages=org.acme.model.inventory
 <a id="multiple-persistence-units-attaching-model-classes"></a>
 #### Attaching model classes to persistence units
 
-There are two ways to attach model classes to persistence units, and they should not be mixed:
+There are three ways to attach model classes to persistence units:
 
 - Via the `packages` configuration property;
-- Via the `@io.quarkus.hibernate.orm.PersistenceUnit` package-level annotation.
+- Via the `@io.quarkus.hibernate.orm.PersistenceUnit` package-level annotation;
+- Via the `@io.quarkus.hibernate.orm.PersistenceUnit` class-level annotation.
 
-If both are mixed, the annotations are ignored and only the `packages` configuration properties are taken into account.
+The `packages` configuration property and the annotations (package-level or class-level) should not be mixed: if the `packages` configuration property is used for at least one persistence unit, all `@PersistenceUnit` annotations are ignored and only the `packages` configuration properties are taken into account.
+
+The package-level and class-level annotations, on the other hand, can be combined: a class-level `@PersistenceUnit` annotation always takes precedence over a package-level one for that particular class.
 
 Using the `packages` configuration property is simple:
 
@@ -339,7 +374,7 @@ It is also supported to attach a given model class to several persistence units.
 >
 > If you have a use case for that and clever ideas about how to implement it without cluttering the simplified Panache approach, contact us on the [quarkus-dev mailing list](https://groups.google.com/d/forum/quarkus-dev).
 
-The second approach to attach model classes to a persistence unit is to use package-level `@io.quarkus.hibernate.orm.PersistenceUnit` annotations. Again, the two approaches cannot be mixed.
+The second approach to attach model classes to a persistence unit is to use package-level `@io.quarkus.hibernate.orm.PersistenceUnit` annotations. This approach cannot be mixed with the `packages` configuration property.
 
 To obtain a configuration similar to the one above with the `packages` configuration property, create a `package-info.java` file with the following content:
 
@@ -352,49 +387,106 @@ import io.quarkus.hibernate.orm.PersistenceUnit;
 
 1. Be careful, use the `@io.quarkus.hibernate.orm.PersistenceUnit` annotation, not the Jakarta Persistence one.
 
-> [!CAUTION]
-> We only support defining the `@PersistenceUnit` for model classes at the package level, using the `@PersistenceUnit` annotation at the class level is not supported in this case.
-
 Note that, similarly to what we do with the configuration property, we take into account the annotated package but also all its subpackages.
+
+The third approach is to annotate the model class itself with `@io.quarkus.hibernate.orm.PersistenceUnit`. This approach also cannot be mixed with the `packages` configuration property.
+
+```java
+@Entity
+@PersistenceUnit("users") <1>
+public class User {
+    // ...
+}
+```
+
+1. Be careful, use the `@io.quarkus.hibernate.orm.PersistenceUnit` annotation, not the Jakarta Persistence one.
+
+A model class can be attached to several persistence units by repeating the annotation:
+
+```java
+@Entity
+@PersistenceUnit("users")
+@PersistenceUnit("inventory")
+public class SharedEntity {
+    // ...
+}
+```
+
+As mentioned above, a class-level annotation takes precedence over a package-level one.
+
+The following table summarizes how the three approaches interact when combined:
+
+| `packages` configuration property | Package-level annotation | Class-level annotation | Result |
+| --- | --- | --- | --- |
+| `users` | `inventory` | `inventory` | Only `users`; configuration overrides both annotations. |
+| None | `users` | `inventory` | Only `inventory`; the class annotation overrides the package annotation. |
+| None | `users` | None | `users`, from the package annotation. |
+| None | None | `users` | `users`, from the class annotation. |
+| None | None | None | Default persistence unit if no package annotations are used anywhere; otherwise unassigned. |
+
+<a id="persistence-unit-detection"></a>
+### Conditions for persistence unit configuration
+
+Quarkus creates a persistence unit when it detects that one is needed, i.e. when any of the following conditions is met:
+
+- It is requested by another extension (e.g. Hibernate Search, Envers).
+- OR at least one build-time property is set for it (e.g. `quarkus.hibernate-orm."users".schema-management.strategy`).
+- OR at least one entity is attached to it (see [below](#multiple-persistence-units-attaching-model-classes)).
+- OR no persistence unit is defined at all, and the default datasource exists: then the default persistence unit is created.
+
+This applies equally to the default persistence unit and to named persistence units. You can mix the default persistence unit and named persistence units, or only have a default persistence unit, or only have named persistence units.
+
+[Datasources follow similar rules](/guides/datasource/index.md#datasource-detection), making most configuration optional [while developing](#dev-mode): for each persistence unit, you mainly need to select a datasource and attach entities.
 
 ### CDI integration
 
 <a id="injecting-entry-points"></a>
 #### Injecting entry points
 
-If you are familiar with using Hibernate ORM in Quarkus, you probably already have injected the `EntityManager` using CDI:
+If you are familiar with using Hibernate ORM in Quarkus, you probably already have injected the `Session` using CDI:
 
 ```java
 @Inject
-EntityManager entityManager;
+Session session;
 ```
 
-This will inject the `EntityManager` of the default persistence unit.
+This will inject the `Session` of the default persistence unit.
 
-Injecting the `EntityManager` of a named persistence unit (`users` in our example) is as simple as:
+Injecting the `Session` of a named persistence unit (`users` in our example) is as simple as:
 
 ```java
 @Inject
 @PersistenceUnit("users") <1>
-EntityManager entityManager;
+Session session;
 ```
 
 1. Here again, we use the same `@io.quarkus.hibernate.orm.PersistenceUnit` annotation.
 
+If you prefer to stick to the Jakarta Persistence API, you can inject an `EntityManager` instead, using the exact same mechanism:
+
+```java
+@Inject
+EntityManager entityManager;
+
+@Inject
+@PersistenceUnit("users")
+EntityManager entityManagerForUsers;
+```
+
 > [!NOTE]
-> The injected `EntityManager` or `Session` instance is a proxy that requires an active transaction for interaction.
+> The injected `Session` or `EntityManager` instance is a proxy that requires an active transaction for interaction.
 >
 > By default it is also possible to use it for read-only operations without a transaction when in a request scope, but this can be disabled by setting `quarkus.hibernate-orm.request-scoped.enabled` to `false`.
 
-You can inject the `EntityManagerFactory` of a named persistence unit using the exact same mechanism:
+You can inject the `SessionFactory` (or its Jakarta Persistence equivalent, `EntityManagerFactory`) of a named persistence unit using the exact same mechanism:
 
 ```java
 @Inject
 @PersistenceUnit("users")
-EntityManagerFactory entityManagerFactory;
+SessionFactory sessionFactory;
 ```
 
-In addition to `EntityManager` and `EntityManagerFactory`, Quarkus also supports injecting the following JPA/Hibernate components:
+In addition to `Session` and `SessionFactory` (and their Jakarta Persistence equivalents `EntityManager` and `EntityManagerFactory`), Quarkus also supports injecting the following JPA/Hibernate components:
 
 ```java
 @Inject
@@ -430,10 +522,69 @@ These components can also be injected with a specific persistence unit qualifier
 CriteriaBuilder criteriaBuilder;
 ```
 
+<a id="stateless-session"></a>
+#### Using `StatelessSession`
+
+In addition to the regular `Session` (or `EntityManager`), Quarkus supports injecting Hibernate's [`StatelessSession`](https://docs.hibernate.org/orm/8.0/userguide/html_single/#stateless-sessions).
+
+A stateless session does not maintain a first-level cache and does not perform automatic dirty checking. Entity changes are not persisted automatically: you must call `insert()`, `update()`, or `delete()` explicitly. This makes stateless sessions a good fit for bulk operations or workflows where you want full control over writes.
+
+You can inject a `StatelessSession` the same way as a regular `Session`:
+
+```java
+@Inject
+StatelessSession statelessSession;
+
+@Inject
+@PersistenceUnit("users")
+StatelessSession usersStatelessSession;
+```
+
+You can also inject Jakarta Persistence's `EntityAgent`, which is backed by the same stateless session. Fields of type `EntityAgent` or `StatelessSession` support `@jakarta.persistence.PersistenceAgent` resource injection:
+
+```java
+@PersistenceAgent
+EntityAgent entityAgent;
+
+@PersistenceAgent(unitName = "users")
+EntityAgent usersEntityAgent;
+```
+
+This also supports Jakarta Data repositories generated by Hibernate's `hibernate-processor`, which use `@PersistenceAgent` to obtain their `EntityAgent`.
+
+Wrap methods that modify the database in `@Transactional`, as you would with a regular `Session`:
+
+```java
+@ApplicationScoped
+public class GiftService {
+
+    @Inject
+    StatelessSession statelessSession;
+
+    @Transactional
+    public void createGift(String giftDescription) {
+        Gift gift = new Gift();
+        gift.setName(giftDescription);
+        statelessSession.insert(gift);
+    }
+
+    @Transactional
+    public List<Gift> findAll() {
+        return statelessSession
+                .createSelectionQuery("from Gift", Gift.class)
+                .getResultList();
+    }
+}
+```
+
+It is also possible to mix a regular `Session` and a `StatelessSession` within the same transaction when needed.
+
+For more details on stateless sessions with Panache, see [Quarkus Data Hibernate](/guides/quarkus-data-hibernate/index.md#use-stateless-sessions).
+
 <a id="plugging-in-converters-entity-listeners"></a>
 #### Plugging in converters and entity listeners
 
-The Quarkus extension for Hibernate ORM supports injecting [attribute converters](https://docs.hibernate.org/orm/7.4/userguide/html_single/#basic-jpa-convert) and [entity listeners](https://docs.hibernate.org/orm/7.4/userguide/html_single/#events-jpa-callbacks) into Hibernate ORM.
+The Quarkus extension for Hibernate ORM supports injecting [attribute converters](https://docs.hibernate.org/orm/8.0/userguide/html_single/#basic-jpa-convert) and [entity listeners](https://docs.hibernate.org/orm/8.0/userguide/html_single/#events-jpa-callbacks) into Hibernate ORM.
 
 Just use them as you would in vanilla Hibernate ORM (see documentation linked above), and rely on CDI features (`@Inject`, `@PostConstruct`, `@PreDestroy`, ...) in the converter/listener implementation as needed.
 
@@ -594,7 +745,7 @@ To set up and configure Hibernate ORM, [using `application.properties`](#hiberna
 > - Persistence units defined in `persistence.xml` always use the [default datasource](/guides/datasource/index.md#configure-a-single-datasource).
 > - Persistence units defined in `persistence.xml` must be configured explicitly: Quarkus will keep injection of environment-related configuration to a minimum.
 >
->   In particular, Quarkus will not configure the dialect or database version automatically based on the datasource, so if the default configuration of Hibernate ORM doesn't suit your needs, you will need to include in `persistence.xml` configuration such as [`hibernate.dialect`](https://docs.hibernate.org/orm/7.4/userguide/html_single/#settings-hibernate.dialect)/[`jakarta.persistence.database-product-name`](https://docs.hibernate.org/orm/7.4/userguide/html_single/#settings-jakarta.persistence.database-product-name) and possibly [`jakarta.persistence.database-product-version`](https://docs.hibernate.org/orm/7.4/userguide/html_single/#settings-jakarta.persistence.database-product-version).
+>   In particular, Quarkus will not configure the dialect or database version automatically based on the datasource, so if the default configuration of Hibernate ORM doesn't suit your needs, you will need to include in `persistence.xml` configuration such as [`hibernate.dialect`](https://docs.hibernate.org/orm/8.0/userguide/html_single/#settings-hibernate.dialect)/[`jakarta.persistence.database-product-name`](https://docs.hibernate.org/orm/8.0/userguide/html_single/#settings-jakarta.persistence.database-product-name) and possibly [`jakarta.persistence.database-product-version`](https://docs.hibernate.org/orm/8.0/userguide/html_single/#settings-jakarta.persistence.database-product-version).
 >
 > - Using `persistence.xml` is incompatible with using `quarkus.hibernate-orm.*` properties  in `application.properties`: if you mix them, Quarkus will raise an exception.
 > - Developer experience may be impacted negatively when using `persistence.xml` compared to when [using `application.properties`](#hibernate-configuration-properties), due to unavailable features, limited guidance in the Quarkus documentation, and error messages providing resolution hints that cannot be applied (e.g. using `quarkus.hibernate-orm.*` properties).
@@ -637,7 +788,7 @@ Your `pom.xml` dependencies as well as your Java code would be identical to the 
 </persistence>
 ```
 
-When using the `persistence.xml` configuration you are configuring Hibernate ORM directly, so in this case the appropriate reference is the [documentation on hibernate.org](https://docs.hibernate.org/orm/7.4/userguide/html_single/#configurations).
+When using the `persistence.xml` configuration you are configuring Hibernate ORM directly, so in this case the appropriate reference is the [documentation on hibernate.org](https://docs.hibernate.org/orm/8.0/userguide/html_single/#configurations).
 
 Please remember these are not the same property names as the ones used in the Quarkus `application.properties`, nor will the same defaults be applied.
 
@@ -671,19 +822,23 @@ During tests and in [development mode](/guides/dev-mode-differences/index.md), H
 
 The main remaining question is how to initialize that database.
 
-1. The first choice is to use `quarkus.hibernate-orm.schema-management.strategy=drop-and-create` in conjunction with `import.sql`.
+1. The first choice is to use `quarkus.hibernate-orm.schema-management.strategy=drop-and-create` in conjunction with `data.sql`.
 
-   That way for every change to your app and in particular to your entities, the database schema will be properly recreated and your data fixture (stored in `import.sql`) will be used to repopulate it from scratch.
+   That way for every change to your app and in particular to your entities, the database schema will be properly recreated and your data fixture (stored in `data.sql`) will be used to repopulate it from scratch.
 
-   This is best to perfectly control your environment and works magic with Quarkus live reload mode: your entity changes or any change to your `import.sql` is immediately picked up and the schema updated without restarting the application! In fact, this is the default when using [Dev Services](/guides/dev-services/index.md).
+   This is best to perfectly control your environment and works magic with Quarkus live reload mode: your entity changes or any change to your `data.sql` is immediately picked up and the schema updated without restarting the application! In fact, this is the default when using [Dev Services](/guides/dev-services/index.md).
 
    > [!TIP]
-   > You can use a file with a different name than `import.sql` by setting the property `quarkus.hibernate-orm.sql-load-script` in `application.properties`. You can also provide a `.zip` file in the same way which should contain only the files containing the SQL statements to be executed.
+   > You can use a file with a different name than `data.sql` by setting the property `quarkus.hibernate-orm.data-management.init-script` in `application.properties`. You can also provide a `.zip` file in the same way which should contain only the files containing the SQL statements to be executed.
+   >
+   > If the schema generated by Hibernate ORM needs to be completed with database objects it cannot generate (constraints, views, functions, ...), put the corresponding SQL statements in `schema.sql` (see [SQL init scripts](#sql-init-scripts)).
 
 
 1. The second approach is to use `quarkus.hibernate-orm.schema-management.strategy=update`.
 
    This approach is best when you do many entity changes but still need to work on a copy of the production data or if you want to reproduce a bug that is based on specific database entries. `update` is a best effort from Hibernate ORM and will fail in specific situations including altering your database structure which could lead to data loss. For example if you change structures which violate a foreign key constraint, Hibernate ORM might have to bail out. But for development, these limitations are acceptable.
+
+   Note that `data.sql` is still executed on every startup with this approach: set `quarkus.hibernate-orm.data-management.strategy=none` if that is not what you want.
 
 
 1. The third approach is to use `quarkus.hibernate-orm.schema-management.strategy=none`.
@@ -691,6 +846,8 @@ The main remaining question is how to initialize that database.
    This approach is best when you are working on a copy of the production data but want to fully control the schema evolution. Or if you use a database schema migration tool like [Flyway](/guides/flyway/index.md) or [Liquibase](/guides/liquibase/index.md).
 
    With this approach when making changes to an entity, make sure to adapt the database schema accordingly; you could also use `validate` to have Hibernate verify the schema matches its expectations.
+
+   Note that `data.sql` is still executed on every startup with this approach, once the schema has been migrated: set `quarkus.hibernate-orm.data-management.strategy=none` if that is not what you want. Resetting the database from the Dev UI executes it again once Flyway or Liquibase have reset the schema, whatever the data management strategy (set `%dev.quarkus.hibernate-orm.data-management.init-script=no-file` to keep it away from the dev database).
 
 
 > [!WARNING]
@@ -702,13 +859,13 @@ These approaches become really powerful when combined with Quarkus configuration
 
 ```properties
 %dev.quarkus.hibernate-orm.schema-management.strategy = drop-and-create
-%dev.quarkus.hibernate-orm.sql-load-script = import-dev.sql
+%dev.quarkus.hibernate-orm.data-management.init-script = data-dev.sql
 
 %dev-with-data.quarkus.hibernate-orm.schema-management.strategy = update
-%dev-with-data.quarkus.hibernate-orm.sql-load-script = no-file
+%dev-with-data.quarkus.hibernate-orm.data-management.strategy = none
 
 %prod.quarkus.hibernate-orm.schema-management.strategy = none
-%prod.quarkus.hibernate-orm.sql-load-script = no-file
+%prod.quarkus.hibernate-orm.data-management.strategy = none
 ```
 
 You can start dev mode using a custom profile:
@@ -737,9 +894,10 @@ Quarkus comes with default profiles (`dev`, `test` and `prod`). And you can add 
 
 The Hibernate ORM Quarkus extension sets some default configurations differently in dev and test modes than in other environments.
 
-- `quarkus.hibernate-orm.sql-load-script` is set to `no-file` for all profiles except the `dev` and `test` ones.
+- `quarkus.hibernate-orm.schema-management.strategy` is set to `none` for all profiles except the `dev` and `test` ones, so neither Hibernate ORM's schema generation nor the schema init script (`schema.sql`) is executed.
+- `quarkus.hibernate-orm.data-management.strategy` is set to `none` for all profiles except the `dev` and `test` ones, so the data init script (`data.sql`) is not executed, even if it is configured explicitly.
 
-You can override it in your `application.properties` explicitly (e.g. `%prod.quarkus.hibernate-orm.sql-load-script = import.sql`) but we wanted you to avoid overriding your database by accident in prod :)
+You can override them in your `application.properties` explicitly (e.g. `%prod.quarkus.hibernate-orm.data-management.strategy = create`) but we wanted you to avoid overriding your database by accident in prod :)
 
 Speaking of, make sure to not drop your database schema in production! Add the following in your properties file.
 
@@ -747,7 +905,7 @@ Speaking of, make sure to not drop your database schema in production! Add the f
 
 ```properties
 %prod.quarkus.hibernate-orm.schema-management.strategy = none
-%prod.quarkus.hibernate-orm.sql-load-script = no-file
+%prod.quarkus.hibernate-orm.data-management.strategy = none
 ```
 
 <a id="flyway"></a>
@@ -931,10 +1089,10 @@ public class MyEntityWeigher implements Weigher<Object, Object> {
 ```
 
 > [!NOTE]
-> `object-count` and `maximum-weight` are mutually exclusive per cache region. If `maximum-weight` is set without `weigher-class`, each entry has a default weight of 1.
+> `object-count` and `maximum-weight` are mutually exclusive per cache region. `maximum-weight` and `weigher-class` must be set together.
 
 > [!NOTE]
-> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
 >
 > You can also use a simplified format, starting with a number:
 >
@@ -1009,7 +1167,7 @@ To use Hibernate Spatial, you simply need to add the dependency to your project:
 
 The dependency version is managed by Quarkus, so you don't need to specify it explicitly.
 
-You can find all information about Spatial in the Hibernate user guide: [Hibernate ORM Spatial](https://docs.hibernate.org/orm/7.4/userguide/html_single/#spatial).
+You can find all information about Spatial in the Hibernate user guide: [Hibernate ORM Spatial](https://docs.hibernate.org/orm/8.0/userguide/html_single/#spatial).
 
 <a id="vector"></a>
 ## Hibernate Vector
@@ -1048,12 +1206,19 @@ public class Document {
 }
 ```
 
-You can find all information about Vector in the Hibernate user guide: [Hibernate ORM Vector](https://docs.hibernate.org/orm/7.4/userguide/html_single/#vector).
+You can find all information about Vector in the Hibernate user guide: [Hibernate ORM Vector](https://docs.hibernate.org/orm/8.0/userguide/html_single/#vector).
 
 <a id="metrics"></a>
 ## Metrics
 
 [Micrometer](/guides/telemetry-micrometer/index.md) is capable of exposing metrics that Hibernate ORM collects at runtime. To enable exposure of Hibernate metrics on the `/q/metrics` endpoint, make sure your project depends on a metrics extension and set the configuration property `quarkus.hibernate-orm.metrics.enabled` to `true`.
+
+Without Micrometer, to simply log session-level metrics for each Hibernate session, enable statistics (`quarkus.hibernate-orm.statistics`) and enable `DEBUG` logging for the `org.hibernate.session.metrics` category:
+
+```properties
+quarkus.hibernate-orm.statistics=true
+quarkus.log.category."org.hibernate.session.metrics".level=DEBUG
+```
 
 ## Limitations and other things you should know
 
@@ -1076,7 +1241,7 @@ Typically, you would need to adapt your build scripts to include the Hibernate E
 ### Automatic integration
 
 **Transaction Manager integration**\
-You don't need to set this up, Quarkus automatically injects the reference to the Narayana Transaction Manager. The dependency is included automatically as a transitive dependency of the Hibernate ORM extension. All configuration is optional; for more details see [Using Transactions in Quarkus](/guides/transaction/index.md).
+You don't need to set this up, Quarkus automatically injects the reference to the Narayana Transaction Manager. The dependency is included automatically as a transitive dependency of the Hibernate ORM extension. All configuration is optional; for more details see [Using transactions](/guides/transaction/index.md).
 
 **Connection pool**\
 Don't need to choose one either. Quarkus automatically includes the Agroal connection pool; configure your datasource as in the above examples and it will set up Hibernate ORM to use Agroal. More details about this connection pool can be found in [Quarkus - Datasources](/guides/datasource/index.md).
@@ -1103,8 +1268,8 @@ The JNDI technology is commonly used in other runtimes to integrate different co
 
 ### Other notable differences
 
-**Format of `import.sql`**\
-When importing a `import.sql` to set up your database, keep in mind that Quarkus reconfigures Hibernate ORM so to require a semicolon (`;`) to terminate each statement. The default in Hibernate is to have a statement per line, without requiring a terminator other than newline: remember to convert your scripts to use the `;` terminator character if you're reusing existing scripts. This is useful so to allow multi-line statements and human friendly formatting.
+**Format of SQL init scripts**\
+When importing a `data.sql` or `schema.sql` script to set up your database, keep in mind that Quarkus reconfigures Hibernate ORM so to require a semicolon (`;`) to terminate each statement. The default in Hibernate is to have a statement per line, without requiring a terminator other than newline: remember to convert your scripts to use the `;` terminator character if you're reusing existing scripts. This is useful so to allow multi-line statements and human friendly formatting.
 
 ## Simplifying Hibernate ORM with Panache
 
@@ -1119,9 +1284,9 @@ Jump over to [Quarkus - Datasources](/guides/datasource/index.md) for all detail
 <a id="multitenancy"></a>
 ## Multitenancy
 
-"The term multitenancy, in general, is applied to software development to indicate an architecture in which a single running instance of an application simultaneously serves multiple clients (tenants). This is highly common in SaaS solutions. Isolating information (data, customizations, etc.) pertaining to the various tenants is a particular challenge in these systems. This includes the data owned by each tenant stored in the database" ([Hibernate User Guide](https://docs.hibernate.org/orm/7.4/userguide/html_single/#multitenacy)).
+"The term multitenancy, in general, is applied to software development to indicate an architecture in which a single running instance of an application simultaneously serves multiple clients (tenants). This is highly common in SaaS solutions. Isolating information (data, customizations, etc.) pertaining to the various tenants is a particular challenge in these systems. This includes the data owned by each tenant stored in the database" ([Hibernate User Guide](https://docs.hibernate.org/orm/8.0/userguide/html_single/#multitenacy)).
 
-Quarkus currently supports the [separate database](https://docs.hibernate.org/orm/7.4/userguide/html_single/#multitenacy-separate-database) approach, the [separate schema](https://docs.hibernate.org/orm/7.4/userguide/html_single/#multitenacy-separate-schema) approach and the [discriminator](https://docs.hibernate.org/orm/7.4/userguide/html_single/#multitenacy-discriminator) approach.
+Quarkus currently supports the [separate database](https://docs.hibernate.org/orm/8.0/userguide/html_single/#multitenacy-separate-database) approach, the [separate schema](https://docs.hibernate.org/orm/8.0/userguide/html_single/#multitenacy-separate-schema) approach and the [discriminator](https://docs.hibernate.org/orm/8.0/userguide/html_single/#multitenacy-discriminator) approach.
 
 To see multitenancy in action, you can check out the [hibernate-orm-multi-tenancy-schema-quickstart](https://github.com/quarkusio/quarkus-quickstarts/tree/main/hibernate-orm-multi-tenancy-schema-quickstart) or [hibernate-orm-multi-tenancy-database-quickstart](https://github.com/quarkusio/quarkus-quickstarts/tree/main/hibernate-orm-multi-tenancy-database-quickstart).
 
@@ -1132,21 +1297,22 @@ Let's start by implementing the `/{tenant}` endpoint. As you can see from the so
 ```java
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
+
+import org.hibernate.Session;
 
 @ApplicationScoped
 @Path("/{tenant}")
 public class FruitResource {
 
     @Inject
-    EntityManager entityManager;
+    Session session;
 
     @GET
     @Path("fruits")
     public Fruit[] getFruits() {
-        return entityManager.createNamedQuery("Fruits.findAll", Fruit.class)
+        return session.createNamedQuery("Fruits.findAll", Fruit.class)
                 .getResultList().toArray(new Fruit[0]);
     }
 
@@ -1587,7 +1753,7 @@ public class CustomTypeContributor implements TypeContributor {
 <a id="interceptors"></a>
 ## Interceptors
 
-You can assign an [`org.hibernate.Interceptor`](https://docs.hibernate.org/orm/7.4/userguide/html_single/#events-interceptors) to your `SessionFactory` by simply defining a CDI bean with the appropriate qualifier:
+You can assign an [`org.hibernate.Interceptor`](https://docs.hibernate.org/orm/8.0/userguide/html_single/#events-interceptors) to your `SessionFactory` by simply defining a CDI bean with the appropriate qualifier:
 
 ```java
 @PersistenceUnitExtension // <1>
@@ -1609,9 +1775,9 @@ public static class MyInterceptor implements Interceptor, Serializable { // <2>
 3. For example, override `onLoad`, which Hibernate ORM calls just before it initializes an entity instance.
 
 > [!TIP]
-> By default, interceptor beans annotated with `@PersistenceUnitExtension` are application-scoped, which means only one interceptor instance will be created per application and reused across all entity managers. For this reason, the interceptor implementation must be thread-safe.
+> By default, interceptor beans annotated with `@PersistenceUnitExtension` are application-scoped, which means only one interceptor instance will be created per application and reused across all sessions. For this reason, the interceptor implementation must be thread-safe.
 >
-> In order to create one interceptor instance per entity manager instead, annotate your bean with `@Dependent`. In that case, the interceptor implementation doesn't need to be thread-safe.
+> In order to create one interceptor instance per session instead, annotate your bean with `@Dependent`. In that case, the interceptor implementation doesn't need to be thread-safe.
 
 > [!NOTE]
 > Due to a limitation in Hibernate ORM itself, `@PreDestroy` methods on `@Dependent`-scoped interceptors will never get called.
@@ -1641,7 +1807,7 @@ public class MyStatementInspector implements StatementInspector { // <2>
 <a id="json_xml_serialization_deserialization"></a>
 ## Customizing JSON/XML serialization/deserialization
 
-By default, Quarkus will try to automatically configure format mappers depending on available extensions. Globally configured `ObjectMapper` (or `Jsonb`) will be used for serialization/deserialization operations when Jackson (or JSON-B) is available. Jackson will take precedence if both Jackson and JSON-B are available at the same time.
+By default, Quarkus will delegate to Hibernate ORM for configuring the appropriate format mappers.
 
 JSON and XML serialization/deserialization in Hibernate ORM can be customized by implementing a `org.hibernate.type.format.FormatMapper` and annotating the implementation with the appropriate qualifiers:
 
@@ -1723,7 +1889,9 @@ From Quarkus's perspective, this is controlled by the [`quarkus.hibernate-orm.va
 - `ddl` -- Hibernate Validator constraints will be considered for the [DDL operations](#dev-mode)
 - `none` -- Hibernate Validator integration will be disabled.
 
-While all constraints with corresponding Jakarta Validation rules will apply during the `callback` validation, in the `ddl` mode, only a subset of constraints is used to influence the DDL. In the Hibernate Validator documentation, you can find [the list of available constraints](https://docs.hibernate.org/validator/9.1/reference/en-US/html_single/#section-builtin-constraints) and their impact on the DDL generation.
+With `none` or `callback` alone, validation constraints do not affect the generated DDL.
+
+While all constraints with corresponding Jakarta Validation rules will apply during the `callback` validation, in the `ddl` mode, only a subset of constraints is used to influence the DDL. In the Hibernate Validator documentation, you can find [the list of available constraints](https://docs.hibernate.org/validator/9.2/reference/en-US/html_single/#section-builtin-constraints) and their impact on the DDL generation.
 
 Let's consider having a simple entity with some constraints applied to its properties:
 
@@ -1840,7 +2008,7 @@ var query = session.createQuery(criteria);
 var result = query.list();
 ```
 
-For a more detailed overview of static metamodel, please refer to the [Jakarta Persistence specification](https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2#a6072).
+For a more detailed overview of static metamodel, please refer to the [Jakarta Persistence specification](https://jakarta.ee/specifications/persistence/4.0/jakarta-persistence-spec-4.0-M4.html#a6072).
 
 ### Jakarta Data
 
@@ -1911,9 +2079,9 @@ public class MyEntityResource {
 >
 > 1. Pass the name of the non-default persistence unit to the repository annotation (`other` in this example).
 >
-> Review the [Javadoc of the `@Repository` annotation](https://jakarta.ee/specifications/data/1.0/apidocs/jakarta.data/jakarta/data/repository/repository#dataStore()) to learn more about the `dataStore` attribute.
+> Review the [Javadoc of the `@Repository` annotation](https://jakarta.ee/specifications/data/1.0/apidocs/jakarta.data/jakarta/data/repository/Repository.html#dataStore()) to learn more about the `dataStore` attribute.
 
-Please refer to the corresponding [Hibernate Data Repositories](https://hibernate.org/repositories/) and [Jakarta Data](https://jakarta.ee/specifications/data/1.0/jakarta-data-1.0) guides to learn what else they have to offer.
+Please refer to the corresponding [Hibernate Data Repositories](https://hibernate.org/repositories/) and [Jakarta Data](https://jakarta.ee/specifications/data/1.0/jakarta-data-1.0.html) guides to learn what else they have to offer.
 
 #### Secure Jakarta Data repositories
 
@@ -2008,13 +2176,11 @@ public interface MyRepository extends CrudRepository<MyEntity, Integer> {
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-enabled"></a> [`quarkus.hibernate-orm.enabled`](#quarkus-hibernate-orm_quarkus-hibernate-orm-enabled) config_property_copy_button:+++quarkus.hibernate-orm.enabled+++[]<br><br>Whether Hibernate ORM is enabled **during the build**.<br><br>If Hibernate ORM is disabled during the build, all processing related to Hibernate ORM will be skipped, but it will not be possible to activate Hibernate ORM at runtime: `quarkus.hibernate-orm.active` will default to `false` and setting it to `true` will lead to an error.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-persistence-xml-ignore"></a> [`quarkus.hibernate-orm.persistence-xml.ignore`](#quarkus-hibernate-orm_quarkus-hibernate-orm-persistence-xml-ignore) config_property_copy_button:+++quarkus.hibernate-orm.persistence-xml.ignore+++[]<br><br>If `true`, Quarkus will ignore any `persistence.xml` file in the classpath and rely exclusively on the Quarkus configuration.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_PERSISTENCE_XML_IGNORE+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-statistics"></a> [`quarkus.hibernate-orm.statistics`](#quarkus-hibernate-orm_quarkus-hibernate-orm-statistics) config_property_copy_button:+++quarkus.hibernate-orm.statistics+++[]<br><br>Whether statistics collection is enabled. If 'metrics.enabled' is true, then the default here is considered true, otherwise the default is false.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_STATISTICS+++[] | boolean |  |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-log-session-metrics"></a> [`quarkus.hibernate-orm.log-session-metrics`](#quarkus-hibernate-orm_quarkus-hibernate-orm-log-session-metrics) config_property_copy_button:+++quarkus.hibernate-orm.log-session-metrics+++[]<br><br>Whether session metrics should be appended into the server log for each Hibernate session. This only has effect if statistics are enabled (`quarkus.hibernate-orm.statistics`). The default is false (which means both `statistics` and `log-session-metrics` need to be enabled for the session metrics to appear in the log).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_LOG_SESSION_METRICS+++[] | boolean |  |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-metrics-enabled"></a> [`quarkus.hibernate-orm.metrics.enabled`](#quarkus-hibernate-orm_quarkus-hibernate-orm-metrics-enabled) config_property_copy_button:+++quarkus.hibernate-orm.metrics.enabled+++[]<br><br>Whether metrics are published if a metrics extension is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_METRICS_ENABLED+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dev-ui-allow-hql"></a> [`quarkus.hibernate-orm.dev-ui.allow-hql`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dev-ui-allow-hql) config_property_copy_button:+++quarkus.hibernate-orm.dev-ui.allow-hql+++[]<br><br>Allow hql queries in the Dev UI page<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DEV_UI_ALLOW_HQL+++[] | boolean | `false` |
-| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-enabled"></a> [`quarkus.hibernate-orm.request-scoped.enabled`](#quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-enabled) config_property_copy_button:+++quarkus.hibernate-orm.request-scoped.enabled+++[]<br><br>Enable or disable access to a Hibernate ORM `EntityManager`/`Session`/`StatelessSession` ++**++when no transaction is active++**++ but a request scope is. When enabled, the corresponding sessions will be read-only. Defaults to enabled for backwards compatibility, but disabling this is recommended, to avoid inconsistent resulsts caused by queries running outside of transactions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_REQUEST_SCOPED_ENABLED+++[] | boolean | `true` |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-enabled"></a> [`quarkus.hibernate-orm.request-scoped.enabled`](#quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-enabled) config_property_copy_button:+++quarkus.hibernate-orm.request-scoped.enabled+++[]<br><br>Enable or disable access to a Hibernate ORM `EntityManager`/`Session`/`StatelessSession` ++**++when no transaction is active++**++ but a request scope is. When enabled, the corresponding sessions will be read-only. Defaults to enabled for backwards compatibility, but disabling this is recommended, to avoid inconsistent results caused by queries running outside of transactions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_REQUEST_SCOPED_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-datasource"></a> [`quarkus.hibernate-orm.datasource`](#quarkus-hibernate-orm_quarkus-hibernate-orm-datasource) config_property_copy_button:+++quarkus.hibernate-orm.datasource+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".datasource` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".datasource+++[]<br><br>The name of the datasource which this persistence unit uses.<br><br>If undefined, it will use the default datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATASOURCE+++[] | string |  |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-packages"></a> [`quarkus.hibernate-orm.packages`](#quarkus-hibernate-orm_quarkus-hibernate-orm-packages) config_property_copy_button:+++quarkus.hibernate-orm.packages+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".packages` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".packages+++[]<br><br>The packages in which the entities affected to this persistence unit are located.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_PACKAGES+++[] | list of string |  |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-sql-load-script"></a> [`quarkus.hibernate-orm.sql-load-script`](#quarkus-hibernate-orm_quarkus-hibernate-orm-sql-load-script) config_property_copy_button:+++quarkus.hibernate-orm.sql-load-script+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".sql-load-script` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".sql-load-script+++[]<br><br>Paths to files containing the SQL statements to execute when Hibernate ORM starts.<br><br>The files are retrieved from the classpath resources, so they must be located in the resources directory (e.g. `src/main/resources`).<br><br>The default value for this setting differs depending on the Quarkus launch mode:<br><br>- In dev and test modes, it defaults to `import.sql`. Simply add an `import.sql` file in the root of your resources directory and it will be picked up without having to set this property. Pass `no-file` to force Hibernate ORM to ignore the SQL import file.<br>- In production mode, it defaults to `no-file`. It means Hibernate ORM won't try to execute any SQL import file by default. Pass an explicit value to force Hibernate ORM to execute the SQL import file.<br><br>If you need different SQL statements between dev mode, test (`@QuarkusTest`) and in production, use Quarkus [configuration profiles facility](https://quarkus.io/guides/config#configuration-profiles).<br><br>**application.properties**<br><br>```property<br>%dev.quarkus.hibernate-orm.sql-load-script = import-dev.sql<br>%test.quarkus.hibernate-orm.sql-load-script = import-test.sql<br>%prod.quarkus.hibernate-orm.sql-load-script = no-file<br>```<br><br>> [!NOTE]<br>> Quarkus supports files with SQL statements or comments spread over multiple lines, or `.zip` files containing those files. Each SQL statement must be terminated by a semicolon.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SQL_LOAD_SCRIPT+++[] | list of string | `import.sql in dev and test modes ; no-file otherwise` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-physical-naming-strategy"></a> [`quarkus.hibernate-orm.physical-naming-strategy`](#quarkus-hibernate-orm_quarkus-hibernate-orm-physical-naming-strategy) config_property_copy_button:+++quarkus.hibernate-orm.physical-naming-strategy+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".physical-naming-strategy` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".physical-naming-strategy+++[]<br><br>Pluggable strategy contract for applying physical naming rules for database object names. Class name of the Hibernate PhysicalNamingStrategy implementation<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_PHYSICAL_NAMING_STRATEGY+++[] | string |  |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-implicit-naming-strategy"></a> [`quarkus.hibernate-orm.implicit-naming-strategy`](#quarkus-hibernate-orm_quarkus-hibernate-orm-implicit-naming-strategy) config_property_copy_button:+++quarkus.hibernate-orm.implicit-naming-strategy+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".implicit-naming-strategy` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".implicit-naming-strategy+++[]<br><br>Pluggable strategy for applying implicit naming rules when an explicit name is not given. Class name of the Hibernate ImplicitNamingStrategy implementation<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_IMPLICIT_NAMING_STRATEGY+++[] | string |  |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-files"></a> [`quarkus.hibernate-orm.mapping-files`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-files) config_property_copy_button:+++quarkus.hibernate-orm.mapping-files+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping-files` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping-files+++[]<br><br>XML files to configure the entity mapping, e.g. `META-INF/my-orm.xml`.<br><br>Defaults to `META-INF/orm.xml` if it exists. Pass `no-file` to force Hibernate ORM to ignore `META-INF/orm.xml`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_FILES+++[] | list of string | `META-INF/orm.xml if it exists; no-file otherwise` |
@@ -2026,28 +2192,25 @@ public interface MyRepository extends CrudRepository<MyEntity, Integer> {
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-active"></a> [`quarkus.hibernate-orm.active`](#quarkus-hibernate-orm_quarkus-hibernate-orm-active) config_property_copy_button:+++quarkus.hibernate-orm.active+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".active` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".active+++[]<br><br>Whether this persistence unit should be active at runtime.<br><br>See [this section of the documentation](/guides/hibernate-orm/index.md#persistence-unit-active).<br><br>Note that if Hibernate ORM is disabled (i.e. `quarkus.hibernate-orm.enabled` is set to `false`), all persistence units are deactivated, and setting this property to `true` will fail.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_ACTIVE+++[] | boolean | `` `true` if Hibernate ORM is enabled and there are entity types or an active datasource assigned to the persistence unit; `false` otherwise `` |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-unsupported-properties-full-property-key"></a> [`quarkus.hibernate-orm.unsupported-properties."full-property-key"`](#quarkus-hibernate-orm_quarkus-hibernate-orm-unsupported-properties-full-property-key) config_property_copy_button:+++quarkus.hibernate-orm.unsupported-properties."full-property-key"+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".unsupported-properties."full-property-key"` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".unsupported-properties."full-property-key"+++[]<br><br>Properties that should be passed on directly to Hibernate ORM. Use the full configuration property key here, for instance `quarkus.hibernate-orm.unsupported-properties."hibernate.order_inserts" = true`.<br><br>> [!WARNING]<br>> Properties set here are completely unsupported: as Quarkus doesn't generally know about these properties and their purpose, there is absolutely no guarantee that they will work correctly, and even if they do, that may change when upgrading to a newer version of Quarkus (even just a micro/patch version).<br><br>Consider using a supported configuration property before falling back to unsupported ones. If none exists, make sure to file a feature request so that a supported configuration property can be added to Quarkus, and more importantly so that the configuration property is tested regularly.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_UNSUPPORTED_PROPERTIES__FULL_PROPERTY_KEY_+++[] | Map\<String,String> |  |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-blocking"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-blocking\[`quarkus.hibernate-orm.blocking`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.blocking+++[]<br><br>*This property is deprecated since `3.39`: Use `quarkus.hibernate-orm.jdbc.enabled` for the default persistence unit, and `quarkus.hibernate-orm."<persistence-unit-name>".jdbc.enabled` for named persistence units, to configure this on a per-persistence-unit basis instead.*<br><br>Whether Hibernate ORM is working in blocking mode.<br><br>Hibernate ORM's blocking `EntityManager`/`Session`/`SessionFactory` are normally disabled by default if no JDBC datasource is found. You can set this property to `false` if you want to disable them despite having a JDBC datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_BLOCKING+++[] | boolean | `true` |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-batch-fetch-size"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-batch-fetch-size\[`quarkus.hibernate-orm.batch-fetch-size`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.batch-fetch-size+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".batch-fetch-size` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".batch-fetch-size+++[]<br><br>*This property is deprecated: Use `quarkus.hibernate-orm.fetch.batch-size` to configure the batch fetch size.*<br><br>The size of the batches used when loading entities and collections.<br><br>`-1` means batch loading is disabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_BATCH_FETCH_SIZE+++[] | int | `16` |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-max-fetch-depth"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-max-fetch-depth\[`quarkus.hibernate-orm.max-fetch-depth`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.max-fetch-depth+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".max-fetch-depth` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".max-fetch-depth+++[]<br><br>*This property is deprecated: Use `quarkus.hibernate-orm.fetch.max-depth` to configure the maximum fetch depth.*<br><br>The maximum depth of outer join fetch tree for single-ended associations (one-to-one, many-to-one).<br><br>A `0` disables default outer join fetching.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAX_FETCH_DEPTH+++[] | int |  |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-metadata-builder-contributor"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-metadata-builder-contributor\[`quarkus.hibernate-orm.metadata-builder-contributor`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.metadata-builder-contributor+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".metadata-builder-contributor` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".metadata-builder-contributor+++[]<br><br>*This property is deprecated: Use `TypeContributor`, `FunctionContributor`, or `AdditionalMappingContributor` instead.*<br><br>Class name of a custom [`org.hibernate.boot.spi.MetadataBuilderContributor`](https://docs.hibernate.org/stable/orm/javadocs/org/hibernate/boot/spi/MetadataBuilderContributor.html) implementation.<br><br>> [!NOTE]<br>> Not all customization options exposed by [`org.hibernate.boot.MetadataBuilder`](https://docs.hibernate.org/stable/orm/javadocs/org/hibernate/boot/MetadataBuilder.html) will work correctly. Stay clear of options related to classpath scanning in particular.<br>><br>> This setting is exposed mainly to allow registration of types, converters and SQL functions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_METADATA_BUILDER_CONTRIBUTOR+++[] | string |  |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-validation-enabled"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-validation-enabled\[`quarkus.hibernate-orm.validation.enabled`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.validation.enabled+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".validation.enabled` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".validation.enabled+++[]<br><br>*This property is deprecated since `3.19`: Use `quarkus.hibernate-orm.validation.mode` instead.*<br><br>Enables the Bean Validation integration.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_VALIDATION_ENABLED+++[] | boolean | `true` |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-multitenant-schema-datasource"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-multitenant-schema-datasource\[`quarkus.hibernate-orm.multitenant-schema-datasource`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.multitenant-schema-datasource+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".multitenant-schema-datasource` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".multitenant-schema-datasource+++[]<br><br>*This property is deprecated: Use `quarkus.hibernate-orm.datasource` to configure the datasource for the persistence unit.*<br><br>Defines the name of the datasource to use in case of SCHEMA approach. The datasource of the persistence unit will be used if not set.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MULTITENANT_SCHEMA_DATASOURCE+++[] | string |  |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-log-session-metrics"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-log-session-metrics\[`quarkus.hibernate-orm.log-session-metrics`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.log-session-metrics+++[]<br><br>*This property is deprecated since `4.0`: This property is no longer functional: Hibernate ORM 7{plus} logs session metrics based on whether the `org.hibernate.session.metrics` log category is enabled, not based on this setting. Enable that log category instead. This property will be removed in a future version.*<br><br>Whether session metrics should be appended into the server log for each Hibernate session.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_LOG_SESSION_METRICS+++[] | boolean |  |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-stateless-session-allow-write"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-request-scoped-stateless-session-allow-write\[`quarkus.hibernate-orm.request-scoped.stateless-session.allow-write`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.request-scoped.stateless-session.allow-write+++[]<br><br>*This property is deprecated: This setting will be removed in a future version, and then allowing writes outside of transactions will no longer be possible.*<br><br>Enable or disable write operations on a Hibernate ORM `StatelessSession` ++**++when no transaction is active++**++ but a request scope is. When disabled, no mutation operations will be allowed outside of active transactions. Defaults to 'false' but, for backwards compatibility, it can be set to 'true' if you have valid reasons to not use transactions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_REQUEST_SCOPED_STATELESS_SESSION_ALLOW_WRITE+++[] | boolean | `false` |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-sql-load-script"></a> <mark>link:#quarkus-hibernate-orm_quarkus-hibernate-orm-sql-load-script\[`quarkus.hibernate-orm.sql-load-script`\]</mark> config_property_copy_button:+++quarkus.hibernate-orm.sql-load-script+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".sql-load-script` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".sql-load-script+++[]<br><br>*This property is deprecated since `4.0`: Use `quarkus.hibernate-orm.data-management.init-script` to load data (executed regardless of how the schema is managed, see `quarkus.hibernate-orm.data-management.strategy`) or `quarkus.hibernate-orm.schema-management.init-script` to complete the schema (executed only when Hibernate ORM creates the schema). Scripts configured with this deprecated property keep their historical behavior: they are executed only when Hibernate ORM creates the schema.*<br><br>Paths to files containing the SQL statements to execute when Hibernate ORM starts.<br><br>The files are retrieved from the classpath resources, so they must be located in the resources directory (e.g. `src/main/resources`).<br><br>When set to a script, this property replaces both `quarkus.hibernate-orm.schema-management.init-script` and `quarkus.hibernate-orm.data-management.init-script`, and the scripts are only executed when Hibernate ORM creates the schema, in every launch mode. It cannot be combined with those properties or their default files (`schema.sql`, `data.sql`), nor with `quarkus.hibernate-orm.data-management.strategy`. When set to `no-file`, those properties and their default files apply.<br><br>In dev and test modes, an `import.sql` file in the classpath has the same effect as setting this property to `import.sql`. To stop using it, move its statements to `data.sql` if they load data and/or to `schema.sql` if they complete the schema, then delete it, or set this property to `no-file`.<br><br>If you need different SQL statements between dev mode, test (`@QuarkusTest`) and in production, use Quarkus [configuration profiles facility](https://quarkus.io/guides/config#configuration-profiles).<br><br>**application.properties**<br><br>```property<br>%dev.quarkus.hibernate-orm.sql-load-script = import-dev.sql<br>%test.quarkus.hibernate-orm.sql-load-script = import-test.sql<br>%prod.quarkus.hibernate-orm.sql-load-script = no-file<br>```<br><br>> [!NOTE]<br>> Quarkus supports files with SQL statements or comments spread over multiple lines, or `.zip` files containing those files. Each SQL statement must be terminated by a semicolon.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SQL_LOAD_SCRIPT+++[] | list of string | `import.sql in dev and test modes if it exists in the classpath; no-file otherwise` |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-database"></a> [Database related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-database) | Type | Default |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-orm-compatibility-version"></a> [`quarkus.hibernate-orm.database.orm-compatibility.version`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-orm-compatibility-version) config_property_copy_button:+++quarkus.hibernate-orm.database.orm-compatibility.version+++[]<br><br>When set, attempts to exchange data with the database as the given version of Hibernate ORM would have, **on a best-effort basis**.<br><br>Please note:<br><br>- schema validation may still fail in some cases: this attempts to make Hibernate ORM 6+ behave correctly at runtime, but it may still expect a different (but runtime-compatible) schema.<br>- robust test suites are still useful and recommended: you should still check that your application behaves as intended with your legacy schema.<br>- this feature is inherently unstable: some aspects of it may stop working in future versions of Quarkus, and older versions will be dropped as Hibernate ORM changes pile up and support for those older versions becomes too unreliable.<br>- you should still plan a migration of your schema to a newer version of Hibernate ORM. For help with migration, refer to link:[https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0:-Hibernate-ORM-5-to-6-migration\[the](https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.0:-Hibernate-ORM-5-to-6-migration[the) Quarkus 3 migration guide from Hibernate ORM 5 to 6\].<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_ORM_COMPATIBILITY_VERSION+++[] | `5.6`, `latest` | `latest` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-charset"></a> [`quarkus.hibernate-orm.database.charset`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-charset) config_property_copy_button:+++quarkus.hibernate-orm.database.charset+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".database.charset` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".database.charset+++[]<br><br>The charset of the database.<br><br>Used for DDL generation and also for the SQL import scripts.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_CHARSET+++[] | [Charset](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/charset/Charset.html) | `UTF-8` |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-default-catalog"></a> [`quarkus.hibernate-orm.database.default-catalog`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-default-catalog) config_property_copy_button:+++quarkus.hibernate-orm.database.default-catalog+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".database.default-catalog` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".database.default-catalog+++[]<br><br>The default catalog to use for the database objects.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_DEFAULT_CATALOG+++[] | string |  |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-default-schema"></a> [`quarkus.hibernate-orm.database.default-schema`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-default-schema) config_property_copy_button:+++quarkus.hibernate-orm.database.default-schema+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".database.default-schema` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".database.default-schema+++[]<br><br>The default schema to use for the database objects.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_DEFAULT_SCHEMA+++[] | string |  |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-version-check-enabled"></a> [`quarkus.hibernate-orm.database.version-check.enabled`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-version-check-enabled) config_property_copy_button:+++quarkus.hibernate-orm.database.version-check.enabled+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".database.version-check.enabled` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".database.version-check.enabled+++[]<br><br>Whether Hibernate ORM should check on startup that the version of the database matches the version configured on the dialect (either the default version, or the one set through `quarkus.datasource.db-version`).<br><br>This should be set to `false` if the database is not available on startup.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_VERSION_CHECK_ENABLED+++[] | boolean | `` `false` if starting offline (see `start-offline`), `true` otherwise `` |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-database-start-offline"></a> [`quarkus.hibernate-orm.database.start-offline`](#quarkus-hibernate-orm_quarkus-hibernate-orm-database-start-offline) config_property_copy_button:+++quarkus.hibernate-orm.database.start-offline+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".database.start-offline` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".database.start-offline+++[]<br><br>Instructs Hibernate ORM to avoid connecting to the database on startup.<br><br>When starting offline:<br><br>- Hibernate ORM will not attempt to create a schema automatically, so it must already be created when the application hits the database for the first time.<br>- Quarkus will not check that the database version matches the one configured at build time.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATABASE_START_OFFLINE+++[] | boolean | `false` |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-mapping"></a> [JSON/XML mapping related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-mapping) | Type | Default |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-format-global"></a> [`quarkus.hibernate-orm.mapping.format.global`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-format-global) config_property_copy_button:+++quarkus.hibernate-orm.mapping.format.global+++[]<br><br>How the default JSON/XML format mappers are configured. Only available to mitigate migration from the current Quarkus-preconfigured format mappers (that will be removed in the future version).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_FORMAT_GLOBAL+++[] | `ignore`, `warn`, `fail` | `fail` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-timezone-default-storage"></a> [`quarkus.hibernate-orm.mapping.timezone.default-storage`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-timezone-default-storage) config_property_copy_button:+++quarkus.hibernate-orm.mapping.timezone.default-storage+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.timezone.default-storage` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.timezone.default-storage+++[]<br><br>How to store timezones in the database by default for properties of type `OffsetDateTime` and `ZonedDateTime`. This default may be overridden on a per-property basis using `@TimeZoneStorage`. NOTE: Properties of type `OffsetTime` are [++not affected by this setting++](https://hibernate.atlassian.net/browse/HHH-16287++)++.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_TIMEZONE_DEFAULT_STORAGE+++[] | tooltip:native[Stores the timestamp and timezone in a column of type `timestamp with time zone`. Only available on some databases/dialects; if not supported,opts=an exception will be thrown during static initialization.], tooltip:normalize[Does not store the timezone,opts=and loses timezone information upon persisting. Instead,normalizes the value\: * upon persisting to the database,to a timestamp in the JDBC timezone set through `quarkus.hibernate-orm.jdbc.timezone`,or the JVM default timezone if not set. * upon reading back from the database,to the JVM default timezone. Use this to get the legacy behavior of Quarkus 2 / Hibernate ORM 5 or older.], tooltip:normalize-utc[Does not store the timezone,opts=and loses timezone information upon persisting. Instead,normalizes the value to a timestamp in the UTC timezone.], tooltip:column[Stores the timezone in a separate column next to the timestamp column. Use `@TimeZoneColumn` on the relevant entity property to customize the timezone column.], tooltip:auto[Equivalent to `native` if supported,opts=`column` otherwise.], tooltip:default[Equivalent to `native` if supported,opts=`normalize-utc` otherwise.] | tooltip:default[Equivalent to `native` if supported,opts=`normalize-utc` otherwise.] |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-id-optimizer-default"></a> [`quarkus.hibernate-orm.mapping.id.optimizer.default`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-id-optimizer-default) config_property_copy_button:+++quarkus.hibernate-orm.mapping.id.optimizer.default+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.id.optimizer.default` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.id.optimizer.default+++[]<br><br>The optimizer to apply to identifier generators whose optimizer is not configured explicitly.<br><br>Only relevant for table- and sequence-based identifier generators. Other generators, such as UUID-based generators, will ignore this setting.<br><br>The optimizer is responsible for pooling new identifier values, in order to reduce the frequency of database calls to retrieve those values and thereby improve performance.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_ID_OPTIMIZER_DEFAULT+++[] | tooltip:pooled-lo[Assumes the value retrieved from the table/sequence is the lower end of the pool.  Upon retrieving value `N`,opts=the new pool of identifiers will go from `N` to `N + <allocation size> - 1`,inclusive.], tooltip:pooled[Assumes the value retrieved from the table/sequence is the higher end of the pool.  Upon retrieving value `N`,opts=the new pool of identifiers will go from `N - <allocation size>` to `N + <allocation size> - 1`,inclusive.  The first value,`1`,is handled differently to avoid negative identifiers.  Use this to get the legacy behavior of Quarkus 2 / Hibernate ORM 5 or older.], tooltip:none[No optimizer,opts=resulting in a database call each and every time an identifier value is needed from the generator.  Not recommended in production environments\: may result in degraded performance and/or frequent gaps in identifier values.] | tooltip:pooled-lo[Assumes the value retrieved from the table/sequence is the lower end of the pool.  Upon retrieving value `N`,opts=the new pool of identifiers will go from `N` to `N + <allocation size> - 1`,inclusive.] |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-duration-preferred-jdbc-type"></a> [`quarkus.hibernate-orm.mapping.duration.preferred-jdbc-type`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-duration-preferred-jdbc-type) config_property_copy_button:+++quarkus.hibernate-orm.mapping.duration.preferred-jdbc-type+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.duration.preferred-jdbc-type` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.duration.preferred-jdbc-type+++[]<br><br>The preferred JDBC type to use for storing {@link java.time.Duration} values. \<p> Can be overridden locally using `@JdbcType`, `@JdbcTypeCode`, and similar annotations. \<p> Can also specify the name of the SqlTypes constant field, for example, `quarkus.hibernate-orm.mapping.type.preferred_jdbc_type=INTERVAL_SECOND`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_DURATION_PREFERRED_JDBC_TYPE+++[] | string | `INTERVAL_SECOND` |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-java-time-use-direct-jdbc"></a> [`quarkus.hibernate-orm.mapping.java-time.use-direct-jdbc`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-java-time-use-direct-jdbc) config_property_copy_button:+++quarkus.hibernate-orm.mapping.java-time.use-direct-jdbc+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.java-time.use-direct-jdbc` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.java-time.use-direct-jdbc+++[]<br><br>Whether to use direct JDBC for `java.time` type handling. \<p> When enabled, `java.time` types are passed directly to the JDBC driver via `PreparedStatement.setObject()` / `ResultSet.getObject()`, bypassing conversion to legacy `java.sql` types such as `java.sql.Timestamp`. \<p> When disabled (the default), Hibernate converts `java.time` values through `java.sql`/`java.util` types before passing them to the JDBC driver, matching the behavior of Hibernate ORM 7.4 and earlier. \<p> **WARNING**: Direct JDBC mode is experimental in Quarkus. Known limitations:<br><br>- On Oracle, `LocalTime` may shift values on a write/read cycle depending on the JVM timezone.\</li><br>- The `quarkus.hibernate-orm.jdbc.timezone` setting may be ignored for some `java.time` types.\</li><br>- The `quarkus.hibernate-orm.mapping.timezone.default-storage` setting may be ignored for some `java.time` types.\</li> \</ul><br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_JAVA_TIME_USE_DIRECT_JDBC+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-instant-preferred-jdbc-type"></a> [`quarkus.hibernate-orm.mapping.instant.preferred-jdbc-type`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-instant-preferred-jdbc-type) config_property_copy_button:+++quarkus.hibernate-orm.mapping.instant.preferred-jdbc-type+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.instant.preferred-jdbc-type` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.instant.preferred-jdbc-type+++[]<br><br>The preferred JDBC type to use for storing {@link java.time.Instant} values. \<p> Can be overridden locally using `@JdbcType`, `@JdbcTypeCode`, and similar annotations. \<p> Can also specify the name of the SqlTypes constant field, for example, `quarkus.hibernate-orm.mapping.instant.preferred-jdbc-type=TIMESTAMP` or `quarkus.hibernate-orm.mapping.instant.preferred-jdbc-type=INSTANT`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_INSTANT_PREFERRED_JDBC_TYPE+++[] | string | `TIMESTAMP` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-boolean-preferred-jdbc-type"></a> [`quarkus.hibernate-orm.mapping.boolean.preferred-jdbc-type`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-boolean-preferred-jdbc-type) config_property_copy_button:+++quarkus.hibernate-orm.mapping.boolean.preferred-jdbc-type+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.boolean.preferred-jdbc-type` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.boolean.preferred-jdbc-type+++[]<br><br>The preferred JDBC type to use for storing boolean values. \<p> Can be overridden locally using `@JdbcType`, `@JdbcTypeCode`, and similar annotations. \<p> Can also specify the name of the SqlTypes constant field, for example, `quarkus.hibernate-orm.mapping.boolean.preferred-jdbc-type=BIT`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_BOOLEAN_PREFERRED_JDBC_TYPE+++[] | string | `BOOLEAN` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-uuid-preferred-jdbc-type"></a> [`quarkus.hibernate-orm.mapping.uuid.preferred-jdbc-type`](#quarkus-hibernate-orm_quarkus-hibernate-orm-mapping-uuid-preferred-jdbc-type) config_property_copy_button:+++quarkus.hibernate-orm.mapping.uuid.preferred-jdbc-type+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".mapping.uuid.preferred-jdbc-type` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".mapping.uuid.preferred-jdbc-type+++[]<br><br>The preferred JDBC type to use for storing {@link java.util.UUID} values. \<p> Can be overridden locally using `@JdbcType`, `@JdbcTypeCode`, and similar annotations. \<p> Can also specify the name of the SqlTypes constant field, for example, `quarkus.hibernate-orm.mapping.uuid.preferred-jdbc-type=CHAR`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_MAPPING_UUID_PREFERRED_JDBC_TYPE+++[] | string | `UUID` |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-dialect"></a> [Dialect related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-dialect) | Type | Default |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect"></a> [`quarkus.hibernate-orm.dialect`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect) config_property_copy_button:+++quarkus.hibernate-orm.dialect+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect+++[]<br><br>Name of the Hibernate ORM dialect.<br><br>For [supported databases](/guides/datasource/index.md#extensions-and-database-drivers-reference), this property does not need to be set explicitly: it is selected automatically based on the datasource, and configured using the xref:datasource.adoc#quarkus-datasource_quarkus.datasource.db-version\[DB version set on the datasource\] to benefit from the best performance and latest features.<br><br>If your database does not have a corresponding Quarkus extension, you **will** need to set this property explicitly. In that case, keep in mind that the JDBC driver and Hibernate ORM dialect may not work properly in GraalVM native executables.<br><br>For built-in dialects, the expected value is one of the names in the [official list of dialects](https://docs.hibernate.org/orm/7.4/dialect/dialect.html), **without** the `Dialect` suffix, for example `Cockroach` for `CockroachDialect`.<br><br>For third-party dialects, the expected value is the fully-qualified class name, for example `com.acme.hibernate.AcmeDbDialect`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT+++[] | string | `selected automatically for most popular databases` |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect"></a> [`quarkus.hibernate-orm.dialect`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect) config_property_copy_button:+++quarkus.hibernate-orm.dialect+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect+++[]<br><br>Name of the Hibernate ORM dialect.<br><br>For [supported databases](/guides/datasource/index.md#extensions-and-database-drivers-reference), this property does not need to be set explicitly: it is selected automatically based on the datasource, and configured using the xref:datasource.adoc#quarkus-datasource_quarkus-datasource-db-version\[DB version set on the datasource\] to benefit from the best performance and latest features.<br><br>If your database does not have a corresponding Quarkus extension, you **will** need to set this property explicitly. In that case, keep in mind that the JDBC driver and Hibernate ORM dialect may not work properly in GraalVM native executables.<br><br>For built-in dialects, the expected value is one of the names in the [official list of dialects](https://docs.hibernate.org/orm/8.0/dialect/dialect.html), **without** the `Dialect` suffix, for example `Cockroach` for `CockroachDialect`.<br><br>For third-party dialects, the expected value is the fully-qualified class name, for example `com.acme.hibernate.AcmeDbDialect`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT+++[] | string | `selected automatically for most popular databases` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-bytes-per-character"></a> [`quarkus.hibernate-orm.dialect.mariadb.bytes-per-character`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-bytes-per-character) config_property_copy_button:+++quarkus.hibernate-orm.dialect.mariadb.bytes-per-character+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.bytes-per-character` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.bytes-per-character+++[]<br><br>Specifies the bytes per character to use based on the database's configured [charset](https://dev.mysql.com/doc/refman/8.0/en/charset-charsets.html).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_MARIADB_BYTES_PER_CHARACTER+++[] | int | `4` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-no-backslash-escapes"></a> [`quarkus.hibernate-orm.dialect.mariadb.no-backslash-escapes`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-no-backslash-escapes) config_property_copy_button:+++quarkus.hibernate-orm.dialect.mariadb.no-backslash-escapes+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.no-backslash-escapes` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.no-backslash-escapes+++[]<br><br>Specifies whether the `NO_BACKSLASH_ESCAPES` sql mode is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_MARIADB_NO_BACKSLASH_ESCAPES+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-storage-engine"></a> [`quarkus.hibernate-orm.dialect.mariadb.storage-engine`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mariadb-storage-engine) config_property_copy_button:+++quarkus.hibernate-orm.dialect.mariadb.storage-engine+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.storage-engine` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.mariadb.storage-engine+++[]<br><br>The storage engine to use.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_MARIADB_STORAGE_ENGINE+++[] | string |  |
@@ -2058,6 +2221,15 @@ public interface MyRepository extends CrudRepository<MyEntity, Integer> {
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-oracle-autonomous"></a> [`quarkus.hibernate-orm.dialect.oracle.autonomous`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-oracle-autonomous) config_property_copy_button:+++quarkus.hibernate-orm.dialect.oracle.autonomous+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.oracle.autonomous` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.oracle.autonomous+++[]<br><br>Specifies whether this database is running on an Autonomous Database Cloud Service.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_ORACLE_AUTONOMOUS+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-oracle-application-continuity"></a> [`quarkus.hibernate-orm.dialect.oracle.application-continuity`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-oracle-application-continuity) config_property_copy_button:+++quarkus.hibernate-orm.dialect.oracle.application-continuity+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.oracle.application-continuity` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.oracle.application-continuity+++[]<br><br>Specifies whether this database is accessed using a database service protected by Application Continuity.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_ORACLE_APPLICATION_CONTINUITY+++[] | boolean | `false` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mssql-compatibility-level"></a> [`quarkus.hibernate-orm.dialect.mssql.compatibility-level`](#quarkus-hibernate-orm_quarkus-hibernate-orm-dialect-mssql-compatibility-level) config_property_copy_button:+++quarkus.hibernate-orm.dialect.mssql.compatibility-level+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".dialect.mssql.compatibility-level` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".dialect.mssql.compatibility-level+++[]<br><br>The `compatibility_level` as defined in `sys.databases`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DIALECT_MSSQL_COMPATIBILITY_LEVEL+++[] | string |  |
+| <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-schema-management"></a> [Schema management configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-schema-management) | Type | Default |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-init-script"></a> [`quarkus.hibernate-orm.schema-management.init-script`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-init-script) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.init-script+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.init-script` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.init-script+++[]<br><br>Paths to files containing SQL statements to execute right after Hibernate ORM created the database schema, typically to complete the schema with objects Hibernate ORM cannot generate (constraints, views, ...).<br><br>The scripts are only executed when Hibernate ORM creates the schema, i.e. when `quarkus.hibernate-orm.schema-management.strategy` is `create` or `drop-and-create`. To load data regardless of how the schema is managed, use `quarkus.hibernate-orm.data-management.init-script` instead.<br><br>The files are retrieved from the classpath resources, so they must be located in the resources directory (e.g. `src/main/resources`).<br><br>By default, a `schema.sql` file in the root of your resources directory is picked up without having to set this property, in every launch mode: whether the script is executed only depends on `quarkus.hibernate-orm.schema-management.strategy`. Pass `no-file` to force Hibernate ORM to ignore the file. An `import.sql` file is not picked up: in dev and test modes, it enables a deprecated behavior instead.<br><br>> [!NOTE]<br>> Quarkus supports files with SQL statements or comments spread over multiple lines, or `.zip` files containing those files. Each SQL statement must be terminated by a semicolon.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_INIT_SCRIPT+++[] | list of string | `` `schema.sql` if it exists in the classpath; `no-file` otherwise `` |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-strategy"></a> [`quarkus.hibernate-orm.schema-management.strategy`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-strategy) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.strategy+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.strategy` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.strategy+++[]<br><br>Select whether the database schema is generated or not.<br><br>`drop-and-create` is awesome in development mode.<br><br>This defaults to 'none'.<br><br>However if Dev Services is in use and no other extensions that manage the schema are present the value will be automatically overridden to 'drop-and-create'.<br><br>Accepted values: `none`, `create`, `drop-and-create`, `drop`, `update`, `validate`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY+++[] | tooltip:none[No schema action.], tooltip:create[Create the schema.], tooltip:drop-and-create[Drop and then recreate the schema.], tooltip:drop[Drop the schema.], tooltip:update[Update (alter) the database schema.], tooltip:validate[Validate the database schema.] | tooltip:none[No schema action.] |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-create-schemas"></a> [`quarkus.hibernate-orm.schema-management.create-schemas`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-create-schemas) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.create-schemas+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.create-schemas` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.create-schemas+++[]<br><br>If Hibernate ORM should create the schemas automatically (for databases supporting them).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_CREATE_SCHEMAS+++[] | boolean | `false` |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-halt-on-error"></a> [`quarkus.hibernate-orm.schema-management.halt-on-error`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-halt-on-error) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.halt-on-error+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.halt-on-error` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.halt-on-error+++[]<br><br>Whether we should stop on the first error when applying the schema.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_HALT_ON_ERROR+++[] | boolean | `false` |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-extra-physical-table-types"></a> [`quarkus.hibernate-orm.schema-management.extra-physical-table-types`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-extra-physical-table-types) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.extra-physical-table-types+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.extra-physical-table-types` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.extra-physical-table-types+++[]<br><br>Additional database object types to include in schema management operations.<br><br>By default, Hibernate ORM only considers tables and sequences when performing schema management operations. This setting allows you to specify additional database object types that should be included, such as "MATERIALIZED VIEW", "VIEW", or other database-specific object types.<br><br>The exact supported values depend on the underlying database and dialect.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_EXTRA_PHYSICAL_TABLE_TYPES+++[] | string |  |
+| <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-data-management"></a> [Data management configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-data-management) | Type | Default |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-data-management-init-script"></a> [`quarkus.hibernate-orm.data-management.init-script`](#quarkus-hibernate-orm_quarkus-hibernate-orm-data-management-init-script) config_property_copy_button:+++quarkus.hibernate-orm.data-management.init-script+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".data-management.init-script` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".data-management.init-script+++[]<br><br>Paths to files containing SQL statements to execute when Hibernate ORM starts, to load data into the database (reference data, test data, ...).<br><br>The scripts are executed regardless of whether the schema is created by Hibernate ORM or managed by another tool such as Flyway or Liquibase, as long as `quarkus.hibernate-orm.data-management.strategy` is `create` (the default in dev and test modes only).<br><br>The files are retrieved from the classpath resources, so they must be located in the resources directory (e.g. `src/main/resources`).<br><br>By default, a `data.sql` file in the root of your resources directory is picked up without having to set this property, in every launch mode: whether the script is executed only depends on `quarkus.hibernate-orm.data-management.strategy`. Pass `no-file` to force Hibernate ORM to ignore the file. Don't name your data init script `import.sql`: that file enables a deprecated behavior.<br><br>If you need different SQL statements between dev mode, test (`@QuarkusTest`) and in production, use Quarkus [configuration profiles facility](https://quarkus.io/guides/config#configuration-profiles).<br><br>**application.properties**<br><br>```property<br>%dev.quarkus.hibernate-orm.data-management.init-script = data-dev.sql<br>%test.quarkus.hibernate-orm.data-management.init-script = data-test.sql<br>%prod.quarkus.hibernate-orm.data-management.init-script = no-file<br>```<br><br>> [!NOTE]<br>> Quarkus supports files with SQL statements or comments spread over multiple lines, or `.zip` files containing those files. Each SQL statement must be terminated by a semicolon.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATA_MANAGEMENT_INIT_SCRIPT+++[] | list of string | `` `data.sql` if it exists in the classpath; `no-file` otherwise `` |
+| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-data-management-strategy"></a> [`quarkus.hibernate-orm.data-management.strategy`](#quarkus-hibernate-orm_quarkus-hibernate-orm-data-management-strategy) config_property_copy_button:+++quarkus.hibernate-orm.data-management.strategy+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".data-management.strategy` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".data-management.strategy+++[]<br><br>Select whether the data init script is executed when Hibernate ORM starts.<br><br>The data init script is configured with `quarkus.hibernate-orm.data-management.init-script` and defaults to `data.sql` if it exists in the classpath.<br><br>With `create` (the default in dev and test modes), the script is executed regardless of how the database schema is managed:<br><br>- if `quarkus.hibernate-orm.schema-management.strategy` creates the schema, the script is executed right after the schema has been created;<br>- otherwise (`none`, `update`, `validate`), for example when the schema is managed by Flyway or Liquibase, the script is executed once Hibernate ORM has started.<br><br>With `none` (the default in other modes, e.g. in production, and when Hibernate ORM starts offline), the script is not executed on start, even when Hibernate ORM creates the schema.<br><br>Regardless of this setting, the data init script is executed when the database is reset from the Dev UI, and it can be executed on demand through Hibernate ORM's `SchemaManager` (`populate()`, or `truncate()` which reimports the data).<br><br>Accepted values: `none`, `create`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DATA_MANAGEMENT_STRATEGY+++[] | tooltip:none[Do not execute the data init script on start. It is still executed when the database is reset from the Dev UI,opts=and can be executed on demand through the `SchemaManager`.], tooltip:create[Execute the data init script when Hibernate ORM starts.] | `` `create` in dev and test modes unless starting offline (see `database.start-offline`), `none` otherwise `` |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-query"></a> [Query related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-query) | Type | Default |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-query-query-plan-cache-max-size"></a> [`quarkus.hibernate-orm.query.query-plan-cache-max-size`](#quarkus-hibernate-orm_quarkus-hibernate-orm-query-query-plan-cache-max-size) config_property_copy_button:+++quarkus.hibernate-orm.query.query-plan-cache-max-size+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".query.query-plan-cache-max-size` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".query.query-plan-cache-max-size+++[]<br><br>The maximum size of the query plan cache. see ++<mark>++\`org.hibernate.cfg.AvailableSettings++</mark>++QUERY_PLAN_CACHE_MAX_SIZE\`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_QUERY_QUERY_PLAN_CACHE_MAX_SIZE+++[] | int | `2048` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-query-default-null-ordering"></a> [`quarkus.hibernate-orm.query.default-null-ordering`](#quarkus-hibernate-orm_quarkus-hibernate-orm-query-default-null-ordering) config_property_copy_button:+++quarkus.hibernate-orm.query.default-null-ordering+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".query.default-null-ordering` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".query.default-null-ordering+++[]<br><br>Default precedence of null values in `ORDER BY` clauses.<br><br>Valid values are: `none`, `first`, `last`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_QUERY_DEFAULT_NULL_ORDERING+++[] | tooltip:none[Null precedence not specified.], tooltip:first[Null values occur at the beginning of the ORDER BY clause.], tooltip:last[Null values occur at the end of the ORDER BY clause.] | tooltip:none[Null precedence not specified.] |
@@ -2076,8 +2248,8 @@ public interface MyRepository extends CrudRepository<MyEntity, Integer> {
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-cache"></a> [Caching configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-cache) | Type | Default |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-expiration-max-idle"></a> [`quarkus.hibernate-orm.cache."cache".expiration.max-idle`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-expiration-max-idle) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".expiration.max-idle+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".expiration.max-idle` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".expiration.max-idle+++[]<br><br>The maximum time before an object of the cache is considered expired.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__EXPIRATION_MAX_IDLE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-hibernate-orm_quarkus-hibernate-orm) | `100s` |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-object-count"></a> [`quarkus.hibernate-orm.cache."cache".memory.object-count`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-object-count) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".memory.object-count+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.object-count` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.object-count+++[]<br><br>The maximum number of objects kept in memory in the cache.<br><br>Mutually exclusive with `maximum-weight`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__MEMORY_OBJECT_COUNT+++[] | long | `10000` |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-maximum-weight"></a> [`quarkus.hibernate-orm.cache."cache".memory.maximum-weight`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-maximum-weight) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".memory.maximum-weight+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.maximum-weight` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.maximum-weight+++[]<br><br>The maximum total weight of objects kept in memory in the cache.<br><br>When set, eviction is based on the total weight of cached entries rather than their count. This is useful for entities with highly variable sizes (e.g., JSON blobs).<br><br>Mutually exclusive with `object-count`. Requires a `weigher-class` to assign weights to entries; without one, each entry has a default weight of 1.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__MEMORY_MAXIMUM_WEIGHT+++[] | long |  |
-| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-weigher-class"></a> [`quarkus.hibernate-orm.cache."cache".memory.weigher-class`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-weigher-class) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".memory.weigher-class+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.weigher-class` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.weigher-class+++[]<br><br>The fully qualified class name of a `com.github.benmanes.caffeine.cache.Weigher` implementation used to assign weights to cache entries.<br><br>Only used when `maximum-weight` is set. The class must have a public no-arg constructor.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__MEMORY_WEIGHER_CLASS+++[] | string |  |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-maximum-weight"></a> [`quarkus.hibernate-orm.cache."cache".memory.maximum-weight`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-maximum-weight) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".memory.maximum-weight+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.maximum-weight` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.maximum-weight+++[]<br><br>The maximum total weight of objects kept in memory in the cache.<br><br>When set, eviction is based on the total weight of cached entries rather than their count. This is useful for entities with highly variable sizes (e.g., JSON blobs).<br><br>Mutually exclusive with `object-count`. Requires a `weigher-class` to assign weights to entries.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__MEMORY_MAXIMUM_WEIGHT+++[] | long |  |
+| [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-weigher-class"></a> [`quarkus.hibernate-orm.cache."cache".memory.weigher-class`](#quarkus-hibernate-orm_quarkus-hibernate-orm-cache-cache-memory-weigher-class) config_property_copy_button:+++quarkus.hibernate-orm.cache."cache".memory.weigher-class+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.weigher-class` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".cache."cache".memory.weigher-class+++[]<br><br>The fully qualified class name of a `com.github.benmanes.caffeine.cache.Weigher` implementation used to assign weights to cache entries.<br><br>Required when `maximum-weight` is set. The class must have a public no-arg constructor.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_CACHE__CACHE__MEMORY_WEIGHER_CLASS+++[] | string |  |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-discriminator"></a> [Discriminator related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-discriminator) | Type | Default |
 | [lock] <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-discriminator-ignore-explicit-for-joined"></a> [`quarkus.hibernate-orm.discriminator.ignore-explicit-for-joined`](#quarkus-hibernate-orm_quarkus-hibernate-orm-discriminator-ignore-explicit-for-joined) config_property_copy_button:+++quarkus.hibernate-orm.discriminator.ignore-explicit-for-joined+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".discriminator.ignore-explicit-for-joined` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".discriminator.ignore-explicit-for-joined+++[]<br><br>Existing applications rely (implicitly or explicitly) on Hibernate ignoring any DiscriminatorColumn declarations on joined inheritance hierarchies. This setting allows these applications to maintain the legacy behavior of DiscriminatorColumn annotations being ignored when paired with joined inheritance.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_DISCRIMINATOR_IGNORE_EXPLICIT_FOR_JOINED+++[] | boolean | `false` |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-log"></a> [Logging configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-log) | Type | Default |
@@ -2087,11 +2259,6 @@ public interface MyRepository extends CrudRepository<MyEntity, Integer> {
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-log-highlight-sql"></a> [`quarkus.hibernate-orm.log.highlight-sql`](#quarkus-hibernate-orm_quarkus-hibernate-orm-log-highlight-sql) config_property_copy_button:+++quarkus.hibernate-orm.log.highlight-sql+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".log.highlight-sql` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".log.highlight-sql+++[]<br><br>Highlight the SQL logs if SQL log is enabled<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_LOG_HIGHLIGHT_SQL+++[] | boolean | `true` |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-log-jdbc-warnings"></a> [`quarkus.hibernate-orm.log.jdbc-warnings`](#quarkus-hibernate-orm_quarkus-hibernate-orm-log-jdbc-warnings) config_property_copy_button:+++quarkus.hibernate-orm.log.jdbc-warnings+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".log.jdbc-warnings` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".log.jdbc-warnings+++[]<br><br>Whether JDBC warnings should be collected and logged.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_LOG_JDBC_WARNINGS+++[] | boolean | `depends on dialect` |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-log-queries-slower-than-ms"></a> [`quarkus.hibernate-orm.log.queries-slower-than-ms`](#quarkus-hibernate-orm_quarkus-hibernate-orm-log-queries-slower-than-ms) config_property_copy_button:+++quarkus.hibernate-orm.log.queries-slower-than-ms+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".log.queries-slower-than-ms` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".log.queries-slower-than-ms+++[]<br><br>If set, Hibernate will log queries that took more than specified number of milliseconds to execute.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_LOG_QUERIES_SLOWER_THAN_MS+++[] | long |  |
-| <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-schema-management"></a> [Schema management configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-schema-management) | Type | Default |
-| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-strategy"></a> [`quarkus.hibernate-orm.schema-management.strategy`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-strategy) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.strategy+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.strategy` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.strategy+++[]<br><br>Select whether the database schema is generated or not.<br><br>`drop-and-create` is awesome in development mode.<br><br>This defaults to 'none'.<br><br>However if Dev Services is in use and no other extensions that manage the schema are present the value will be automatically overridden to 'drop-and-create'.<br><br>Accepted values: `none`, `create`, `drop-and-create`, `drop`, `update`, `validate`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY+++[] | tooltip:none[No schema action.], tooltip:create[Create the schema.], tooltip:drop-and-create[Drop and then recreate the schema.], tooltip:drop[Drop the schema.], tooltip:update[Update (alter) the database schema.], tooltip:validate[Validate the database schema.] | tooltip:none[No schema action.] |
-| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-create-schemas"></a> [`quarkus.hibernate-orm.schema-management.create-schemas`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-create-schemas) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.create-schemas+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.create-schemas` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.create-schemas+++[]<br><br>If Hibernate ORM should create the schemas automatically (for databases supporting them).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_CREATE_SCHEMAS+++[] | boolean | `false` |
-| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-halt-on-error"></a> [`quarkus.hibernate-orm.schema-management.halt-on-error`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-halt-on-error) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.halt-on-error+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.halt-on-error` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.halt-on-error+++[]<br><br>Whether we should stop on the first error when applying the schema.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_HALT_ON_ERROR+++[] | boolean | `false` |
-| <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-extra-physical-table-types"></a> [`quarkus.hibernate-orm.schema-management.extra-physical-table-types`](#quarkus-hibernate-orm_quarkus-hibernate-orm-schema-management-extra-physical-table-types) config_property_copy_button:+++quarkus.hibernate-orm.schema-management.extra-physical-table-types+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".schema-management.extra-physical-table-types` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".schema-management.extra-physical-table-types+++[]<br><br>Additional database object types to include in schema management operations.<br><br>By default, Hibernate ORM only considers tables and sequences when performing schema management operations. This setting allows you to specify additional database object types that should be included, such as "MATERIALIZED VIEW", "VIEW", or other database-specific object types.<br><br>The exact supported values depend on the underlying database and dialect.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_EXTRA_PHYSICAL_TABLE_TYPES+++[] | string |  |
 | <a id="quarkus-hibernate-orm_section_quarkus-hibernate-orm-scripts"></a> [Database scripts related configuration](#quarkus-hibernate-orm_section_quarkus-hibernate-orm-scripts) | Type | Default |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-scripts-generation"></a> [`quarkus.hibernate-orm.scripts.generation`](#quarkus-hibernate-orm_quarkus-hibernate-orm-scripts-generation) config_property_copy_button:+++quarkus.hibernate-orm.scripts.generation+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".scripts.generation` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".scripts.generation+++[]<br><br>Select whether the database schema DDL files are generated or not. Accepted values: `none`, `create`, `drop-and-create`, `drop`, `update`, `validate`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCRIPTS_GENERATION+++[] | tooltip:none[No schema action.], tooltip:create[Create the schema.], tooltip:drop-and-create[Drop and then recreate the schema.], tooltip:drop[Drop the schema.], tooltip:update[Update (alter) the database schema.], tooltip:validate[Validate the database schema.] | tooltip:none[No schema action.] |
 | <a id="quarkus-hibernate-orm_quarkus-hibernate-orm-scripts-generation-create-target"></a> [`quarkus.hibernate-orm.scripts.generation.create-target`](#quarkus-hibernate-orm_quarkus-hibernate-orm-scripts-generation-create-target) config_property_copy_button:+++quarkus.hibernate-orm.scripts.generation.create-target+++[]<br><br>`quarkus.hibernate-orm."persistence-unit-name".scripts.generation.create-target` config_property_copy_button:+++quarkus.hibernate-orm."persistence-unit-name".scripts.generation.create-target+++[]<br><br>Filename or URL where the database create DDL file should be generated.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HIBERNATE_ORM_SCRIPTS_GENERATION_CREATE_TARGET+++[] | string |  |

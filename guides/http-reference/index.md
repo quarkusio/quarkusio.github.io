@@ -14,6 +14,23 @@ If you are looking to use Quarkus for a web application, look at the [Quarkus fo
 
 To serve static resources from the application jar, you must place them in the `META-INF/resources` directory of your application. This location was chosen as it is the standard location for resources in `jar` files as defined by the Servlet spec. Even though Quarkus can be used without Servlet, following this convention allows existing code that places its resources in this location to function correctly.
 
+For `GET` and `HEAD` requests, static resources take precedence over Jakarta REST endpoints: if a request path matches both a static resource and an endpoint, the static resource is served and the endpoint is not invoked. Therefore, the security annotations of the endpoint, such as `@RolesAllowed`, do not protect the static resource. To secure static resources, use [authorization using configuration](/guides/security-authorize-web-endpoints-reference/index.md#authorization-using-configuration). Quarkus logs a warning at startup about the shadowed endpoints that it detects. If the shadowing is intended, for example, when an endpoint is a fallback for the paths without a static resource, you can disable the warning by setting the level of its log category to `ERROR`. This disables the warning for all endpoints.
+
+If you use Quarkus REST, set the following configuration property:
+
+```properties
+quarkus.log.category."io.quarkus.resteasy.reactive.server.runtime.StaticResourceShadowingCheck".level=ERROR
+```
+
+If you use RESTEasy Classic, set the following configuration property:
+
+```properties
+quarkus.log.category."io.quarkus.resteasy.runtime.StaticResourceShadowingCheck".level=ERROR
+```
+
+> [!NOTE]
+> With Servlet support, which the `quarkus-undertow` extension provides, Jakarta REST endpoints take precedence over static resources, except for RESTEasy Classic endpoints when the RESTEasy Classic path is `/`, which is the default. You can change the RESTEasy Classic path with the `quarkus.resteasy.path` configuration property or the `@ApplicationPath` annotation.
+
 ### From web dependencies like webjars or mvnpm
 
 Look at the [Web dependency locator](/guides/web-dependency-locator/index.md) guide for details on how to use [WebJars](https://www.webjars.org), [mvnpm](https://mvnpm.org) and [importmaps](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap)
@@ -72,18 +89,83 @@ The `quarkus.http.static-dir.endpoint` value must not contain `*` or `..`, and i
 
 This feature can be used in both development and production environments.
 
+<a id="http-compression"></a>
 ### HTTP Compression
 
-The response body of a static resource is not compressed by default. You can enable the HTTP compression support by means of `quarkus.http.enable-compression=true`. If compression support is enabled then the response body is compressed if the `Content-Type` header derived from the file name of a resource is a compressed media type as configured via `quarkus.http.compress-media-types`.
+The response body of an HTTP response is not compressed by default. You can enable HTTP compression support by setting `quarkus.http.enable-compression=true`.
+
+If compression is enabled, the response body is compressed when the `Content-Type` header matches one of the media types configured via `quarkus.http.compress-media-types`.
 
 > [!TIP]
-> By default, the following list of media types is compressed: `text/html`, `text/plain`, `text/xml`, `text/css`, `text/javascript`, `application/javascript`, `application/json`, `application/graphql+json` and `application/xhtml+xml`.
+> By default, the following media types are compressed: `text/html`, `text/plain`, `text/xml`, `text/css`, `text/javascript`, `application/javascript`, `application/json`, `application/graphql+json`, and `application/xhtml+xml`.
 
 > [!NOTE]
-> If the client does not indicate its support for HTTP compression in a request header, e.g. `Accept-Encoding: deflate, gzip, br`, then the response body is not compressed.
+> If the client does not indicate support for HTTP compression in the request (e.g., `Accept-Encoding: deflate, gzip, br`), the response body is not compressed.
+
+#### Minimum response size
+
+By default, all responses matching the configured media types are compressed regardless of their size. Use `quarkus.http.compression-content-size-threshold` to set a minimum response body size (in bytes) that triggers compression. Responses smaller than this threshold are sent uncompressed, avoiding the CPU overhead of compressing small payloads.
+
+```properties
+quarkus.http.enable-compression=true
+# Only compress responses larger than 1KB
+quarkus.http.compression-content-size-threshold=1024
+```
+
+> [!NOTE]
+> The threshold only applies when the response `Content-Length` is known. Chunked responses (where the total size is not known upfront) are always eligible for compression when compression is enabled.
+
+#### Compression level
+
+Use `quarkus.http.compression-level` to control the compression level for gzip and deflate. Higher values produce smaller output at the cost of more CPU usage. When not set, the compressor's default level is used.
+
+```properties
+quarkus.http.enable-compression=true
+quarkus.http.compression-level=6
+```
+
+#### Brotli compression
+
+Brotli compression is not available by default. To enable it, add the Brotli4J dependency to your project:
+
+**pom.xml**
+
+```xml
+<dependency>
+    <groupId>com.aayushatharva.brotli4j</groupId>
+    <artifactId>brotli4j</artifactId>
+</dependency>
+```
+
+**build.gradle**
+
+```gradle
+implementation("com.aayushatharva.brotli4j:brotli4j")
+```
+
+Then add `br` to the compressors list:
+
+```properties
+quarkus.http.compressors=deflate,gzip,br
+```
+
+If `br` is configured without the dependency, the build fails.
+
+With Maven, the `brotli4j` dependency brings the native library matching the machine running the build. With Gradle, or when building a native executable in a container, also add the `native-<os>-<arch>` artifact matching the target platform. See [Brotli4J and cross-platform support](/guides/vertx-reference/index.md#brotli4j-and-cross-platform-support) for the list of artifacts.
 
 > [!TIP]
-> Brotli compression is not available by default. You can enable it by setting `quarkus.http.compressors=deflate,gzip,br`. In case of building native image, it adds around 1MB to your executable size.
+> Adding the dependency adds approximately 1MB to native executable size because it requires bundling the Brotli4J native library, whether or not `br` is in the compressors list.
+
+> [!NOTE]
+> The dependency enables Brotli compression when `br` is in the compressors list, and Brotli decompression whenever decompression is enabled with `quarkus.http.enable-decompression`: the server then decodes request bodies sent with `Content-Encoding: br`. Without the dependency, such a request body is not decoded and reaches the application as is.
+
+#### Per-endpoint control
+
+The RESTEasy Reactive and Reactive Routes extensions allow enabling or disabling compression on individual endpoints using the `@io.quarkus.vertx.http.Compressed` and `@io.quarkus.vertx.http.Uncompressed` annotations. See the [Quarkus REST](/guides/rest/index.md#http-compression) and [Reactive Routes](/guides/reactive-routes/index.md#http-compression) guides for details.
+
+#### Request decompression
+
+Quarkus can also decompress incoming request bodies. Enable this with `quarkus.http.enable-decompression=true`. The client must indicate the compression format in the `Content-Encoding` request header (e.g., `gzip`, `deflate`, or `br`).
 
 <a id="static-resources-config"></a>
 ### Other Configurations
@@ -103,6 +185,8 @@ Additionally, the index page for static resources can be changed from default `i
 | <a id="quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-max-age"></a> [`quarkus.http.static-resources.max-age`](#quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-max-age) config_property_copy_button:+++quarkus.http.static-resources.max-age+++[]<br><br>Set value for max age in caching headers. The default is `24` hours.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_STATIC_RESOURCES_MAX_AGE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx-http_quarkus-http-static-resources) | `24H` |
 | <a id="quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-max-cache-size"></a> [`quarkus.http.static-resources.max-cache-size`](#quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-max-cache-size) config_property_copy_button:+++quarkus.http.static-resources.max-cache-size+++[]<br><br>Set the max cache size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_STATIC_RESOURCES_MAX_CACHE_SIZE+++[] | int | `10000` |
 | <a id="quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-content-encoding"></a> [`quarkus.http.static-resources.content-encoding`](#quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-content-encoding) config_property_copy_button:+++quarkus.http.static-resources.content-encoding+++[]<br><br>Content encoding for text related files<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_STATIC_RESOURCES_CONTENT_ENCODING+++[] | [Charset](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/charset/Charset.html) | `UTF-8` |
+| <a id="quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-directory-listing"></a> [`quarkus.http.static-resources.directory-listing`](#quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-directory-listing) config_property_copy_button:+++quarkus.http.static-resources.directory-listing+++[]<br><br>Set whether directory listing should be enabled.<br><br>When enabled, if a request is made to a path that maps to a directory, the server returns an HTML page listing the directory contents.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_STATIC_RESOURCES_DIRECTORY_LISTING+++[] | boolean | `false` |
+| <a id="quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-send-vary-header"></a> [`quarkus.http.static-resources.send-vary-header`](#quarkus-vertx-http_quarkus-http-static-resources_quarkus-http-static-resources-send-vary-header) config_property_copy_button:+++quarkus.http.static-resources.send-vary-header+++[]<br><br>Set whether the `Vary` header should be sent in responses.<br><br>The `Vary` header indicates to caches that the response may vary based on the value of the specified request headers (e.g. `Accept-Encoding`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_STATIC_RESOURCES_SEND_VARY_HEADER+++[] | boolean | `true` |
 
 <a id="duration-note-anchor-quarkus-vertx-http_quarkus-http-static-resources"></a>
 
@@ -233,6 +317,19 @@ By default, Quarkus listens to port 8443 for SSL secured connections and 8444 wh
 
 These ports can be configured in your `application.properties` with the properties `quarkus.http.ssl-port` and `quarkus.http.test-ssl-port`.
 
+### Configure the HTTPS host independently
+
+By default, both the plain HTTP and HTTPS listeners bind to the host configured with `quarkus.http.host`. When you need to bind them to different network interfaces, set `quarkus.http.ssl-host` for the HTTPS listener. When not set, HTTPS uses the same host as plain HTTP.
+
+This is useful when HTTP should only be reachable locally (for example local administration) while HTTPS should be reachable from remote clients:
+
+```properties
+quarkus.http.host=127.0.0.1
+quarkus.http.ssl-host=0.0.0.0
+quarkus.http.ssl.certificate.files=/path/to/certificate
+quarkus.http.ssl.certificate.key-files=/path/to/key
+```
+
 ### Disable the HTTP port
 
 It is possible to disable the HTTP port and only support secure requests. This is done via the `quarkus.http.insecure-requests` property in `application.properties`. There are three possible values:
@@ -330,6 +427,14 @@ quarkus.http.filter.any-order.matches=/paths/order.*
 
 Will include the `Cache-Control: max-age=1` header when `/paths/order` is requested.
 
+When using aggressive cache headers (for example, for static assets behind a CDN), you can set `apply-on-success=true` to apply headers only on successful (2xx) responses. This prevents CDNs from caching error responses such as 403 or 500.
+
+```properties
+quarkus.http.filter.static.header."Cache-Control"=public, max-age=31536000, immutable
+quarkus.http.filter.static.matches=/static/.*
+quarkus.http.filter.static.apply-on-success=true
+```
+
 [lock] Configuration property fixed at build time - All other configuration properties are overridable at runtime
 
 |  |  |  |
@@ -339,6 +444,7 @@ Will include the `Cache-Control: max-age=1` header when `/paths/order` is reques
 | <a id="quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-header-header-name"></a> [`quarkus.http.filter."filter".header."header-name"`](#quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-header-header-name) config_property_copy_button:+++quarkus.http.filter."filter".header."header-name"+++[]<br><br>Additional HTTP Headers always sent in the response<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_FILTER__FILTER__HEADER__HEADER_NAME_+++[] | Map\<String,String> |  |
 | <a id="quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-methods"></a> [`quarkus.http.filter."filter".methods`](#quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-methods) config_property_copy_button:+++quarkus.http.filter."filter".methods+++[]<br><br>The HTTP methods for this path configuration<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_FILTER__FILTER__METHODS+++[] | list of string |  |
 | <a id="quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-order"></a> [`quarkus.http.filter."filter".order`](#quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-order) config_property_copy_button:+++quarkus.http.filter."filter".order+++[]<br><br>Order in which this path config is applied. Higher priority takes precedence<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_FILTER__FILTER__ORDER+++[] | int |  |
+| <a id="quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-apply-on-success"></a> [`quarkus.http.filter."filter".apply-on-success`](#quarkus-vertx-http_quarkus-http-filter_quarkus-http-filter-filter-apply-on-success) config_property_copy_button:+++quarkus.http.filter."filter".apply-on-success+++[]<br><br>If enabled, headers are applied only when the response status code is in the 2xx range. This is useful to avoid caching error responses at CDNs when using aggressive `Cache-Control` headers.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_FILTER__FILTER__APPLY_ON_SUCCESS+++[] | boolean | `false` |
 
 ## Support 100-Continue in vert.x
 
@@ -359,6 +465,12 @@ quarkus.http.http2=false
 ```
 
 Note that some configuration attributes are specific to HTTP/2. For example, to configure the max header list size (\~ header), you need to configure the `quarkus.http.limits.max-header-list-size` attribute. You can also enable or disable HTTP/2 push using `quarkus.http.http2-push-enabled`.
+
+## HTTP/3 Support
+
+HTTP/3 (QUIC) is available as an experimental extension. It uses QUIC over UDP instead of TCP and requires TLS.
+
+To enable HTTP/3, add the `quarkus-http3` extension to your project. See the [HTTP/3 reference guide](/guides/http3-reference/index.md) for configuration and usage details.
 
 ## Listening on a Random Port
 
@@ -487,11 +599,13 @@ This works with both the standard `Forwarded` header and the `X-Forwarded-Host` 
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-form-fields"></a> [`quarkus.http.limits.max-form-fields`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-form-fields) config_property_copy_button:+++quarkus.http.limits.max-form-fields+++[]<br><br>Set the maximum number of fields of a form. Set to `-1` to allow unlimited number of attributes.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_FORM_FIELDS+++[] | int | `256` |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-form-buffered-bytes"></a> [`quarkus.http.limits.max-form-buffered-bytes`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-form-buffered-bytes) config_property_copy_button:+++quarkus.http.limits.max-form-buffered-bytes+++[]<br><br>Set the maximum number of bytes a server can buffer when decoding a form. Set to `-1` to allow unlimited length, up to `Integer.MAX_VALUE` bytes.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_FORM_BUFFERED_BYTES+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-vertx-http_quarkus-http-limits) | `1K` |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-parameters"></a> [`quarkus.http.limits.max-parameters`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-parameters) config_property_copy_button:+++quarkus.http.limits.max-parameters+++[]<br><br>The maximum number of HTTP request parameters permitted for incoming requests.<br><br>If a client sends more than this number of parameters in a request, the connection is closed.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_PARAMETERS+++[] | int | `1000` |
+| <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-query-parameters"></a> [`quarkus.http.limits.max-query-parameters`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-query-parameters) config_property_copy_button:+++quarkus.http.limits.max-query-parameters+++[]<br><br>The maximum number of query parameters decoded from the request URI.<br><br>Query parameters beyond this limit are ignored.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_QUERY_PARAMETERS+++[] | int | `1024` |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-part-header-size"></a> [`quarkus.http.limits.max-multipart-part-header-size`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-part-header-size) config_property_copy_button:+++quarkus.http.limits.max-multipart-part-header-size+++[]<br><br>The maximum size of the headers section within a single MIME part of a `multipart/form-data` request. This limits the combined size of all header names and values for each individual part (e.g., the Content-Disposition and Content-Type headers), not the HTTP request headers.<br><br>If a part's headers exceed this limit, the request is rejected with HTTP 413.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_MULTIPART_PART_HEADER_SIZE+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-vertx-http_quarkus-http-limits) | `32K` |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-header-count"></a> [`quarkus.http.limits.max-multipart-header-count`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-header-count) config_property_copy_button:+++quarkus.http.limits.max-multipart-header-count+++[]<br><br>The maximum number of headers allowed within a single MIME part of a `multipart/form-data` request.<br><br>If a part contains more headers than this limit, the request is rejected with HTTP 413.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_MULTIPART_HEADER_COUNT+++[] | int | `40` |
+| <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-file-size"></a> [`quarkus.http.limits.max-multipart-file-size`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-multipart-file-size) config_property_copy_button:+++quarkus.http.limits.max-multipart-file-size+++[]<br><br>The maximum size of a single file part of a `multipart/form-data` request. Text attributes are bounded by `max-form-attribute-size` instead, and the whole request by `max-body-size`.<br><br>If a file part exceeds this limit, the request is rejected with HTTP 413. By default, file parts are only bounded by `max-body-size`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_MULTIPART_FILE_SIZE+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-vertx-http_quarkus-http-limits) |  |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-connections"></a> [`quarkus.http.limits.max-connections`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-connections) config_property_copy_button:+++quarkus.http.limits.max-connections+++[]<br><br>The maximum number of connections that are allowed at any one time. If this is set it is recommended to set a short idle timeout.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_CONNECTIONS+++[] | int |  |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-header-table-size"></a> [`quarkus.http.limits.header-table-size`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-header-table-size) config_property_copy_button:+++quarkus.http.limits.header-table-size+++[]<br><br>Set the SETTINGS_HEADER_TABLE_SIZE HTTP/2 setting.<br><br>Allows the sender to inform the remote endpoint of the maximum size of the header compression table used to decode header blocks, in octets. The encoder can select any size equal to or less than this value by using signaling specific to the header compression format inside a header block. The initial value is `4,096` octets.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_HEADER_TABLE_SIZE+++[] | long |  |
-| <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-concurrent-streams"></a> [`quarkus.http.limits.max-concurrent-streams`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-concurrent-streams) config_property_copy_button:+++quarkus.http.limits.max-concurrent-streams+++[]<br><br>Set SETTINGS_MAX_CONCURRENT_STREAMS HTTP/2 setting.<br><br>Indicates the maximum number of concurrent streams that the sender will allow. This limit is directional: it applies to the number of streams that the sender permits the receiver to create. Initially, there is no limit to this value. It is recommended that this value be no smaller than 100, to not unnecessarily limit parallelism.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_CONCURRENT_STREAMS+++[] | long |  |
+| <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-concurrent-streams"></a> [`quarkus.http.limits.max-concurrent-streams`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-concurrent-streams) config_property_copy_button:+++quarkus.http.limits.max-concurrent-streams+++[]<br><br>Set the SETTINGS_MAX_CONCURRENT_STREAMS HTTP/2 setting.<br><br>Indicates the maximum number of concurrent streams that the sender will allow. This limit is directional: it applies to the number of streams that the sender permits the receiver to create. Per [RFC 9113, Section 6.5.2](https://www.rfc-editor.org/rfc/rfc9113#section-6.5.2), it is recommended that this value be no smaller than 100, so as to not unnecessarily limit parallelism.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_CONCURRENT_STREAMS+++[] | long | `128` |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-frame-size"></a> [`quarkus.http.limits.max-frame-size`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-frame-size) config_property_copy_button:+++quarkus.http.limits.max-frame-size+++[]<br><br>Set the SETTINGS_MAX_FRAME_SIZE HTTP/2 setting. Indicates the size of the largest frame payload that the sender is willing to receive, in octets. The initial value is `2^14` (16,384) octets.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_FRAME_SIZE+++[] | int |  |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-header-list-size"></a> [`quarkus.http.limits.max-header-list-size`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-max-header-list-size) config_property_copy_button:+++quarkus.http.limits.max-header-list-size+++[]<br><br>Set the SETTINGS_MAX_HEADER_LIST_SIZE HTTP/2 setting. This advisory setting informs a peer of the maximum size of header list that the sender is prepared to accept, in octets. The value is based on the uncompressed size of header fields, including the length of the name and value in octets plus an overhead of 32 octets for each header field. The default value is `8192`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_MAX_HEADER_LIST_SIZE+++[] | long |  |
 | <a id="quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-rst-flood-max-rst-frame-per-window"></a> [`quarkus.http.limits.rst-flood-max-rst-frame-per-window`](#quarkus-vertx-http_quarkus-http-limits_quarkus-http-limits-rst-flood-max-rst-frame-per-window) config_property_copy_button:+++quarkus.http.limits.rst-flood-max-rst-frame-per-window+++[]<br><br>Set the max number of RST frame allowed per time window, this is used to prevent [HTTP/2 RST frame flood DDOS attacks](https://github.com/netty/netty/security/advisories/GHSA-xpw8-rcwv-8f8p). The default value is `200`, setting zero or a negative value, disables flood protection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_HTTP_LIMITS_RST_FLOOD_MAX_RST_FRAME_PER_WINDOW+++[] | int |  |
@@ -606,6 +720,10 @@ You can add HTTP request logging by configuring it in `application.properties`. 
 | Response header |  | `%{o,response_header_name}` |
 | Vert.x Routing Context Internal Data |  | `%{d,map_key}` |
 | Vert.x MDC data (e.g. 'traceId' for OpenTelemetry) |  | `%{X,mdc-key}` |
+| Connection status: 'X' if the client closed the connection before the response was completed, '-' otherwise |  | `%{CONNECTION_STATUS}` |
+
+> [!NOTE]
+> When a request is logged with the connection status `X`, the response was never sent, so the status code (`%s`) and the bytes sent (`%b`, `%B`) describe the response as it was when the connection closed, and the response time (`%D`, `%T`) is the time until the connection closed.
 
 Set `quarkus.http.access-log.consolidate-rerouted-requests=true` to enable support for the modifier `<`. This modifier can be used for requests that have been internally redirected to consult the original request. The following attributes support this modifier:
 
@@ -629,24 +747,25 @@ Set `quarkus.http.access-log.consolidate-rerouted-requests=true` to enable suppo
 
 ## Arbitrary customizations
 
-Quarkus allows users to arbitrarily customize the options of HTTP servers started by Quarkus via the use of `io.quarkus.vertx.http.HttpServerOptionsCustomizer`. For example, if the HTTP port needs to be set programmatically, then the following code could be used:
+Quarkus allows users to arbitrarily customize the configuration of HTTP servers started by Quarkus via the use of `io.quarkus.vertx.http.HttpServerConfigCustomizer`. For example, if the HTTP port needs to be set programmatically, then the following code could be used:
 
 ```java
 import jakarta.inject.Singleton;
-import io.quarkus.vertx.http.HttpServerOptionsCustomizer;
+import io.quarkus.vertx.http.HttpServerConfigCustomizer;
+import io.vertx.core.http.HttpServerConfig;
 
 @Singleton <1>
-public class MyCustomizer implements HttpServerOptionsCustomizer {
+public class MyCustomizer implements HttpServerConfigCustomizer {
 
     @Override
-    public void customizeHttpServer(HttpServerOptions options) { <2>
-        options.setPort(9998);
+    public void customizeHttpServer(HttpServerConfig config) { <2>
+        config.setPort(9998);
     }
 }
 ```
 
 1. By making the class a managed bean, Quarkus will take the customizer into account when it starts the Vert.x servers
-2. In this case, we only care about customizing the HTTP server, so we just override the `customizeHttpServer` method, but users should be aware that `HttpServerOptionsCustomizer` allows configuring the HTTPS and Domain Socket servers as well
+2. In this case, we only care about customizing the HTTP server, so we just override the `customizeHttpServer` method, but users should be aware that `HttpServerConfigCustomizer` allows configuring the HTTPS and Domain Socket servers as well
 
 ## How to execute logic when HTTP server started
 
@@ -761,6 +880,73 @@ Supported forwarding address headers are:
 - `X-Forwarded-Port`
 - `X-Forwarded-Ssl`
 - `X-Forwarded-Prefix`
+
+<a id="x-forwarded-for-selection"></a>
+### Selecting the X-Forwarded-For client address
+
+By default, Quarkus takes the client address from the leftmost `X-Forwarded-For` value. When a proxy appends the client address rather than overwriting the header, the leftmost value is supplied by the client and cannot be trusted. Set `quarkus.http.proxy.x-forwarded-for-index` to select the value by its position from the right, where `1` is the rightmost value:
+
+```properties
+quarkus.http.proxy.proxy-address-forwarding=true
+quarkus.http.proxy.allow-x-forwarded=true
+quarkus.http.proxy.trusted-proxies=127.0.0.1
+quarkus.http.proxy.x-forwarded-for-index=1 <1>
+```
+
+1. Set the index to the number of values your proxies append to `X-Forwarded-For`. One appended value places the client at index `1`, two appended values at index `2`.
+
+The index counts non-empty values only and merges repeated `X-Forwarded-For` header lines in the order received. When the header holds at least one value but fewer than the index, the request is rejected with a `400 Bad Request` response. When the header is absent or contains only empty values, the connection peer address is used. Selection applies to `X-Forwarded-For` only and cannot be combined with `quarkus.http.proxy.allow-forwarded`.
+
+> [!WARNING]
+> Select a value only when Quarkus is reachable exclusively through trusted proxies, because a client that connects directly can forge any value. The index must equal the number of values the proxies append; a lower index selects a client-supplied value.
+
+When a fixed index is not enough, for example to read a vendor header or to walk a chain of trusted addresses, provide a CDI bean that implements the `io.quarkus.vertx.http.XForwardedForSelector` interface:
+
+```java
+import io.quarkus.vertx.http.XForwardedForSelector;
+
+import jakarta.inject.Singleton;
+
+@Singleton
+public class ClientIpSelector implements XForwardedForSelector {
+
+    @Override
+    public String select(Context context) {
+        String clientIp = context.headers().get("X-Real-Client-IP");
+        if (clientIp != null) {
+            return clientIp;
+        }
+        return context.connectionPeer().host(); <1>
+    }
+}
+```
+
+1. Falls back to the direct connection address. Returning `null` or a blank value instead rejects the request with a `400 Bad Request` response.
+
+The selector runs only when the request carries at least one non-empty `X-Forwarded-For` value. When the header is absent or contains only empty values, the selector is not invoked and the connection peer address is used.
+
+> [!NOTE]
+> At most one such bean may exist, and it cannot be combined with `quarkus.http.proxy.x-forwarded-for-index` or `quarkus.http.proxy.allow-forwarded`.
+
+### Using the PROXY protocol
+
+When the proxy in front of Quarkus supports the [PROXY protocol](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt), enable it so that the remote address of a connection is the address of the actual client rather than the address of the proxy:
+
+```properties
+quarkus.http.proxy.use-proxy-protocol=true
+```
+
+The PROXY protocol is then expected on every listener: HTTP, HTTPS and the Unix domain socket. A connection that does not start with a PROXY protocol header is rejected. If only some of the listeners are reached through the proxy, for example when the load balancer passes TLS traffic through with a PROXY header while plain HTTP traffic comes from inside the cluster, restrict the protocol to those listeners:
+
+```properties
+quarkus.http.proxy.use-proxy-protocol=true
+quarkus.http.proxy.proxy-protocol-listeners=https
+```
+
+The accepted values are `http`, `https` and `domain-socket`. When none of the selected listeners is started, for example `https` without a TLS configuration, the PROXY protocol is not used and a warning is logged at startup. The management interface has the same properties under `quarkus.management.proxy`.
+
+> [!IMPORTANT]
+> The PROXY protocol header is not authenticated: a listener that expects it uses the client address sent by whoever opens the connection. Make sure that only the proxy can connect to such a listener, for example with firewall rules or a network policy. The trusted proxy checks described in [Running behind a reverse proxy](#reverse-proxy) apply to the forwarded headers, they do not restrict who can send a PROXY protocol header.
 
 <a id="same-site-cookie"></a>
 ## SameSite cookies

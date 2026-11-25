@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -36,7 +36,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-kotlin-quickstart \
     -Dextensions='kotlin,rest-jackson'
@@ -123,7 +123,7 @@ class ReactiveGreetingResourceTest {
 
 ## Kotlin version
 
-The Quarkus Kotlin extension already declares a dependency on some base Kotlin libraries like `kotlin-stdlib-jdk8` and `kotlin-reflect`. The Kotlin version of these dependencies is declared in the Quarkus BOM and is currently at 2.4.10. It is therefore recommended to use the same Kotlin version for other Kotlin libraries. When adding a dependency to another base Kotlin library (e.g. `kotlin-test-junit5`) you don't need to specify the version, since the Quarkus BOM includes the [Kotlin BOM](https://search.maven.org/artifact/org.jetbrains.kotlin/kotlin-bom).
+The Quarkus Kotlin extension already declares a dependency on some base Kotlin libraries like `kotlin-stdlib-jdk8` and `kotlin-reflect`. The Kotlin version of these dependencies is declared in the Quarkus BOM and is currently at 2.4.20. It is therefore recommended to use the same Kotlin version for other Kotlin libraries. When adding a dependency to another base Kotlin library (e.g. `kotlin-test-junit5`) you don't need to specify the version, since the Quarkus BOM includes the [Kotlin BOM](https://search.maven.org/artifact/org.jetbrains.kotlin/kotlin-bom).
 
 This being said, you still need to specify the version of the Kotlin compiler to use. Again, it is recommended to use the same version which Quarkus uses for the Kotlin libraries.
 
@@ -209,8 +209,8 @@ plugins {
     id 'java'
     id 'io.quarkus'
 
-    id "org.jetbrains.kotlin.jvm" version "2.4.10" // <1>
-    id "org.jetbrains.kotlin.plugin.allopen" version "2.4.10" // <1>
+    id "org.jetbrains.kotlin.jvm" version "2.4.20" // <1>
+    id "org.jetbrains.kotlin.plugin.allopen" version "2.4.20" // <1>
 }
 
 repositories {
@@ -219,7 +219,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.10'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.20'
 
    implementation enforcedPlatform("${quarkusPlatformGroupId}:${quarkusPlatformArtifactId}:${quarkusPlatformVersion}")
 
@@ -263,8 +263,8 @@ or, if you use the Gradle Kotlin DSL:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.4.10" // <1>
-    kotlin("plugin.allopen") version "2.4.10"
+    kotlin("jvm") version "2.4.20" // <1>
+    kotlin("plugin.allopen") version "2.4.20"
     id("io.quarkus")
 }
 

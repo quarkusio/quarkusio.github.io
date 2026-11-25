@@ -152,6 +152,31 @@ quarkus.oidc-client.grant.type=ciba
 
 Then, you can use the `OidcClient.accessTokens` method to accept a Map of extra properties and pass the `auth_req_id` parameter to exchange the token authorization code.
 
+<a id="oidc-client-jwt-bearer-grant-assertion"></a>
+#### JWT bearer grant with a JWT bearer or SPIFFE JWT-SVID token
+
+Some providers expect a workload to exchange a token which identifies it, such as a Kubernetes service account token or a SPIFFE JWT-SVID token, for an access token. With the [JWT bearer token grant](https://www.rfc-editor.org/rfc/rfc7523#section-2.1), this token is sent as an `assertion` grant parameter, instead of being used to [authenticate the client](#oidc-client-jwt-bearer).
+
+`OidcClient` can load such a token and use it as the JWT bearer grant assertion. For example, if the token is available in the file system:
+
+```properties
+quarkus.oidc-client.auth-server-url=${auth-server-url}
+quarkus.oidc-client.client-id=quarkus-app
+quarkus.oidc-client.grant.type=jwt <1>
+quarkus.oidc-client.credentials.jwt.source=bearer <2>
+quarkus.oidc-client.credentials.jwt.token-path=/var/run/secrets/tokens <3>
+quarkus.oidc-client.credentials.jwt.assertion=true <4>
+```
+
+1. Use the JWT bearer token grant.
+2. Use an existing JWT bearer token. Set it to `spiffe-jwt` to use a [SPIFFE JWT-SVID](#oidc-client-spiffe-jwt-svid) token.
+3. Path to the token. Quarkus loads a new token from the file system and reloads it when the token expires.
+4. Send the token as the `assertion` grant parameter.
+
+If `quarkus.oidc-client.credentials.jwt.source` is set to `spiffe-jwt`, the [SPIFFE Client](/guides/security-spiffe-client/index.md) extension is present, and no `token-path` is set, then Quarkus fetches the JWT-SVID from the SPIFFE Workload API. In this case, set `quarkus.oidc-client.credentials.jwt.audience` to the audience which the provider requires for the JWT bearer grant assertion. If it is not set, the audience defaults to the `quarkus.oidc-client.auth-server-url` value.
+
+No custom code is required to provide the assertion, therefore you can use `OidcClient` with the [OIDC client filters](#rest-client-oidc-filter) as usual. If you prefer to provide the assertion yourself, use `OidcClient` methods which accept additional grant parameters, for example, `oidcClient.getTokens(Map.of("assertion", "ey..."))`. This assertion takes precedence over the one loaded by Quarkus.
+
 #### Grant scopes
 
 You might need to request that a specific set of scopes be associated with an issued access token. Use a dedicated `quarkus.oidc-client.scopes` list property, for example: `quarkus.oidc-client.scopes=email,phone`
@@ -228,9 +253,70 @@ For example, assume that the Quarkus endpoint must access a microservice that re
    1. `io.quarkus.oidc.client.runtime.TokensHelper` manages the access token acquisition and refresh.
 
 
-### Inject tokens
+### Inject TokenProvider
 
-You can inject `Tokens` that use `OidcClient` internally. `Tokens` can be used to acquire the access tokens and refresh them if necessary:
+You can inject `TokenProvider` that uses `OidcClient` internally to acquire the access tokens and refresh them asynchronously:
+
+```java
+import jakarta.inject.Inject;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+import io.quarkus.oidc.client.spi.TokenProvider;
+
+@Path("/service")
+public class OidcClientResource {
+
+   @Inject
+   TokenProvider tokenProvider;
+
+   public Uni<String> getAccessToken() {
+       return tokenProvider.getAccessToken();
+   }
+}
+```
+
+You can also inject a `TokenProvider` that is bound to a named OIDC client, see [Inject named OidcClient, Tokens and TokenProvider](#named-oidc-clients).
+
+`TokenProvider` can also acquire the access token with additional grant parameters, for example, `tokenProvider.getAccessToken(Map.of("scope", "openid"))`. The tokens acquired with different additional grant parameters are cached separately, see [Caching tokens acquired with additional grant parameters](#additional-grant-parameters-token-cache).
+
+When a Quarkus extension must acquire OIDC tokens by using one of the token grants supported by the OIDC client, it can also use `TokenProvider` while depending only on the OIDC Client SPI:
+
+1. Add the following dependency:
+
+   ```xml
+   <dependency>
+       <groupId>io.quarkus</groupId>
+       <artifactId>quarkus-oidc-client-spi</artifactId>
+   </dependency>
+   ```
+
+
+Now, the extension is able to use a `TokenProvider` when an application that uses this extension also includes a `quarkus-oidc-client` dependency. Since the extension itself depends only on `quarkus-oidc-client-spi`, it must inject `TokenProvider` using `jakarta.enterprise.inject.Instance` and expect that `TokenProvider` may not be available.
+
+For example:
+
+```java
+import jakarta.inject.Inject;
+import jakarta.enterprise.inject.Instance;
+import io.quarkus.oidc.client.spi.TokenProvider;
+
+public class CustomExtensionTokenProvider {
+
+   @Inject
+   Instance<TokenProvider> tokenProvider;
+
+   public Uni<String> getAccessToken() {
+       return tokenProvider.isResolvable() ? tokenProvider.get().getAccessToken() : Uni.createFrom().nullItem();
+   }
+}
+```
+
+Currently, when an extensions injects `io.quarkus.oidc.client.spi.TokenProvider`, only a default OIDC client configuration can be used.
+
+### Inject Tokens
+
+You can inject a `Tokens` class that uses `OidcClient` internally. `Tokens` can be used to acquire the access tokens and refresh them if necessary but also blocking the current request:
 
 ```java
 import jakarta.inject.Inject;
@@ -425,7 +511,7 @@ public class OidcClientResource {
 1. See the `RestClientWithTokenHeaderParam` declaration in the [Use OidcClient directly](#use-oidc-client-directly) section.
 
 <a id="named-oidc-clients"></a>
-### Inject named OidcClient and tokens
+### Inject named OidcClient, Tokens and TokenProvider
 
 If multiple `OidcClient` objects are configured, you can specify the `OidcClient` injection target with the `@NamedOidcClient` qualifier instead of working with `OidcClients`:
 
@@ -498,6 +584,14 @@ public class OidcClientRequestCustomFilter implements ClientRequestFilter {
         requestContext.getHeaders().add(HttpHeaders.AUTHORIZATION, "Bearer " + tokens.getAccessToken());
     }
 }
+```
+
+The same qualifier can also be used to specify the `OidcClient` used for a `TokenProvider` injection:
+
+```java
+@Inject
+@NamedOidcClient("jwt-secret")
+TokenProvider tokenProvider;
 ```
 
 Additionally, if you want to do a programmatic lookup of an `OidcClient`, use the `NamedOidcClient.Literal` qualifier to select it instead of relying on a static `@NamedOidcClient` injection point:
@@ -844,7 +938,7 @@ public class OidcClientRequestCustomFilter implements ClientRequestFilter {
 
 The `Tokens` producer will acquire and refresh the tokens, and the custom filter will decide how and when to use the token.
 
-You can also inject named `Tokens`, see [Inject named OidcClient and Tokens](#named-oidc-clients)
+You can also inject named `Tokens`, see [Inject named OidcClient, Tokens and TokenProvider](#named-oidc-clients).
 
 <a id="refresh-access-tokens"></a>
 ### Refreshing access tokens
@@ -868,6 +962,17 @@ quarkus.oidc-client.refresh-interval=1m <1>
 If the access token needs to be refreshed but no refresh token is available, an attempt is made to acquire a new token with a configured grant, such as `client_credentials`.
 
 Some OpenID Connect providers do not return a refresh token in a `client_credentials` grant response. For example, starting with Keycloak 12, a refresh token is not returned by default for `client_credentials`. Providers might also restrict how many times a refresh token can be used.
+
+<a id="additional-grant-parameters-token-cache"></a>
+### Caching tokens acquired with additional grant parameters
+
+`OidcClientRequestReactiveFilter`, `OidcClientRequestFilter`, `TokenProvider`, and `Tokens` producers always cache the tokens they acquire with the configured grant. Tokens acquired with additional grant parameters, for example, with `tokenProvider.getAccessToken(Map.of("scope", "openid"))` or by a custom filter, are cached per set of such parameters, because the parameters, for example, a requested `scope` or a subject token which has to be exchanged, can affect which tokens are issued. The token propagation filters, `AccessTokenRequestReactiveFilter` and `AccessTokenRequestFilter`, cache the tokens they exchange the same way, with the incoming access token being the additional grant parameter, see [Token Propagation for Quarkus REST](#token-propagation-rest) and [Token Propagation for RESTEasy Classic](#token-propagation-resteasy). By default, each filter and each token producer caches the tokens of up to 15 sets of additional grant parameters. This limit is approximate, the cache can briefly exceed it when tokens are requested concurrently. When the limit is reached, the tokens which are least likely to be needed again, for example, expired or least recently used tokens, are evicted. The tokens acquired with the configured grant only, without additional grant parameters, are not counted toward this limit and are never evicted. Use the `quarkus.oidc-client.token-cache-max-size` property to change the limit per producer, for example, when many different subject tokens are exchanged:
+
+```properties
+quarkus.oidc-client.token-cache-max-size=30
+```
+
+Set this property to `0` to not cache the tokens acquired with additional grant parameters at all.
 
 <a id="revoke-access-tokens"></a>
 ### Revoking access tokens
@@ -1079,9 +1184,16 @@ public class OidcClientRequestCustomFilter extends AbstractOidcClientRequestFilt
 }
 ```
 
+> [!TIP]
+> To make the most of the [token cache](#additional-grant-parameters-token-cache), let Quarkus load the client assertion with the `quarkus.oidc-client.credentials.jwt.token-path` property instead of using a custom filter. Quarkus then renews the client assertion without affecting the cached tokens.
+
+> [!NOTE]
+> The JWT bearer token can also be used as a JWT bearer grant assertion instead of the client assertion. For more information, see the [JWT bearer grant with a JWT bearer or SPIFFE JWT-SVID token](#oidc-client-jwt-bearer-grant-assertion) section.
+
+<a id="oidc-client-spiffe-jwt-svid"></a>
 #### SPIFFE JWT-SVID
 
-[SPIFFE](https://spiffe.io) (Secure Production Identity Framework for Everyone) JWT-SVID tokens can be used as client assertions for client authentication. When the JWT source is set to `spiffe`, the `client_assertion_type` parameter is set to `urn:ietf:params:oauth:client-assertion-type:jwt-spiffe` instead of the JWT bearer `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` value.
+[SPIFFE](https://spiffe.io) (Secure Production Identity Framework for Everyone) JWT-SVID tokens can be used as client assertions for client authentication. When the JWT source is set to `spiffe-jwt`, the `client_assertion_type` parameter is set to `urn:ietf:params:oauth:client-assertion-type:jwt-spiffe` instead of the JWT bearer `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` value.
 
 Enable it as follows:
 
@@ -1098,6 +1210,22 @@ quarkus.oidc-client.credentials.jwt.token-path=/var/run/secrets/tokens <1>
 ```
 
 1. Path to a SPIFFE JWT-SVID token. Quarkus loads a new token from the file system and reloads it when the token expires. The token's `sub` claim is verified to start with the `spiffe://` scheme.
+
+Alternatively, when the [SPIFFE Client](/guides/security-spiffe-client/index.md) extension is present and no `token-path` is set, Quarkus fetches JWT-SVIDs directly from the local SPIRE Agent instead of reading them from disk. Tokens are cached and refreshed automatically before they expire.
+
+```properties
+quarkus.oidc-client.auth-server-url=${auth-server-url}
+quarkus.oidc-client.client-id=quarkus-app
+quarkus.oidc-client.credentials.jwt.source=spiffe-jwt
+```
+
+The JWT-SVID audience defaults to the `quarkus.oidc-client.auth-server-url` value. If the OIDC provider's issuer differs from `quarkus.oidc-client.auth-server-url`, set `quarkus.oidc-client.credentials.jwt.audience` explicitly.
+
+> [!NOTE]
+> The SPIFFE JWT-SVID token can also be used as a JWT bearer grant assertion instead of the client assertion. For more information, see the [JWT bearer grant with a JWT bearer or SPIFFE JWT-SVID token](#oidc-client-jwt-bearer-grant-assertion) section.
+
+> [!TIP]
+> For development and testing with Keycloak, see [SPIFFE integration with Dev Services for Keycloak](/guides/security-spiffe-client/index.md#keycloak-dev-svc-integration).
 
 #### Apple POST JWT
 
@@ -1149,42 +1277,6 @@ quarkus.tls.oidc-client.trust-store.p12.password=${trust-store-password}
 The OIDC discovery endpoint is typically public. Some OIDC providers may enforce authenticated access to this endpoint. For example, the Kubernetes API server acts as an OIDC provider for service account tokens and requires a bearer access token to access its discovery endpoint.
 
 To send client credentials to the discovery endpoint, set `quarkus.oidc-client.credentials.for-all-endpoints=true`. Since the discovery endpoint is accessed with an HTTP GET request, only authentication methods that use the HTTP `Authorization` header are effective, such as `client_secret_basic` and [JWT bearer](#oidc-client-jwt-bearer). Alternatively, you can use [OidcRequestFilter](#oidc-client-ref-oidc-request-filters) to customize the authentication.
-
-### OIDC Client SPI
-
-When your custom extension must acquire OIDC tokens by using one of the token grants supported by the OIDC client, the extension can depend only on the OIDC Client SPI and let the OIDC client itself acquire and refresh access tokens as needed.
-
-1. Add the following dependency:
-
-   ```xml
-   <dependency>
-       <groupId>io.quarkus</groupId>
-       <artifactId>quarkus-oidc-client-spi</artifactId>
-   </dependency>
-   ```
-
-
-1. Update your extension to use the `io.quarkus.oidc.client.spi.TokenProvider` CDI bean as required. For example:
-
-   ```java
-   package org.acme.extension;
-
-   import jakarta.inject.Inject;
-   import io.quarkus.oidc.client.spi.TokenProvider;
-
-   public class ExtensionOAuth2Support {
-
-      @Inject
-      TokenProvider tokenProvider;
-
-      public Uni<String> getAccessToken() {
-          return tokenProvider.getAccessToken();
-      }
-   }
-   ```
-
-   Currently, `io.quarkus.oidc.client.spi.TokenProvider` is available only for default OIDC clients because custom extensions are unlikely to be aware of multiple named OIDC clients.
-
 
 <a id="integration-testing-oidc-client"></a>
 ### Testing
@@ -1583,6 +1675,14 @@ quarkus.resteasy-client-oidc-token-propagation.exchange-token=true
 
 `AccessTokenRequestReactiveFilter` uses a default `OidcClient` by default. A named `OidcClient` can be selected with a `quarkus.rest-client-oidc-token-propagation.client-name` configuration property or with the `io.quarkus.oidc.token.propagation.common.AccessToken#exchangeTokenClient` annotation attribute.
 
+`AccessTokenRequestReactiveFilter` caches the exchanged tokens, see [Caching tokens acquired with additional grant parameters](#additional-grant-parameters-token-cache), also when the token exchange is activated with the `io.quarkus.oidc.token.propagation.common.AccessToken#exchangeTokenClient` annotation attribute. An incoming access token is exchanged once and the exchanged token is propagated until it expires, even if the incoming access token is revoked in the meantime. By default, the exchanged tokens of up to 15 incoming access tokens are cached. Use the `quarkus.oidc-client.token-cache-max-size` property of the `OidcClient` which exchanges the tokens to change this limit, for example, when the tokens of many users are exchanged at the same time:
+
+```properties
+quarkus.oidc-client.token-cache-max-size=50
+```
+
+Set this property to `0` to exchange the incoming access token on every request, so that the OpenID Connect provider verifies the incoming access token every time and rejects it as soon as it is revoked.
+
 <a id="token-propagation-resteasy"></a>
 ## Token Propagation for RESTEasy Classic
 
@@ -1697,6 +1797,14 @@ quarkus.resteasy-client-oidc-token-propagation.exchange-token=true
 > `AccessTokenRequestFilter` will use `OidcClient` to exchange the current token, and you can use `quarkus.oidc-client.grant-options.exchange` to set the additional exchange properties expected by your OpenID Connect provider.
 
 `AccessTokenRequestFilter` uses a default `OidcClient` by default. A named `OidcClient` can be selected with the `quarkus.resteasy-client-oidc-token-propagation.client-name` configuration property.
+
+`AccessTokenRequestFilter` caches the exchanged tokens, see [Caching tokens acquired with additional grant parameters](#additional-grant-parameters-token-cache), also when the token exchange is activated with the `io.quarkus.oidc.token.propagation.common.AccessToken#exchangeTokenClient` annotation attribute. An incoming access token is exchanged once and the exchanged token is propagated until it expires, even if the incoming access token is revoked in the meantime. By default, the exchanged tokens of up to 15 incoming access tokens are cached. Use the `quarkus.oidc-client.token-cache-max-size` property of the `OidcClient` which exchanges the tokens to change this limit, for example, when the tokens of many users are exchanged at the same time:
+
+```properties
+quarkus.oidc-client.token-cache-max-size=50
+```
+
+Set this property to `0` to exchange the incoming access token on every request, so that the OpenID Connect provider verifies the incoming access token every time and rejects it as soon as it is revoked.
 
 ### RestClient JsonWebTokenRequestFilter
 
@@ -1889,7 +1997,7 @@ quarkus.oidc-client.health.enabled=true
 | <a id="quarkus-oidc-client_quarkus-oidc-client-follow-redirects"></a> [`quarkus.oidc-client.follow-redirects`](#quarkus-oidc-client_quarkus-oidc-client-follow-redirects) config_property_copy_button:+++quarkus.oidc-client.follow-redirects+++[]<br><br>`quarkus.oidc-client."id".follow-redirects` config_property_copy_button:+++quarkus.oidc-client."id".follow-redirects+++[]<br><br>Follow redirects automatically when WebClient gets HTTP 302. When this property is disabled only a single redirect to exactly the same original URI is allowed but only if one or more cookies were set during the redirect request.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_FOLLOW_REDIRECTS+++[] | boolean | `true` |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-token-path"></a> [`quarkus.oidc-client.token-path`](#quarkus-oidc-client_quarkus-oidc-client-token-path) config_property_copy_button:+++quarkus.oidc-client.token-path+++[]<br><br>`quarkus.oidc-client."id".token-path` config_property_copy_button:+++quarkus.oidc-client."id".token-path+++[]<br><br>The OIDC token endpoint that issues access and refresh tokens; specified as a relative path or absolute URL. Set if `discovery-enabled` is `false` or a discovered token endpoint path must be customized.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_TOKEN_PATH+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-revoke-path"></a> [`quarkus.oidc-client.revoke-path`](#quarkus-oidc-client_quarkus-oidc-client-revoke-path) config_property_copy_button:+++quarkus.oidc-client.revoke-path+++[]<br><br>`quarkus.oidc-client."id".revoke-path` config_property_copy_button:+++quarkus.oidc-client."id".revoke-path+++[]<br><br>The relative path or absolute URL of the OIDC token revocation endpoint.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REVOKE_PATH+++[] | string |  |
-| <a id="quarkus-oidc-client_quarkus-oidc-client-client-id"></a> [`quarkus.oidc-client.client-id`](#quarkus-oidc-client_quarkus-oidc-client-client-id) config_property_copy_button:+++quarkus.oidc-client.client-id+++[]<br><br>`quarkus.oidc-client."id".client-id` config_property_copy_button:+++quarkus.oidc-client."id".client-id+++[]<br><br>The client id of the application. Each application has a client id that is used to identify the application. Setting the client id is not required if `application-type` is `service` and no token introspection is required.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CLIENT_ID+++[] | string |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-client-id"></a> [`quarkus.oidc-client.client-id`](#quarkus-oidc-client_quarkus-oidc-client-client-id) config_property_copy_button:+++quarkus.oidc-client.client-id+++[]<br><br>`quarkus.oidc-client."id".client-id` config_property_copy_button:+++quarkus.oidc-client."id".client-id+++[]<br><br>The client id of the application. Each application has a client id that is used to identify the application. Setting the client id is not required if `application-type` is `service` and no token introspection is required.<br><br>If this property is set to an HTTPS URL, the [OAuth Client ID Metadata Document](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document) registration is activated. In this mode, Quarkus serves a metadata document at the URL path derived from the client id, allowing the authorization server to discover the client configuration without prior registration. The `client-name()` property must also be set in this case. This option is only supported by the OIDC extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CLIENT_ID+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-client-name"></a> [`quarkus.oidc-client.client-name`](#quarkus-oidc-client_quarkus-oidc-client-client-name) config_property_copy_button:+++quarkus.oidc-client.client-name+++[]<br><br>`quarkus.oidc-client."id".client-name` config_property_copy_button:+++quarkus.oidc-client."id".client-name+++[]<br><br>The client name of the application. It is meant to represent a human readable description of the application which you may provide when an application (client) is registered in an OpenId Connect provider's dashboard. For example, you can set this property to have more informative log messages which record an activity of the given client.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CLIENT_NAME+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-id"></a> [`quarkus.oidc-client.id`](#quarkus-oidc-client_quarkus-oidc-client-id) config_property_copy_button:+++quarkus.oidc-client.id+++[]<br><br>`quarkus.oidc-client."id".id` config_property_copy_button:+++quarkus.oidc-client."id".id+++[]<br><br>A unique OIDC client identifier. It must be set when OIDC clients are created dynamically and is optional in all other cases.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_ID+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-client-enabled"></a> [`quarkus.oidc-client.client-enabled`](#quarkus-oidc-client_quarkus-oidc-client-client-enabled) config_property_copy_button:+++quarkus.oidc-client.client-enabled+++[]<br><br>`quarkus.oidc-client."id".client-enabled` config_property_copy_button:+++quarkus.oidc-client."id".client-enabled+++[]<br><br>If this client configuration is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CLIENT_ENABLED+++[] | boolean | `true` |
@@ -1908,8 +2016,9 @@ quarkus.oidc-client.health.enabled=true
 | <a id="quarkus-oidc-client_quarkus-oidc-client-early-tokens-acquisition"></a> [`quarkus.oidc-client.early-tokens-acquisition`](#quarkus-oidc-client_quarkus-oidc-client-early-tokens-acquisition) config_property_copy_button:+++quarkus.oidc-client.early-tokens-acquisition+++[]<br><br>`quarkus.oidc-client."id".early-tokens-acquisition` config_property_copy_button:+++quarkus.oidc-client."id".early-tokens-acquisition+++[]<br><br>Requires that all filters which use 'OidcClient' acquire the tokens at the post-construct initialization time, possibly long before these tokens are used. This property should be disabled if the access token may expire before it is used for the first time and no refresh token is available.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_EARLY_TOKENS_ACQUISITION+++[] | boolean | `true` |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-headers-headers"></a> [`quarkus.oidc-client.headers."headers"`](#quarkus-oidc-client_quarkus-oidc-client-headers-headers) config_property_copy_button:+++quarkus.oidc-client.headers."headers"+++[]<br><br>`quarkus.oidc-client."id".headers."headers"` config_property_copy_button:+++quarkus.oidc-client."id".headers."headers"+++[]<br><br>Custom HTTP headers which have to be sent to the token endpoint<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_HEADERS__HEADERS_+++[] | Map\<String,String> |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-refresh-interval"></a> [`quarkus.oidc-client.refresh-interval`](#quarkus-oidc-client_quarkus-oidc-client-refresh-interval) config_property_copy_button:+++quarkus.oidc-client.refresh-interval+++[]<br><br>`quarkus.oidc-client."id".refresh-interval` config_property_copy_button:+++quarkus.oidc-client."id".refresh-interval+++[]<br><br>Token refresh interval. By default, OIDC client refreshes the token during the current request, when it detects that it has expired, or nearly expired if the `refresh-token-time-skew()` is configured. But, when this property is configured, OIDC client can refresh the token asynchronously in the configured interval. This property is only effective with OIDC client filters and other `AbstractTokensProducer` extensions, but not when you use the `OidcClient#getTokens()` API directly.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REFRESH_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-oidc-client_quarkus-oidc-client) |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-token-cache-max-size"></a> [`quarkus.oidc-client.token-cache-max-size`](#quarkus-oidc-client_quarkus-oidc-client-token-cache-max-size) config_property_copy_button:+++quarkus.oidc-client.token-cache-max-size+++[]<br><br>`quarkus.oidc-client."id".token-cache-max-size` config_property_copy_button:+++quarkus.oidc-client."id".token-cache-max-size+++[]<br><br>Maximum number of sets of additional grant parameters for which an OIDC client filter, an OIDC token propagation filter which exchanges tokens, or a token producer, such as `TokenProvider`, caches the tokens. Tokens requested with additional grant parameters, for example, with different scopes or subject tokens passed to `TokenProvider#getAccessToken(Map)`, are cached per set of parameters. Set this property to `0` to not cache such tokens at all. This number is approximate, the cache can briefly exceed it when tokens are requested concurrently. This property is not relevant when tokens are acquired with the configured grant only, without additional grant parameters, because such tokens are always cached. Neither does it apply when the `OidcClient` API is used directly.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_TOKEN_CACHE_MAX_SIZE+++[] | int | `15` |
 | <a id="quarkus-oidc-client_section_quarkus-oidc-client-proxy"></a> [HTTP proxy configuration](#quarkus-oidc-client_section_quarkus-oidc-client-proxy) | Type | Default |
-| <a id="quarkus-oidc-client_quarkus-oidc-client-proxy-proxy-configuration-name"></a> [`quarkus.oidc-client.proxy.proxy-configuration-name`](#quarkus-oidc-client_quarkus-oidc-client-proxy-proxy-configuration-name) config_property_copy_button:+++quarkus.oidc-client.proxy.proxy-configuration-name+++[]<br><br>`quarkus.oidc-client."id".proxy.proxy-configuration-name` config_property_copy_button:+++quarkus.oidc-client."id".proxy.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.proxy.<name>.*`. Please note that the 'non-proxy-hosts' option is currently not supported. If a name is configured, but no proxy configuration is found with that name then an error will be thrown.<br><br>The default proxy configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_PROXY_PROXY_CONFIGURATION_NAME+++[] | string |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-proxy-proxy-configuration-name"></a> [`quarkus.oidc-client.proxy.proxy-configuration-name`](#quarkus-oidc-client_quarkus-oidc-client-proxy-proxy-configuration-name) config_property_copy_button:+++quarkus.oidc-client.proxy.proxy-configuration-name+++[]<br><br>`quarkus.oidc-client."id".proxy.proxy-configuration-name` config_property_copy_button:+++quarkus.oidc-client."id".proxy.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.proxy.<name>.*`. If a name is configured, but no proxy configuration is found with that name then an error will be thrown.<br><br>The default proxy configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_PROXY_PROXY_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-oidc-client_section_quarkus-oidc-client-tls"></a> [TLS configuration](#quarkus-oidc-client_section_quarkus-oidc-client-tls) | Type | Default |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-tls-tls-configuration-name"></a> [`quarkus.oidc-client.tls.tls-configuration-name`](#quarkus-oidc-client_quarkus-oidc-client-tls-tls-configuration-name) config_property_copy_button:+++quarkus.oidc-client.tls.tls-configuration-name+++[]<br><br>`quarkus.oidc-client."id".tls.tls-configuration-name` config_property_copy_button:+++quarkus.oidc-client."id".tls.tls-configuration-name+++[]<br><br>The name of the TLS configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.tls.<name>.*` If a name is configured, but no TLS configuration is found with that name then an error will be thrown.<br><br>The default TLS configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_TLS_TLS_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-oidc-client_section_quarkus-oidc-client-credentials"></a> [Different authentication options for OIDC client to access OIDC token and other secured endpoints](#quarkus-oidc-client_section_quarkus-oidc-client-credentials) | Type | Default |
@@ -1919,7 +2028,7 @@ quarkus.oidc-client.health.enabled=true
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-provider-keyring-name"></a> [`quarkus.oidc-client.credentials.client-secret.provider.keyring-name`](#quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-provider-keyring-name) config_property_copy_button:+++quarkus.oidc-client.credentials.client-secret.provider.keyring-name+++[]<br><br>`quarkus.oidc-client."id".credentials.client-secret.provider.keyring-name` config_property_copy_button:+++quarkus.oidc-client."id".credentials.client-secret.provider.keyring-name+++[]<br><br>The CredentialsProvider keyring name. The keyring name is only required when the CredentialsProvider being used requires the keyring name to look up the secret, which is often the case when a CredentialsProvider is shared by multiple extensions to retrieve credentials from a more dynamic source like a vault instance or secret manager<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_CLIENT_SECRET_PROVIDER_KEYRING_NAME+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-provider-key"></a> [`quarkus.oidc-client.credentials.client-secret.provider.key`](#quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-provider-key) config_property_copy_button:+++quarkus.oidc-client.credentials.client-secret.provider.key+++[]<br><br>`quarkus.oidc-client."id".credentials.client-secret.provider.key` config_property_copy_button:+++quarkus.oidc-client."id".credentials.client-secret.provider.key+++[]<br><br>The CredentialsProvider client secret key<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_CLIENT_SECRET_PROVIDER_KEY+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-method"></a> [`quarkus.oidc-client.credentials.client-secret.method`](#quarkus-oidc-client_quarkus-oidc-client-credentials-client-secret-method) config_property_copy_button:+++quarkus.oidc-client.credentials.client-secret.method+++[]<br><br>`quarkus.oidc-client."id".credentials.client-secret.method` config_property_copy_button:+++quarkus.oidc-client."id".credentials.client-secret.method+++[]<br><br>The authentication method. If the `clientSecret.value` secret is set, this method is `basic` by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_CLIENT_SECRET_METHOD+++[] | tooltip:basic[`client_secret_basic` (default)\: The client id and secret are submitted with the HTTP Authorization Basic scheme.], tooltip:post[`client_secret_post`\: The client id and secret are submitted as the `client_id` and `client_secret` form parameters.], tooltip:post-jwt[`client_secret_jwt`\: The client id and generated JWT secret are submitted as the `client_id` and `client_secret` form parameters.], tooltip:query[client id and secret are submitted as HTTP query parameters. This option is only supported by the OIDC extension.] |  |
-| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-source"></a> [`quarkus.oidc-client.credentials.jwt.source`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-source) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.source+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.source` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.source+++[]<br><br>JWT token source: token is generated by the OIDC provider client or is an existing JWT bearer or SPIFFE SVID token.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_SOURCE+++[] | tooltip:client[JWT token is generated by the OIDC provider client to support `client_secret_jwt` and `private_key_jwt` authentication methods.], tooltip:bearer[JWT bearer token is used as a client assertion\: https\://www.rfc-editor.org/rfc/rfc7523++#++section-2.2.], tooltip:spiffe-jwt[SPIFFE SVID token is used as a client assertion\: urn\:ietf\:params\:oauth\:client-assertion-type\:jwt-spiffe] | tooltip:client[JWT token is generated by the OIDC provider client to support `client_secret_jwt` and `private_key_jwt` authentication methods.] |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-source"></a> [`quarkus.oidc-client.credentials.jwt.source`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-source) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.source+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.source` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.source+++[]<br><br>JWT token source: token is generated by the OIDC provider client or is an existing JWT bearer or SPIFFE SVID token.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_SOURCE+++[] | tooltip:client[JWT token is generated by the OIDC provider client to support `client_secret_jwt` and `private_key_jwt` authentication methods.], tooltip:bearer[JWT bearer token is used as a client assertion\: https\://www.rfc-editor.org/rfc/rfc7523++#++section-2.2. The OIDC client extension can also use it as a JWT bearer grant assertion if the `assertion` property is enabled\: https\://www.rfc-editor.org/rfc/rfc7523++#++section-2.1.], tooltip:spiffe-jwt[SPIFFE SVID token is used as a client assertion\: urn\:ietf\:params\:oauth\:client-assertion-type\:jwt-spiffe The OIDC client extension can also use it as a JWT bearer grant assertion if the `assertion` property is enabled\: https\://www.rfc-editor.org/rfc/rfc7523++#++section-2.1.] | tooltip:client[JWT token is generated by the OIDC provider client to support `client_secret_jwt` and `private_key_jwt` authentication methods.] |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-token-path"></a> [`quarkus.oidc-client.credentials.jwt.token-path`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-token-path) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.token-path+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.token-path` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.token-path+++[]<br><br>Path to a file with a JWT bearer token that should be used as a client assertion. This path can only be set when JWT source (`source()`) is set to `Source#BEARER`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_TOKEN_PATH+++[] | path |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-secret"></a> [`quarkus.oidc-client.credentials.jwt.secret`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-secret) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.secret+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.secret` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.secret+++[]<br><br>If provided, indicates that JWT is signed using a secret key. It is mutually exclusive with `key`, `key-file` and `key-store` properties.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_SECRET+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-secret-provider-name"></a> [`quarkus.oidc-client.credentials.jwt.secret-provider.name`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-secret-provider-name) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.secret-provider.name+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.secret-provider.name` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.secret-provider.name+++[]<br><br>The CredentialsProvider bean name, which should only be set if more than one CredentialsProvider is registered<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_SECRET_PROVIDER_NAME+++[] | string |  |
@@ -1931,7 +2040,9 @@ quarkus.oidc-client.health.enabled=true
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-store-password"></a> [`quarkus.oidc-client.credentials.jwt.key-store-password`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-store-password) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.key-store-password+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.key-store-password` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.key-store-password+++[]<br><br>A parameter to specify the password of the keystore file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_KEY_STORE_PASSWORD+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-id"></a> [`quarkus.oidc-client.credentials.jwt.key-id`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-id) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.key-id+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.key-id` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.key-id+++[]<br><br>The private key id or alias.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_KEY_ID+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-password"></a> [`quarkus.oidc-client.credentials.jwt.key-password`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-key-password) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.key-password+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.key-password` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.key-password+++[]<br><br>The private key password.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_KEY_PASSWORD+++[] | string |  |
-| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-audience"></a> [`quarkus.oidc-client.credentials.jwt.audience`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-audience) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.audience+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.audience` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.audience+++[]<br><br>The JWT audience (`aud`) claim value. By default, the audience is set to the address of the OpenId Connect Provider's token endpoint.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_AUDIENCE+++[] | string |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-public-key"></a> [`quarkus.oidc-client.credentials.jwt.public-key`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-public-key) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.public-key+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.public-key` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.public-key+++[]<br><br>String representation of a public key in PEM format. Ignored unless the `OidcClientCommonConfig#clientId() client-id` is an HTTPS URL activating the [Client ID Metadata Document](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document) registration, and a private key (`key`, `key-file`, or `key-store-file`) is also configured. The public key is published in the metadata document `jwks` property and `token_endpoint_auth_method` is set to `private_key_jwt`. This option is only supported by the OIDC extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_PUBLIC_KEY+++[] | string |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-public-key-file"></a> [`quarkus.oidc-client.credentials.jwt.public-key-file`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-public-key-file) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.public-key-file+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.public-key-file` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.public-key-file+++[]<br><br>Path to a file containing the public key in PEM format. Both public keys and certificates are accepted. Ignored unless the `OidcClientCommonConfig#clientId() client-id` is an HTTPS URL activating the [Client ID Metadata Document](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document) registration, and a private key (`key`, `key-file`, or `key-store-file`) is also configured. The public key is published in the metadata document `jwks` property and `token_endpoint_auth_method` is set to `private_key_jwt`. This option is only supported by the OIDC extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_PUBLIC_KEY_FILE+++[] | string |  |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-audience"></a> [`quarkus.oidc-client.credentials.jwt.audience`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-audience) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.audience+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.audience` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.audience+++[]<br><br>The JWT audience (`aud`) claim value. By default, the audience is set to the address of the OpenId Connect Provider's token endpoint. When the JWT `source()` is `Source#SPIFFE_JWT`, the audience defaults to the `OidcCommonConfig#authServerUrl() auth-server-url` instead. Set this property explicitly if the OIDC provider expects a different audience, for example, if its issuer URL differs from the `auth-server-url`, or if it requires a specific audience when the SPIFFE JWT-SVID token is used as a JWT bearer grant assertion, see `assertion()`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_AUDIENCE+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-keep-audience-trailing-slash"></a> [`quarkus.oidc-client.credentials.jwt.keep-audience-trailing-slash`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-keep-audience-trailing-slash) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.keep-audience-trailing-slash+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.keep-audience-trailing-slash` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.keep-audience-trailing-slash+++[]<br><br>Whether to keep a trailing slash `/` in the `audience()` value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_KEEP_AUDIENCE_TRAILING_SLASH+++[] | boolean | `false` |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-token-key-id"></a> [`quarkus.oidc-client.credentials.jwt.token-key-id`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-token-key-id) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.token-key-id+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.token-key-id` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.token-key-id+++[]<br><br>The key identifier of the signing key added as a JWT `kid` header.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_TOKEN_KEY_ID+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-issuer"></a> [`quarkus.oidc-client.credentials.jwt.issuer`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-issuer) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.issuer+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.issuer` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.issuer+++[]<br><br>The issuer of the signing key added as a JWT `iss` claim. The default value is the client id.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_ISSUER+++[] | string |  |
@@ -1939,8 +2050,10 @@ quarkus.oidc-client.health.enabled=true
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-claims-claim-name"></a> [`quarkus.oidc-client.credentials.jwt.claims."claim-name"`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-claims-claim-name) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.claims."claim-name"+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.claims."claim-name"` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.claims."claim-name"+++[]<br><br>Additional claims.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_CLAIMS__CLAIM_NAME_+++[] | Map\<String,String> |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-signature-algorithm"></a> [`quarkus.oidc-client.credentials.jwt.signature-algorithm`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-signature-algorithm) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.signature-algorithm+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.signature-algorithm` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.signature-algorithm+++[]<br><br>The signature algorithm used for the `key-file` property. Supported values: `RS256` (default), `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, `HS256`, `HS384`, `HS512`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_SIGNATURE_ALGORITHM+++[] | string |  |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-lifespan"></a> [`quarkus.oidc-client.credentials.jwt.lifespan`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-lifespan) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.lifespan+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.lifespan` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.lifespan+++[]<br><br>The JWT lifespan in seconds. This value is added to the time at which the JWT was issued to calculate the expiration time.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_LIFESPAN+++[] | int | `10` |
-| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-assertion"></a> [`quarkus.oidc-client.credentials.jwt.assertion`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-assertion) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.assertion+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.assertion` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.assertion+++[]<br><br>If true then the client authentication token is a JWT bearer grant assertion. Instead of producing 'client_assertion' and 'client_assertion_type' form properties, only 'assertion' is produced. This option is only supported by the OIDC client extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_ASSERTION+++[] | boolean | `false` |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-assertion"></a> [`quarkus.oidc-client.credentials.jwt.assertion`](#quarkus-oidc-client_quarkus-oidc-client-credentials-jwt-assertion) config_property_copy_button:+++quarkus.oidc-client.credentials.jwt.assertion+++[]<br><br>`quarkus.oidc-client."id".credentials.jwt.assertion` config_property_copy_button:+++quarkus.oidc-client."id".credentials.jwt.assertion+++[]<br><br>If true then the client authentication token is a JWT bearer grant assertion. Instead of producing 'client_assertion' and 'client_assertion_type' form properties, only 'assertion' is produced. It applies to the JWT token generated by the OIDC client and to the existing JWT bearer or SPIFFE SVID token, see `source()`. The JWT bearer grant type must be used when this property is enabled. This option is only supported by the OIDC client extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_JWT_ASSERTION+++[] | boolean | `false` |
 | <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-for-all-endpoints"></a> [`quarkus.oidc-client.credentials.for-all-endpoints`](#quarkus-oidc-client_quarkus-oidc-client-credentials-for-all-endpoints) config_property_copy_button:+++quarkus.oidc-client.credentials.for-all-endpoints+++[]<br><br>`quarkus.oidc-client."id".credentials.for-all-endpoints` config_property_copy_button:+++quarkus.oidc-client."id".credentials.for-all-endpoints+++[]<br><br>If true, client credentials are also sent to OIDC discovery and JWKS endpoints, which normally do not require authentication. Enable this when the OIDC provider enforces authenticated access to these endpoints.<br><br>One of the following authentication methods must be used when this property is enabled:<br><br>\* `client_secret_basic` — `Authorization: Basic` header \* JWT bearer (`jwt.source=bearer`) — `Authorization: Bearer` header<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_FOR_ALL_ENDPOINTS+++[] | boolean | `false` |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-attestation-enabled"></a> [`quarkus.oidc-client.credentials.attestation.enabled`](#quarkus-oidc-client_quarkus-oidc-client-credentials-attestation-enabled) config_property_copy_button:+++quarkus.oidc-client.credentials.attestation.enabled+++[]<br><br>`quarkus.oidc-client."id".credentials.attestation.enabled` config_property_copy_button:+++quarkus.oidc-client."id".credentials.attestation.enabled+++[]<br><br>Enable attestation-based client authentication.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_ATTESTATION_ENABLED+++[] | boolean | `false` |
+| <a id="quarkus-oidc-client_quarkus-oidc-client-credentials-attestation-signature-algorithm"></a> [`quarkus.oidc-client.credentials.attestation.signature-algorithm`](#quarkus-oidc-client_quarkus-oidc-client-credentials-attestation-signature-algorithm) config_property_copy_button:+++quarkus.oidc-client.credentials.attestation.signature-algorithm+++[]<br><br>`quarkus.oidc-client."id".credentials.attestation.signature-algorithm` config_property_copy_button:+++quarkus.oidc-client."id".credentials.attestation.signature-algorithm+++[]<br><br>The EC signature algorithm used for proof-of-possession (PoP) JWTs and self-attested attestation JWTs. Custom attesters may use different algorithms for signing attestation JWTs.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_CREDENTIALS_ATTESTATION_SIGNATURE_ALGORITHM+++[] | `es256`, `es384`, `es512` | `es256` |
 
 <a id="duration-note-anchor-quarkus-oidc-client_quarkus-oidc-client"></a>
 

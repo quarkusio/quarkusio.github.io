@@ -18,7 +18,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=my-groupId \
     -DprojectArtifactId=my-artifactId
 
@@ -51,7 +51,7 @@ If you are using the Maven command, the following table lists the attributes you
 | `extensions` | *\[\]* | The list of extensions to add to the project (comma-separated) |
 | `quarkusRegistryClient` | `true` | Whether Quarkus should use the online registry to resolve extension catalogs. If this is set to false, the extension catalog will be narrowed to the defined (or default) platform BOM. |
 
-By default, the command will target the `io.quarkus.platform:quarkus-bom:3.40.1.2` platform release (unless the coordinates of the desired platform release have been specified).
+By default, the command will target the `io.quarkus.platform:quarkus-bom:4.0.1` platform release (unless the coordinates of the desired platform release have been specified).
 
 The project is generated in a directory named after the passed artifactId. If the directory already exists, the generation fails.
 
@@ -249,7 +249,11 @@ Now you need to connect your local agent to the remote host, using the `remote-d
 ./mvnw quarkus:remote-dev -Dquarkus.live-reload.url=http://my-remote-host:8080
 ```
 
+With the Quarkus CLI, run `quarkus dev --remote -Dquarkus.live-reload.url=http://my-remote-host:8080`.
+
 Now every time you refresh the browser you should see any changes you have made locally immediately visible in the remote app. This is done via an HTTP based long polling transport, that will synchronize your local workspace and the remote application via HTTP calls.
+
+Remote development HTTP requests are limited by `quarkus.http.limits.max-body-size`. Set this value high enough for the largest file that must be synchronized. If the general HTTP body limit is disabled, remote development still applies a 10 MiB limit.
 
 If you do not want to use the HTTP feature then you can simply run the `remote-dev` command without specifying the URL. In this mode the command will continuously rebuild the local application, so you can use an external tool such as odo or rsync to sync to the remote application.
 
@@ -363,6 +367,14 @@ quarkus dev -DwatchedFiles=~/.m2/repository/io/quarkus/quarkus-smallrye-health/9
 
 ```bash
 ./mvnw quarkus:dev -DwatchedFiles=~/.m2/repository/io/quarkus/quarkus-smallrye-health/999-SNAPSHOT/quarkus-smallrye-health-999-SNAPSHOT.jar
+```
+
+### Running with an unsupported Maven version
+
+`quarkus:dev` and `quarkus:create` fail if the Maven version is not supported by Quarkus. If you cannot choose the Maven version, for example because it is provided by your environment, you can skip this check with the `skipMavenVersionCheck` property, at your own risk:
+
+```bash
+mvn quarkus:dev -DskipMavenVersionCheck
 ```
 
 ## Debugging
@@ -483,11 +495,11 @@ Usually, dependencies of an application (which is a Maven project) could be disp
 Executing `./mvnw quarkus:dependency-tree` on your project should result in an output similar to:
 
 ```text
-[INFO] --- quarkus-maven-plugin:3.40.1.2:dependency-tree (default-cli) @ getting-started ---
+[INFO] --- quarkus-maven-plugin:4.0.1:dependency-tree (default-cli) @ getting-started ---
 [INFO] org.acme:getting-started:jar:1.0.0-SNAPSHOT
-[INFO] └─ io.quarkus:quarkus-resteasy-deployment:jar:3.40.1.2 (compile)
-[INFO]    ├─ io.quarkus:quarkus-resteasy-server-common-deployment:jar:3.40.1.2 (compile)
-[INFO]    │  ├─ io.quarkus:quarkus-core-deployment:jar:3.40.1.2 (compile)
+[INFO] └─ io.quarkus:quarkus-resteasy-deployment:jar:4.0.1 (compile)
+[INFO]    ├─ io.quarkus:quarkus-resteasy-server-common-deployment:jar:4.0.1 (compile)
+[INFO]    │  ├─ io.quarkus:quarkus-core-deployment:jar:4.0.1 (compile)
 [INFO]    │  │  ├─ commons-beanutils:commons-beanutils:jar:1.9.3 (compile)
 [INFO]    │  │  │  ├─ commons-logging:commons-logging:jar:1.2 (compile)
 [INFO]    │  │  │  └─ commons-collections:commons-collections:jar:3.2.2 (compile)
@@ -516,7 +528,7 @@ This goal will resolve all the runtime, build time, test and dev mode dependenci
 
 Native executables make Quarkus applications ideal for containers and serverless workloads.
 
-Make sure to have `GRAALVM_HOME` configured and pointing to the latest release of GraalVM for JDK 21. Verify that your `pom.xml` has the proper `native` profile as shown in [Maven configuration](#build-tool-maven).
+Make sure to have `GRAALVM_HOME` configured and pointing to the latest release of GraalVM for JDK 25. Verify that your `pom.xml` has the proper `native` profile as shown in [Maven configuration](#build-tool-maven).
 
 Create a native executable using:
 
@@ -585,13 +597,13 @@ quarkus build --native -Dquarkus.native.container-build=true
 The produced executable will be a 64-bit Linux executable, so depending on your operating system, it may no longer be runnable. However, it's not an issue as we are going to copy it to a Docker container. Note that in this case the build itself runs in a Docker container too, so you don't need to have GraalVM installed locally.
 
 > [!TIP]
-> By default, the native executable will be generated using the `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21` Docker image.
+> By default, the native executable will be generated using the `quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25` Docker image.
 >
 > If you want to build a native executable with a different Docker image (for instance to use a different GraalVM version), use the `-Dquarkus.native.builder-image=<image name>` build argument.
 >
-> The list of the available Docker images can be found on [quay.io](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags). Be aware that a given Quarkus version might not be compatible with all the images available.
+> The list of the available Docker images can be found on [quay.io](https://quay.io/repository/quarkus/ubi10-quarkus-mandrel-builder-image?tab=tags). Be aware that a given Quarkus version might not be compatible with all the images available.
 >
-> Starting from Quarkus 3.19, the *builder* image is based on UBI 9, and thus requires an UBI 9 base image if you want to run the native executable in a container. You can switch back to UBI 8, by setting the `quarkus.native.builder-image` property to one of the available image from the [quay.io repository](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags). For example ``quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21\` is using UBI 8, and so the resulting native executable will be compatible with UBI 8 base images.
+> The *builder* image is based on UBI 10, and thus requires an UBI 10 base image if you want to run the native executable in a container. You can switch to an older UBI version by setting the `quarkus.native.builder-image` property to one of the available images from the [quay.io repository (UBI 9)](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags) or the [quay.io repository (UBI 8)](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags). For example `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25` is using UBI 9, and so the resulting native executable will be compatible with UBI 9 base images.
 
 You can follow the [Build a native executable guide](/guides/building-native-image/index.md) as well as [Deploying Application to Kubernetes and OpenShift](/guides/deploying-to-kubernetes/index.md) for more information.
 
@@ -735,6 +747,11 @@ As long as an Uber-Jar file name is created by appending a suffix, such as `runn
 <a id="multi-module-maven"></a>
 ### Working with multi-module projects
 
+A multi-module Maven project is typically organized as a parent (aggregator) module with several child modules, for example one or more shared library modules and one or more Quarkus application modules that depend on them.
+
+<a id="multi-module-bean-discovery"></a>
+#### Making CDI beans discoverable across modules
+
 By default, Quarkus will not discover CDI beans inside another module.
 
 The best way to enable CDI bean discovery for a module in a multi-module project would be to include the `jandex-maven-plugin`, unless it is the main application module already configured with the quarkus-maven-plugin, in which case it will be indexed automatically.
@@ -745,7 +762,7 @@ The best way to enable CDI bean discovery for a module in a multi-module project
     <plugin>
       <groupId>io.smallrye</groupId>
       <artifactId>jandex-maven-plugin</artifactId>
-      <version>3.6.0</version>
+      <version>3.6.1</version>
       <executions>
         <execution>
           <id>make-index</id>
@@ -760,6 +777,32 @@ The best way to enable CDI bean discovery for a module in a multi-module project
 ```
 
 More information on this topic can be found on the [Bean Discovery](/guides/cdi-reference/index.md#bean_discovery) section of the CDI guide.
+
+<a id="multi-module-dev-mode"></a>
+#### Running dev mode in a multi-module project
+
+[Development mode](#dev-mode) is started on a single Quarkus application module, not on the aggregator. Before starting it, build the whole project once so that the other modules the application depends on are compiled:
+
+```bash
+./mvnw install -DskipTests
+```
+
+Then start dev mode on the application module only, selecting it from the root of the project with `-pl`:
+
+```bash
+./mvnw quarkus:dev -pl :my-app
+```
+
+Alternatively, run it from within the module directory:
+
+```bash
+cd my-app
+../mvnw quarkus:dev
+```
+
+Local modules that the application depends on are treated as hot-reloadable dependencies: when you edit their sources and a change is detected, Quarkus recompiles them and redeploys the application, exactly as it does for the application's own sources. This is why the project must be built at least once first; otherwise dev mode fails with a `Hot reloadable dependency ... has not been compiled yet` error.
+
+Dev mode runs a single Quarkus application at a time. If your project contains several Quarkus application modules, start each one in its own dev mode session, in a separate terminal, and if needed on a different port using `-Dquarkus.http.port`.
 
 <a id="maven-test-configuration"></a>
 ### Maven test plugin configuration
@@ -1050,7 +1093,7 @@ The properties are shown below:
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot-enabled"></a> [`quarkus.package.jar.aot.enabled`](#quarkus-core_quarkus-package-jar-aot-enabled) config_property_copy_button:+++quarkus.package.jar.aot.enabled+++[]<br><br>Whether to automate the creation of an AOT file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_ENABLED+++[] | boolean | `false` |
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot-type"></a> [`quarkus.package.jar.aot.type`](#quarkus-core_quarkus-package-jar-aot-type) config_property_copy_button:+++quarkus.package.jar.aot.type+++[]<br><br>The type of AOT file to generate<br><br>If `auto` is used, Quarkus will generate an AOT file on OpenJDK 25{plus}, an SCC on IBM Semeru, and an AppCDS file otherwise.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_TYPE+++[] | `auto`, `aot`, `app-cds`, `scc` |  |
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot-additional-recording-args"></a> [`quarkus.package.jar.aot.additional-recording-args`](#quarkus-core_quarkus-package-jar-aot-additional-recording-args) config_property_copy_button:+++quarkus.package.jar.aot.additional-recording-args+++[]<br><br>Comma-separated list of additional recording arguments passed to the recording command line.<br><br>For instance, may be used to enable advanced logging with: `-Xlog:aot{plus}map=trace,aot{plus}map{plus}oops=trace,aot=warning:file=aot-analysis.map:none:filesize=0 -Xlog:aot{plus}resolve*=trace,aot{plus}codecache{plus}exit=debug:file=training.log:level,tags`<br><br>If an argument includes the `,` symbol, it needs to be escaped, e.g. `\\,`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_ADDITIONAL_RECORDING_ARGS+++[] | list of string |  |
-| [lock] <a id="quarkus-core_quarkus-package-jar-aot-phase"></a> [`quarkus.package.jar.aot.phase`](#quarkus-core_quarkus-package-jar-aot-phase) config_property_copy_button:+++quarkus.package.jar.aot.phase+++[]<br><br>The phase in which the AOT file should be generated.<br><br>For Leyden AOT, `auto` means `integration-tests`.<br><br>For AppCDS, `auto` means `build` (and an error will be thrown if set to `integration-tests`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_PHASE+++[] | `auto`, `build`, `integration-tests` |  |
+| [lock] <a id="quarkus-core_quarkus-package-jar-aot-phase"></a> [`quarkus.package.jar.aot.phase`](#quarkus-core_quarkus-package-jar-aot-phase) config_property_copy_button:+++quarkus.package.jar.aot.phase+++[]<br><br>The phase in which the AOT file should be generated.<br><br>For Leyden AOT, `auto` means `integration-tests`.<br><br>For AppCDS and SCC, `auto` means `build` (and an error will be thrown if AppCDS is set to `integration-tests`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_PHASE+++[] | `auto`, `build`, `integration-tests` |  |
 | [lock] <a id="quarkus-core_quarkus-package-jar-compress"></a> [`quarkus.package.jar.compress`](#quarkus-core_quarkus-package-jar-compress) config_property_copy_button:+++quarkus.package.jar.compress+++[]<br><br>Whether the created jar will be compressed. This setting is not used when building a native image<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_COMPRESS+++[] | boolean | `true` |
 | [lock] <a id="quarkus-core_quarkus-package-jar-user-configured-ignored-entries"></a> [`quarkus.package.jar.user-configured-ignored-entries`](#quarkus-core_quarkus-package-jar-user-configured-ignored-entries) config_property_copy_button:+++quarkus.package.jar.user-configured-ignored-entries+++[]<br><br>Files that should not be copied to the output artifact.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_USER_CONFIGURED_IGNORED_ENTRIES+++[] | list of string |  |
 | [lock] <a id="quarkus-core_quarkus-package-jar-included-optional-dependencies"></a> [`quarkus.package.jar.included-optional-dependencies`](#quarkus-core_quarkus-package-jar-included-optional-dependencies) config_property_copy_button:+++quarkus.package.jar.included-optional-dependencies+++[]<br><br>List of all the dependencies that have been defined as optional to include into the final package of the application. Each optional dependency needs to be expressed in the following format:<br><br>`groupId:artifactId[:[classifier][:[type]]]`<br><br>With the classifier and type being optional (note that the brackets (`[]`) denote optionality and are not a part of the syntax specification). The group ID and artifact ID must be present and non-empty.<br><br>If the type is missing, the artifact is assumed to be of type `jar`.<br><br>This parameter is optional; if absent, no optional dependencies will be included into the final package of the application.<br><br>For backward compatibility reasons, this parameter is ignored by default and can be enabled by setting the parameter `quarkus.package.jar.filter-optional-dependencies` to `true`.<br><br>This parameter is meant to be used in modules where multi-builds have been configured to avoid getting a final package with unused dependencies.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_INCLUDED_OPTIONAL_DEPENDENCIES+++[] | list of GACT |  |
@@ -1066,9 +1109,9 @@ The properties are shown below:
 | [lock] <a id="quarkus-core_quarkus-package-jar-decompiler-output-directory"></a> [`quarkus.package.jar.decompiler.output-directory`](#quarkus-core_quarkus-package-jar-decompiler-output-directory) config_property_copy_button:+++quarkus.package.jar.decompiler.output-directory+++[]<br><br>The directory into which to save the decompilation output.<br><br>A relative path is understood as relative to the build directory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_DECOMPILER_OUTPUT_DIRECTORY+++[] | string | `decompiler` |
 | [lock] <a id="quarkus-core_quarkus-package-jar-decompiler-jar-directory"></a> [`quarkus.package.jar.decompiler.jar-directory`](#quarkus-core_quarkus-package-jar-decompiler-jar-directory) config_property_copy_button:+++quarkus.package.jar.decompiler.jar-directory+++[]<br><br>The directory into which to save the decompilation tool if it doesn't exist locally.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_DECOMPILER_JAR_DIRECTORY+++[] | string | `${user.home}/.quarkus` |
 | [lock] <a id="quarkus-core_quarkus-package-main-class"></a> [`quarkus.package.main-class`](#quarkus-core_quarkus-package-main-class) config_property_copy_button:+++quarkus.package.main-class+++[]<br><br>The entry point of the application. This can either be a fully qualified name of a standard Java class with a main method, or `io.quarkus.runtime.QuarkusApplication`.<br><br>If your application has main classes annotated with `io.quarkus.runtime.annotations.QuarkusMain` then this can also reference the name given in the annotation, to avoid the need to specify fully qualified names in the config.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_MAIN_CLASS+++[] | string |  |
-| [lock] <a id="quarkus-core_quarkus-package-output-directory"></a> [`quarkus.package.output-directory`](#quarkus-core_quarkus-package-output-directory) config_property_copy_button:+++quarkus.package.output-directory+++[]<br><br>The directory into which the output package(s) should be written. Relative paths are resolved from the build systems target directory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_DIRECTORY+++[] | path |  |
-| [lock] <a id="quarkus-core_quarkus-package-output-name"></a> [`quarkus.package.output-name`](#quarkus-core_quarkus-package-output-name) config_property_copy_button:+++quarkus.package.output-name+++[]<br><br>The name of the final artifact, excluding the suffix and file extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_NAME+++[] | string |  |
-| [lock] <a id="quarkus-core_quarkus-package-output-timestamp"></a> [`quarkus.package.output-timestamp`](#quarkus-core_quarkus-package-output-timestamp) config_property_copy_button:+++quarkus.package.output-timestamp+++[]<br><br>The timestamp used as a reference for generating the packages (e.g. for the creation timestamp of ZIP entries).<br><br>The approach is similar to what is done by the maven-jar-plugin with `project.build.outputTimestamp`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_TIMESTAMP+++[] | [Instant](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Instant.html) |  |
+| [lock] <a id="quarkus-core_quarkus-package-output-directory"></a> [`quarkus.package.output-directory`](#quarkus-core_quarkus-package-output-directory) config_property_copy_button:+++quarkus.package.output-directory+++[]<br><br>The directory into which the output package(s) should be written. Relative paths are resolved from the build systems target directory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_DIRECTORY+++[] | path | required [exclamation circle] |
+| [lock] <a id="quarkus-core_quarkus-package-output-name"></a> [`quarkus.package.output-name`](#quarkus-core_quarkus-package-output-name) config_property_copy_button:+++quarkus.package.output-name+++[]<br><br>The name of the final artifact, excluding the suffix and file extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_NAME+++[] | string | `${quarkus.build.base-name:application}` |
+| [lock] <a id="quarkus-core_quarkus-package-output-timestamp"></a> [`quarkus.package.output-timestamp`](#quarkus-core_quarkus-package-output-timestamp) config_property_copy_button:+++quarkus.package.output-timestamp+++[]<br><br>The timestamp used as a reference for generating the packages (e.g. for the creation timestamp of ZIP entries).<br><br>The approach is similar to what is done by the maven-jar-plugin with `project.build.outputTimestamp`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_OUTPUT_TIMESTAMP+++[] | [Instant](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Instant.html) | `${quarkus.build.timestamp:now}` |
 | [lock] <a id="quarkus-core_quarkus-package-write-transformed-bytecode-to-build-output"></a> [`quarkus.package.write-transformed-bytecode-to-build-output`](#quarkus-core_quarkus-package-write-transformed-bytecode-to-build-output) config_property_copy_button:+++quarkus.package.write-transformed-bytecode-to-build-output+++[]<br><br>Setting this switch to `true` will cause Quarkus to write the transformed application bytecode to the build tool's output directory. This is useful for post-build tools that need to scan the application bytecode (for example, offline code-coverage tools).<br><br>For example, if using Maven, enabling this feature will result in the classes in `target/classes` being replaced with classes that have been transformed by Quarkus.<br><br>Setting this to `true`, however, should be done with a lot of caution and only if subsequent builds are done in a clean environment (i.e. the build tool's output directory has been completely cleaned).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_WRITE_TRANSFORMED_BYTECODE_TO_BUILD_OUTPUT+++[] | boolean | `false` |
 | [lock] <a id="quarkus-core_quarkus-package-runner-suffix"></a> [`quarkus.package.runner-suffix`](#quarkus-core_quarkus-package-runner-suffix) config_property_copy_button:+++quarkus.package.runner-suffix+++[]<br><br>The suffix that is applied to the runner artifact's base file name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_RUNNER_SUFFIX+++[] | string | `-runner` |
 
@@ -1199,11 +1242,11 @@ Here is an example `info` output for a simple project:
 [INFO] Building code-with-quarkus 1.0.0-SNAPSHOT
 [INFO] --------------------------------[ jar ]---------------------------------
 [INFO]
-[INFO] --- quarkus-maven-plugin:3.40.1.2:info (default-cli) @ code-with-quarkus ---
+[INFO] --- quarkus-maven-plugin:4.0.1:info (default-cli) @ code-with-quarkus ---
 [WARNING] quarkus:info goal is experimental, its options and output may change in future versions
 [INFO] Quarkus platform BOMs: <1>
-[INFO]   io.quarkus.platform:quarkus-bom:pom:3.40.1.2
-[INFO]   io.quarkus.platform:quarkus-camel-bom:pom:3.40.1.2
+[INFO]   io.quarkus.platform:quarkus-bom:pom:4.0.1
+[INFO]   io.quarkus.platform:quarkus-camel-bom:pom:4.0.1
 [INFO]
 [INFO] Extensions from io.quarkus.platform:quarkus-bom: <2>
 [INFO]   io.quarkus:quarkus-rest
@@ -1229,11 +1272,11 @@ Here is an example `info` output for a simple project:
 `quarkus:info` will also highlight basic Quarkus dependency version misalignments, in case they are detected. For example, if we modify the project mentioned above by removing the `camel-quarkus-rabbitmq` extension from the dependencies and adding a `2.6.3.Final` `<version>` element to the `quarkus-rest` dependency that is managed by the `quarkus-bom` and then run `quarkus:info` again, we'll see something like:
 
 ```text
-[INFO] --- quarkus-maven-plugin:3.40.1.2:info (default-cli) @ code-with-quarkus ---
+[INFO] --- quarkus-maven-plugin:4.0.1:info (default-cli) @ code-with-quarkus ---
 [WARNING] quarkus:info goal is experimental, its options and output may change in future versions
 [INFO] Quarkus platform BOMs:
-[INFO]   io.quarkus.platform:quarkus-bom:pom:3.40.1.2
-[INFO]   io.quarkus.platform:quarkus-camel-bom:pom:3.40.1.2 | unnecessary <1>
+[INFO]   io.quarkus.platform:quarkus-bom:pom:4.0.1
+[INFO]   io.quarkus.platform:quarkus-camel-bom:pom:4.0.1 | unnecessary <1>
 [INFO]
 [INFO] Extensions from io.quarkus.platform:quarkus-bom:
 [INFO]   io.quarkus:quarkus-resteasy-reactive:2.6.3.Final | misaligned <2>
@@ -1248,7 +1291,7 @@ Here is an example `info` output for a simple project:
 ```
 
 1. The `quarkus-camel-bom` import is now reported as 'unnecessary' since none of the Quarkus extensions it includes are found among the project dependencies
-2. The version `2.6.3.Final` of the `quarkus-resteasy-reactive` is now reported as being misaligned with the version managed by the Quarkus platform BOM imported in the project, which is 3.40.1.2
+2. The version `2.6.3.Final` of the `quarkus-resteasy-reactive` is now reported as being misaligned with the version managed by the Quarkus platform BOM imported in the project, which is 4.0.1
 
 <a id="project-update"></a>
 ## Quarkus project update
@@ -1273,12 +1316,12 @@ Assuming we have a project including Kogito, Camel and core Quarkus extensions a
 [INFO] Building code-with-quarkus 1.0.0-SNAPSHOT
 [INFO] --------------------------------[ jar ]---------------------------------
 [INFO]
-[INFO] --- quarkus-maven-plugin:3.40.1.2:update (default-cli) @ code-with-quarkus ---
+[INFO] --- quarkus-maven-plugin:4.0.1:update (default-cli) @ code-with-quarkus ---
 [WARNING] quarkus:update goal is experimental, its options and output might change in future versions
 [INFO]
 [INFO] Recommended Quarkus platform BOM updates: <1>
-[INFO] Update: io.quarkus.platform:quarkus-bom:pom:2.7.1.Final -> 3.40.1.2
-[INFO] Update: io.quarkus.platform:quarkus-camel-bom:pom:2.7.1.Final -> 3.40.1.2
+[INFO] Update: io.quarkus.platform:quarkus-bom:pom:2.7.1.Final -> 4.0.1
+[INFO] Update: io.quarkus.platform:quarkus-camel-bom:pom:2.7.1.Final -> 4.0.1
 ```
 
 1. A list of currently recommended Quarkus platform BOM updates
@@ -1290,7 +1333,7 @@ If we modify the project to remove all the Camel Quarkus extensions from the pro
 
 ```text
 [INFO] Recommended Quarkus platform BOM updates: <1>
-[INFO] Update: io.quarkus.platform:quarkus-bom:pom:2.7.1.Final -> 3.40.1.2
+[INFO] Update: io.quarkus.platform:quarkus-bom:pom:2.7.1.Final -> 4.0.1
 [INFO] Remove: io.quarkus.platform:quarkus-camel-bom:pom:2.7.1.Final <2>
 [INFO]
 [INFO] Extensions from io.quarkus.platform:quarkus-bom:

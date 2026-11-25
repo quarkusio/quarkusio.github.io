@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -54,7 +54,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-ldap-quickstart \
     -Dextensions='elytron-security-ldap,rest' \
@@ -214,6 +214,29 @@ The `quarkus-elytron-security-ldap` extension requires a dir-context and an iden
 >
 > The number of cache entries is limited by `quarkus.security.ldap.cache.size`, which defaults to `100`.
 
+### Connecting over LDAPS
+
+When the LDAP server uses a certificate that the JVM does not trust by default, for example one signed by a private certificate authority, configure the trust store in the [TLS registry](/guides/tls-registry-reference/index.md) and name that configuration in `quarkus.security.ldap.dir-context.tls-configuration-name`:
+
+```properties
+quarkus.tls.ldap.trust-store.pem.certs=/path/to/ca.crt
+quarkus.security.ldap.dir-context.url=ldaps://ldap.server.local
+quarkus.security.ldap.dir-context.tls-configuration-name=ldap
+```
+
+The TLS configuration is used for every connection of the security realm, including the ones opened to follow referrals when `quarkus.security.ldap.dir-context.referral-mode` is `follow`. Its protocols and cipher suites are applied, and when the TLS configuration is reloaded, for example with `quarkus.tls.ldap.reload-period`, new connections use the reloaded certificates.
+
+> [!IMPORTANT]
+> The TLS registry enables only TLSv1.3 by default. Some LDAP servers, such as Active Directory on Windows Server 2019 and earlier, do not support TLSv1.3, and the connections then fail with a `protocol_version` handshake error. Enable TLSv1.2 for these servers:
+>
+> ```properties
+> quarkus.tls.ldap.protocols=TLSv1.3,TLSv1.2
+> ```
+
+Every URL in `quarkus.security.ldap.dir-context.url` must use the `ldaps://` scheme, otherwise the application fails to start. JNDI verifies the host name of the connections with the `LDAPS` algorithm. The LDAP connections do not apply another hostname verification algorithm, the certificate revocation lists, the handshake timeout, the key exchange groups, or the PQC enforcement policy of the TLS configuration. Quarkus logs a warning at startup when the TLS configuration sets one of them.
+
+Without `quarkus.security.ldap.dir-context.tls-configuration-name`, the connections use the default SSL context of the JVM.
+
 ### Map LDAP groups to `SecurityIdentity` roles
 
 Previously described application configuration showed how to map `CN` attribute of the LDAP Distinguished Name group to a Quarkus `SecurityIdentity` role. More specifically, the `standardRole` CN was mapped to a `SecurityIdentity` role and thus allowed access to the `UserResource#me` endpoint. However, required `SecurityIdentity` roles may differ between applications and you may need to map LDAP groups to local `SecurityIdentity` roles like in the example below:
@@ -320,6 +343,7 @@ user%
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-referral-mode"></a> [`quarkus.security.ldap.dir-context.referral-mode`](#quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-referral-mode) config_property_copy_button:+++quarkus.security.ldap.dir-context.referral-mode+++[]<br><br>how ldap redirects are handled<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_DIR_CONTEXT_REFERRAL_MODE+++[] | `ignore`, `follow`, `throw` | `ignore` |
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-connect-timeout"></a> [`quarkus.security.ldap.dir-context.connect-timeout`](#quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-connect-timeout) config_property_copy_button:+++quarkus.security.ldap.dir-context.connect-timeout+++[]<br><br>The connect timeout<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_DIR_CONTEXT_CONNECT_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-elytron-security-ldap_quarkus-security) | `5S` |
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-read-timeout"></a> [`quarkus.security.ldap.dir-context.read-timeout`](#quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-read-timeout) config_property_copy_button:+++quarkus.security.ldap.dir-context.read-timeout+++[]<br><br>The read timeout<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_DIR_CONTEXT_READ_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-elytron-security-ldap_quarkus-security) | `60S` |
+| <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-tls-configuration-name"></a> [`quarkus.security.ldap.dir-context.tls-configuration-name`](#quarkus-elytron-security-ldap_quarkus-security-ldap-dir-context-tls-configuration-name) config_property_copy_button:+++quarkus.security.ldap.dir-context.tls-configuration-name+++[]<br><br>The name of the TLS configuration (`quarkus.tls.<name>.*`) to use for the connections to the LDAP server, for example to trust the private certificate authority of an `ldaps://` server. When set, every URL of `quarkus.security.ldap.dir-context.url` must use the `ldaps://` scheme, and the protocols of the TLS configuration are applied, which default to TLSv1.3 only.<br><br>If not set, the default SSL context of the JVM is used. The default TLS configuration of the TLS registry is deliberately not used, so that setting it for the HTTP server does not change the LDAP connections.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_DIR_CONTEXT_TLS_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-cache-enabled"></a> [`quarkus.security.ldap.cache.enabled`](#quarkus-elytron-security-ldap_quarkus-security-ldap-cache-enabled) config_property_copy_button:+++quarkus.security.ldap.cache.enabled+++[]<br><br>If set to true, request to the LDAP server are cached<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_CACHE_ENABLED+++[] | boolean | `false` |
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-cache-max-age"></a> [`quarkus.security.ldap.cache.max-age`](#quarkus-elytron-security-ldap_quarkus-security-ldap-cache-max-age) config_property_copy_button:+++quarkus.security.ldap.cache.max-age+++[]<br><br>The duration that an entry can stay in the cache<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_CACHE_MAX_AGE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-elytron-security-ldap_quarkus-security) | `60S` |
 | <a id="quarkus-elytron-security-ldap_quarkus-security-ldap-cache-size"></a> [`quarkus.security.ldap.cache.size`](#quarkus-elytron-security-ldap_quarkus-security-ldap-cache-size) config_property_copy_button:+++quarkus.security.ldap.cache.size+++[]<br><br>The maximum number of entries to keep in the cache<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SECURITY_LDAP_CACHE_SIZE+++[] | int | `100` |

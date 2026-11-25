@@ -158,6 +158,39 @@ java -XX:AOTCache=app.aot -jar quarkus-run.jar
 >
 > You can collect even more information in an `aot.log` file with `-Xlog:class+load=info,aot+codecache=debug:file=aot.log:level,tags`.
 
+<a id="aot-add-modules"></a>
+### Options that add modules, such as Flight Recorder
+
+The JVM only uses an AOT cache if the application runs with the same `--add-modules` as the training run. Otherwise it reports an error such as the following and starts the application without the cache:
+
+```text
+[error][aot] Mismatched values for property jdk.module.addmods: jdk.jfr specified during runtime but not during dump time
+```
+
+Some JVM options add a module implicitly. The most common one is `-XX:StartFlightRecording`, which adds `jdk.jfr`; enabling the Vector API with `--add-modules=jdk.incubator.vector` has the same effect.
+
+If the application is always started with such an option, pass the corresponding `--add-modules` to the training run with `quarkus.package.jar.aot.additional-recording-args`:
+
+**Maven**
+
+```bash
+./mvnw verify -Dquarkus.package.jar.aot.enabled=true -Dquarkus.package.jar.aot.additional-recording-args=--add-modules=jdk.jfr
+```
+
+**Gradle**
+
+```bash
+./gradlew build quarkusIntTest -Dquarkus.package.jar.aot.enabled=true -Dquarkus.package.jar.aot.additional-recording-args=--add-modules=jdk.jfr
+```
+
+The check works both ways: a cache generated this way is only used when the application is started with `-XX:StartFlightRecording` or `--add-modules=jdk.jfr`, and is rejected otherwise. A single cache cannot serve both kinds of runs.
+
+To record only occasionally, keep the default cache and start the recording on the running application instead, which does not affect the cache:
+
+```bash
+jcmd <pid> JFR.start
+```
+
 ## Manual AOT file generation
 
 As explained above, Quarkus takes care of all the heavy lifting when coming to the AOT file generation. However, in cases where more control is needed, users can perform the necessary steps manually.
@@ -318,12 +351,12 @@ implementation("io.quarkus:quarkus-container-image-podman")
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-enabled"></a> [`quarkus.package.jar.aot.enabled`](#quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-enabled) config_property_copy_button:+++quarkus.package.jar.aot.enabled+++[]<br><br>Whether to automate the creation of an AOT file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_ENABLED+++[] | boolean | `false` |
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-type"></a> [`quarkus.package.jar.aot.type`](#quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-type) config_property_copy_button:+++quarkus.package.jar.aot.type+++[]<br><br>The type of AOT file to generate<br><br>If `auto` is used, Quarkus will generate an AOT file on OpenJDK 25{plus}, an SCC on IBM Semeru, and an AppCDS file otherwise.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_TYPE+++[] | `auto`, `aot`, `app-cds`, `scc` |  |
 | [lock] <a id="quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-additional-recording-args"></a> [`quarkus.package.jar.aot.additional-recording-args`](#quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-additional-recording-args) config_property_copy_button:+++quarkus.package.jar.aot.additional-recording-args+++[]<br><br>Comma-separated list of additional recording arguments passed to the recording command line.<br><br>For instance, may be used to enable advanced logging with: `-Xlog:aot{plus}map=trace,aot{plus}map{plus}oops=trace,aot=warning:file=aot-analysis.map:none:filesize=0 -Xlog:aot{plus}resolve*=trace,aot{plus}codecache{plus}exit=debug:file=training.log:level,tags`<br><br>If an argument includes the `,` symbol, it needs to be escaped, e.g. `\\,`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_ADDITIONAL_RECORDING_ARGS+++[] | list of string |  |
-| [lock] <a id="quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-phase"></a> [`quarkus.package.jar.aot.phase`](#quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-phase) config_property_copy_button:+++quarkus.package.jar.aot.phase+++[]<br><br>The phase in which the AOT file should be generated.<br><br>For Leyden AOT, `auto` means `integration-tests`.<br><br>For AppCDS, `auto` means `build` (and an error will be thrown if set to `integration-tests`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_PHASE+++[] | `auto`, `build`, `integration-tests` |  |
+| [lock] <a id="quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-phase"></a> [`quarkus.package.jar.aot.phase`](#quarkus-core_quarkus-package-jar-aot_quarkus-package-jar-aot-phase) config_property_copy_button:+++quarkus.package.jar.aot.phase+++[]<br><br>The phase in which the AOT file should be generated.<br><br>For Leyden AOT, `auto` means `integration-tests`.<br><br>For AppCDS and SCC, `auto` means `build` (and an error will be thrown if AppCDS is set to `integration-tests`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_PACKAGE_JAR_AOT_PHASE+++[] | `auto`, `build`, `integration-tests` |  |
 
 <a id="appcds-legacy"></a>
 ## AppCDS (Legacy)
 
-For JDK versions prior to 24, Quarkus supports [Application Class Data Sharing (AppCDS)](https://docs.oracle.com/en/java/javase/17/docs/specs/man/java.html#application-class-data-sharing) as a fallback. AppCDS provides more modest startup improvements compared to Leyden AOT, but works on older JDKs.
+For JDK versions prior to 24, Quarkus supports [Application Class Data Sharing (AppCDS)](https://docs.oracle.com/en/java/javase/25/docs/specs/man/java.html#application-class-data-sharing) as a fallback. AppCDS provides more modest startup improvements compared to Leyden AOT, but works on older JDKs.
 
 ### Generating AppCDS archive
 
@@ -363,6 +396,3 @@ java -XX:SharedArchiveFile=app-cds.jsa -jar quarkus-run.jar
 - The JDK version must be **exactly** the same
 - AppCDS only caches class metadata, not method profiles or verification results
 - Training during integration tests is not supported for AppCDS (only build-time generation)
-
-> [!TIP]
-> The legacy `quarkus.package.jar.appcds.enabled` configuration is still supported but deprecated. Use `quarkus.package.jar.aot.enabled=true` with `quarkus.package.jar.aot.type=app-cds` instead.

@@ -181,7 +181,7 @@ public class ProtectedResource {
 1. Only requests with OpenID Connect scope `email` will be granted access.
 2. The read access is limited to the client requests with the `orders_read` scope.
 
-For more information about the `io.quarkus.security.PermissionsAllowed` annotation, see the [Permission annotation](/guides/security-authorize-web-endpoints-reference/index.md#permission-annotation) section of the "Authorization of web endpoints" guide.
+For more information about the `io.quarkus.security.PermissionsAllowed` annotation, see the [Authorize with permissions](/guides/security-authorize-web-endpoints-reference/index.md#permission-annotation) section of the "Authorize access to web endpoints" guide.
 
 <a id="bearer-token-token-verification-introspection"></a>
 ### Token verification and introspection
@@ -1202,6 +1202,8 @@ quarkus.oidc.token.authorization-scheme=dpop <1>
 After accepting such tokens, Quarkus will go through the full [DPoP token verification process](https://datatracker.ietf.org/doc/html/rfc9449#name-checking-dpop-proofs).
 
 You can define a [custom DPoP nonce provider](https://www.rfc-editor.org/rfc/rfc9449.html#name-resource-server-provided-no) by implementing the `io.quarkus.oidc.DPoPNonceProvider` interface as a CDI bean. If the DPoP proof nonce is missing or invalid, Quarkus responds with the `401 Unauthorized` status and attaches the expected nonce as the `DPoP-Nonce` header value. The provider can also use the verified DPoP proof [`jti`](https://datatracker.ietf.org/doc/html/rfc9449#section-4.2) identifier to detect and reject replayed DPoP proofs.
+
+Use the `quarkus.oidc.dpop.proof-age` property to reject DPoP proofs older than the configured duration (default is 2 minutes), calculated from the proof's `iat` (issued at) claim. This ensures proofs with timestamps in the past or future are properly rejected. The `quarkus.oidc.token.lifespan-grace` property can optionally add a grace period to tolerate slight clock skews. The optional `exp` (expiry) claim is also verified when present.
 
 ### Mutual TLS token binding
 

@@ -10,10 +10,10 @@ This guide explains how to benefit from Java 21+ virtual threads in Quarkus appl
 A "thread-like" data structure managed by the Operating System.
 
 **Platform thread**\
-Until Java 19, every instance of the [Thread](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Thread.html) class was a platform thread, a wrapper around an OS thread. Creating a platform thread creates an OS thread, and blocking a platform thread blocks an OS thread.
+Until Java 19, every instance of the [Thread](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Thread.html) class was a platform thread, a wrapper around an OS thread. Creating a platform thread creates an OS thread, and blocking a platform thread blocks an OS thread.
 
 **Virtual thread**\
-Lightweight, JVM-managed threads. They extend the [Thread](https://docs.oracle.com/en/java/javase/18/docs/api/java.base/java/lang/Thread.html) class but are not tied to one specific OS thread. Thus, scheduling virtual threads is the responsibility of the JVM.
+Lightweight, JVM-managed threads. They extend the [Thread](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Thread.html) class but are not tied to one specific OS thread. Thus, scheduling virtual threads is the responsibility of the JVM.
 
 **Carrier thread**\
 A platform thread used to execute a virtual thread is called a **carrier** thread. It isn't a class distinct from [Thread]({Thread}) or `VirtualThread` but rather a functional denomination.
@@ -224,6 +224,24 @@ The following table summarizes the options:
 
 Note that all three models can be used in a single application.
 
+#### Use virtual threads by default
+
+Instead of annotating every endpoint, you can make virtual threads the default execution model for all your REST endpoints. Either set the build-time property `quarkus.rest.blocking.signatures.execution.mode=virtual-thread`, or create a Quarkus REST `Application` class annotated with `@RunOnVirtualThread`:
+
+```java
+package org.acme;
+
+import jakarta.ws.rs.core.Application;
+
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
+@RunOnVirtualThread
+public class MyApplication extends Application {
+}
+```
+
+In both cases, individual endpoints can opt out with an explicit `@Blocking` annotation. The two approaches differ in how they treat endpoints considered non-blocking, so review the semantics before choosing one. Before doing this, make sure your application does not suffer from [pinning](#pinning) or [monopolization](#monopolization). For more information, see the Quarkus [Use virtual threads in REST applications](/guides/rest-virtual-threads/index.md) guide.
+
 ## Use virtual thread friendly clients
 
 As mentioned in the [Why not run everything on virtual threads?](#why-not) section, the Java ecosystem is not entirely ready for virtual threads. So, you need to be careful, especially when using a libraries doing I/O.
@@ -269,9 +287,6 @@ For a more robust approach that works on all Java versions, use the `junit-virtu
 java -jar target/quarkus-app/quarkus-run.jar
 ```
 
-> [!TIP]
-> Prior to Java 21, virtual threads were still an experimental feature, you need to start your application with the `--enable-preview` flag.
-
 ## Build containers for application using virtual threads
 
 When running your application in JVM mode (so not compiled into native, for native check [the dedicated section](#native)), you can follow the [containerization guide](/guides/container-image/index.md) to build a container.
@@ -284,7 +299,7 @@ To containerize your Quarkus application that use `@RunOnVirtualThread`, add the
 quarkus.container-image.build=true
 quarkus.container-image.group=<your-group-name>
 quarkus.container-image.name=<you-container-name>
-quarkus.jib.base-jvm-image=registry.access.redhat.com/ubi9/openjdk-21-runtime <1>
+quarkus.jib.base-jvm-image=registry.access.redhat.com/ubi10/openjdk-21-runtime <1>
 quarkus.jib.platforms=linux/amd64,linux/arm64 <2>
 ```
 

@@ -1,6 +1,6 @@
 # Introduction to Contexts and Dependency Injection (CDI)
 
-In this guide we're going to describe the basic principles of the Quarkus programming model that is based on the [Jakarta Contexts and Dependency Injection 4.1](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html) specification. The [CDI reference guide](/guides/cdi-reference/index.md) describes the bean discovery, non-standard features and configuration properties. The [CDI integration guide](/guides/cdi-integration/index.md) has more detail on common CDI-related integration use cases, and example code for solutions.
+In this guide we're going to describe the basic principles of the Quarkus programming model that is based on the [Jakarta Contexts and Dependency Injection 5.0](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html) specification. The [CDI reference guide](/guides/cdi-reference/index.md) describes the bean discovery, non-standard features and configuration properties. The [CDI integration guide](/guides/cdi-integration/index.md) has more detail on common CDI-related integration use cases, and example code for solutions.
 
 ## OK. Let's start simple. What is a bean?
 
@@ -76,7 +76,7 @@ There is a simple rule: **exactly one bean must be assignable to an injection po
 
 ## Can I use setter and constructor injection?
 
-Yes, you can. In fact, in CDI, the "setter injection" is superseded by more powerful [initializer methods](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#initializer_methods). Initializers may accept multiple parameters and don't have to follow the JavaBean naming conventions.
+Yes, you can. In fact, in CDI, the "setter injection" is superseded by more powerful [initializer methods](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#initializer_methods). Initializers may accept multiple parameters and don't have to follow the JavaBean naming conventions.
 
 **Initialized and Constructor Injection Example**
 
@@ -103,7 +103,7 @@ public class Translator {
 
 ## You talked about some qualifiers?
 
-[Qualifiers](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#qualifiers) are annotations that help the container to distinguish beans that implement the same type. As we already said, a bean is assignable to an injection point if it has all the required qualifiers. If you declare no qualifier at an injection point, the `@Default` qualifier is assumed.
+[Qualifiers](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#qualifiers) are annotations that help the container to distinguish beans that implement the same type. As we already said, a bean is assignable to an injection point if it has all the required qualifiers. If you declare no qualifier at an injection point, the `@Default` qualifier is assumed.
 
 A qualifier type is a Java annotation defined as `@Retention(RUNTIME)` and annotated with the `@jakarta.inject.Qualifier` meta-annotation:
 
@@ -131,7 +131,7 @@ public class SuperiorTranslator extends Translator {
 }
 ```
 
-1. `@Superior` is a [qualifier annotation](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#defining_qualifier_types).
+1. `@Superior` is a [qualifier annotation](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#defining_qualifier_types).
 
 This bean would be assignable to `@Inject @Superior Translator` and `@Inject @Superior SuperiorTranslator` but not to `@Inject Translator`. The reason is that `@Inject Translator` is automatically transformed to `@Inject @Default Translator` during typesafe resolution. And since our `SuperiorTranslator` does not declare `@Default` only the original `Translator` bean is assignable.
 
@@ -181,7 +181,7 @@ Therefore, we recommend to stick with `@ApplicationScoped` by default unless the
 <a id="client_proxies"></a>
 ## I don't understand the concept of client proxies.
 
-Indeed, the [client proxies](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#client_proxies) could be hard to grasp, but they provide some useful functionality. A client proxy is basically an object that delegates all method invocations to a target bean instance. It's a container construct that implements `io.quarkus.arc.ClientProxy` and extends the bean class.
+Indeed, the [client proxies](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#client_proxies) could be hard to grasp, but they provide some useful functionality. A client proxy is basically an object that delegates all method invocations to a target bean instance. It's a container construct that implements `io.quarkus.arc.ClientProxy` and extends the bean class.
 
 > [!IMPORTANT]
 > Client proxies only delegate method invocations. So never read or write a field of a normal scoped bean, otherwise you will work with non-contextual or stale data.
@@ -209,7 +209,7 @@ class Translator_ClientProxy extends Translator { <1>
 }
 ```
 
-1. The `Translator_ClientProxy` instance is always injected instead of a direct reference to a [contextual instance](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#contextual_instance) of the `Translator` bean.
+1. The `Translator_ClientProxy` instance is always injected instead of a direct reference to a [contextual instance](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#contextual_instance) of the `Translator` bean.
 
 Client proxies allow for:
 
@@ -488,7 +488,7 @@ class Logger {
 
 ## Conclusion
 
-In this guide, we've covered some basic topics of the Quarkus programming model that is based on the [Jakarta Contexts and Dependency Injection 4.1](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html) specification. Quarkus implements the CDI Lite specification, but not CDI Full. See also [the list of supported features and limitations](/guides/cdi-reference/index.md#supported_features_and_limitations). There are also quite a few [non-standard features](/guides/cdi-reference/index.md#nonstandard_features) and [Quarkus-specific APIs](/guides/cdi-reference/index.md#build_time_apis).
+In this guide, we've covered some basic topics of the Quarkus programming model that is based on the [Jakarta Contexts and Dependency Injection 5.0](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html) specification. Quarkus implements the CDI Lite specification, but not CDI Full. See also [the list of supported features and limitations](/guides/cdi-reference/index.md#supported_features_and_limitations). There are also quite a few [non-standard features](/guides/cdi-reference/index.md#nonstandard_features) and [Quarkus-specific APIs](/guides/cdi-reference/index.md#build_time_apis).
 
 > [!TIP]
-> If you wish to learn more about Quarkus-specific features and limitations there is a Quarkus [CDI Reference Guide](/guides/cdi-reference/index.md). We also recommend you to read the [CDI specification](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html) and the [Weld documentation](https://docs.jboss.org/weld/reference/latest/en-US/html/) (Weld is a CDI Reference Implementation) to get acquainted with more complex topics.
+> If you wish to learn more about Quarkus-specific features and limitations there is a Quarkus [CDI Reference Guide](/guides/cdi-reference/index.md). We also recommend you to read the [CDI specification](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html) and the [Weld documentation](https://docs.jboss.org/weld/reference/latest/en-US/html/) (Weld is a CDI Reference Implementation) to get acquainted with more complex topics.

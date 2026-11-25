@@ -27,7 +27,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -53,7 +53,7 @@ To complete this guide, you need:
    .Using Maven
 
    ```bash
-   ./mvnw io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:update -N
+   ./mvnw io.quarkus.platform:quarkus-maven-plugin:4.0.1:update -N
    ```
 
    Optional: To specify a particular stream, use the `-Dstream` option; for example: `-Dstream=3.2`
@@ -66,3 +66,7 @@ To complete this guide, you need:
    ## Update recipes
 
    The OpenRewrite recipes used by the update command are maintained in the [Quarkus Updates](https://github.com/quarkusio/quarkus-updates) repository. If you find that a recipe is missing or incorrect, you can contribute improvements there. Refer to the [README.md](https://github.com/quarkusio/quarkus-updates/blob/main/README.md) and the [CONTRIBUTING.md](https://github.com/quarkusio/quarkus-updates/blob/main/CONTRIBUTING.md) guide for detailed instructions on how to write and test recipes.
+
+   ## Compare versions
+
+   The [Quarkus Almanac](https://quarkus.io/almanac) shows what changed between two Quarkus versions, including configuration properties, dependencies, extensions, and APIs. Use it to see how an update might affect your project before you start, or to find changes that the update command did not cover.

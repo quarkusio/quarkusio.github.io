@@ -2,19 +2,9 @@
 
 This guide explains how your Quarkus application can utilize [OpenTelemetry](https://opentelemetry.io/) (OTel) to provide structured, contextual, vendor-neutral and centralised logging for interactive web applications.
 
-<a id="extension-status-note"></a>
-
-> [!NOTE]
-> This technology is considered preview.
->
-> In *preview*, backward compatibility and presence in the ecosystem is not guaranteed. Specific improvements might require changing configuration or APIs, and plans to become *stable* are under way. Feedback is welcome on our [mailing list](https://groups.google.com/d/forum/quarkus-dev) or as issues in our [GitHub issue tracker](https://github.com/quarkusio/quarkus/issues).
->
-> For a full list of possible statuses, check our [FAQ entry](https://quarkus.io/faq/#what-are-the-extension-statuses).
-
 This document is part of the [Observability in Quarkus reference guide](/guides/observability/index.md) which features this and other observability related components.
 
 > [!NOTE]
-> - OpenTelemetry Logging is considered *tech preview* and is disabled by default.
 > - The [OpenTelemetry Guide](/guides/opentelemetry/index.md) is available with signal independent information about the OpenTelemetry extension.
 
 ## Prerequisites
@@ -23,7 +13,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -61,7 +51,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=opentelemetry-quickstart \
     -Dextensions='rest,quarkus-opentelemetry' \
@@ -75,7 +65,7 @@ For Windows users:
 
 - If using Powershell, wrap `-D` parameters in double quotes e.g. `"-DprojectArtifactId=opentelemetry-quickstart"`
 
-This command generates the Maven project and imports the `quarkus-opentelemetry` extension, which includes the default OpenTelemetry support, and a gRPC span exporter for [OTLP](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md).
+This command generates the Maven project and imports the `quarkus-opentelemetry` extension, which includes the default OpenTelemetry support, and an OTLP span exporter for [OTLP](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md).
 
 If you already have your Quarkus project configured, you can add the `quarkus-opentelemetry` extension to your project by running the following command in your project base directory:
 
@@ -151,19 +141,19 @@ The only mandatory configuration for OpenTelemetry Logging is the one enabling i
 quarkus.otel.logs.enabled=true
 ```
 
-To change any of the default property values, here is an example on how to configure the default OTLP gRPC Exporter within the application, using the `src/main/resources/application.properties` file:
+To change any of the default property values, here is an example on how to configure the default OTLP Exporter within the application, using the `src/main/resources/application.properties` file:
 
 ```properties
 quarkus.application.name=myservice // <1>
 quarkus.otel.logs.enabled=true // <2>
-quarkus.otel.exporter.otlp.logs.endpoint=http://localhost:4317 // <3>
+quarkus.otel.exporter.otlp.logs.endpoint=http://localhost:4318 // <3>
 quarkus.otel.exporter.otlp.logs.headers=authorization=Bearer my_secret // <4>
 ```
 
 1. All logs created from the application will include an OpenTelemetry `Resource` indicating the logs were created by the `myservice` application. If not set, it will default to the artifact id.
 2. Enable the OpenTelemetry logging. Must be set at build time.
-3. gRPC endpoint to send the logs. If not set, it will default to `http://localhost:4317`.
-4. Optional gRPC headers commonly used for authentication.
+3. OTLP endpoint to send the logs. If not set, it will default to `http://localhost:4318`.
+4. Optional headers commonly used for authentication.
 
 To configure the connection using the same properties for all signals, please check the base [configuration section of the OpenTelemetry guide](/guides/opentelemetry/index.md#create-the-configuration).
 

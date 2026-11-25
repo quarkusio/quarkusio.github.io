@@ -195,19 +195,22 @@ class BusinessBean {
 For non-CDI components, use the `io.smallrye.config.SmallRyeConfig#getConfigMapping` API to retrieve the config mapping instance:
 
 ```java
-SmallRyeConfig config = ConfigProvider.getConfig().unwrap(SmallRyeConfig.class);
+Config config = Config.get();
 Server server = config.getConfigMapping(Server.class);
 ```
 
 > [!TIP]
 > Check the [Mapping configuration to objects](/guides/config-mappings/index.md) guide for advanced usages with `@ConfigMapping`.
 
+> [!NOTE]
+> By default, a Config Mapping validates that every available configuration name under the mapping prefix is matched. This prevents unknown configuration properties. This validation can be disabled by setting `smallrye.config.mapping.validate-unknown=false`.
+
 ## ConfigProperty
 
 While `@ConfigMapping` is the recommended approach, Quarkus also supports [MicroProfile Config](https://microprofile.io/project/eclipse/microprofile-config) annotations to inject the configuration properties in the application.
 
 ```java
-@ConfigProperty(name = "greeting.message") <1>
+@ConfigProperty(name = "greeting.message") // <1>
 String message;
 ```
 
@@ -217,14 +220,14 @@ String message;
 > If the application attempts to inject a configuration property that is not set, an error is thrown.
 
 ```java
-@ConfigProperty(name = "greeting.message") <1>
+@ConfigProperty(name = "greeting.message")                      // <1>
 String message;
 
-@ConfigProperty(name = "greeting.suffix", defaultValue="!") <2>
+@ConfigProperty(name = "greeting.suffix", defaultValue="!")     // <2>
 String suffix;
 
 @ConfigProperty(name = "greeting.name")
-Optional<String> name; <3>
+Optional<String> name;                                          // <3>
 ```
 
 1. If you do not provide a value for this property, the application startup fails with `io.quarkus.runtime.configuration.ConfigurationException: Failed to load config value of type class java.lang.String for: greeting.messagee`.
@@ -273,7 +276,7 @@ will result in a `java.util.NoSuchElementException: SRCFG02004: Required propert
 The `io.smallrye.config.SmallRyeConfig` API allows to access the Config API programmatically. This API is mostly useful in situations where CDI injection is not available.
 
 ```java
-SmallRyeConfig config = org.eclipse.microprofile.config.ConfigProvider.getConfig().unwrap(SmallRyeConfig.class);
+Config config = Config.get();
 String databaseName = config.getValue("database.name", String.class);
 Optional<String> maybeDatabaseName = config.getOptionalValue("database.name", String.class);
 ```
@@ -290,7 +293,7 @@ Configuration Profiles allow for multiple configurations in the same file or sep
 
 ### Profile in the property name
 
-To be able to set properties with the same name, each property needs to be prefixed with a percentage sign `%` followed by the profile name and a dot `.` in the syntax `%{profile-name}.config.name`:
+To be able to set properties with the same name, each property needs to be prefixed with a percentage sign `%` followed by the profile name and a dot `.` in the syntax `%[profile-name].config.name` (without the square brackets):
 
 **application.properties**
 
@@ -301,7 +304,7 @@ quarkus.http.port=9090
 
 The Quarkus HTTP port will be 9090. If the `dev` profile is active it will be 8181.
 
-Profiles in the `.env` file follow the syntax `_{PROFILE}_CONFIG_KEY=value`:
+Profiles in the `.env` file follow the syntax `_[PROFILE]_CONFIG_KEY=value`:
 
 ..env
 
@@ -350,7 +353,7 @@ Setting `quarkus.profile`  to `staging` will activate the `staging` profile.
 
 ### Profile-aware files
 
-In this case, properties for a specific profile may reside in an `application-{profile}.properties` named file. The previous example may be expressed as:
+In this case, properties for a specific profile may reside in an `application-[profile].properties` named file. The previous example may be expressed as:
 
 **application.properties**
 
@@ -375,11 +378,11 @@ quarkus.http.test-port=9191
 > Do not use profile-aware files to set `quarkus.profile` or `quarkus.test.profile`. This will not work because the profile is required in advance to load the profile-aware files.
 
 > [!IMPORTANT]
-> An `application.properties` file must exist (even if empty) in the exact location of the profile-aware (`application-{profile}.properties`) file to be included in the configuration to ensure a consistent order when loading the files.
+> An `application.properties` file must exist (even if empty) in the exact location of the profile-aware (`application-[profile].properties`) file to be included in the configuration to ensure a consistent order when loading the files.
 
 ### Parent Profile
 
-A Parent Profile adds one level of hierarchy to the current profile. The configuration `quarkus.config.profile.parent` accepts a single profile name.
+A Parent Profile adds one level of hierarchy to the current profile. The configuration `quarkus.config.profile.parent` accepts a comma-separated list of profile names.
 
 When the Parent Profile is active, if a property cannot be found in the current active Profile, the config lookup fallbacks to the Parent Profile. Consider:
 
@@ -403,6 +406,20 @@ Then
 
 > [!WARNING]
 > Do not use Profile-aware files to set `quarkus.config.profile.parent`. This will not work because the profile is required in advance to load the profile-aware files.
+
+#### Multi-level hierarchy
+
+The Parent Profile also supports multiple levels of hierarchy. A parent profile can itself have a parent:
+
+**application.properties**
+
+```properties
+quarkus.profile=child
+%child.quarkus.config.profile.parent=parent
+%parent.quarkus.config.profile.parent=grandparent
+```
+
+This activates three profiles with the following lookup priority: `child` overrides `parent`, and `parent` overrides `grandparent`. If a property is defined in both `child` and `parent`, the `child` value wins.
 
 ### Multiple Profiles
 
@@ -501,6 +518,40 @@ If an expression cannot be expanded and no default is supplied a `NoSuchElementE
 > [!NOTE]
 > Expressions lookups are performed in all config sources. The expression values and expansion values may reside in different config sources.
 
+### Escaping
+
+A `$` that begins an expression segment can be escaped with a backslash to treat it as a literal character:
+
+**application.properties**
+
+```properties
+# value is: ${my.prop}
+expression=\${my.prop}
+```
+
+A backslash that immediately precedes a `$` can itself be escaped with another backslash:
+
+**application.properties**
+
+```properties
+# my.prop=value
+# value is: \value
+expression=\\${my.prop}
+```
+
+> [!NOTE]
+> Escaping only applies to values that contain an expression segment. In a value with no `$\{...}` segment, every backslash is treated as a literal character (for example, a Windows path such as `C:\some\path` is used as-is). Once a value contains an expression segment, backslash becomes an escape character everywhere in that value.
+
+### Disabling Expansion
+
+Expression expansion may be selectively disabled for a block of code using `io.smallrye.config.Expressions.withoutExpansion()`. The raw (unexpanded) value is returned for any property looked up within the block:
+
+```java
+Config config = Config.get();
+// returns "https://${remote.host}/" without expanding the expression
+String url = Expressions.withoutExpansion(() -> config.getValue("callable.url", String.class));
+```
+
 ### With Environment Variables
 
 Property Expressions also work with Environment Variables.
@@ -575,7 +626,7 @@ my.indexed.collection[2]=turtle
 
 The indexed property syntax uses the property name and square brackets \`\[ \] with an index in between.
 
-A call to `Config#getValues("my.collection", String.class)`, will automatically create and convert a `List<String>` that contains the values `dog`, `cat` and `turtle`. A call to `Config#getValues("my.indexed.collection", String.class)` returns the exact same result. If the same property name exists in both forms (regular and indexed), the regular value has priority.
+A call to `Config#getValues("my.collection", String.class)`, will automatically create and convert a `List<String>` that contains the values `dog`, `cat` and `turtle`. A call to `Config#getValues("my.indexed.collection", String.class)` returns the exact same result. If the same property name exists in both forms within the same configuration source, the indexed format takes priority. When available in multiple sources, the higher ordinal source wins, like any other configuration lookup.
 
 The indexed property is sorted by their index before being added to the target `Collection`. Any gaps contained in the indexes do not resolve to the target `Collection`, which means that the `Collection` result will store all values without any gaps.
 
@@ -661,20 +712,21 @@ While `quarkus.config-tracking.enabled` enables effective build time configurati
 Maven projects could add the following goal to their `quarkus-maven-plugin` configuration:
 
 ```xml
-      <plugin>
-        <groupId>${quarkus.platform.group-id}</groupId>
-        <artifactId>quarkus-maven-plugin</artifactId>
-        <version>${quarkus.platform.version}</version>
-        <extensions>true</extensions>
-        <executions>
-          <execution>
-            <id>track-prod-config-changes</id>
-            <phase>process-resources</phase>
-            <goals>
-              <goal>track-config-changes</goal>
-            </goals>
-          </execution>
-        </executions>
+<plugin>
+<groupId>${quarkus.platform.group-id}</groupId>
+<artifactId>quarkus-maven-plugin</artifactId>
+<version>${quarkus.platform.version}</version>
+<extensions>true</extensions>
+<executions>
+  <execution>
+    <id>track-prod-config-changes</id>
+    <phase>process-resources</phase>
+    <goals>
+      <goal>track-config-changes</goal>
+    </goals>
+  </execution>
+</executions>
+</plugin>
 ```
 
 The `track-config-changes` goal looks for `${project.basedir}/.quarkus/quarkus-prod-config-dump` (file name and directory are configurable) and, if the file already exists, checks whether the values stored in the config dump have changed. It will log the changed options and save the current values of each of the options present in `${project.basedir}/.quarkus/quarkus-prod-config-dump` in `${project.basedir}/target/quarkus-prod-config.check` (the target file name and location can be configured). If the build time configuration has not changed since the last build both `${project.basedir}/.quarkus/quarkus-prod-config-dump` and `${project.basedir}/.quarkus/quarkus-prod-config-dump` will be identical.
@@ -688,7 +740,7 @@ In addition to dumping configuration values, `track-config-changes` goal also du
 By default, `track-config-changes` looks for the configuration recorded during previous build and does nothing if it's not found. Enabling `dumpCurrentWhenRecordedUnavailable` parameter will make it dump the current build configuration options taking into account `quarkus.config-tracking.*` configuration.
 
 > [!IMPORTANT]
-> Unlike the build configuration options recorded during the `quarkus:build` goal, configuration options saved by `quarkus:track-config-changes` with `dumpCurrentWhenRecordedUnavailable` enabled will include all the build configuration options exposed by a `org.eclipse.microprofile.config.Config` instance. Which means this report may include some build configuration options that will not be used by the Quarkus application build process but also may be missing some build configuration options since MicroProfile Config specification allows configuration sources not to expose all the property names they provide to users.
+> Unlike the build configuration options recorded during the `quarkus:build` goal, configuration options saved by `quarkus:track-config-changes` with `dumpCurrentWhenRecordedUnavailable` enabled will include all the build configuration options exposed by a `io.smallrye.config.Config` instance. Which means this report may include some build configuration options that will not be used by the Quarkus application build process but also may be missing some build configuration options since MicroProfile Config specification allows configuration sources not to expose all the property names they provide to users.
 
 ## Config property values injected during static initialization phase
 
@@ -705,10 +757,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class MyBean {
 
-   @ConfigProperty(name = "foo", defaultValue = "bar") <1>
+   @ConfigProperty(name = "foo", defaultValue = "bar") // <1>
    String foo;
 
-    void onInit(@Observes @Initialized(ApplicationScoped.class) Object event) { <2>
+    void onInit(@Observes @Initialized(ApplicationScoped.class) Object event) { // <2>
        // this observer method is notified during STATIC_INIT...
     }
 }
@@ -731,7 +783,7 @@ import io.quarkus.runtime.annotations.StaticInitSafe;
 @ApplicationScoped
 public class MyBeanNoFailure {
 
-   @StaticInitSafe <1>
+   @StaticInitSafe // <1>
    @ConfigProperty(name = "foo", defaultValue = "bar")
    String foo;
 

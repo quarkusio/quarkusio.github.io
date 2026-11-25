@@ -2,7 +2,7 @@
 
 Quarkus supports a feature called Dev Services that allows you to create various datasources without any config. If you have docker running and have not configured `quarkus.infinispan-client.hosts`, Quarkus will automatically start an Infinispan container when running tests or dev mode, and automatically configure the connection.
 
-When running the production version of the application, the Infinispan connection need to be configured as normal, so if you want to include a production database config in your `application.properties` and continue to use Dev Services we recommend that you use the `%prod.` profile to define your Infinispan settings.
+When running the production version of the application, the Infinispan connection needs to be configured as normal, so if you want to include a production database config in your `application.properties` and continue to use Dev Services we recommend that you use the `%prod.` profile to define your Infinispan settings.
 
 Dev Services for Infinispan relies on Docker/Podman to start the server.
 
@@ -13,7 +13,7 @@ You **don't need to configure anything in dev mode**. The server will be running
 > [!NOTE]
 > The running Infinispan Server has authentication enabled and a user with full admin role. The credentials of the user are **admin/password**.
 
-### Accessing to the Infinispan Server Console
+### Accessing the Infinispan Server Console
 
 Infinispan Server provides a web console that can be accessed with a browser:
 
@@ -39,7 +39,7 @@ Dev Services for Infinispan relies on Docker to start the broker. If your enviro
 
 ## Providing configuration to the running server
 
-Dev Services for Infinispan will spin up an Infinispan with the infinispan.xml file by default. However, there are cases where is helpful to provide some extra configuration to the server. This can be done by adding configuration files in xml, yaml or json to the resources classpath and providing the following configuration:
+Dev Services for Infinispan will spin up an Infinispan with the infinispan.xml file by default. However, there are cases where it is helpful to provide some extra configuration to the server. This can be done by adding configuration files in xml, yaml or json to the resources classpath and providing the following configuration:
 
 ```properties
 quarkus.infinispan-client.devservices.config-files=server-config-override.xml <1>
@@ -62,7 +62,7 @@ quarkus.infinispan-client.devservices.config-files=server-config-override.xml <1
 
 ## Cross Site Replication
 
-If you want run the Infinispan Server container with Cross Site Replication configuration, you need to provide a site name.
+If you want to run the Infinispan Server container with Cross Site Replication configuration, you need to provide a site name.
 
 ```properties
 quarkus.infinispan-client.devservices.site=NYC <1>
@@ -73,11 +73,11 @@ quarkus.infinispan-client.devservices.mcast-port=46666 <2>
 2. Eventually configure a mcastPort if you want to avoid creating a cluster with another container
 
 > [!NOTE]
-> Learn more about Cross Site Replication in the Infinispan Cross Site Replication [documentation guide](https://infinispan.org/docs/stable/titles/xsite/xsite.html) and in the Infinispan Cross Site Replication [simple code tutorial](https://infinispan.org/tutorials/simple/simple_tutorials.html#cross-site-replication_remote-cache-tutorials).
+> Learn more about Cross Site Replication in the Infinispan Cross Site Replication [documentation guide](https://infinispan.org/docs/stable/titles/xsite/xsite.html) and in the Infinispan Cross Site Replication [simple code tutorial](https://infinispan.org/tutorials/remote-cross-site-replication/).
 
 ## Multiple Dev Services for named connections
 
-The Infinispan Client extension supports connecting to more than one Infinispan Cluster with the named connections. If you need to spin an additional Dev Service for a connection name, configure at least on property in the application properties:
+The Infinispan Client extension supports connecting to more than one Infinispan Cluster with the named connections. If you need to spin an additional Dev Service for a connection name, configure at least one property in the application properties:
 
 ```properties
 quarkus.infinispan-client.conn-2.devservices.enabled=true
@@ -100,7 +100,7 @@ infinispan:
 
 1. Collector endpoint. Assuming a container service name 'jaeger' is running.
 2. Enables tracing.
-3. Exporter protocol. OLTP is the OpenTelemetry protocol.
+3. Exporter protocol. OTLP is the OpenTelemetry protocol.
 4. The service name that will be registered in the tracing collector, Jaeger in this case.
 5. Enables 'security' category tracing.
 
@@ -193,7 +193,5 @@ services:
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-artifacts"></a> [`quarkus.infinispan-client.devservices.artifacts`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-artifacts) config_property_copy_button:+++quarkus.infinispan-client.devservices.artifacts+++[]<br><br>List of the artifacts to automatically download and add to the Infinispan server libraries.<br><br>For example a Maven coordinate (org.postgresql:postgresql:42.3.1) or a dependency location url.<br><br>If an invalid value is passed, the Infinispan server will throw an error when trying to start.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_ARTIFACTS+++[] | list of string |  |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-site"></a> [`quarkus.infinispan-client.devservices.site`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-site) config_property_copy_button:+++quarkus.infinispan-client.devservices.site+++[]<br><br>Add a site name to start the Infinispan Server Container with Cross Site Replication enabled (ex. lon). Cross Site Replication is the capability to connect two separate Infinispan Server Clusters that might run in different Data Centers, and configure backup caches to copy the data across the clusters with active-active or active-passive replication. See more about Cross Site Replication in the Infinispan Documentation <https://infinispan.org/docs/stable/titles/xsite/xsite.html> Configure `mcast-port` to avoid forming a cluster with any other running Infinispan Server container.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_SITE+++[] | string |  |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-mcast-port"></a> [`quarkus.infinispan-client.devservices.mcast-port`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-mcast-port) config_property_copy_button:+++quarkus.infinispan-client.devservices.mcast-port+++[]<br><br>If you are running an Infinispan Server already in docker, if the containers use the same mcastPort they will form a cluster. Set a different mcastPort to create a separate cluster in Docker (e. 46656). A common use case in a local Docker development mode, is the need of having two different Infinispan Clusters with Cross Site Replication enabled. see <https://github.com/infinispan/infinispan-simple-tutorials/blob/main/infinispan-remote/cross-site-replication/docker-compose/><br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_MCAST_PORT+++[] | int |  |
-| [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-tracing-enabled"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-tracing-enabled\[`quarkus.infinispan-client.devservices.tracing.enabled`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.devservices.tracing.enabled+++[]<br><br>*This property is deprecated.*<br><br>Runs the Infinispan Server container with tracing enabled. Traces are disabled by default<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_TRACING_ENABLED+++[] | boolean | `false` |
-| [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-tracing-exporter-otlp-endpoint"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-tracing-exporter-otlp-endpoint\[`quarkus.infinispan-client.devservices.tracing.exporter.otlp.endpoint`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.devservices.tracing.exporter.otlp.endpoint+++[]<br><br>*This property is deprecated.*<br><br>Sets Infinispan Server otlp endpoint. Default value is <http://localhost:4317><br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_TRACING_EXPORTER_OTLP_ENDPOINT+++[] | string | `http://localhost:4317` |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-container-env-environment-variable-name"></a> [`quarkus.infinispan-client.devservices.container-env."environment-variable-name"`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-container-env-environment-variable-name) config_property_copy_button:+++quarkus.infinispan-client.devservices.container-env."environment-variable-name"+++[]<br><br>Environment variables that are passed to the container.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_+++[] | Map\<String,String> |  |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-config-files"></a> [`quarkus.infinispan-client.devservices.config-files`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices_quarkus-infinispan-client-devservices-config-files) config_property_copy_button:+++quarkus.infinispan-client.devservices.config-files+++[]<br><br>Infinispan Server configuration chunks to be passed to the container.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_CONFIG_FILES+++[] | list of string |  |

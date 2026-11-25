@@ -57,7 +57,7 @@ implementation("io.quarkus:quarkus-messaging-kafka")
 ```
 
 > [!NOTE]
-> The extension includes `kafka-clients` version 4.1.1 as a transitive dependency and is compatible with Kafka brokers version 2.x and above.
+> The extension includes `kafka-clients` version 4.2.2 as a transitive dependency and is compatible with Kafka brokers version 2.x and above.
 
 ## Configuring SmallRye Kafka Connector
 
@@ -214,7 +214,7 @@ As with the previous `Message` example, if your injected channel receives payloa
 
 Reactive Messaging invokes your method on an I/O thread. See the [Quarkus Reactive Architecture documentation](/guides/quarkus-reactive-architecture/index.md) for further details on this topic. But, you often need to combine Reactive Messaging with blocking processing such as database interactions. For this, you need to use the `@Blocking` annotation indicating that the processing is *blocking* and should not be run on the caller thread.
 
-For example, The following code illustrates how you can store incoming payloads to a database using Hibernate with Panache:
+For example, the following code illustrates how you can store incoming payloads to a database using Hibernate with Panache:
 
 ```java
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -314,7 +314,7 @@ SmallRye Reactive Messaging enables implementing custom commit strategies. See [
 If a message produced from a Kafka record is nacked, a failure strategy is applied. The Kafka connector supports the following strategies:
 
 - `fail`: fail the application, no more records will be processed (default strategy). The offset of the record that has not been processed correctly is not committed.
-- `ignore`: the failure is logged, but the processing continue. The offset of the record that has not been processed correctly is committed.
+- `ignore`: the failure is logged, but the processing continues. The offset of the record that has not been processed correctly is committed.
 - `dead-letter-queue`: the offset of the record that has not been processed correctly is committed, but the record is written to a Kafka dead letter topic.
 - `delayed-retry-topic`: the failed record is sent to delayed retry topics for later reprocessing, with configurable delays and maximum retries.
 
@@ -397,7 +397,7 @@ If the `fail-on-deserialization-failure` attribute is set to `false` and the `fa
 
 ### Consumer Groups
 
-In Kafka, a consumer group is a set of consumers which cooperate to consume data from a topic. A topic is divided into a set of partitions. The partitions of a topic are assigned among the consumers in the group, effectively allowing to scale consumption throughput. Note that each partition is assigned to a single consumer from a group. However, a consumer can be assigned multiple partitions if the number of partitions is greater than the number of consumer in the group.
+In Kafka, a consumer group is a set of consumers which cooperate to consume data from a topic. A topic is divided into a set of partitions. The partitions of a topic are assigned among the consumers in the group, effectively allowing to scale consumption throughput. Note that each partition is assigned to a single consumer from a group. However, a consumer can be assigned multiple partitions if the number of partitions is greater than the number of consumers in the group.
 
 Let's explore briefly different producer/consumer patterns and how to implement them using Quarkus:
 
@@ -410,7 +410,7 @@ Let's explore briefly different producer/consumer patterns and how to implement 
 
 1. **Multiple consumer threads inside a consumer group**
 
-   For a given application instance, the number of consumers inside the consumer group can be configured using `mp.messaging.incoming.$channel.concurrency` property. The partitions of the subscribed topic will be divided among the consumer threads. Note that if the `concurrency` value exceed the number of partitions of the topic, some consumer threads won't be assigned any partitions.
+   For a given application instance, the number of consumers inside the consumer group can be configured using `mp.messaging.incoming.$channel.concurrency` property. The partitions of the subscribed topic will be divided among the consumer threads. Note that if the `concurrency` value exceeds the number of partitions of the topic, some consumer threads won't be assigned any partitions.
 
    ![Architecture](/guides/images/kafka-one-app-two-consumers.png)
 
@@ -428,13 +428,13 @@ Let's explore briefly different producer/consumer patterns and how to implement 
 
 1. **Pub/Sub: Multiple consumer groups subscribed to a topic**
 
-   Lastly different applications can subscribe independently to same topics using different **consumer group ids**. For example, messages published to a topic called *orders* can be consumed independently on two consumer applications, one with `mp.messaging.incoming.orders.group.id=invoicing` and second with `mp.messaging.incoming.orders.group.id=shipping`. Different consumer groups can thus scale independently according to the message consumption requirements.
+   Lastly different applications can subscribe independently to the same topics using different **consumer group ids**. For example, messages published to a topic called *orders* can be consumed independently on two consumer applications, one with `mp.messaging.incoming.orders.group.id=invoicing` and second with `mp.messaging.incoming.orders.group.id=shipping`. Different consumer groups can thus scale independently according to the message consumption requirements.
 
    ![Architecture](/guides/images/kafka-two-app-two-consumer-groups.png)
 
 
 > [!NOTE]
-> A common business requirement is to consume and process Kafka records in order. The Kafka broker preserves order of records inside a partition and not inside a topic. Therefore, it is important to think about how records are partitioned inside a topic. The default partitioner uses record key hash to compute the partition for a record, or when the key is not defined, chooses a partition randomly per batch or records.
+> A common business requirement is to consume and process Kafka records in order. The Kafka broker preserves order of records inside a partition and not inside a topic. Therefore, it is important to think about how records are partitioned inside a topic. The default partitioner uses record key hash to compute the partition for a record, or when the key is not defined, chooses a partition randomly per batch of records.
 >
 > During normal operation, a Kafka consumer preserves the order of records inside each partition assigned to it. SmallRye Reactive Messaging keeps this order for processing, unless `@Blocking(ordered = false)` is used (see [Blocking processing](#blocking-processing)).
 >
@@ -451,7 +451,7 @@ Let's explore briefly different producer/consumer patterns and how to implement 
 
 #### Consumer Rebalance Listener
 
-Inside a consumer group, as new group members arrive and old members leave, the partitions are re-assigned so that each member receives a proportional share of the partitions. This is known as rebalancing the group. To handle offset commit and assigned partitions yourself, you can provide a consumer rebalance listener. To achieve this, implement the `io.smallrye.reactive.messaging.kafka.KafkaConsumerRebalanceListener` interface and expose it as a CDI bean with the `@Idenfier` qualifier. A common use case is to store offset in a separate data store to implement exactly-once semantic, or starting the processing at a specific offset.
+Inside a consumer group, as new group members arrive and old members leave, the partitions are re-assigned so that each member receives a proportional share of the partitions. This is known as rebalancing the group. To handle offset commit and assigned partitions yourself, you can provide a consumer rebalance listener. To achieve this, implement the `io.smallrye.reactive.messaging.kafka.KafkaConsumerRebalanceListener` interface and expose it as a CDI bean with the `@Identifier` qualifier. A common use case is to store offset in a separate data store to implement exactly-once semantic, or starting the processing at a specific offset.
 
 The listener is invoked every time the consumer topic/partition assignment changes. For example, when the application starts, it invokes the `partitionsAssigned` callback with the initial set of topics/partitions associated with the consumer. If, later, this set changes, it calls the `partitionsRevoked` and `partitionsAssigned` callbacks again, so you can implement custom logic.
 
@@ -565,11 +565,11 @@ mp.messaging.incoming.your-channel.group.id=${quarkus.uuid}
 ```
 
 > [!IMPORTANT]
-> If the `group.id` attribute is not set, it defaults the `quarkus.application.name` configuration property.
+> If the `group.id` attribute is not set, it defaults to the `quarkus.application.name` configuration property.
 
 #### Manual topic-partition assignment
 
-The `assign-seek` channel attribute allows manually assigning topic-partitions to a Kafka incoming channel, and optionally seek to a specified offset in the partition to start consuming records. If `assign-seek` is used, the consumer will not be dynamically subscribed to topics, but instead will statically assign the described partitions. In manual topic-partition rebalancing doesn't happen and therefore rebalance listeners are never called.
+The `assign-seek` channel attribute allows manually assigning topic-partitions to a Kafka incoming channel, and optionally seek to a specified offset in the partition to start consuming records. If `assign-seek` is used, the consumer will not be dynamically subscribed to topics, but instead will statically assign the described partitions. In manual topic-partition assignment, rebalancing doesn't happen and therefore rebalance listeners are never called.
 
 The attribute takes a list of triplets separated by commas: `<topic>:<partition>:<offset>`.
 
@@ -1102,7 +1102,7 @@ If a record cannot be written, the message is nacked.
 
 The Kafka outbound connector handles back-pressure, monitoring the number of in-flight messages waiting to be written to the Kafka broker. The number of in-flight messages is configured using the `max-inflight-messages` attribute and defaults to 1024.
 
-The connector only sends that amount of messages concurrently. No other messages will be sent until at least one in-flight message gets acknowledged by the broker. Then, the connector writes a new message to Kafka when one of the broker’s in-flight messages get acknowledged. Be sure to configure Kafka’s `batch.size` and `linger.ms` accordingly.
+The connector only sends that amount of messages concurrently. No other messages will be sent until at least one in-flight message gets acknowledged by the broker. Then, the connector writes a new message to Kafka when one of the broker’s in-flight messages gets acknowledged. Be sure to configure Kafka’s `batch.size` and `linger.ms` accordingly.
 
 You can also remove the limit of in-flight messages by setting `max-inflight-messages` to `0`. However, note that the Kafka producer may block if the number of requests reaches `max.in.flight.requests.per.connection`.
 
@@ -1110,7 +1110,7 @@ You can also remove the limit of in-flight messages by setting `max-inflight-mes
 
 When the Kafka producer receives an error from the server, if it is a transient, recoverable error, the client will retry sending the batch of messages. This behavior is controlled by `retries` and `retry.backoff.ms` parameters. In addition to this, SmallRye Reactive Messaging will retry individual messages on recoverable errors, depending on the `retries` and `delivery.timeout.ms` parameters.
 
-Note that while having retries in a reliable system is a best practice, the `max.in.flight.requests.per.connection` parameter defaults to `5`, meaning that the order of the messages is not guaranteed. If the message order is a must for your use case, setting `max.in.flight.requests.per.connection` to `1` will make sure a single batch of messages is sent at a time, in the expense of limiting the throughput of the producer.
+Note that while having retries in a reliable system is a best practice, the `max.in.flight.requests.per.connection` parameter defaults to `5`, meaning that the order of the messages is not guaranteed. If the message order is a must for your use case, setting `max.in.flight.requests.per.connection` to `1` will make sure a single batch of messages is sent at a time, at the expense of limiting the throughput of the producer.
 
 For applying retry mechanism on processing errors, see the section on [Retrying processing](#retrying-processing).
 
@@ -1462,7 +1462,132 @@ If the outgoing record already contains a *key*, it **won't be overridden** by t
 
 Kafka Transactions allows managing consumer offsets inside a transaction, together with produced messages. This enables coupling a consumer with a transactional producer in a *consume-transform-produce* pattern, also known as **exactly-once processing**.
 
-The `KafkaTransactions` custom emitter provides a way to apply exactly-once processing to an incoming Kafka message inside a transaction.
+#### Declarative Exactly-Once with `@ExactlyOnce`
+
+The simplest way to enable exactly-once processing is to annotate a processor method with `@ExactlyOnce`. The method must have both `@Incoming` and `@Outgoing` annotations, and both channels must be managed by the Kafka connector:
+
+```java
+import jakarta.enterprise.context.ApplicationScoped;
+
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.Outgoing;
+
+import io.quarkus.smallrye.reactivemessaging.kafka.ExactlyOnce;
+import io.smallrye.reactive.messaging.kafka.Record;
+
+@ApplicationScoped
+public class OrderProcessor {
+
+    @Incoming("orders-in")
+    @Outgoing("orders-out")
+    @ExactlyOnce
+    Record<String, Integer> process(Record<String, Integer> order) {
+        return Record.of(order.key(), order.value() + 1);
+    }
+}
+```
+
+Each incoming record is consumed and the result is produced within a single Kafka transaction, ensuring atomic consumption and production -- no duplicates and no message loss.
+
+The method can also return a `List` to produce multiple records per input:
+
+```java
+@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+List<Record<String, Integer>> process(Record<String, Integer> order) {
+    return List.of(
+            Record.of(order.key(), order.value() * 10),
+            Record.of(order.key(), order.value() * 10 + 1));
+}
+```
+
+Quarkus auto-configures the following Kafka properties when `@ExactlyOnce` is detected:
+
+| Property | Value |
+| --- | --- |
+| `transactional.id` (outgoing) | `${quarkus.application.name}-<channel-name>` |
+| `enable.idempotence` (outgoing) | `true` |
+| `acks` (outgoing) | `all` |
+| `commit-strategy` (incoming) | `ignore` |
+| `isolation.level` (incoming) | `read_committed` |
+
+These can be overridden in `application.properties` if needed.
+
+The method can also return reactive types (`Uni`, `CompletionStage`). In that case, the method runs non-blocking and the transaction commits when the returned `Uni` completes:
+
+```java
+@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+Uni<Record<String, Integer>> process(Record<String, Integer> order) {
+    return invokeExternalService(order)
+            .onItem().transform(result -> Record.of(order.key(), result));
+}
+```
+
+> [!NOTE]
+> `@ExactlyOnce` methods must use payload parameters (e.g., `Record<K, V>`, plain types), not `Message<?>`.
+
+##### Combining with Database Transactions
+
+`@ExactlyOnce` can be combined with database transactions. The database transaction runs inside the Kafka transaction: if the database commit fails, the Kafka transaction is rolled back too. If the database commit succeeds but the Kafka transaction fails, the database changes persist but the message will be reprocessed. So you need to design your consumer to be idempotent to handle this case. For stronger guarantees, consider using the transactional outbox pattern.
+
+For **Hibernate ORM** (blocking), use `@Transactional`:
+
+```java
+@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+@Transactional
+Record<String, Order> process(Record<String, Order> order) {
+    OrderEntity entity = new OrderEntity(order.value());
+    entity.persist();
+    return Record.of(order.key(), order.value());
+}
+```
+
+For **Hibernate Reactive**, use `@Transactional` or `@WithTransaction` with a reactive return type:
+
+```java
+@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+@Transactional
+Uni<Record<String, Order>> process(Record<String, Order> order) {
+    OrderEntity entity = new OrderEntity(order.value());
+    return entity.persist()
+            .map(e -> Record.of(order.key(), order.value()));
+}
+```
+
+##### Error Handling
+
+When an `@ExactlyOnce` method throws an exception, the Kafka transaction is aborted and the consumer offset is reset to the last committed position. The message will be retried automatically on the next poll. If the method is also annotated with `@Transactional`, the database transaction is rolled back as well.
+
+Using the `@ExactlyOnce` annotation, the incoming channel `commit-strategy` and `failure-strategy` attributes are set by default to `ignore`, in order to allow the Kafka transaction to manage the offset commits.
+
+##### Routing to a Different Topic
+
+To route records to a different topic within the exactly-once transaction (e.g., a dead-letter topic), return a `ProducerRecord` with the target topic:
+
+```java
+@Incoming("orders-in")
+@Outgoing("orders-out")
+@ExactlyOnce
+ProducerRecord<String, Order> process(Record<String, Order> order) {
+    if (order.value().isInvalid()) {
+        return new ProducerRecord<>("orders-dlq", order.key(), order.value());
+    }
+    return new ProducerRecord<>("orders-out", order.key(), order.value());
+}
+```
+
+The record is sent transactionally — if the transaction is aborted, neither the main output nor the dead-letter record is published.
+
+#### Manual Exactly-Once with `KafkaTransactions`
+
+For more advanced use cases, the `KafkaTransactions` custom emitter provides a way to apply exactly-once processing to an incoming Kafka message inside a transaction.
 
 The following example includes a batch of Kafka records inside a transaction.
 
@@ -1687,7 +1812,7 @@ mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.seriali
 
 Now, your Kafka messages will contain a Jackson serialized representation of your `Fruit` data object. In this case, the `deserializer` configuration is not necessary as the [Serializer/deserializer autodetection](#serialization-autodetection) is enabled by default.
 
-If you want to deserialize a list of fruits, you need to create a deserializer with a Jackson `TypeReference` denoted the generic collection used.
+If you want to deserialize a list of fruits, you need to create a deserializer with a Jackson `TypeReference` denoting the generic collection used.
 
 ```java
 package com.acme.fruit.jackson;
@@ -1758,7 +1883,7 @@ mp.messaging.outgoing.fruit-out.value.serializer=io.quarkus.kafka.client.seriali
 
 Now, your Kafka messages will contain a JSON-B serialized representation of your `Fruit` data object.
 
-If you want to deserialize a list of fruits, you need to create a deserializer with a `Type` denoted the generic collection used.
+If you want to deserialize a list of fruits, you need to create a deserializer with a `Type` denoting the generic collection used.
 
 ```java
 package com.acme.fruit.jsonb;
@@ -1896,7 +2021,7 @@ For each channel, you can disable the checks using:
 ```properties
 # Disable both liveness and readiness checks with `health-enabled=false`:
 
-# Incoming channel (receiving records form Kafka)
+# Incoming channel (receiving records from Kafka)
 mp.messaging.incoming.your-channel.health-enabled=false
 # Outgoing channel (writing records to Kafka)
 mp.messaging.outgoing.your-channel.health-enabled=false
@@ -1912,7 +2037,7 @@ mp.messaging.outgoing.your-channel.health-readiness-enabled=false
 
 Reactive Messaging *startup* and *readiness* checks offer two strategies. The default strategy verifies that an active connection is established with the broker. This approach is not intrusive as it's based on built-in Kafka client metrics.
 
-Using the `health-topic-verification-enabled=true` attribute, *startup* probe uses an *admin client* to check for the list of topics. Whereas the *readiness* probe for an incoming channel checks that at least one partition is assigned for consumption, and for an outgoing channel checks that the topic used by the producer exist in the broker.
+Using the `health-topic-verification-enabled=true` attribute, *startup* probe uses an *admin client* to check for the list of topics. Whereas the *readiness* probe for an incoming channel checks that at least one partition is assigned for consumption, and for an outgoing channel checks that the topic used by the producer exists in the broker.
 
 Note that to achieve this, an *admin connection* is required. You can adjust the timeout for topic verification calls to the broker using the `health-topic-verification-timeout` configuration.
 
@@ -1972,7 +2097,7 @@ To disable JMX MBean registration, set the following property in your `applicati
 quarkus.kafka.jmx.enabled=false
 ```
 
-When disabled, the `AppInfoParser` skipş the JMX MBean registration and the default value for `kafka.metric.reporters` is set to empty, preventing the `JmxReporter` from being loaded. Kafka client metrics are available through Micrometer when the [Micrometer extension](/guides/telemetry-micrometer/index.md) is present.
+When disabled, the `AppInfoParser` skips the JMX MBean registration and the default value for `kafka.metric.reporters` is set to empty, preventing the `JmxReporter` from being loaded. Kafka client metrics are available through Micrometer when the [Micrometer extension](/guides/telemetry-micrometer/index.md) is present.
 
 ## Authentication with OAuth
 
@@ -2016,7 +2141,7 @@ quarkus.ssl.native=true
 
 Update the `oauth.client.id`, `oauth.client.secret` and `oauth.token.endpoint.uri` values.
 
-OAuth authentication works for both JVM and native modes. Since SSL in not enabled by default in native mode, `quarkus.ssl.native=true` must be added to support JaasClientOauthLoginCallbackHandler, which uses SSL. (See the [Using SSL with Native Executables](/guides/native-and-ssl/index.md) guide for more details.)
+OAuth authentication works for both JVM and native modes. Since SSL is not enabled by default in native mode, `quarkus.ssl.native=true` must be added to support JaasClientOauthLoginCallbackHandler, which uses SSL. (See the [Using SSL with Native Executables](/guides/native-and-ssl/index.md) guide for more details.)
 
 ## TLS Configuration
 
@@ -2162,7 +2287,7 @@ class BaristaTest {
 4. Use the `send` method to send a message to the `orders` channel. The application will process this message and send a message to `beverages` channel.
 5. Use the `received` method on `beverages` channel to check the messages produced by the application.
 
-If your Kafka consumer is batch based, you will need to send a batch of messages to the channel as by creating them manually.
+If your Kafka consumer is batch based, you will need to send a batch of messages to the channel by creating them manually.
 
 For instance:
 
@@ -2445,7 +2570,7 @@ quarkus.kafka.devservices.redpanda.transaction-enabled=false
 ```
 
 > [!NOTE]
-> Redpanda transactions does not support exactly-once processing.
+> Redpanda transactions do not support exactly-once processing.
 
 <a id="Compose"></a>
 ### Compose
@@ -3005,7 +3130,7 @@ public class FruitStore {
 3. Requests a new transaction. The transaction completes when the passed action completes.
 4. Persist the entity. It returns a `Uni<Fruit>`.
 5. Switch back to a `Uni<Void>`.
-6. Close the session - this is close the connection with the database. The connection can then be recycled.
+6. Close the session - this closes the connection with the database. The connection can then be recycled.
 
 Unlike with *classic* Hibernate, you can't use `@Transactional`. Instead, we use `session.withTransaction` and persist our entity. The `map` is used to return a `Uni<Void>` and not a `Uni<Fruit>`.
 
@@ -3037,7 +3162,7 @@ Check [Serializing via Jackson](#jackson-serialization) for more detail about th
 Let's imagine the following process:
 
 1. You receive an HTTP request with a payload,
-2. You create an Hibernate entity instance from this payload,
+2. You create a Hibernate entity instance from this payload,
 3. You persist that entity into a database,
 4. You send the entity to a Kafka topic
 
@@ -3145,7 +3270,7 @@ public Multi<Fruit> stream() {
 }
 ```
 
-Some environment cuts the SSE connection when there is not enough activity. The workaround consists of sending *ping* messages (or empty objects) periodically.
+Some environments cut the SSE connection when there is not enough activity. The workaround consists of sending *ping* messages (or empty objects) periodically.
 
 ```java
 @Channel("fruits")
@@ -3235,7 +3360,7 @@ public class FruitProducer {
 4. Begin a Kafka transaction.
 5. Send the payload to Kafka inside the Kafka transaction.
 6. Persist the entity into the database in a Hibernate Reactive transaction.
-7. Once the persist operation completes, and there is no errors, the Kafka transaction is committed. The result is omitted and returned as the HTTP response.
+7. Once the persist operation completes, and there are no errors, the Kafka transaction is committed. The result is omitted and returned as the HTTP response.
 
 In the previous example the database transaction (inner) will commit followed by the Kafka transaction (outer). If you wish to commit the Kafka transaction first and the database transaction second, you need to nest them in the reverse order.
 

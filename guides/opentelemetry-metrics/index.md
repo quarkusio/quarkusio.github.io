@@ -2,19 +2,9 @@
 
 This guide explains how your Quarkus application can utilize [OpenTelemetry](https://opentelemetry.io/) (OTel) to provide metrics for interactive web applications.
 
-<a id="extension-status-note"></a>
-
-> [!NOTE]
-> This technology is considered preview.
->
-> In *preview*, backward compatibility and presence in the ecosystem is not guaranteed. Specific improvements might require changing configuration or APIs, and plans to become *stable* are under way. Feedback is welcome on our [mailing list](https://groups.google.com/d/forum/quarkus-dev) or as issues in our [GitHub issue tracker](https://github.com/quarkusio/quarkus/issues).
->
-> For a full list of possible statuses, check our [FAQ entry](https://quarkus.io/faq/#what-are-the-extension-statuses).
-
 This document is part of the [Observability in Quarkus reference guide](/guides/observability/index.md) which features this and other observability related components.
 
 > [!NOTE]
-> - OpenTelemetry Metrics is considered *tech preview* and is disabled by default.
 > - Automatic metrics instrumentation in Quarkus is handled by [Micrometer](/guides/telemetry-micrometer/index.md) and the [quarkus-micrometer-opentelemetry](/guides/telemetry-micrometer-to-opentelemetry/index.md) extension bridges those metrics into OpenTelemetry.
 > - The [OpenTelemetry Guide](/guides/opentelemetry/index.md) is available with signal independent information about the OpenTelemetry extension.
 > - If you search more information about OpenTelemetry Tracing, please refer to the [OpenTelemetry Tracing Guide](/guides/opentelemetry-tracing/index.md).
@@ -25,7 +15,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -63,7 +53,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=opentelemetry-quickstart \
     -Dextensions='rest,quarkus-opentelemetry' \
@@ -77,7 +67,7 @@ For Windows users:
 
 - If using Powershell, wrap `-D` parameters in double quotes e.g. `"-DprojectArtifactId=opentelemetry-quickstart"`
 
-This command generates the Maven project and imports the `quarkus-opentelemetry` extension, which includes the default OpenTelemetry support, and a gRPC span exporter for [OTLP](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md).
+This command generates the Maven project and imports the `quarkus-opentelemetry` extension, which includes the default OpenTelemetry support, and an OTLP span exporter for [OTLP](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md).
 
 If you already have your Quarkus project configured, you can add the `quarkus-opentelemetry` extension to your project by running the following command in your project base directory:
 
@@ -171,19 +161,19 @@ The only mandatory configuration for OpenTelemetry Metrics is the one enabling i
 quarkus.otel.metrics.enabled=true
 ```
 
-To change any of the default property values, here is an example on how to configure the default OTLP gRPC Exporter within the application, using the `src/main/resources/application.properties` file:
+To change any of the default property values, here is an example on how to configure the default OTLP Exporter within the application, using the `src/main/resources/application.properties` file:
 
 ```properties
 quarkus.application.name=myservice // <1>
 quarkus.otel.metrics.enabled=true // <2>
-quarkus.otel.exporter.otlp.metrics.endpoint=http://localhost:4317 // <3>
+quarkus.otel.exporter.otlp.metrics.endpoint=http://localhost:4318 // <3>
 quarkus.otel.exporter.otlp.metrics.headers=authorization=Bearer my_secret // <4>
 ```
 
 1. All metrics created from the application will include an OpenTelemetry `Resource` indicating the metrics was created by the `myservice` application. If not set, it will default to the artifact id.
 2. Enable the OpenTelemetry metrics. Must be set at build time.
-3. gRPC endpoint to send the metrics. If not set, it will default to `http://localhost:4317`.
-4. Optional gRPC headers commonly used for authentication.
+3. OTLP endpoint to send the metrics. If not set, it will default to `http://localhost:4318`.
+4. Optional headers commonly used for authentication.
 
 To configure the connection using the same properties for all signals, please check the base [configuration section of the OpenTelemetry guide](/guides/opentelemetry/index.md#create-the-configuration).
 
@@ -248,24 +238,24 @@ quarkus dev
 ./gradlew --console=plain quarkusDev
 ```
 
-or if configuring the OTLP gRPC endpoint via JVM arguments:
+or if configuring the OTLP endpoint via JVM arguments:
 
 **CLI**
 
 ```bash
-quarkus dev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4317"
+quarkus dev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4318"
 ```
 
 **Maven**
 
 ```bash
-./mvnw quarkus:dev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4317"
+./mvnw quarkus:dev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4318"
 ```
 
 **Gradle**
 
 ```bash
-./gradlew --console=plain quarkusDev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4317"
+./gradlew --console=plain quarkusDev -Djvm.args="-Dquarkus.otel.exporter.otlp.endpoint=http://localhost:4318"
 ```
 
 With the OpenTelemetry Collector, the Jaeger system and the application running, you can make a request to the provided endpoint:
@@ -613,6 +603,8 @@ These are the metrics produced by the OpenTelemetry extension when metrics are e
 
 > [!WARNING]
 > The instrumentation for JVM metrics uses JFR events and not all native VM implementations support the listed events. For more details, please see [OpenTelemetry's Runtime Telemetry documentation](https://github.com/open-telemetry/opentelemetry-java-instrumentation/tree/main/instrumentation/runtime-telemetry/library).
+>
+> Setting `quarkus.native.monitoring=none` also disables the `jfr` monitoring option that the extension enables for these events: the native executable still starts, but the JFR-based JVM metrics are not produced.
 
 The native image assessment above was performed using GraalVM 23.0.2.
 
@@ -622,6 +614,28 @@ The native image assessment above was performed using GraalVM 23.0.2.
 ### Micrometer to OpenTelemetry bridge
 
 The Micrometer to OpenTelemetry bridge unifies all telemetry in Quarkus. It generates Micrometer's metrics but sends them along the OpenTelemetry telemetry output. For more details please visit the [Micrometer and OpenTelemetry extension](/guides/telemetry-micrometer-to-opentelemetry/index.md).
+
+<a id="redundant-metrics-warning"></a>
+### Avoiding redundant metrics collection
+
+Collecting metrics with both a Micrometer registry (such as `quarkus-micrometer-registry-prometheus`) and OpenTelemetry metrics at the same time is redundant: the measurements are gathered and exported by two independent pipelines, adding memory and runtime overhead.
+
+To help detect this, Quarkus logs a build-time warning when a Micrometer metrics registry is present together with OpenTelemetry metrics, unless you are using the `quarkus-micrometer-opentelemetry` extension:
+
+```text
+Redundant metrics collection detected: both Micrometer (registries: %s) and OpenTelemetry are active. Consider disabling one system (e.g., setting quarkus.otel.metrics.enabled=false).
+```
+
+To resolve the warning, choose one of the following:
+
+- Use the [`quarkus-micrometer-opentelemetry`](/guides/telemetry-micrometer-to-opentelemetry/index.md) extension, which lets Micrometer metrics flow through the OpenTelemetry SDK with a single pipeline.
+- Keep OpenTelemetry metrics and remove the Micrometer registry.
+- Keep the Micrometer registry (for example, when OpenTelemetry is used only for tracing) and disable OpenTelemetry metrics:
+
+  ```properties
+  quarkus.otel.metrics.enabled=false
+  ```
+
 
 ## Exporters
 

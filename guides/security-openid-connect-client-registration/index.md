@@ -17,6 +17,8 @@ You can use Quarkus `quarkus-oidc-client-registration` extension to register one
 
 [OIDC TenantConfigResolver](/guides/security-openid-connect-multitenancy/index.md#tenant-config-resolver) can be used to create OIDC tenant configurations using the metadata of the registered clients.
 
+As an alternative to dynamic client registration, you can use the [OAuth Client ID Metadata Document](/guides/security-oidc-client-id-metadata-document/index.md) support, which allows the authorization server to discover the client configuration by fetching a metadata document from the `client-id` URL without requiring an explicit registration step.
+
 > [!IMPORTANT]
 > Currently, Quarkus `quarkus-oidc-client-registration` extension has an `experimental` status. Dynamic client registration API provided by this extension may change while this extension has an experiemental status.
 
@@ -83,7 +85,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.client.registration.ClientMetadata;
 import io.quarkus.oidc.client.registration.OidcClientRegistration;
@@ -162,7 +164,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.client.registration.ClientMetadata;
 import io.quarkus.oidc.client.registration.OidcClientRegistration;
@@ -235,7 +237,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.client.registration.ClientMetadata;
 import io.quarkus.oidc.client.registration.OidcClientRegistration;
@@ -704,7 +706,7 @@ public class ClientRegistrationResponseFilter implements OidcResponseFilter {
 | <a id="quarkus-oidc-client-registration_quarkus-oidc-client-registration-metadata-post-logout-uri"></a> [`quarkus.oidc-client-registration.metadata.post-logout-uri`](#quarkus-oidc-client-registration_quarkus-oidc-client-registration-metadata-post-logout-uri) config_property_copy_button:+++quarkus.oidc-client-registration.metadata.post-logout-uri+++[]<br><br>`quarkus.oidc-client-registration."id".metadata.post-logout-uri` config_property_copy_button:+++quarkus.oidc-client-registration."id".metadata.post-logout-uri+++[]<br><br>Post Logout URI<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REGISTRATION_METADATA_POST_LOGOUT_URI+++[] | string |  |
 | <a id="quarkus-oidc-client-registration_quarkus-oidc-client-registration-metadata-extra-props-extra-props"></a> [`quarkus.oidc-client-registration.metadata.extra-props."extra-props"`](#quarkus-oidc-client-registration_quarkus-oidc-client-registration-metadata-extra-props-extra-props) config_property_copy_button:+++quarkus.oidc-client-registration.metadata.extra-props."extra-props"+++[]<br><br>`quarkus.oidc-client-registration."id".metadata.extra-props."extra-props"` config_property_copy_button:+++quarkus.oidc-client-registration."id".metadata.extra-props."extra-props"+++[]<br><br>Additional metadata properties<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REGISTRATION_METADATA_EXTRA_PROPS__EXTRA_PROPS_+++[] | Map\<String,String> |  |
 | <a id="quarkus-oidc-client-registration_section_quarkus-oidc-client-registration-proxy"></a> [HTTP proxy configuration](#quarkus-oidc-client-registration_section_quarkus-oidc-client-registration-proxy) | Type | Default |
-| <a id="quarkus-oidc-client-registration_quarkus-oidc-client-registration-proxy-proxy-configuration-name"></a> [`quarkus.oidc-client-registration.proxy.proxy-configuration-name`](#quarkus-oidc-client-registration_quarkus-oidc-client-registration-proxy-proxy-configuration-name) config_property_copy_button:+++quarkus.oidc-client-registration.proxy.proxy-configuration-name+++[]<br><br>`quarkus.oidc-client-registration."id".proxy.proxy-configuration-name` config_property_copy_button:+++quarkus.oidc-client-registration."id".proxy.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.proxy.<name>.*`. Please note that the 'non-proxy-hosts' option is currently not supported. If a name is configured, but no proxy configuration is found with that name then an error will be thrown.<br><br>The default proxy configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REGISTRATION_PROXY_PROXY_CONFIGURATION_NAME+++[] | string |  |
+| <a id="quarkus-oidc-client-registration_quarkus-oidc-client-registration-proxy-proxy-configuration-name"></a> [`quarkus.oidc-client-registration.proxy.proxy-configuration-name`](#quarkus-oidc-client-registration_quarkus-oidc-client-registration-proxy-proxy-configuration-name) config_property_copy_button:+++quarkus.oidc-client-registration.proxy.proxy-configuration-name+++[]<br><br>`quarkus.oidc-client-registration."id".proxy.proxy-configuration-name` config_property_copy_button:+++quarkus.oidc-client-registration."id".proxy.proxy-configuration-name+++[]<br><br>The name of the proxy configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.proxy.<name>.*`. If a name is configured, but no proxy configuration is found with that name then an error will be thrown.<br><br>The default proxy configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REGISTRATION_PROXY_PROXY_CONFIGURATION_NAME+++[] | string |  |
 | <a id="quarkus-oidc-client-registration_section_quarkus-oidc-client-registration-tls"></a> [TLS configuration](#quarkus-oidc-client-registration_section_quarkus-oidc-client-registration-tls) | Type | Default |
 | <a id="quarkus-oidc-client-registration_quarkus-oidc-client-registration-tls-tls-configuration-name"></a> [`quarkus.oidc-client-registration.tls.tls-configuration-name`](#quarkus-oidc-client-registration_quarkus-oidc-client-registration-tls-tls-configuration-name) config_property_copy_button:+++quarkus.oidc-client-registration.tls.tls-configuration-name+++[]<br><br>`quarkus.oidc-client-registration."id".tls.tls-configuration-name` config_property_copy_button:+++quarkus.oidc-client-registration."id".tls.tls-configuration-name+++[]<br><br>The name of the TLS configuration to use.<br><br>If a name is configured, it uses the configuration from `quarkus.tls.<name>.*` If a name is configured, but no TLS configuration is found with that name then an error will be thrown.<br><br>The default TLS configuration is **not** used by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_OIDC_CLIENT_REGISTRATION_TLS_TLS_CONFIGURATION_NAME+++[] | string |  |
 

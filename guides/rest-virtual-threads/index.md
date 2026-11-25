@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -37,7 +37,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-virtual-threads \
     -Dextensions='rest-jackson,quarkus-rest-client-jackson' \
@@ -82,7 +82,7 @@ implementation("io.quarkus:quarkus-rest-client-jackson")
 
 We need to customize the `pom.xml` file to use virtual threads.
 
-1. Locate the line with `<maven.compiler.release>17</maven.compiler.release>`, and replace it with:
+1. Check that the `maven.compiler.release` property is 21 or later:
 
 ```xml
     <maven.compiler.release>21</maven.compiler.release>
@@ -128,11 +128,6 @@ We need to customize the `pom.xml` file to use virtual threads.
 ```
 
 The `-Djdk.tracePinnedThreads` will detect pinned carrier threads while running tests on Java 21-23 (See [the virtual thread reference guide for details](/guides/virtual-threads/index.md#pinning)).
-
-> [!IMPORTANT]
-> **--enable-preview on Java 19 and 20**
->
-> If you are using a Java 19 or 20, add the `--enable-preview` flag in the `argLine` and as `parameters` of the maven compiler plugin. Note that we strongly recommend Java 21.
 
 ## Create the weather client
 
@@ -245,6 +240,63 @@ It's essential to understand what happened behind the scene:
 5. Finally, when the second invocation of the rest client completes, the virtual thread is rescheduled and continues its execution.
 6. The method returns the result. The virtual thread terminates.
 7. The result is captured by Quarkus and written in the HTTP response
+
+## Use virtual threads for every endpoint
+
+Annotating every endpoint with `@RunOnVirtualThread` can be cumbersome when you want your whole application to use virtual threads. There are two ways to switch the default execution model for all endpoints at once: a configuration property and an annotated Quarkus REST `Application` class.
+
+> [!WARNING]
+> Before switching all endpoints to virtual threads, make sure your application and its dependencies do not suffer from thread pinning or carrier thread monopolization. For more information, see the Quarkus [Virtual thread support reference](/guides/virtual-threads/index.md) guide. Thread pinning caused by `synchronized` blocks is resolved in JDK 24 and later, so we recommend running on JDK 24 or later when enabling virtual threads globally. You can detect pinning in your tests, as shown in the section below.
+
+### Use the configuration property
+
+You can enable virtual threads for all Quarkus REST endpoints with a single build-time property:
+
+```properties
+quarkus.rest.blocking.signatures.execution.mode=virtual-thread
+```
+
+When enabled, every endpoint that would otherwise be executed on a worker thread is executed on a virtual thread instead. The regular execution model rules still apply:
+
+- Endpoints considered non-blocking because they return `Uni`, `Multi` or `CompletionStage` keep running on the event loop.
+- Explicit `@Blocking`, `@NonBlocking` and `@RunOnVirtualThread` annotations on the endpoint method or resource class always take precedence. So, if a specific endpoint is not safe to run on a virtual thread, annotate it with `@Blocking` to keep it on a worker thread.
+- An execution model annotation on the Quarkus REST `Application` class takes precedence over this property, and a warning is logged at startup.
+
+### Annotate the Quarkus REST Application class
+
+Alternatively, you can declare the default execution model in code. Quarkus does not require a Quarkus REST `Application` class, but you can add one and annotate it with `@RunOnVirtualThread`:
+
+```java
+package org.acme;
+
+import jakarta.ws.rs.core.Application;
+
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
+@RunOnVirtualThread
+public class MyApplication extends Application {
+}
+```
+
+Every endpoint without an explicit `@Blocking` annotation is then executed on a virtual thread. Unlike the configuration property, this approach also moves endpoints with a non-blocking signature, such as endpoints returning `Uni`, to a virtual thread. The same applies to endpoints annotated with `@NonBlocking`; in this case, a warning is logged at startup. An application can only have one `Application` class.
+
+### Choose between the two approaches
+
+The following table summarizes on which thread an endpoint is executed, depending on how it is declared:
+
+**Execution model depending on the endpoint declaration**
+
+| Endpoint | Default | `quarkus.rest.blocking.signatures.execution.mode=virtual-thread` | `@RunOnVirtualThread` on `Application` |
+| --- | --- | --- | --- |
+| No annotation, blocking signature (returns `String`, a POJO, ...) | Worker thread | Virtual thread | Virtual thread |
+| No annotation, non-blocking signature (returns `Uni`, `Multi`, `CompletionStage`, ...) | Event loop | Event loop | Virtual thread |
+| `@Blocking` | Worker thread | Worker thread | Worker thread |
+| `@NonBlocking` | Event loop | Event loop | Virtual thread (a warning is logged) |
+| `@RunOnVirtualThread` | Virtual thread | Virtual thread | Virtual thread |
+
+### Revert to worker threads without code changes
+
+If you run into problems, you do not need to remove the property or the annotation to compare against the worker thread model. Setting `quarkus.virtual-threads.enabled=false` executes all the endpoints marked to run on virtual threads on worker threads instead.
 
 ## Verify pinning using tests
 

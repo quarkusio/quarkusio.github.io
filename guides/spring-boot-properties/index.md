@@ -2,8 +2,7 @@
 
 If you prefer to use Spring Boot `@ConfigurationProperties` annotated class to access application properties instead of [`@ConfigMapping`](/guides/config-mappings/index.md#config-mappings) or a MicroProfile `@ConfigProperty` approach, you can do that with this extension.
 
-> [!IMPORTANT]
-> Spring Boot `@ConfigurationProperties` has a few limitations. For instance, `Map` injection is not supported. Consider using [Mapping configuration to objects](/guides/config-mappings/index.md).
+Spring Boot `@ConfigurationProperties` classes are bound with the same mapping support as [`@ConfigMapping`](/guides/config-mappings/index.md), so nested classes, `Optional`, `List` and `Map` fields are supported.
 
 ## Prerequisites
 
@@ -11,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -44,7 +43,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=spring-boot-properties-quickstart \
     -Dextensions='rest,spring-boot-properties' \
@@ -136,7 +135,7 @@ public class GreetingProperties {
 }
 ```
 
-Here `text` field is public, but it could also be a private field with getter and setter or just a public getter in an interface. Because `text` does not have a default value it is considered required and unless it is defined in a configuration file (`application.properties` by default)  your application will fail to start. Define this property in your `src/main/resources/application.properties` file:
+Here `text` field is public, but it could also be a private field with a getter. As in Spring Boot, the annotated type must be a class, interfaces are not bound. Because `text` does not have a default value it is considered required and unless it is defined in a configuration file (`application.properties` by default)  your application will fail to start. Define this property in your `src/main/resources/application.properties` file:
 
 ```properties
 # Your configuration properties
@@ -444,6 +443,54 @@ public class GreetingResource {
     }
 }
 ```
+
+## Naming strategy
+
+By default, a field name is mapped to its configuration property name in kebab-case, so a `maxAttempts` field is read from `greeting.max-attempts`. Annotate the class with `@io.smallrye.config.ConfigMapping` to use a different `namingStrategy`:
+
+```java
+package org.acme.spring.boot.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import io.smallrye.config.ConfigMapping;
+import io.smallrye.config.ConfigMapping.NamingStrategy;
+
+@ConfigurationProperties("greeting")
+@ConfigMapping(namingStrategy = NamingStrategy.VERBATIM)
+public class GreetingProperties {
+
+    public Message message;
+
+    public String greetingName; // <1>
+
+    public static class Message { // <2>
+
+        public String text;
+
+        public String textSuffix = "!";
+    }
+}
+```
+
+1. Read from `greeting.greetingName`.
+2. A nested class inherits the naming strategy of its enclosing class, so `textSuffix` is read from `greeting.message.textSuffix`. A nested class can declare its own `@ConfigMapping(namingStrategy = ...)` to override it. A property class that is not enclosed by the annotated class is mapped in kebab-case, unless it declares a naming strategy itself.
+
+A field annotated with the Spring Boot `@Name` annotation is mapped to the given name, regardless of the naming strategy.
+
+## Unknown properties
+
+Configuration properties under the class prefix that do not map to any field are ignored. Set `ignoreUnknownFields = false` to fail the application startup instead:
+
+```java
+@ConfigurationProperties(value = "greeting", ignoreUnknownFields = false)
+public class GreetingProperties {
+    // ...
+}
+```
+
+> [!NOTE]
+> Unknown properties are only reported when `quarkus.config.mapping.validate-unknown` is enabled, which is the default.
 
 ## More Spring guides
 

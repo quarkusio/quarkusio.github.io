@@ -459,7 +459,7 @@ If your delete query does not start with `delete`, we support the following addi
 - `<query>` will expand to `delete from EntityName where <query>`
 
 > [!NOTE]
-> You can also write your queries in plain [HQL](https://docs.hibernate.org/orm/7.4/userguide/html_single/#hql):
+> You can also write your queries in plain [HQL](https://docs.hibernate.org/orm/8.0/userguide/html_single/#hql):
 
 ```java
 Order.find("select distinct o from Order o left join fetch o.lineItems");
@@ -526,7 +526,7 @@ Query projection can be done with the `project(Class)` method on the `PanacheQue
 
 You can use it to restrict which fields will be returned by the database.
 
-Hibernate will use **DTO projection** and generate a SELECT clause with the attributes from the projection class. This is also called **dynamic instantiation** or **constructor expression**, more info can be found on the Hibernate guide: [hql select clause](https://docs.hibernate.org/orm/7.4/userguide/html_single/#hql-select-clause)
+Hibernate will use **DTO projection** and generate a SELECT clause with the attributes from the projection class. This is also called **dynamic instantiation** or **constructor expression**, more info can be found on the Hibernate guide: [hql select clause](https://docs.hibernate.org/orm/8.0/userguide/html_single/#hql-select-clause)
 
 The projection class needs to be a valid Java Bean and have a constructor that contains all its attributes, this constructor will be used to instantiate the projection DTO instead of using the entity class. This must be the only constructor of the class.
 

@@ -4,7 +4,9 @@ We are quickly moving to an SSL-everywhere world so being able to use SSL is cru
 
 Since GraalVM 21.3, TLS works in native executables out of the box: the JDK TLS stack is included automatically, so TLS on the HTTP server and on most clients requires no extra configuration.
 
-The exception is clients that go through the `java.net.URL` / `HttpsURLConnection` `https` protocol handler, such as the REST client used in this guide. That handler must be enabled explicitly when building the native executable, which is what `quarkus.ssl.native` (and the underlying `-H:EnableURLProtocols=https` option) controls. This guide walks through that mechanism, and through configuring the trust store used at run time.
+The exception is clients that go through the `java.net.URL` / `HttpsURLConnection` `https` protocol handler, such as the RESTEasy Classic REST Client used in this guide. That handler must be enabled explicitly when building the native executable, which is what `quarkus.ssl.native` (and the underlying `-H:EnableURLProtocols=https` option) controls. This guide walks through that mechanism, and through configuring the trust store used at run time.
+
+The modern [REST Client](/guides/rest-client/index.md) (`quarkus-rest-client`) uses Vert.x for HTTPS, including request URI validation, and does not require the JDK `https` URL handler. It can make HTTPS requests with `quarkus.ssl.native=false` and `quarkus.native.enable-https-url-handler=false`, provided the server certificate is trusted. These settings control URL-handler registration, not the availability of TLS itself.
 
 > [!NOTE]
 > In JVM mode, SSL is supported without any further manipulation.
@@ -78,7 +80,7 @@ The important part is the following option that was automatically added by Quark
 -H:EnableURLProtocols=http,https
 ```
 
-It enables the native SSL support for your native executable. But you should not set it manually, we have a nice configuration property for this purpose as described below.
+It enables the JDK HTTPS URL handler for your native executable. But you should not set it manually, we have a nice configuration property for this purpose as described below.
 
 As SSL is de facto the standard nowadays, we decided to enable its support automatically for some of our extensions:
 
@@ -101,7 +103,7 @@ $ ls -lh target/resteasy-client-quickstart-1.0.0-SNAPSHOT-runner
 
 ## Let's disable SSL and see how it goes
 
-Quarkus has an option to disable the SSL support entirely. Why? Because it comes at a certain cost. So if you are sure you don't need it, you can disable it entirely.
+Quarkus has an option to disable automatic registration of the HTTPS URL handler. This affects clients such as RESTEasy Classic that use that handler, but does not disable TLS on the HTTP server or the modern REST Client.
 
 First, let's disable it without changing the REST service URL and see how it goes.
 
@@ -128,7 +130,7 @@ quarkus build --native
 The native executable tests will fail with the following error:
 
 ```
-Caused by: java.lang.IllegalArgumentException: https://stage.code.quarkus.io/api requires SSL support but it is disabled. You probably have set quarkus.ssl.native to false.
+Caused by: java.lang.IllegalArgumentException: https://stage.code.quarkus.io/api requires SSL support, which is disabled in this native executable. Make sure the quarkus.ssl.native property is set to true, then rebuild the native executable.
 ```
 
 This error is the one you obtain when trying to use SSL while it was not explicitly enabled in your native executable.
@@ -176,7 +178,8 @@ $ ls -lh target/resteasy-client-quickstart-1.0.0-SNAPSHOT-runner
 -rwxrwxr-x. 1 gandrian gandrian 35M Jun 11 13:06 target/resteasy-client-quickstart-1.0.0-SNAPSHOT-runner
 ```
 
-Yes, it is now **35 MB** whereas it used to be **46 MB**. SSL comes with an 11 MB overhead in native executable size.
+> [!NOTE]
+> These historical sizes depend on the GraalVM version and application. Disabling the HTTPS URL handler does not remove the JDK TLS stack on current GraalVM versions.
 
 And there's more to it.
 
@@ -233,7 +236,7 @@ will ensure that the certificates of `/tmp/mycerts` are baked into the native bi
 
 ### Run time configuration
 
-Using the runtime certificate configuration, supported by GraalVM since 21.3 does not require any special or additional configuration compared to regular java programs or Quarkus in jvm mode. For more information, see the [Runtime Options](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/CertificateManagement/#runtime-options) section of the "GraalVM Certificate Management in Native Image" guide.
+Using the runtime certificate configuration, supported by GraalVM since 21.3 does not require any special or additional configuration compared to regular java programs or Quarkus in jvm mode. For more information, see the [Runtime Options](https://www.graalvm.org/jdk25/reference-manual/native-image/dynamic-features/CertificateManagement/#runtime-options) section of the "GraalVM Certificate Management in Native Image" guide.
 
 <a id="working-with-containers"></a>
 ### Working with containers

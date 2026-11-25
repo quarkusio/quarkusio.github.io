@@ -146,7 +146,7 @@ To do this, define the following properties in the `<properties>` section:
 
 ```xml
 <grpc.version>1.81.0</grpc.version>
-<protoc.version>4.35.0</protoc.version>
+<protoc.version>4.35.1</protoc.version>
 ```
 
 These properties configure the gRPC version and the `protoc` version.
@@ -234,7 +234,7 @@ When gRPC classes, which are classes generated from `proto` files, are in a depe
         <plugin>
             <groupId>io.smallrye</groupId>
             <artifactId>jandex-maven-plugin</artifactId>
-            <version>3.6.0</version>
+            <version>3.6.1</version>
             <executions>
                 <execution>
                 <id>make-index</id>
@@ -286,9 +286,6 @@ The next table lists the different variants of the `protoc` and plugin artifacts
 | Windows x86 64 bits | `windows-x86_64` | `com.google.protobuf:protoc:VERSION:exe:windows-x86_64` and `io.grpc:protoc-gen-grpc-java:VERSION:exe:windows-x86_64` |
 
 Because of the packaging of `protoc` and the plugin (using classifier), it's not possible to exclude undesired platforms individually.
-
-> [!WARNING]
-> When using [AArch64](https://en.wikipedia.org/wiki/AArch64) on macOS be aware of this [issue](https://github.com/grpc/grpc-java/issues/11844): meaning that the macOS [x86_64](https://en.wikipedia.org/wiki/X86) protoc and macOS aarch_64 protoc are the `same` - both are macOS x86_64. So you need to enable [Rosetta](https://en.wikipedia.org/wiki/Rosetta_(software)) (`softwareupdate --install-rosetta`) on your ARM based macOS if you want to generate protobuf classes.
 
 You can, however, exclude the `protoc` dependency altogether and use the `quarkus.grpc.protoc-path` system property to configure the path to the `protoc` executable installed on your machine. Thus, you don't need to download any `protoc` variants:
 

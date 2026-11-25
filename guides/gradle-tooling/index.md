@@ -20,7 +20,7 @@ quarkus create app my-groupId:my-artifactId \
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=my-groupId \
     -DprojectArtifactId=my-artifactId \
     -Dextensions="rest,rest-jackson" \
@@ -28,7 +28,7 @@ mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
 ```
 
 > [!NOTE]
-> If you just launch `mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create` the Maven plugin asks for user inputs. You can disable this interactive mode (and use default values) by passing `-B` to the Maven command.
+> If you just launch `mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create` the Maven plugin asks for user inputs. You can disable this interactive mode (and use default values) by passing `-B` to the Maven command.
 
 > [!TIP]
 > If you prefer using the Kotlin DSL, use `gradle-kotlin-dsl` instead of `gradle`.
@@ -36,7 +36,7 @@ mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
 > [!NOTE]
 > Quarkus project scaffolding automatically installs the Gradle wrapper (`./gradlew`) in your project.
 >
-> If you prefer to use a standalone Gradle installation, please use Gradle 9.7.0.
+> If you prefer to use a standalone Gradle installation, please use Gradle 9.9.0.
 
 The project is generated in a directory named after the passed artifactId.
 
@@ -278,7 +278,11 @@ Now you need to connect your local agent to the remote host, using the `remote-d
 ./gradlew quarkusRemoteDev -Dquarkus.live-reload.url=http://my-remote-host:8080
 ```
 
+With the Quarkus CLI, run `quarkus dev --remote -Dquarkus.live-reload.url=http://my-remote-host:8080`.
+
 Now every time you refresh the browser you should see any changes you have made locally immediately visible in the remote app.
+
+Remote development HTTP requests are limited by `quarkus.http.limits.max-body-size`. Set this value high enough for the largest file that must be synchronized. If the general HTTP body limit is disabled, remote development still applies a 10 MiB limit.
 
 All the config options are shown below:
 
@@ -511,7 +515,7 @@ This task will resolve all the runtime, build time, test and dev mode dependenci
 
 Native executables make Quarkus applications ideal for containers and serverless workloads.
 
-Make sure to have `GRAALVM_HOME` configured and pointing to the latest release of GraalVM for JDK 21.
+Make sure to have `GRAALVM_HOME` configured and pointing to the latest release of GraalVM for JDK 25.
 
 Create a native executable using:
 
@@ -537,13 +541,13 @@ Native related properties can either be added in `application.properties` file, 
 quarkusBuild {
     nativeArgs {
         containerBuild = true <1>
-        builderImage = "quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21" <2>
+        builderImage = "quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25" <2>
     }
 }
 ```
 
 1. Set `quarkus.native.container-build` property to `true`
-2. Set `quarkus.native.builder-image` property to `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21`
+2. Set `quarkus.native.builder-image` property to `quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25`
 
 **Kotlin DSL**
 
@@ -551,13 +555,13 @@ quarkusBuild {
 tasks.quarkusBuild {
     nativeArgs {
         "container-build" to true <1>
-        "builder-image" to "quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21" <2>
+        "builder-image" to "quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25" <2>
     }
 }
 ```
 
 1. Set `quarkus.native.container-build` property to `true`
-2. Set `quarkus.native.builder-image` property to `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21`
+2. Set `quarkus.native.builder-image` property to `quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25`
 
 > [!WARNING]
 > When using the Gradle Groovy DSL, property keys must follow lower camel case notation. e.g. `container-build` is not valid, and should be replaced by `containerBuild`. This limitation does not apply to the Gradle Kotlin DSL.
@@ -582,13 +586,13 @@ quarkus build --native --no-tests -Dquarkus.native.container-build=true
 The produced executable will be a 64-bit Linux executable, so depending on your operating system it may no longer be runnable. However, it's not an issue as we are going to copy it to a Docker container. Note that in this case the build itself runs in a Docker container too, so you don't need to have GraalVM installed locally.
 
 > [!TIP]
-> By default, the native executable will be generated using the `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21` Docker image.
+> By default, the native executable will be generated using the `quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25` Docker image.
 >
 > If you want to build a native executable with a different Docker image (for instance to use a different GraalVM version), use the `-Dquarkus.native.builder-image=<image name>` build argument.
 >
-> The list of the available Docker images can be found on [quay.io](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags). Be aware that a given Quarkus version might not be compatible with all the images available.
+> The list of the available Docker images can be found on [quay.io](https://quay.io/repository/quarkus/ubi10-quarkus-mandrel-builder-image?tab=tags). Be aware that a given Quarkus version might not be compatible with all the images available.
 >
-> Note also that starting Quarkus 3.19, the default *builder* images are based on UBI 9. To use the previous UBI 8 based images, you can use the pick an image from the [quay.io repository](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags).
+> The default *builder* images are based on UBI 10. To use older UBI based images, you can pick an image from the [quay.io repository (UBI 9)](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags) or the [quay.io repository (UBI 8)](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags).
 
 ## Running native tests
 
@@ -791,6 +795,8 @@ The Quarkus Gradle plugin cares about *what* is cached *in which environment* (C
 
 > [!TIP]
 > The Quarkus Gradle plugin detects a *CI environment*, if the `CI` environment variable is present.
+
+Cached outputs can be reused by a build of the same project in another directory, or with another Gradle user home. For example, CI pipelines that each check out into their own directory can share a build cache, and so can CI and developer machines. The application model that Quarkus resolves for a project records absolute paths, so the tasks that consume it take a digest of the model as an input instead, together with the artifacts the model refers to. The digest names each artifact by its coordinates and each project directory by its module, wherever they are located, so it is the same for artifacts resolved from the Gradle user home, a Maven repository, another project of the build or an included build. A file dependency outside the project is the exception: it is identified by its location, so outputs that depend on it are only reused by builds in the same location.
 
 How the various Quarkus package types are cached in non-CI and CI environments is described in the following table. Note that even if a task's output is not *cached*, the *up-to-date* checks still apply.
 

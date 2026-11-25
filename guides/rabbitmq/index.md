@@ -17,7 +17,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -66,7 +66,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rabbitmq-quickstart-producer \
     -Dextensions='messaging-rabbitmq,rest-jackson' \
@@ -140,7 +140,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rabbitmq-quickstart-processor \
     -Dextensions='messaging-rabbitmq' \

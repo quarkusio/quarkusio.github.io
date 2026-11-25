@@ -19,7 +19,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -33,14 +33,6 @@ In this guide, we will build an application that:
 - Configures the registrar via `application.properties`
 
 Beyond service discovery and load balancing, it also supports [_service registration_](/guides/stork-registration/index.md). Service registration is the process of announcing a service instance to a registry so that other services can discover it. While Stork provides built-in registrars for Consul, Eureka, and others, you can implement your own by using the Stork SPI.
-
-## Solution
-
-We recommend that you follow the instructions in the next sections and create the application step by step. However, you can go right to the completed example.
-
-Clone the Git repository: `git clone https://github.com/quarkusio/quarkus-quickstarts.git`, or download an [archive](https://github.com/quarkusio/quarkus-quickstarts/archive/main.zip).
-
-The solution is located in the `stork-programmatic-custom-registration-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/stork-programmatic-custom-registration-quickstart).
 
 ## Bootstrapping the project
 
@@ -62,7 +54,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=stork-programmatic-custom-registration-quickstart \
     -Dextensions='quarkus-rest,quarkus-smallrye-stork,quarkus-rest-client-jackson' \

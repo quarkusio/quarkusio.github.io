@@ -12,7 +12,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -150,6 +150,16 @@ When using REST Assured in your test, the connection and response timeouts are s
 
 ```properties
 quarkus.http.test-timeout=10s
+```
+
+### Logging of the request and the response when a validation fails
+
+Quarkus configures REST Assured to log the request and the response when a validation fails. To log the response, REST Assured reads the complete response body, also when all the validations pass.
+
+A response that never ends, such as a stream of server-sent events, therefore blocks the test. The `quarkus.http.test-timeout` timeout stops the test only when the server sends no data for that time. To test such an endpoint with REST Assured, disable the logging:
+
+```properties
+quarkus.test.rest-assured.enable-logging-on-failure=false
 ```
 
 ### Injecting a URI
@@ -419,6 +429,36 @@ To get around this Quarkus supports the idea of a test profile. If a test has a 
 To reduce the amount of times Quarkus needs to restart, `io.quarkus.test.junit.util.QuarkusTestProfileAwareClassOrderer` is registered as a global `ClassOrderer` as described in the [JUnit User Guide](https://docs.junit.org/current/writing-tests/test-execution-order.html#classes). The behavior of this `ClassOrderer` is configurable via `application.properties` using the property `quarkus.test.class-orderer`. The Quarkus orderer will attempt to sort according to the secondary orderer, with the constraint that tests which require the same application instance are grouped. The property accepts the FQCN of the `ClassOrderer` to use as a secondary orderer. It can be set to an orderer that is provided by JUnit or even your own custom one. If the class cannot be found, it fallbacks to JUnit default behaviour which does not set a `ClassOrderer` at all.
 
 The Quarkus orderer can also be disabled entirely by setting another `ClassOrderer` using the JUnit configuration. This is only permitted in cases where all Quarkus tests would run on the same application (that is, the use of test profiles and test resources is limited).
+
+> [!NOTE]
+> This only affects version 3.6.0 of `maven-surefire-plugin` and `maven-failsafe-plugin`, which has a bug ([apache/maven-surefire#3529](https://github.com/apache/maven-surefire/issues/3529)) fixed in 3.6.1 ([apache/maven-surefire#3530](https://github.com/apache/maven-surefire/pull/3530)). In 3.6.0, the `runOrder` option (`alphabetical`, `random` or `reversealphabetical`) is translated into a JUnit `ClassOrderer` which is passed explicitly to JUnit. This replaces the Quarkus orderer, so tests which use different test profiles or test resources fail with an error explaining that the Quarkus JUnit configuration has been overridden. The simplest fix is to upgrade to 3.6.1 or later. If you must stay on 3.6.0, either do not set `runOrder` and use `quarkus.test.class-orderer` instead to choose the order of the tests within each group, or keep `runOrder` and set the Quarkus orderer in the plugin configuration, which takes precedence over `runOrder`:
+>
+> ```xml
+> <configuration>
+>     <runOrder>alphabetical</runOrder>
+>     <properties>
+>         <configurationParameters>
+>             junit.jupiter.testclass.order.default=io.quarkus.test.junit.util.QuarkusTestProfileAwareClassOrderer
+>         </configurationParameters>
+>     </properties>
+> </configuration>
+> ```
+>
+> `runOrder` also sets the order of test methods within each class, through `junit.jupiter.testmethod.order.default`. `quarkus.test.class-orderer` only orders classes, so if you drop `runOrder`, you can keep both orders by combining the two settings. For example, for a random order:
+>
+> ```xml
+> <configuration>
+>     <properties>
+>         <configurationParameters>
+>             junit.jupiter.testmethod.order.default=org.junit.jupiter.api.MethodOrderer$Random
+>         </configurationParameters>
+>     </properties>
+> </configuration>
+> ```
+>
+> ```properties
+> quarkus.test.class-orderer=org.junit.jupiter.api.ClassOrderer$Random
+> ```
 
 ### Writing a Profile
 
@@ -1104,10 +1144,10 @@ By simply annotating any test in the test suite with `@QuarkusTestResource`, Qua
 > [!NOTE]
 > When using multiple test resources, they can be started concurrently. For that you need to set `@QuarkusTestResource(parallel = true)`.
 
-Quarkus provides a few implementations of `QuarkusTestResourceLifecycleManager` out of the box (see `io.quarkus.test.h2.H2DatabaseTestResource` which starts an H2 database, or `io.quarkus.test.kubernetes.client.KubernetesServerTestResource` which starts a mock Kubernetes API server), but it is common to create custom implementations to address specific application needs. Common cases include starting docker containers using [Testcontainers](https://www.testcontainers.org/) (an example of which can be found [here](https://github.com/quarkusio/quarkus/blob/main/test-framework/keycloak-server/src/main/java/io/quarkus/test/keycloak/server/KeycloakTestResourceLifecycleManager.java)), or starting a mock HTTP server using [Wiremock](https://wiremock.org/) (an example of which can be found [here](https://github.com/geoand/quarkus-test-demo/blob/main/src/test/java/org/acme/getting/started/country/WiremockCountries.java)).
+Quarkus provides a few implementations of `QuarkusTestResourceLifecycleManager` out of the box (see `io.quarkus.test.kubernetes.client.KubernetesServerTestResource` which starts a mock Kubernetes API server), but it is common to create custom implementations to address specific application needs. Common cases include starting docker containers using [Testcontainers](https://www.testcontainers.org/) (an example of which can be found [here](https://github.com/quarkusio/quarkus/blob/main/test-framework/keycloak-server/src/main/java/io/quarkus/test/keycloak/server/KeycloakTestResourceLifecycleManager.java)), or starting a mock HTTP server using [Wiremock](https://wiremock.org/) (an example of which can be found [here](https://github.com/geoand/quarkus-test-demo/blob/main/src/test/java/org/acme/getting/started/country/WiremockCountries.java)).
 
 > [!NOTE]
-> As `QuarkusTestResourceLifecycleManager` is not a CDI Bean, classes that implement it can't have fields injected with `@Inject`. You can use `String propertyName = ConfigProvider.getConfig().getValue("quarkus.my-config-group.myconfig", String.class);`
+> As `QuarkusTestResourceLifecycleManager` is not a CDI Bean, classes that implement it can't have fields injected with `@Inject`. You can use `String propertyName = Config.get().getValue("quarkus.my-config-group.myconfig", String.class);`
 
 ### Altering the test class
 
@@ -1266,7 +1306,7 @@ This is covered in the [Native Executable Guide](/guides/building-native-image/i
 This is a black box test that supports the same set features and has the same limitations.
 
 > [!NOTE]
-> As a test annotated with `@QuarkusIntegrationTest` tests the result of the build, it should be run as part of the integration test suite - i.e. by setting `-DskipITs=false` if using Maven or the `quarkusIntTest` task if using Gradle. These tests will **not** work if run in the same phase as `@QuarkusTest` as Quarkus has not yet created the final artifact.
+> As a test annotated with `@QuarkusIntegrationTest` tests the result of the build, it should be run as part of the integration test suite - i.e. by setting `-DskipITs=false` if using Maven or the `quarkusIntTest` task if using Gradle. These tests will **not** work if run in the same phase as `@QuarkusTest` as Quarkus has not yet created the final artifact. Gradle integration tests belong in `src/integrationTest/java` (or `src/integrationTest/kotlin`). The Quarkus Gradle plugin creates that source set and wires it to `quarkusIntTest`.
 
 The `pom.xml` file contains:
 
@@ -1441,6 +1481,12 @@ An example use of this could be the following Maven command, that forces `@Quark
 ./mvnw verify -Dquarkus.http.test-host=1.2.3.4 -Dquarkus.http.test-port=4321
 ```
 
+The Gradle equivalent is:
+
+```bash
+./gradlew quarkusIntTest -Dquarkus.http.test-host=1.2.3.4 -Dquarkus.http.test-port=4321
+```
+
 To test against a running instance that only accepts SSL/TLS connection (example: `https://1.2.3.4:4321`) set the system property `quarkus.http.test-ssl-enabled` to `true` and `quarkus.http.test-ssl-port` to the target HTTPS port.
 
 ## Mixing `@QuarkusTest` with other type of tests
@@ -1483,13 +1529,15 @@ To alleviate this restriction, the `@QuarkusTest` annotation defines a JUnit `@T
 </plugin>
 ```
 
+When tags exclude every test of a `@QuarkusTest` class from an execution run, as in the `default-test` execution above, Quarkus does not build an application for that class: no Dev Services are started and no container runtime is needed for that run.
+
 ##### 
 
 Currently `@QuarkusTest` and `@QuarkusIntegrationTest` should not be run in the same test run.
 
 For Maven, this means that the former should be run by the surefire plugin while the latter should be run by the failsafe plugin.
 
-For Gradle, this means the two types of tests should belong to different source sets.
+For Gradle, `@QuarkusTest` stays in the `test` source set while `@QuarkusIntegrationTest` belongs in `src/integrationTest`. The Quarkus Gradle plugin creates that source set and the `quarkusIntTest` task by default. Custom extra source sets are only needed when you want additional suites beyond that.
 
 <details>
 <summary>Details</summary>
@@ -1623,7 +1671,7 @@ Injection is also supported into objects that implement `io.quarkus.test.common.
 The `@QuarkusTest` annotation can be grouped with other annotations by defining a custom meta-annotation. For instance, you can bundle it with the `@Tag` annotation to automatically mark a group of tests like in the example below:
 
 ```java
-org.acme.test
+package org.acme.test;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -1646,6 +1694,9 @@ public @interface QuarkusSecurityTest { <1>
 ```
 
 1. The `@QuarkusSecurityTest` annotation can be used instead of the `@QuarkusTest` annotation.
+
+> [!NOTE]
+> If the meta-annotation is shipped in a separate dependency, that dependency must be part of the application index (a Jandex index, a `META-INF/beans.xml`, or `quarkus.index-dependency`) — otherwise the test class is not registered as a CDI bean.
 
 ## Testing Components
 

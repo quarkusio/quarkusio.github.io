@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -45,7 +45,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=openapi-swaggerui-quickstart \
     -Dextensions='rest-jackson' \
@@ -396,11 +396,6 @@ Remember that setting fields on the schema will override what has been generated
 | BUILD | The filter executes at build time. |
 | RUNTIME_STARTUP | The filter executes (eagerly) at application startup. |
 | RUNTIME_PER_REQUEST | The filter executes each time the OpenAPI document is requested. |
-| RUN | DEPRECATED. The filter executes at stage `RUNTIME_STARTUP` if `quarkus.smallrye-openapi.always-run-filter` is set to `false`, or at stage `RUNTIME_PER_REQUEST` if `quarkus.smallrye-openapi.always-run-filter` is set to `true`. (See also [\[Advanced interactions of RunStages\]](<#Advanced interactions of RunStages>).) |
-| BOTH | DEPRECATED. The filter executes as if both the `BUILD` and `RUN` stages were specified. |
-
-> [!NOTE]
-> The `quarkus.smallrye-openapi.always-run-filter` configuration property is deprecated. Annotate your filters with `@OpenApiFilter(stages = OpenApiFilter.RunStage.RUNTIME_PER_REQUEST)` instead.
 
 ### Advanced interactions of RunStages
 
@@ -408,13 +403,17 @@ While the `BUILD` RunStage is expected to run at build time - as the name alread
 
 The `quarkus-smallrye-openapi` extension saves the OpenAPI Document to a file when the `quarkus.smallrye-openapi.store-schema-directory` is configured. This saved version of the OpenAPI Document is useful for downstream consumers.
 
-To produce an OpenAPI Document which possibly **could** match the one produced during runtime, the `RUN` and `RUNTIME_STARTUP` RunStages are executed at build time - in a separate step from the `BUILD` RunStage. Any exception which occurs during this additional processing step is ignored, i.e. if one of the filters throws, none will have any effect.
+To produce an OpenAPI Document which possibly **could** match the one produced during runtime, the `RUNTIME_STARTUP` RunStage is executed at build time - in a separate step from the `BUILD` RunStage. Any exception which occurs during this additional processing step is ignored, i.e. if one of the filters throws, none will have any effect.
 
 This additional processing step is done even if `quarkus.smallrye-openapi.store-schema-directory` is **NOT** configured.
 
 ### The MicroProfile OpenAPI way
 
-The Microprofile OpenAPI specification defines that **one** OASFilter implementation can be specified using the `mp.openapi.filter` configuration property. This filter will be run during RunStage `RUN`.
+The Microprofile OpenAPI specification defines that **one** OASFilter implementation can be specified using the `mp.openapi.filter` configuration property, which is useful when adopting a filter from a shared library. This filter will be run during RunStage `RUNTIME_STARTUP` for every configured document.
+
+The RunStages and documents this filter applies to can be changed by annotating the filter class itself with `@OpenApiFilter`.
+
+Note that extending a filter registered through `mp.openapi.filter` won't prevent that filter from running. You can disable that filter by specifying `mp.openapi.filter=` in a higher priority config source, effectively resetting this config property.
 
 ## Loading OpenAPI Schema From Static Files
 
@@ -612,6 +611,18 @@ As shown in the previous section, a profile for an operation can be defined usin
 - If both `scan-exclude-profiles` and `scan-profiles` are configured, **only** `scan-exclude-profiles` is checked.
 - If neither is configured: all operations are **included**.
 
+### Storing the schema documents of all configured documents
+
+The generated OpenAPI schema documents are stored on build when `quarkus.smallrye-openapi.store-schema-directory` is configured, and each named OpenAPI document can configure its own `quarkus.smallrye-openapi.<document-name>.store-schema-directory`. Instead of configuring the directory for every document individually, the schema documents of all configured OpenAPI documents can be stored in one go:
+
+```properties
+quarkus.smallrye-openapi.store-schemas-directory=target/openapi
+```
+
+With the `user` and `order` documents from the example above, this stores the default schema document (`openapi.json` and `openapi.yaml`) as well as `openapi-user.json`, `openapi-user.yaml`, `openapi-order.json` and `openapi-order.yaml`.
+
+A `store-schema-directory` configured for an individual document takes precedence over `store-schemas-directory` for that document.
+
 ### Cleanup
 
 The generated OpenAPI documents by default include every schema, even those referenced by operations which are excluded. The following configuration removes any unused schema.
@@ -764,6 +775,7 @@ MicroProfile OpenAPI Core configuration is defined in [MicroProfile OpenAPI Spec
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-management-enabled"></a> [`quarkus.smallrye-openapi.management.enabled`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-management-enabled) config_property_copy_button:+++quarkus.smallrye-openapi.management.enabled+++[]<br><br>If management interface is turned on the openapi schema document will be published under the management interface. This allows you to exclude OpenAPI from management by setting the value to false<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_MANAGEMENT_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-js-client-enabled"></a> [`quarkus.smallrye-openapi.js-client.enabled`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-js-client-enabled) config_property_copy_button:+++quarkus.smallrye-openapi.js-client.enabled+++[]<br><br>Generate a JavaScript client proxy for all REST operations discovered by OpenAPI. When enabled, a static client library and a typed proxy module are generated as web resources, along with an import map for bare module imports.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_JS_CLIENT_ENABLED+++[] | boolean | `false` |
+| [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-store-schemas-directory"></a> [`quarkus.smallrye-openapi.store-schemas-directory`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-store-schemas-directory) config_property_copy_button:+++quarkus.smallrye-openapi.store-schemas-directory+++[]<br><br>If set, the generated OpenAPI schema documents of every configured OpenAPI document will be stored in this directory on build, without having to configure a `store-schema-directory` for each document individually. Both the json and yaml variants of each document will be stored here.<br><br>A `store-schema-directory` configured for an individual document takes precedence over this directory for that document.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_STORE_SCHEMAS_DIRECTORY+++[] | path |  |
 | <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-enabled"></a> [`quarkus.smallrye-openapi.enabled`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-enabled) config_property_copy_button:+++quarkus.smallrye-openapi.enabled+++[]<br><br>Enable the openapi endpoint. By default it's enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-path"></a> [`quarkus.smallrye-openapi.path`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-path) config_property_copy_button:+++quarkus.smallrye-openapi.path+++[]<br><br>`quarkus.smallrye-openapi."document-name".path` config_property_copy_button:+++quarkus.smallrye-openapi."document-name".path+++[]<br><br>The path at which to register the OpenAPI Servlet.<br><br>For the default document, the default value is simply `openapi`. For any named OpenAPI documents, the `-<document-name>` part will be replaced by the document name.<br><br>If you set a non-default value, then your custom value is used without resolving `-<document-name>`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_PATH+++[] | string | `openapi-<document-name>` |
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-store-schema-directory"></a> [`quarkus.smallrye-openapi.store-schema-directory`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-store-schema-directory) config_property_copy_button:+++quarkus.smallrye-openapi.store-schema-directory+++[]<br><br>`quarkus.smallrye-openapi."document-name".store-schema-directory` config_property_copy_button:+++quarkus.smallrye-openapi."document-name".store-schema-directory+++[]<br><br>If set, the generated OpenAPI schema documents will be stored here on build. Both openapi.json and openapi.yaml will be stored here if this is set.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_STORE_SCHEMA_DIRECTORY+++[] | path |  |
@@ -807,8 +819,6 @@ MicroProfile OpenAPI Core configuration is defined in [MicroProfile OpenAPI Spec
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-scan-profiles"></a> [`quarkus.smallrye-openapi.scan-profiles`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-scan-profiles) config_property_copy_button:+++quarkus.smallrye-openapi.scan-profiles+++[]<br><br>`quarkus.smallrye-openapi."document-name".scan-profiles` config_property_copy_button:+++quarkus.smallrye-openapi."document-name".scan-profiles+++[]<br><br>Profiles which explicitly include operations. If set, any operation without a matching profile is excluded.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_SCAN_PROFILES+++[] | list of string |  |
 | [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-scan-exclude-profiles"></a> [`quarkus.smallrye-openapi.scan-exclude-profiles`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-scan-exclude-profiles) config_property_copy_button:+++quarkus.smallrye-openapi.scan-exclude-profiles+++[]<br><br>`quarkus.smallrye-openapi."document-name".scan-exclude-profiles` config_property_copy_button:+++quarkus.smallrye-openapi."document-name".scan-exclude-profiles+++[]<br><br>Profiles which explicitly exclude operations. If set, any operation without a matching profile is included. Excludes are considered before inclusions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_SCAN_EXCLUDE_PROFILES+++[] | list of string |  |
 | <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-servers"></a> [`quarkus.smallrye-openapi.servers`](#quarkus-smallrye-openapi_quarkus-smallrye-openapi-servers) config_property_copy_button:+++quarkus.smallrye-openapi.servers+++[]<br><br>`quarkus.smallrye-openapi."documents".servers` config_property_copy_button:+++quarkus.smallrye-openapi."documents".servers+++[]<br><br>Specify the list of servers that provide connectivity information<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_SERVERS+++[] | list of string |  |
-| <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-enable"></a> <mark>link:#quarkus-smallrye-openapi_quarkus-smallrye-openapi-enable\[`quarkus.smallrye-openapi.enable`\]</mark> config_property_copy_button:+++quarkus.smallrye-openapi.enable+++[]<br><br>*This property is deprecated since `3.26`: use `quarkus.smallrye-openapi.enabled` instead.*<br><br>Enable the openapi endpoint. By default it's enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_ENABLE+++[] | boolean |  |
-| [lock] <a id="quarkus-smallrye-openapi_quarkus-smallrye-openapi-always-run-filter"></a> <mark>link:#quarkus-smallrye-openapi_quarkus-smallrye-openapi-always-run-filter\[`quarkus.smallrye-openapi.always-run-filter`\]</mark> config_property_copy_button:+++quarkus.smallrye-openapi.always-run-filter+++[]<br><br>`quarkus.smallrye-openapi."document-name".always-run-filter` config_property_copy_button:+++quarkus.smallrye-openapi."document-name".always-run-filter+++[]<br><br>*This property is deprecated since `3.34`: Use `@OpenApiFilter(stages = RunStage.RUNTIME_PER_REQUEST)` instead to mark individual filters as per-request. This makes the OpenAPI document dynamic automatically without requiring this configuration property.*<br><br>Do not run the filter only at startup, but every time the document is requested (dynamic).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_OPENAPI_ALWAYS_RUN_FILTER+++[] | boolean | `false` |
 
 ### Swagger UI
 
@@ -871,4 +881,3 @@ MicroProfile OpenAPI Core configuration is defined in [MicroProfile OpenAPI Spec
 | [lock] <a id="quarkus-swagger-ui_quarkus-swagger-ui-query-config-enabled"></a> [`quarkus.swagger-ui.query-config-enabled`](#quarkus-swagger-ui_quarkus-swagger-ui-query-config-enabled) config_property_copy_button:+++quarkus.swagger-ui.query-config-enabled+++[]<br><br>If set to true, this allows the user to modify and test different query parameters in the API request<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SWAGGER_UI_QUERY_CONFIG_ENABLED+++[] | boolean | `false` |
 | [lock] <a id="quarkus-swagger-ui_quarkus-swagger-ui-try-it-out-enabled"></a> [`quarkus.swagger-ui.try-it-out-enabled`](#quarkus-swagger-ui_quarkus-swagger-ui-try-it-out-enabled) config_property_copy_button:+++quarkus.swagger-ui.try-it-out-enabled+++[]<br><br>If try it out should be enabled by default<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SWAGGER_UI_TRY_IT_OUT_ENABLED+++[] | boolean | `false` |
 | <a id="quarkus-swagger-ui_quarkus-swagger-ui-enabled"></a> [`quarkus.swagger-ui.enabled`](#quarkus-swagger-ui_quarkus-swagger-ui-enabled) config_property_copy_button:+++quarkus.swagger-ui.enabled+++[]<br><br>If Swagger UI is included, it should be enabled/disabled. By default, Swagger UI is enabled if it is included (see `always-include`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SWAGGER_UI_ENABLED+++[] | boolean | `true` |
-| <a id="quarkus-swagger-ui_quarkus-swagger-ui-enable"></a> <mark>link:#quarkus-swagger-ui_quarkus-swagger-ui-enable\[`quarkus.swagger-ui.enable`\]</mark> config_property_copy_button:+++quarkus.swagger-ui.enable+++[]<br><br>*This property is deprecated since `3.26`: use `quarkus.swagger-ui.enabled` instead.*<br><br>If Swagger UI is included, it should be enabled/disabled. By default, Swagger UI is enabled if it is included (see `always-include`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SWAGGER_UI_ENABLE+++[] | boolean |  |

@@ -16,7 +16,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -55,7 +55,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-json-quickstart \
     -Dextensions='rest-jackson' \
@@ -107,7 +107,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-json-quickstart \
     -Dextensions='rest-jsonb' \
@@ -249,47 +249,53 @@ Furthermore, the `ObjectMapper` is configured to format dates and time in ISO-86
 
 The default behaviour of Jackson can be restored by setting `quarkus.jackson.write-dates-as-timestamps=true` in your `application.properties`. If you want to change the format for a single field, you can use the `@JsonFormat` annotation.
 
-Also, Quarkus makes it very easy to configure various Jackson settings via CDI beans. The simplest (and suggested) approach is to define a CDI bean of type `io.quarkus.jackson.ObjectMapperCustomizer` inside of which any Jackson configuration can be applied.
+Also, Quarkus makes it very easy to configure various Jackson settings via CDI beans. The simplest (and suggested) approach is to define a CDI bean of type `io.quarkus.jackson.JsonMapperBuilderCustomizer` inside of which any Jackson configuration can be applied.
 
 An example where a custom module needs to be registered would look like so:
 
 ```java
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import jakarta.inject.Singleton;
+import tools.jackson.databind.json.JsonMapper;
 
 @Singleton
-public class RegisterCustomModuleCustomizer implements ObjectMapperCustomizer {
+public class RegisterCustomModuleCustomizer implements JsonMapperBuilderCustomizer {
 
-    public void customize(ObjectMapper mapper) {
-        mapper.registerModule(new CustomModule());
+    public void customize(JsonMapper.Builder builder) {
+        builder.addModule(new CustomModule());
     }
 }
 ```
 
-Users can even provide their own `ObjectMapper` bean if they so choose. If this is done, it is very important to manually inject and apply all `io.quarkus.jackson.ObjectMapperCustomizer` beans in the CDI producer that produces `ObjectMapper`. Failure to do so will prevent Jackson specific customizations provided by various extensions from being applied.
+Users can even provide their own `JsonMapper` bean if they so choose. If this is done, it is very important to manually inject and apply all `io.quarkus.jackson.JsonMapperBuilderCustomizer` beans in the CDI producer that produces `JsonMapper`. Failure to do so will prevent Jackson specific customizations provided by various extensions from being applied.
 
 ```java
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.arc.All;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+import io.quarkus.jackson.JsonFactoryBuilderCustomizer;
+import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import java.util.List;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.json.JsonFactoryBuilder;
+import tools.jackson.databind.json.JsonMapper;
 
 public class CustomObjectMapper {
 
-    // Replaces the CDI producer for ObjectMapper built into Quarkus
+    // Replaces the CDI producer for JsonMapper built into Quarkus
     @Singleton
     @Produces
-    ObjectMapper objectMapper(@All List<ObjectMapperCustomizer> customizers) {
-        ObjectMapper mapper = myObjectMapper(); // Custom `ObjectMapper`
+    JsonMapper jsonMapper(@All List<JsonMapperBuilderCustomizer> customizers,
+            @All List<JsonFactoryBuilderCustomizer> factoryCustomizers) {
+        JsonFactoryBuilder factoryBuilder = JsonFactory.builder();
+        factoryCustomizers.stream().sorted().forEach(customizer -> customizer.customize(factoryBuilder));
 
-        // Apply all ObjectMapperCustomizer beans (incl. Quarkus)
-        for (ObjectMapperCustomizer customizer : customizers) {
-            customizer.customize(mapper);
-        }
+        JsonMapper.Builder builder = JsonMapper.builder(factoryBuilder.build());
 
-        return mapper;
+        // Apply all JsonMapperBuilderCustomizer beans (including Quarkus customizers)
+        customizers.stream().sorted().forEach(customizer -> customizer.customize(builder));
+
+        return builder.build();
     }
 }
 ```

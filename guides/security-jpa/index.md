@@ -62,7 +62,7 @@ public class User extends PanacheEntity {
      * @param password the unencrypted password (it is encrypted with bcrypt)
      * @param role the comma-separated roles
      */
-    public static void add(String username, String password, String role) { <6>
+    public static void add(String username, char[] password, String role) { <6>
         User user = new User();
         user.username = username;
         user.password = BcryptUtil.bcryptHash(password);
@@ -183,7 +183,7 @@ public class CustomPasswordProvider implements PasswordProvider {
 ```
 
 > [!TIP]
-> To quickly create a hashed password, use `String BcryptUtil.bcryptHash(String password)`, which defaults to creating a random salt and hashing in ten iterations. This method also allows specifying the number of iterations and salt used.
+> To quickly create a hashed password, use `String BcryptUtil.bcryptHash(char[] password)`, which defaults to creating a random salt and hashing in ten iterations. This method also allows specifying the number of iterations and salt used.
 
 > [!WARNING]
 > For applications running in a production environment, do not store passwords as plain text.

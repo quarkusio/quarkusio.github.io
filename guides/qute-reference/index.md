@@ -1581,7 +1581,7 @@ public record UserData(UserInfo info, @LoggedIn String username) { <3>
 }
 ```
 
-1. If no name is explicitly specified by the `value` member the [default name is assigned](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1#default_name) - the simple name of the bean class, after converting the first character to lower case. In this particular case, the default name is `userData`.
+1. If no name is explicitly specified by the `value` member the [default name is assigned](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#default_name) - the simple name of the bean class, after converting the first character to lower case. In this particular case, the default name is `userData`.
 2. The `@Singleton` scope is added automatically.
 3. All parameters of the canonical constructor are injection points. The accessor methods can be used to obtain the injected bean.
 
@@ -1826,6 +1826,32 @@ public class HelloResource {
 > ```
 >
 > The `@JvmRecord` annotation instructs the Kotlin compiler to generate a Java record in the bytecode, which Quarkus then recognizes as a type-safe template. Note that `@JvmRecord` requires Kotlin 1.5+ and JVM target 16+.
+
+#### Explicit Parameter Naming with `@CheckedTemplateParam`
+
+By default, parameter names for type-safe templates are obtained from the method or record component parameter metadata, which requires the Java compiler to be configured with the `-parameters` flag. The `@io.quarkus.qute.CheckedTemplateParam` annotation allows you to explicitly specify parameter names without requiring the `-parameters` flag, and enables using different names in templates versus Java code.
+
+```java
+@CheckedTemplate
+public class Templates {
+    public static native TemplateInstance hello(@CheckedTemplateParam("name") String userName); <1>
+}
+```
+
+1. The template will use the parameter name `name`, while the Java method parameter is `userName`.
+
+The annotation also works with template records:
+
+```java
+record Greeting(@CheckedTemplateParam("name") String userName,
+                @CheckedTemplateParam("age") int userAge) implements TemplateInstance {} <1>
+```
+
+1. The template will use parameter names `name` and `age`, while the record components are `userName` and `userAge`.
+
+The `@CheckedTemplateParam` annotation value must be a valid Java identifier. This requirement ensures that parameter names can be used in template expressions without ambiguity.
+
+For example, parameter names like `user-name`, `my.param`, or `1test` are invalid and will result in a build-time error.
 
 #### Customized Template Path
 
@@ -2866,6 +2892,32 @@ public class MyBean {
 ```
 
 1. The annotation value is a locale tag string (IETF).
+
+##### Locale Aware Message Bundles
+
+An injected message bundle interface is by default bound to the default locale. If you need the localized variant to be selected dynamically based on the current locale, e.g. the locale negotiated from the `Accept-Language` header of the current HTTP request, then use the `@LocaleAware` qualifier instead.
+
+**Injected Current-Locale-Aware Message Bundle Example**
+
+```java
+import io.quarkus.qute.i18n.LocaleAware;
+
+@Singleton
+public class MyBean {
+
+    @LocaleAware <1>
+    AppMessages msg;
+
+    String render() {
+       return msg.hello_name("Jachym"); <2>
+    }
+}
+```
+
+1. Each message method invocation selects the appropriate localized variant based on the current locale.
+2. If the current locale is not available, or no matching localized variant exists, then the default locale is used as a fallback.
+
+The current locale is obtained from a `io.quarkus.qute.i18n.CurrentLocaleProvider` bean. If the `quarkus-vertx-http` extension is present (e.g. when using `quarkus-rest-qute`) then a default provider that resolves the locale from the `Accept-Language` header of the current HTTP request is used. You can supply a custom provider by declaring a CDI bean that implements `CurrentLocaleProvider`; it takes precedence over the default one.
 
 ##### Enums
 

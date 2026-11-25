@@ -2,15 +2,6 @@
 
 This extension provides support for both Micrometer and OpenTelemetry in Quarkus applications. It streamlines integration by incorporating both extensions along with a bridge that enables sending Micrometer metrics via OpenTelemetry.
 
-<a id="extension-status-note"></a>
-
-> [!NOTE]
-> This technology is considered preview.
->
-> In *preview*, backward compatibility and presence in the ecosystem is not guaranteed. Specific improvements might require changing configuration or APIs, and plans to become *stable* are under way. Feedback is welcome on our [mailing list](https://groups.google.com/d/forum/quarkus-dev) or as issues in our [GitHub issue tracker](https://github.com/quarkusio/quarkus/issues).
->
-> For a full list of possible statuses, check our [FAQ entry](https://quarkus.io/faq/#what-are-the-extension-statuses).
-
 This document is part of the [Observability in Quarkus reference guide](/guides/observability/index.md) which features this and other observability related components.
 
 > [!NOTE]
@@ -34,6 +25,9 @@ public String timer() {
 The output telemetry data is handled by the OpenTelemetry SDK and sent by the `quarkus-opentelemetry` extension exporter using the OTLP protocol.
 
 This reduces the overhead of having an independent Micrometer registry plus the OpenTelemetry SDK in memory for the same application when both `quarkus-micrometer` and `quarkus-opentelemetry` extensions are used independently.
+
+> [!NOTE]
+> Using a Micrometer registry (such as `quarkus-micrometer-registry-prometheus`) together with OpenTelemetry metrics collects the same measurements twice. Quarkus logs a build-time warning in that case. See [Avoiding redundant metrics collection](/guides/opentelemetry-metrics/index.md#redundant-metrics-warning) for the available options, including this extension.
 
 **The OpenTelemetry SDK will handle all metrics.** Either Micrometer metrics (manual or automatic) and OpenTelemetry Metrics can be used. All are available with this single extension.
 
@@ -139,7 +133,7 @@ A link to the equivalent OpenTelemetry Semantic Convention is also provided for 
 
 **Micrometer metrics output comparison. Prometheus registry vs. OpenTelemetry bridge**
 
-| Micrometer Meter Java definition | Quarkus Micrometer Prometheus output (as seen at `/q/metrics/`) | This bridge OpenTelemetry output name (as seen in the OTLP output) | Related OpenTelemetry Semantic Convention (not applied) |
+| Micrometer Meter Java definition | Quarkus Micrometer Prometheus client v0.x output (as seen at `/q/metrics/`) | This bridge OpenTelemetry output name (as seen in the OTLP output) | Related OpenTelemetry Semantic Convention (not applied) |
 | --- | --- | --- | --- |
 | Using the [@Timed](/guides/telemetry-micrometer/index.md#create-a-timer) interceptor. |  | method.timed ([Histogram](/guides/opentelemetry-metrics/index.md#histograms)), method.timed.max ([DoubleGauge](/guides/opentelemetry-metrics/index.md#gauges)) | NA |
 | Using the [@Counted](/guides/telemetry-micrometer/index.md#counters) interceptor. |  | method.counted ([DoubleSum](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#sum-aggregation)) | NA |
@@ -158,6 +152,10 @@ A link to the equivalent OpenTelemetry Semantic Convention is also provided for 
 > Some metrics might be missing from the output if they contain no data.
 
 ## See the output
+
+### Metrics in the Dev UI
+
+In dev mode, the Observability **Metrics** view in the Dev UI charts your live metrics. With the bridge active, Micrometer meters forwarded into the OpenTelemetry SDK, as well as native OpenTelemetry metrics, are captured once (from OpenTelemetry) — so there are no duplicate series. See [Metrics in the Dev UI](/guides/telemetry-micrometer/index.md#dev-ui-metrics) for details.
 
 ### Grafana-OTel-LGTM Dev Service
 

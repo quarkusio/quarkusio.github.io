@@ -10,6 +10,9 @@ This document is part of the [Observability in Quarkus reference guide](/guides/
 > [!NOTE]
 > By default, the metrics are exposed on the main HTTP server. If you would like to surface metrics from a separate management port, see the [Managed interface](#management-interface) section.
 
+> [!NOTE]
+> `quarkus-micrometer` now uses the Prometheus client v1.x. For help migrating from the old client, please check the [Prometheus Java client 0.x to 1.x upgrade](https://github.com/micrometer-metrics/micrometer/wiki/1.13-Migration-Guide)  from Micrometer.
+
 ## Micrometer and monitoring system extensions
 
 Quarkus Micrometer extensions are structured in the same way as the Micrometer project. The `quarkus-micrometer` extension provides core Micrometer support and runtime integration. Other Quarkus and Quarkiverse extensions use the Quarkus Micrometer extension to provide support for other monitoring systems.
@@ -17,7 +20,7 @@ Quarkus Micrometer extensions are structured in the same way as the Micrometer p
 Quarkus extensions:
 
 - micrometer
-- micrometer-registry-prometheus
+- micrometer-registry-prometheus (Prometheus client v1.x)
 - micrometer-opentelemetry
 
 [Quarkiverse extensions](https://github.com/quarkiverse/quarkus-micrometer-registry) (may be incomplete):
@@ -220,7 +223,7 @@ Meter names should use dots to separate segments, `a.name.like.this`. Micrometer
 
 Given the following declaration of a timer: `registry.timer("http.server.requests")`, applied naming conventions will emit the following metrics for different monitoring systems:
 
-- Prometheus: `http_server_requests_duration_seconds`
+- Prometheus: `http_server_requests_seconds`
 - Atlas: `httpServerRequests`
 - Graphite: `http.server.requests`
 - InfluxDB: `http_server_requests`
@@ -554,13 +557,38 @@ Netty uses two primary memory categories:
 
 #### Pooling Mechanism
 
-Netty uses **PooledByteBufAllocator** to reduce memory allocation overhead and fragmentation. It is based on a **jemalloc-style arena system** (see [jemalloc/jemalloc](https://github.com/jemalloc/jemalloc)), which includes:
+Since Netty 4.2, the default allocator is **AdaptiveByteBufAllocator**, which uses an adaptive pooling strategy with dynamically sized chunks (128 KiB to 8 MiB). The pooled allocator metrics described below come from Netty's **PooledByteBufAllocator**, which is only active when explicitly configured (e.g., via `io.netty.allocator.type=pooled`). When pooled allocation is used, it is based on a **jemalloc-style arena system** (see [jemalloc/jemalloc](https://github.com/jemalloc/jemalloc)), which includes:
 
 - **Arenas**: Large memory blocks that manage allocations.
-- **Chunks**: Memory segments within arenas (typically 16MB in size).
-- **Pages**: Fixed-size portions of a chunk (usually 8KB).
+- **Chunks**: Memory segments within arenas (64 KiB with Quarkus's default `maxOrder=3`).
+- **Pages**: Fixed-size portions of a chunk (8 KiB).
 - **Subpages**: Smaller allocations within a page for tiny objects.
 - **Thread-local Caches**: Per-thread cache for frequently used small buffers, reducing contention.
+
+#### Tracked Allocators
+
+Each allocator is reported once, identified by the `name` tag. The `allocator_type` tag reports its implementation class (e.g. `AdaptiveByteBufAllocator`), which depends on the `io.netty.allocator.type` system property.
+
+When Vert.x is present, which is the case for most Quarkus applications:
+
+| Name | Allocator |
+| --- | --- |
+| `vertx-pooled` | The allocator Vert.x uses for pooled buffers. This is Netty's default allocator (`ByteBufAllocator.DEFAULT`): an `AdaptiveByteBufAllocator`, or a `PooledByteBufAllocator` with `io.netty.allocator.type=pooled`. With `io.netty.allocator.type=unpooled`, Vert.x uses a dedicated `AdaptiveByteBufAllocator` instead. |
+| `vertx-unpooled` | Netty's shared `UnpooledByteBufAllocator` (`UnpooledByteBufAllocator.DEFAULT`), also used by Vert.x for direct buffers. With `io.netty.allocator.type=unpooled`, this is also Netty's default allocator. |
+
+When Vert.x is not present:
+
+| Name | Allocator |
+| --- | --- |
+| `default` | Netty's default allocator (`ByteBufAllocator.DEFAULT`): an `AdaptiveByteBufAllocator`, unless `io.netty.allocator.type` selects another one. |
+| `unpooled` | Netty's shared `UnpooledByteBufAllocator` (`UnpooledByteBufAllocator.DEFAULT`). Not reported separately with `io.netty.allocator.type=unpooled`, as it is then the `default` allocator. |
+
+In both cases, the allocator used by the REST Client for multipart form uploads is reported as `quarkus-multipart-form-upload`.
+
+Allocators that libraries create for their own use are not tracked, nor are the heap buffers created by Vert.x (e.g. with `Buffer.buffer()`), which are regular JVM heap objects.
+
+> [!NOTE]
+> Previous versions also reported allocators named `pooled` and `unpooled` when Vert.x was present. They were removed, as `pooled` tracked `PooledByteBufAllocator.DEFAULT`, which is not used by default since Netty 4.2, and `unpooled` tracked the same allocator as `vertx-unpooled`, so its memory was reported twice.
 
 #### Metrics for Netty Memory Management
 
@@ -574,7 +602,11 @@ These metrics track the current memory usage by Netty allocators (in bytes)
 | --- | --- | --- | --- |
 | `allocator.memory.used` | Amount of memory currently used by the allocator | Gauge | `memory_type=[heap, direct]`, `name=allocator-name` |
 
+For pooling allocators (`AdaptiveByteBufAllocator` and `PooledByteBufAllocator`), this is the memory reserved in chunks, including the free space within them, rather than the size of the buffers currently in use: it grows in chunk-sized steps, and only decreases when a whole chunk is freed, not when individual buffers are released. For `UnpooledByteBufAllocator`, this is the size of the buffers currently allocated.
+
 ##### **2. Pooled  Allocator - Pinned Memory Metrics**
+
+This metric and the following ones are only reported for allocators of type `PooledByteBufAllocator`, so with Netty's defaults they are absent unless `io.netty.allocator.type=pooled` is set.
 
 Pinned memory refers to buffers that cannot be recycled due to active references, preventing reuse by the allocator. A *high* number may indicate some kind of leak (as reference are not released).
 
@@ -644,6 +676,7 @@ java -Dio.netty.leakDetection.level=advanced ...
 - [`quarkus-hibernate-orm`](https://quarkus.io/guides/hibernate-orm)
 - [`quarkus-jaxrs-client-reactive`](https://quarkus.io/extensions/io.quarkus/quarkus-jaxrs-client-reactive)
 - [`quarkus-kubernetes`](https://quarkus.io/guides/deploying-to-kubernetes)
+- [`quarkus-load-shedding`](https://quarkus.io/guides/load-shedding-reference)
 - [`jboss-logging`](https://quarkus.io/guides/logging) (logging API in Quarkus)
 - [`quarkus-mongodb-client`](https://quarkus.io/guides/mongodb)
 - [`quarkus-netty`](https://quarkus.io/extensions/io.quarkus/quarkus-netty)
@@ -652,6 +685,7 @@ java -Dio.netty.leakDetection.level=advanced ...
 - [`quarkus-resteasy-jackson`](https://quarkus.io/guides/resteasy)
 - [`quarkus-resteasy-client`](https://quarkus.io/guides/resteasy-client)
 - [`quarkus-scheduler`](https://quarkus.io/guides/scheduler)
+- [`quarkus-signals`](https://quarkus.io/guides/signals)
 - [`quarkus-smallrye-graphql`](https://quarkus.io/guides/smallrye-graphql)
 - [`quarkus-messaging`](https://quarkus.io/extensions/io.quarkus/quarkus-messaging)
 - 
@@ -709,7 +743,6 @@ public class CustomConfiguration {
                 if(id.getName().startsWith("myservice")) {
                     return DistributionStatisticConfig.builder()
                         .percentiles(0.5, 0.95)     // median and 95th percentile, not aggregable
-                        .percentilesHistogram(true) // histogram buckets (e.g. prometheus histogram_quantile)
                         .build()
                         .merge(config);
                 }
@@ -815,6 +848,39 @@ With such a configuration, the JSON metrics will be available from `http://0.0.0
 
 Refer to the [management interface reference](/guides/management-interface-reference/index.md) for more information.
 
+<a id="dev-ui-metrics"></a>
+## Metrics in the Dev UI
+
+In dev mode, when a metrics backend is present, your application metrics become available as cards on the Dev UI **Observability** dashboard. Each card charts one metric name and carries a reading of its latest value in the header. Pick which metrics to add from the grouped catalog the first time you open the dashboard, and change your mind later with **Edit dashboard**; only the metrics on the dashboard are captured, to save resources. Drag a card by its header to arrange the dashboard in whatever order suits you, and use the expand icon in a card's header to give that one metric the whole dashboard area when a chart needs more room than a tile allows; press **Escape** to go back. A maximized metric card also offers a **Data** tab, listing the captured samples as they were recorded, before the card derives a rate or a mean from them and before a histogram's buckets are merged to fit the chart. Your choice of cards and their order is kept in browser local storage and is shared by every application you run.
+
+How a card is drawn depends on what the meter measures:
+
+**Counters**\
+A per-second rate, because the raw value only ever climbs. One line per tag combination.
+
+**Gauges**\
+A dial showing the current reading, with the history beside it. Where the dial's full scale comes from is stated in the caption: a gauge that is already a ratio reads out of 100%; one whose ceiling is published as a separate meter, such as `jvm.memory.used` against `jvm.memory.max`, is scaled to that meter, which the dashboard captures alongside it; anything else is scaled to the highest reading in the retention window. A gauge split across several tag combinations keeps a plain line chart, since a dial can only show one reading. A gauge that moves in whole steps, such as a long task timer's active task count, is drawn as a staircase rather than a sloped line.
+
+**Timers and distribution summaries**\
+The mean and the maximum per sample interval, derived from the recorded total and count rather than from the recording count alone. Durations are labeled in the unit that fits (µs, ms, s, min) and sizes in binary units (KiB, MiB).
+
+**Histograms**\
+A bar per bucket, showing how the recordings were spread. Buckets accumulate from the moment capture starts, empty buckets at either end are dropped, and neighboring buckets are merged when a meter publishes more of them than a card can label. Published percentiles, if the meter has any, are summarized above the bars.
+
+The charts are available automatically whenever a metrics backend and the Dev UI are present; they are dev-mode only and add nothing to production or native builds. You can tune the capture with:
+
+```properties
+quarkus.dev-ui.observability.metrics.sample-interval=5s <1>
+quarkus.dev-ui.observability.metrics.retention=10m <2>
+quarkus.dev-ui.observability.metrics.max-points-per-series=720 <3>
+```
+
+1. How often meters are sampled.
+2. Rolling time window kept per series.
+3. Hard cap on points retained per series.
+
+These charts work with the Prometheus registry, the Micrometer OpenTelemetry bridge, and native OpenTelemetry metrics. When the bridge forwards Micrometer meters into the OpenTelemetry SDK, the metrics are captured once (from OpenTelemetry), avoiding duplicates.
+
 ## Configuration Reference
 
 [lock] Configuration property fixed at build time - All other configuration properties are overridable at runtime
@@ -833,7 +899,15 @@ Refer to the [management interface reference](/guides/management-interface-refer
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-redis-enabled"></a> [`quarkus.micrometer.binder.redis.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-redis-enabled) config_property_copy_button:+++quarkus.micrometer.binder.redis.enabled+++[]<br><br>Redis client metrics support.<br><br>Support for Redis metrics will be enabled if Micrometer support is enabled, the Quarkus Redis client extension is on the classpath and either this value is true, or this value is unset and `quarkus.micrometer.binder-enabled-default` is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_REDIS_ENABLED+++[] | boolean |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-stork-enabled"></a> [`quarkus.micrometer.binder.stork.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-stork-enabled) config_property_copy_button:+++quarkus.micrometer.binder.stork.enabled+++[]<br><br>Stork metrics support.<br><br>Support for Stork metrics will be enabled if Micrometer support is enabled, the Quarkus Stork extension is on the classpath and either this value is true, or this value is unset and `quarkus.micrometer.binder-enabled-default` is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_STORK_ENABLED+++[] | boolean |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-server-enabled"></a> [`quarkus.micrometer.binder.grpc-server.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-server-enabled) config_property_copy_button:+++quarkus.micrometer.binder.grpc-server.enabled+++[]<br><br>gRPC Server metrics support.<br><br>Support for gRPC server metrics will be enabled if Micrometer support is enabled, the gRPC server interfaces are on the classpath and either this value is true, or this value is unset and `quarkus.micrometer.binder-enabled-default` is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_SERVER_ENABLED+++[] | boolean |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-server-histogram"></a> [`quarkus.micrometer.binder.grpc-server.histogram`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-server-histogram) config_property_copy_button:+++quarkus.micrometer.binder.grpc-server.histogram+++[]<br><br>Whether to publish histogram buckets for gRPC server processing duration timers.<br><br>Disabled by default because histograms increase memory usage and metric cardinality. When enabled, Micrometer's default percentile histogram buckets are published (suitable for `histogram_quantile` in Prometheus). Optional SLO boundaries can be added via `slos()`, and the published bucket range can be clamped via `minimum-expected-value()` / `maximum-expected-value()`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_SERVER_HISTOGRAM+++[] | boolean | `false` |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-server-slos"></a> [`quarkus.micrometer.binder.grpc-server.slos`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-server-slos) config_property_copy_button:+++quarkus.micrometer.binder.grpc-server.slos+++[]<br><br>Optional service level objective (bucket) boundaries for the processing duration histogram.<br><br>Only applied when `histogram()` is `true`. When unset, Micrometer's default percentile histogram buckets are used. When set, these SLO boundaries are added to that histogram.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_SERVER_SLOS+++[] | list of [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-server-minimum-expected-value"></a> [`quarkus.micrometer.binder.grpc-server.minimum-expected-value`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-server-minimum-expected-value) config_property_copy_button:+++quarkus.micrometer.binder.grpc-server.minimum-expected-value+++[]<br><br>Minimum expected duration observed by the processing duration timer.<br><br>Only applied when `histogram()` is `true`. Sets a lower bound on which Micrometer percentile-histogram buckets are published. When unset, Micrometer's timer default (`1ms`) is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_SERVER_MINIMUM_EXPECTED_VALUE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-micrometer_quarkus-micrometer) |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-server-maximum-expected-value"></a> [`quarkus.micrometer.binder.grpc-server.maximum-expected-value`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-server-maximum-expected-value) config_property_copy_button:+++quarkus.micrometer.binder.grpc-server.maximum-expected-value+++[]<br><br>Maximum expected duration observed by the processing duration timer.<br><br>Only applied when `histogram()` is `true`. Sets an upper bound on which Micrometer percentile-histogram buckets are published. Narrowing this value reduces metric cardinality. When unset, Micrometer's timer default (`30s`) is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_SERVER_MAXIMUM_EXPECTED_VALUE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-micrometer_quarkus-micrometer) |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-client-enabled"></a> [`quarkus.micrometer.binder.grpc-client.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-client-enabled) config_property_copy_button:+++quarkus.micrometer.binder.grpc-client.enabled+++[]<br><br>gRPC Client metrics support.<br><br>Support for gRPC client metrics will be enabled if Micrometer support is enabled, the gRPC client interfaces are on the classpath and either this value is true, or this value is unset and `quarkus.micrometer.binder-enabled-default` is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_CLIENT_ENABLED+++[] | boolean |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-client-histogram"></a> [`quarkus.micrometer.binder.grpc-client.histogram`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-client-histogram) config_property_copy_button:+++quarkus.micrometer.binder.grpc-client.histogram+++[]<br><br>Whether to publish histogram buckets for gRPC client processing duration timers.<br><br>Disabled by default because histograms increase memory usage and metric cardinality. When enabled, Micrometer's default percentile histogram buckets are published (suitable for `histogram_quantile` in Prometheus). Optional SLO boundaries can be added via `slos()`, and the published bucket range can be clamped via `minimum-expected-value()` / `maximum-expected-value()`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_CLIENT_HISTOGRAM+++[] | boolean | `false` |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-client-slos"></a> [`quarkus.micrometer.binder.grpc-client.slos`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-client-slos) config_property_copy_button:+++quarkus.micrometer.binder.grpc-client.slos+++[]<br><br>Optional service level objective (bucket) boundaries for the processing duration histogram.<br><br>Only applied when `histogram()` is `true`. When unset, Micrometer's default percentile histogram buckets are used. When set, these SLO boundaries are added to that histogram.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_CLIENT_SLOS+++[] | list of [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-client-minimum-expected-value"></a> [`quarkus.micrometer.binder.grpc-client.minimum-expected-value`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-client-minimum-expected-value) config_property_copy_button:+++quarkus.micrometer.binder.grpc-client.minimum-expected-value+++[]<br><br>Minimum expected duration observed by the processing duration timer.<br><br>Only applied when `histogram()` is `true`. Sets a lower bound on which Micrometer percentile-histogram buckets are published. When unset, Micrometer's timer default (`1ms`) is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_CLIENT_MINIMUM_EXPECTED_VALUE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-micrometer_quarkus-micrometer) |  |
+| [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-grpc-client-maximum-expected-value"></a> [`quarkus.micrometer.binder.grpc-client.maximum-expected-value`](#quarkus-micrometer_quarkus-micrometer-binder-grpc-client-maximum-expected-value) config_property_copy_button:+++quarkus.micrometer.binder.grpc-client.maximum-expected-value+++[]<br><br>Maximum expected duration observed by the processing duration timer.<br><br>Only applied when `histogram()` is `true`. Sets an upper bound on which Micrometer percentile-histogram buckets are published. Narrowing this value reduces metric cardinality. When unset, Micrometer's timer default (`30s`) is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_GRPC_CLIENT_MAXIMUM_EXPECTED_VALUE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-micrometer_quarkus-micrometer) |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-messaging-enabled"></a> [`quarkus.micrometer.binder.messaging.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-messaging-enabled) config_property_copy_button:+++quarkus.micrometer.binder.messaging.enabled+++[]<br><br>Kafka metrics support.<br><br>Support for Reactive Messaging metrics will be enabled if Micrometer support is enabled, MessageObservationCollector interface is on the classpath and either this value is true, or this value is unset and `quarkus.micrometer.binder-enabled-default` is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_MESSAGING_ENABLED+++[] | boolean |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-virtual-threads-enabled"></a> [`quarkus.micrometer.binder.virtual-threads.enabled`](#quarkus-micrometer_quarkus-micrometer-binder-virtual-threads-enabled) config_property_copy_button:+++quarkus.micrometer.binder.virtual-threads.enabled+++[]<br><br>Virtual Threads metrics support.<br><br>Support for virtual threads metrics will be enabled if Micrometer support is enabled, this value is set to `true` (default), the JVM supports virtual threads (Java 21{plus}) and the `quarkus.micrometer.binder-enabled-default` property is true.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_VIRTUAL_THREADS_ENABLED+++[] | boolean |  |
 | [lock] <a id="quarkus-micrometer_quarkus-micrometer-binder-virtual-threads-tags"></a> [`quarkus.micrometer.binder.virtual-threads.tags`](#quarkus-micrometer_quarkus-micrometer-binder-virtual-threads-tags) config_property_copy_button:+++quarkus.micrometer.binder.virtual-threads.tags+++[]<br><br>The tags to be added to the metrics. Empty by default. When set, tags are passed as: `key1=value1,key2=value2`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_VIRTUAL_THREADS_TAGS+++[] | list of string |  |
@@ -857,9 +931,7 @@ Refer to the [management interface reference](/guides/management-interface-refer
 | <a id="quarkus-micrometer_quarkus-micrometer-binder-http-server-suppress-non-application-uris"></a> [`quarkus.micrometer.binder.http-server.suppress-non-application-uris`](#quarkus-micrometer_quarkus-micrometer-binder-http-server-suppress-non-application-uris) config_property_copy_button:+++quarkus.micrometer.binder.http-server.suppress-non-application-uris+++[]<br><br>Suppress non-application uris from metrics collection. This will suppress all metrics for non-application endpoints using `${quarkus.http.root-path}/${quarkus.http.non-application-root-path}`.<br><br>Suppressing non-application uris is enabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_HTTP_SERVER_SUPPRESS_NON_APPLICATION_URIS+++[] | boolean | `true` |
 | <a id="quarkus-micrometer_quarkus-micrometer-binder-http-server-suppress4xx-errors"></a> [`quarkus.micrometer.binder.http-server.suppress4xx-errors`](#quarkus-micrometer_quarkus-micrometer-binder-http-server-suppress4xx-errors) config_property_copy_button:+++quarkus.micrometer.binder.http-server.suppress4xx-errors+++[]<br><br>Suppress 4xx errors from metrics collection for unmatched templates. This configuration exists to limit cardinality explosion from caller side error. Does not apply to 404 errors.<br><br>Suppressing 4xx errors is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_HTTP_SERVER_SUPPRESS4XX_ERRORS+++[] | boolean | `false` |
 | <a id="quarkus-micrometer_quarkus-micrometer-binder-http-server-max-uri-tags"></a> [`quarkus.micrometer.binder.http-server.max-uri-tags`](#quarkus-micrometer_quarkus-micrometer-binder-http-server-max-uri-tags) config_property_copy_button:+++quarkus.micrometer.binder.http-server.max-uri-tags+++[]<br><br>Maximum number of unique URI tag values allowed. After the max number of tag values is reached, metrics with additional tag values are denied by filter.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_HTTP_SERVER_MAX_URI_TAGS+++[] | int | `100` |
-| <a id="quarkus-micrometer_quarkus-micrometer-export-prometheus-configuration-property-name"></a> [`quarkus.micrometer.export.prometheus."configuration-property-name"`](#quarkus-micrometer_quarkus-micrometer-export-prometheus-configuration-property-name) config_property_copy_button:+++quarkus.micrometer.export.prometheus."configuration-property-name"+++[]<br><br>Prometheus registry configuration properties.<br><br>A property source for configuration of the Prometheus MeterRegistry, see <https://micrometer.io/docs/registry/prometheus>.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_EXPORT_PROMETHEUS__CONFIGURATION_PROPERTY_NAME_+++[] | Map\<String,String> |  |
-| <a id="quarkus-micrometer_quarkus-micrometer-binder-vertx-match-patterns"></a> <mark>link:#quarkus-micrometer_quarkus-micrometer-binder-vertx-match-patterns\[`quarkus.micrometer.binder.vertx.match-patterns`\]</mark> config_property_copy_button:+++quarkus.micrometer.binder.vertx.match-patterns+++[]<br><br>*This property is deprecated: use `quarkus.micrometer.binder.http-server.match-patterns`.*<br><br>Comma-separated list of regular expressions used to specify uri labels in http metrics.<br><br>Vertx instrumentation will attempt to transform parameterized resource paths, `/item/123`, into a generic form, `/item/telemetry-micrometer`, to reduce the cardinality of uri label values.<br><br>Patterns specified here will take precedence over those computed values.<br><br>For example, if `/item/\\\\d+=/item/custom` or `/item/[0-9]+=/item/custom` is specified in this list, a request to a matching path (`/item/123`) will use the specified replacement value (`/item/custom`) as the value for the uri label. Note that backslashes must be double escaped as `\\\\`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_VERTX_MATCH_PATTERNS+++[] | list of string |  |
-| <a id="quarkus-micrometer_quarkus-micrometer-binder-vertx-ignore-patterns"></a> <mark>link:#quarkus-micrometer_quarkus-micrometer-binder-vertx-ignore-patterns\[`quarkus.micrometer.binder.vertx.ignore-patterns`\]</mark> config_property_copy_button:+++quarkus.micrometer.binder.vertx.ignore-patterns+++[]<br><br>*This property is deprecated: use `quarkus.micrometer.binder.http-server.ignore-patterns`.*<br><br>Comma-separated list of regular expressions defining uri paths that should be ignored (not measured).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_BINDER_VERTX_IGNORE_PATTERNS+++[] | list of string |  |
+| <a id="quarkus-micrometer_quarkus-micrometer-export-prometheus-configuration-property-name"></a> [`quarkus.micrometer.export.prometheus."configuration-property-name"`](#quarkus-micrometer_quarkus-micrometer-export-prometheus-configuration-property-name) config_property_copy_button:+++quarkus.micrometer.export.prometheus."configuration-property-name"+++[]<br><br>Prometheus registry configuration properties.<br><br>A property source for configuration of the Prometheus MeterRegistry, see <https://docs.micrometer.io/micrometer/reference/implementations/prometheus.html>.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MICROMETER_EXPORT_PROMETHEUS__CONFIGURATION_PROPERTY_NAME_+++[] | Map\<String,String> |  |
 
 <a id="duration-note-anchor-quarkus-micrometer_quarkus-micrometer"></a>
 

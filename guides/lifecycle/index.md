@@ -13,7 +13,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -45,7 +45,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=lifecycle-quickstart \
     -DnoCode
@@ -239,7 +239,7 @@ public class AppLifecycleBean {
 In the JVM mode, there is no real difference, except that `StartupEvent` is always fired **after** `@Initialized(ApplicationScoped.class)` and `ShutdownEvent` is fired **before** `@Destroyed(ApplicationScoped.class)`. For a native executable build, however, `@Initialized(ApplicationScoped.class)` is fired as **part of the native build process**, whereas `StartupEvent` is fired when the native image is executed. See [Three Phases of Bootstrap and Quarkus Philosophy](/guides/writing-extensions/index.md#bootstrap-three-phases) for more details.
 
 > [!NOTE]
-> In CDI applications, an event with qualifier `@Initialized(ApplicationScoped.class)` is fired when the application context is initialized. See [the spec](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#application_context) for more info.
+> In CDI applications, an event with qualifier `@Initialized(ApplicationScoped.class)` is fired when the application context is initialized. See [the spec](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#application_context) for more info.
 
 <a id="startup_annotation"></a>
 ### Using `@Startup` to initialize a CDI bean at application startup
@@ -439,7 +439,7 @@ class ObservingBean2 {
 ```
 
 > [!NOTE]
-> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
 >
 > You can also use a simplified format, starting with a number:
 >

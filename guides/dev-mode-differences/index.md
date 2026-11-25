@@ -41,7 +41,7 @@ In an effort to make development errors very easy to diagnose, Quarkus provides 
 
 ### Database import scripts
 
-The `quarkus-hibernate-orm` extension will run the `import.sql` script in `src/main/resources` when Quarkus is running in dev mode. More details can be found in the [Hibernate ORM guide](/guides/hibernate-orm/index.md#dev-mode).
+The `quarkus-hibernate-orm` extension will run the `data.sql` script in `src/main/resources` to load data when Quarkus is running in dev mode. More details can be found in the [Hibernate ORM guide](/guides/hibernate-orm/index.md#sql-init-scripts).
 
 ### Dev Services
 

@@ -1,4 +1,4 @@
-# Mapping configuration to objects
+# Mapping Configuration to Objects
 
 With config mappings it is possible to group multiple configuration properties in a single interface that share the same prefix.
 
@@ -20,6 +20,15 @@ The `Server` interface is able to map configuration properties with the name `se
 
 > [!NOTE]
 > If a mapping fails to match a configuration property a `NoSuchElementException` is thrown, unless the mapped element is an `Optional`.
+
+### Mapping Rules
+
+A config mapping interface must obey the following rules:
+
+- A mapping method cannot accept parameters
+- A mapping method return type cannot be `void`
+- A mapping cannot use self-reference types
+- `default` methods are allowed
 
 ### Registration
 
@@ -63,8 +72,37 @@ class BusinessBean {
 In non-CDI contexts, use the API `io.smallrye.config.SmallRyeConfig#getConfigMapping` to retrieve the config mapping instance:
 
 ```java
-SmallRyeConfig config = ConfigProvider.getConfig().unwrap(SmallRyeConfig.class);
+Config config = Config.get();
 Server server = config.getConfigMapping(Server.class);
+```
+
+### Hierarchy
+
+A config mapping can extend another mapping and inherit all its super members:
+
+```java
+public interface Parent {
+    String name();
+}
+
+@ConfigMapping(prefix = "child")
+public interface Child extends Parent {
+
+}
+```
+
+Members can also be overridden:
+
+```java
+public interface Parent {
+    String name();
+}
+
+@ConfigMapping(prefix = "child")
+public interface Child extends Parent {
+    @WithName("child-name")
+    String name();
+}
 ```
 
 ### Nested groups
@@ -160,7 +198,7 @@ server.name=konoha
 
 Without the `@WithParentName` the method `name()` requires the configuration property `server.info.name`. Because we use `@WithParentName`, the `info()` mapping will inherit the parent name from `Server` and `name()` maps to `server.name` instead.
 
-#### NamingStrategy
+#### namingStrategy
 
 Method names in camelCase map to kebab-case property names:
 
@@ -203,6 +241,32 @@ The `@ConfigMapping` annotation support the following naming strategies with the
 - `KEBAB_CASE` (default) - The method name is derived by replacing case changes with a dash to map the configuration property, i.e. `theHost` maps to `the-host`.
 - `VERBATIM` - The method name is used as is to map the configuration property, i.e. `theHost` maps to `theHost`.
 - `SNAKE_CASE` - The method name is derived by replacing case changes with an underscore to map the configuration property, i.e. `theHost` maps to `the_host`.
+
+#### `beanStyleGetters`
+
+The `beanStyleGetters` attribute (default `false`) enables matching bean-style getter names (`get`/`is` prefixed) to their property name equivalent. For example, `getHost()` and `isEnabled()` map to the properties `host` and `enabled` respectively:
+
+```java
+@ConfigMapping(prefix = "server", beanStyleGetters = true)
+public interface Server {
+    String getHost();
+
+    int getPort();
+
+    boolean isEnabled();
+}
+```
+
+**application.properties**
+
+```properties
+server.host=localhost
+server.port=8080
+server.enabled=true
+```
+
+> [!WARNING]
+> Bean-style getter matching allows multiple method names to match the same configuration name. For instance, `getFoo` and `isFoo` both match `foo`, which may not be intended. Prefer simple method names that match one-to-one with their configuration names.
 
 ### Conversions
 
@@ -309,6 +373,10 @@ foo=foo
 
 A call to `Converters.foo()` results in the value `bar`.
 
+#### Optionals
+
+A mapping can wrap any complex type with an `Optional`. `Optional` mappings do not require the configuration path and value to be present, so no `NoSuchElementException` is thrown when the configuration property is missing.
+
 #### Collections ====
 
 A config mapping is also able to map collections types `List` and `Set`:
@@ -348,7 +416,7 @@ server.environments[0].apps[1].services=stock,warehouse
 The `List` or `Set` mappings can use [indexed properties](/guides/config-reference/index.md#indexed-properties) to map configuration values in mapping groups. For collection with simple element types like `String`, their configuration value is a comma separated string.
 
 > [!NOTE]
-> Only the `List` mapping can maintain element order. Hence, with `Set` mappings the element order is not maintained from the configuration files but is random.
+> A `List` mapping is backed by an `ArrayList`, and a `Set` mapping is backed by a `HashSet`. Only the `List` mapping can maintain element order.
 
 #### Maps ====
 
@@ -362,6 +430,12 @@ public interface Server {
     int port();
 
     Map<String, String> form();
+
+    Map<String, List<Alias>> aliases();
+
+    interface Alias {
+        String name();
+    }
 }
 ```
 
@@ -370,12 +444,25 @@ public interface Server {
 ```properties
 server.host=localhost
 server.port=8080
-server.form.login-page=login.html
-server.form.error-page=error.html
-server.form.landing-page=index.html
+server.form.index=index.html
+server.form.login.page=login.html
+server.form.error.page=error.html
+server.aliases.localhost[0].name=prod
+server.aliases.localhost[1].name=127.0.0.1
+server.aliases."io.quarkus"[0].name=quarkus
 ```
 
-The configuration property needs to specify an additional name to act as the key. In this case the `form()` `Map` will contain three elements with the keys `login-page`, `error-page` and `landing-page`.
+The configuration property needs to specify an additional segment to act as the map key. In this case the `form()` `Map` will contain three elements with the keys `index`, `login.page` and `error.page`.
+
+> [!TIP]
+> Quotes are required around a `Map` key only when the key contains a dot (e.g. `"io.quarkus"`), because a dot would otherwise be interpreted as a path separator. For single-segment keys (no dots), quotes are optional.
+
+> [!WARNING]
+> Do not mix quoted and unquoted forms for the same `Map` key. For a key that spans a single segment, both `server.aliases.localhost.name` and `server.aliases."localhost".name` refer to the same key `localhost`, making it ambiguous. When SmallRye Config finds both forms it resolves the entry using the quoted form and logs a warning.
+>
+> When both quoted and unquoted forms are found, only the quoted form is then used to look up values and; property names written in the unquoted form are left unmapped and the mapping may fail validation or yield unexpected values. If members of a nested group are split between the two forms, the unquoted members are not found and the mapping may fail validation or yield unexpected values.
+>
+> Pick one form and use it consistently for a given key across all configuration sources.
 
 It also works for groups:
 
@@ -411,6 +498,102 @@ server."my-server".landing=index.html
 
 In this case the `allServers()` `Map` will contain one `Server` element with the key `my-server`.
 
+#### `@WithUnnamedKey`
+
+The `@WithUnnamedKey` annotation allows omitting a single map key in the configuration path:
+
+```java
+@ConfigMapping(prefix = "server")
+public interface Server {
+    @WithUnnamedKey("localhost")
+    Map<String, Alias> aliases();
+
+    interface Alias {
+        String name();
+    }
+}
+```
+
+**application.properties**
+
+```properties
+server.aliases.name=localhost
+server.aliases.prod.name=prod
+```
+
+The `server.aliases.name` property is unnamed because it does not contain the map key segment. Due to `@WithUnnamedKey("localhost")`, the key `localhost` is used automatically when the map key is absent.
+
+```java
+Server server = config.getConfigMapping(Server.class);
+Alias localhost = server.aliases().get("localhost");
+Alias prod = server.aliases().get("prod");
+```
+
+If the unnamed key is also explicitly set in a property name (e.g. `server.aliases.localhost.name=explicit`), the explicit value takes precedence over the unnamed entry.
+
+The `eager` attribute (default `true`) controls whether the unnamed key entry is included when its values come only from defaults. When `eager = false`, the entry is excluded from the `Map` unless at least one value is explicitly set in a configuration source.
+
+#### `@WithKeys`
+
+The `@WithKeys` annotation defines which `Map` keys must be loaded by the configuration, instead of discovering keys from `Config#getPropertyNames`. This is useful when the `ConfigSource` does not enumerate its properties:
+
+```java
+@ConfigMapping(prefix = "server")
+public interface Server {
+    @WithKeys(KeysProvider.class)
+    Map<String, Alias> aliases();
+
+    interface Alias {
+        String name();
+    }
+
+    class KeysProvider implements Supplier<Iterable<String>> {
+        @Override
+        public Iterable<String> get() {
+            return List.of("dev", "test", "prod");
+        }
+    }
+}
+```
+
+Each key must exist in the final configuration relative to the `Map` path segment, or the mapping will fail with a `ConfigValidationException`.
+
+#### `@WithDefaults`
+
+The `@WithDefaults` marker annotation on a `Map` returns the default value for the value element on any key lookup:
+
+```java
+@ConfigMapping(prefix = "server")
+public interface Server {
+    @WithDefaults
+    Map<String, Alias> aliases();
+
+    interface Alias {
+        @WithDefault("localhost")
+        String name();
+    }
+}
+```
+
+**application.properties**
+
+```properties
+server.aliases.prod.name=prod
+```
+
+A lookup with the key `localhost`, `any`, or any other key returns an `Alias` instance populated from `@WithDefault` values. A lookup with `prod` returns an `Alias` instance with `name=prod` because the property is defined in the configuration. The `Map` can only iterate and size explicitly defined keys — in this case only `prod`.
+
+```java
+Server server = config.getConfigMapping(Server.class);
+Alias localhost = server.aliases().get("localhost");    // <1>
+Alias any = server.aliases().get("any");                // <2>
+Alias prod = server.aliases().get("prod");              // <3>
+```
+
+1. Calling `localhost.name()` returns `localhost`
+2. Calling `any.name()` also returns `localhost`, since it is the default
+3. Calling `prod.name()` return `prod`, since it is the value defined in the configuration file
+
 ### Defaults
 
 The `@WithDefault` annotation allows to set a default property into a mapping (and prevent and error if the configuration value is not available in any `ConfigSource`):
@@ -427,6 +610,34 @@ public interface Defaults {
 
 No configuration properties required. The `Defaults.foo()` will return the value `foo` and `Defaults.bar()` will return the value `bar`.
 
+### Secrets
+
+A mapping can mark a member as a secret with `Secret<T>`:
+
+```java
+@ConfigMapping(prefix = "credentials")
+public interface Credentials {
+    String username();
+
+    Secret<String> password();
+}
+```
+
+A `Secret` value modifies the behavior of the Config system by:
+
+- Omitting the name of the secret from `Config#getPropertyNames()`
+- Omitting the name and value of the secret from the mapping `toString` output
+- Throwing a `SecurityException` when trying to retrieve the value via the `Config` programmatic API
+
+A `Secret` can be of any type that can be converted by a registered `org.eclipse.microprofile.config.spi.Converter` of the same type.
+
+### `toString`, `equals`, `hashCode`
+
+If the config mapping contains a `toString` method declaration, the config mapping instance will include a proper implementation of the `toString` method. The `equals` and `hashCode` methods are included automatically.
+
+> [!CAUTION]
+> Do not include a `toString` declaration in a config mapping with sensitive information.
+
 ### Validation
 
 A config mapping may combine annotations from [Bean Validation](https://beanvalidation.org) to validate configuration values:
@@ -441,6 +652,8 @@ public interface Server {
     int port();
 }
 ```
+
+The application startup fails with a `io.smallrye.config.ConfigValidationException` if the configuration property values do not follow the constraints defined in `Server`.
 
 > [!WARNING]
 > For validation to work, the `quarkus-hibernate-validator` extension is required, and it is performed automatically.
@@ -539,3 +752,185 @@ class AppConfigTest {
 
 > [!NOTE]
 > Nested elements need to be spied individually by Mockito.
+
+<a id="config-instance-builder"></a>
+## `ConfigInstanceBuilder`
+
+With the `io.smallrye.config.ConfigInstanceBuilder` API, it is possible to create instances of a config mapping interface programmatically, without requiring a `SmallRyeConfig` instance or any configuration source. This is particularly useful for testing, providing default configurations, or any scenario where configuration values are known ahead of time.
+
+> [!NOTE]
+> The configuration interface does not need the `@ConfigMapping` annotation to work with the builder. Any valid configuration interface is accepted.
+
+### Usage
+
+A configuration interface instance is created with `ConfigInstanceBuilder.forInterface()`:
+
+```java
+interface Server {
+    String host();
+
+    int port();
+}
+
+Server server = ConfigInstanceBuilder.forInterface(Server.class)
+        .with(Server::host, "localhost")
+        .with(Server::port, 8080)
+        .build();
+```
+
+The builder uses method references to identify which property to set, providing compile-time type safety without string-based property names.
+
+### Primitive Types
+
+The builder provides dedicated `with()` overloads for `int`, `long`, `double`, and `boolean`. Other primitive types (`byte`, `short`, `float`, `char`) use the generic `with()` method with their boxed types:
+
+```java
+@ConfigMapping
+interface Primitives {
+    int intValue();
+
+    boolean booleanValue();
+
+    byte byteValue();
+}
+
+Primitives primitives = ConfigInstanceBuilder.forInterface(Primitives.class)
+        .with(Primitives::intValue, 42)
+        .with(Primitives::booleanValue, true)
+        .with(Primitives::byteValue, Byte.valueOf((byte) 1))
+        .build();
+```
+
+### Optional Properties
+
+The `withOptional()` method sets `Optional` properties. If an optional property is not set, it defaults to empty:
+
+```java
+interface AppConfig {
+    Optional<String> name();
+
+    OptionalInt timeout();
+}
+
+AppConfig config = ConfigInstanceBuilder.forInterface(AppConfig.class)
+        .withOptional(AppConfig::name, "MyApp")
+        .withOptional(AppConfig::timeout, 30)
+        .build();
+```
+
+The `withOptional` method wraps the value in `Optional.of()`, `OptionalInt.of()`, `OptionalLong.of()`, or `OptionalDouble.of()` depending on the property type.
+
+### Defaults
+
+Properties annotated with `@WithDefault` are automatically applied when no value is explicitly set in the builder:
+
+```java
+interface ServerDefaults {
+    @WithDefault("localhost")
+    String host();
+
+    @WithDefault("8080")
+    int port();
+}
+
+ServerDefaults server = ConfigInstanceBuilder.forInterface(ServerDefaults.class).build(); // <1>
+```
+
+1. Both `host()` and `port()` return their `@WithDefault` values
+
+Explicitly set values override the `@WithDefault` annotation:
+
+```java
+ServerDefaults server = ConfigInstanceBuilder.forInterface(ServerDefaults.class)
+        .with(ServerDefaults::host, "0.0.0.0")
+        .build(); // <1>
+```
+
+1. Now, `host()` returns `0.0.0.0` and, `port()` returns `8080` from @WithDefault
+
+### Nested Groups
+
+Nested configuration groups are built separately and composed into the parent builder:
+
+```java
+interface AppConfig {
+    String name();
+
+    DatabaseConfig database();
+}
+
+interface DatabaseConfig {
+    String url();
+
+    int poolSize();
+}
+
+AppConfig config = ConfigInstanceBuilder.forInterface(AppConfig.class)
+        .with(AppConfig::name, "MyApp")
+        .with(AppConfig::database, ConfigInstanceBuilder.forInterface(DatabaseConfig.class)
+                .with(DatabaseConfig::url, "jdbc:h2:mem:test")
+                .with(DatabaseConfig::poolSize, 10)
+                .build())
+        .build();
+```
+
+> [!NOTE]
+> If a nested group has `@WithDefault` values for all its members, the nested group instance is automatically built with those defaults when not explicitly set in the parent builder.
+
+### Collections and Maps
+
+`List`, `Set`, and `Map` types are set directly with their values:
+
+```java
+interface AppConfig {
+    List<String> hosts();
+
+    Map<String, String> labels();
+}
+
+AppConfig config = ConfigInstanceBuilder.forInterface(AppConfig.class)
+        .with(AppConfig::hosts, List.of("host1", "host2"))
+        .with(AppConfig::labels, Map.of("env", "prod", "region", "us-east"))
+        .build();
+```
+
+### Required Properties
+
+Properties without a `@WithDefault` are considered required. Calling `build()` throws a `NoSuchElementException` if any required property is not set:
+
+```java
+interface Server {
+    String host();
+
+    @WithDefault("8080")
+    int port();
+}
+
+Server fails = ConfigInstanceBuilder.forInterface(Server.class)
+        .build(); // <1>
+
+Server works = ConfigInstanceBuilder.forInterface(Server.class)
+        .with(Server::host, "localhost")
+        .build(); // <2>
+```
+
+1. 
+   - Throws a `NoSuchElementException`, the `host` is required but not set
+2. 
+   - Works as expected since the `host` value is now provided
+
+### Builder Reuse
+
+A builder instance can be used to produce multiple independent instances. Each `build()` call creates a new object:
+
+```java
+ConfigInstanceBuilder<Server> builder = ConfigInstanceBuilder.forInterface(Server.class)
+        .with(Server::host, "localhost")
+        .with(Server::port, 8080);
+
+Server first = builder.build();
+Server second = builder.build();
+boolean equals = first.equals(second); // <1>
+```
+
+1. `first` and `second` are equal but not the same object

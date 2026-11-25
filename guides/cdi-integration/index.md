@@ -1,6 +1,6 @@
 # CDI integration guide
 
-ArC, the CDI container in Quarkus, is bootstrapped at build time. To integrate with the container, [CDI Build Compatible Extensions](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#spi_lite) can be used, as well as a Quarkus-specific extension API. CDI Portable Extensions are not and cannot be supported. This guide focuses on the Quarkus-specific extensions API.
+ArC, the CDI container in Quarkus, is bootstrapped at build time. To integrate with the container, [CDI Build Compatible Extensions](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#spi_lite) can be used, as well as a Quarkus-specific extension API. CDI Portable Extensions are not and cannot be supported. This guide focuses on the Quarkus-specific extensions API.
 
 The container is bootstrapped in multiple phases. From a high level perspective these phases go as follows:
 
@@ -56,7 +56,7 @@ It is also possible to set the default scope via `AdditionalBeanBuildItem.Builde
 
 ### *Reason 2*: Class Is Discovered but Has No Bean Defining Annotation
 
-In Quarkus, the application is represented by a single bean archive with the [bean discovery mode `annotated`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#default_bean_discovery). Therefore, bean classes that don't have a [bean defining annotation](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bean_defining_annotations) are ignored. Bean defining annotations are declared on the class-level and include scopes, stereotypes and `@Interceptor`.
+In Quarkus, the application is represented by a single bean archive with the [bean discovery mode `annotated`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#default_bean_discovery). Therefore, bean classes that don't have a [bean defining annotation](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#bean_defining_annotations) are ignored. Bean defining annotations are declared on the class-level and include scopes, stereotypes and `@Interceptor`.
 
 *Solution 1*: Use the `AutoAddScopeBuildItem`. This build item can be used to add a scope to a class that meets certain conditions.
 
@@ -119,7 +119,7 @@ It is likely that the annotation class is not part of the application index. For
 <a id="annotations_transformer_build_item"></a>
 ## Use Case - I Need To Transform Annotation Metadata
 
-In some cases, it's useful to be able to modify the annotation metadata. Quarkus provides a powerful alternative to [`jakarta.enterprise.inject.spi.ProcessAnnotatedType`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#process_annotated_type) and [`jakarta.enterprise.inject.build.compatible.spi.Enhancement`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bce_enhancement). With an `AnnotationsTransformerBuildItem` it's possible to override the annotations that exist on bean classes.
+In some cases, it's useful to be able to modify the annotation metadata. Quarkus provides a powerful alternative to [`jakarta.enterprise.inject.spi.ProcessAnnotatedType`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#process_annotated_type) and [`jakarta.enterprise.inject.build.compatible.spi.Enhancement`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#bce_enhancement). With an `AnnotationsTransformerBuildItem` it's possible to override the annotations that exist on bean classes.
 
 > [!NOTE]
 > Keep in mind that annotation transformers must be produced *before* the bean discovery starts.
@@ -243,7 +243,7 @@ void doSomethingWithNamedBeans(SynthesisFinishedBuildItem synthesisFinished, Bui
 <a id="synthetic_beans"></a>
 ## Use Case - The Need for Synthetic Beans
 
-Sometimes it is practical to be able to register a *synthetic bean*. Bean attributes of a synthetic bean are not derived from a Java class, method or field. Instead, all the attributes are defined by an extension. In regular CDI, this could be achieved using the [`AfterBeanDiscovery.addBean()`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#after_bean_discovery) and [`SyntheticComponents.addBean()`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bce_synthesis) methods.
+Sometimes it is practical to be able to register a *synthetic bean*. Bean attributes of a synthetic bean are not derived from a Java class, method or field. Instead, all the attributes are defined by an extension. In regular CDI, this could be achieved using the [`AfterBeanDiscovery.addBean()`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#after_bean_discovery) and [`SyntheticComponents.addBean()`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#bce_synthesis) methods.
 
 *Solution*: If you need to register a synthetic bean then use the `SyntheticBeanBuildItem`.
 
@@ -265,9 +265,29 @@ The output of a bean configurator is recorded as bytecode. Therefore, there are 
 
 1. Generate the bytecode of the `Contextual#create(CreationalContext<T>)` method directly via `ExtendedBeanConfigurator.creator(Consumer<MethodCreator>)`.
 2. Pass a subclass of `io.quarkus.arc.BeanCreator` via `ExtendedBeanConfigurator#creator(Class<? extends BeanCreator<U>>)`, and possibly specify some build-time parameters via `ExtendedBeanConfigurator#param()` and synthetic injection points via `ExtendedBeanConfigurator#addInjectionPoint()`.
-3. Produce the runtime instance through a proxy returned from a [`@Recorder` method](/guides/writing-extensions/index.md#bytecode-recording) and set it via `ExtendedBeanConfigurator#runtimeValue(RuntimeValue<?>)`, `ExtendedBeanConfigurator#runtimeProxy(Object)`,  `ExtendedBeanConfigurator#supplier(Supplier<?>)` or `ExtendedBeanConfigurator#createWith(Function<SyntheticCreationalContext<?>, <?>)`.
+3. Produce the runtime instance through a service using the [`ServiceRegistrar` service system](/guides/writing-extensions/index.md#bytecode-recording) and set it via `SyntheticBeanBuildItem.configure(Class).serviceValue(Class, String)`. (Or, for legacy/deprecated extensions, produce a proxy returned from a legacy [`@Recorder` method](/guides/writing-extensions/index.md#legacy-bytecode-recording) and set it via `ExtendedBeanConfigurator#runtimeValue(RuntimeValue<?>)`, `ExtendedBeanConfigurator#runtimeProxy(Object)`, `ExtendedBeanConfigurator#supplier(Supplier<?>)` or `ExtendedBeanConfigurator#createWith(Function<SyntheticCreationalContext<?>, <?>)`).
 
-**`SyntheticBeanBuildItem` Example 2**
+**`SyntheticBeanBuildItem` Example 2 (Modern - using Services)**
+
+```java
+@BuildStep
+SyntheticBeanBuildItem syntheticBean(ServiceRegistrar reg) {
+   reg.forService(Foo.class, "foo-service")
+      .onStart(ctx -> new Foo()); <1>
+
+   return SyntheticBeanBuildItem.configure(Foo.class).scope(Singleton.class)
+                .serviceValue(Foo.class, "foo-service") <2>
+                .done();
+}
+```
+
+1. Define a service that constructs the `Foo` bean at startup.
+2. Bind the synthetic bean to the value produced by the service.
+
+> [!NOTE]
+> For legacy extensions, synthetic beans can also be initialized using deprecated bytecode recorders as shown in the example below.
+
+**`SyntheticBeanBuildItem` Example 3 (Legacy - using Deprecated Recorders)**
 
 ```java
 @BuildStep
@@ -284,7 +304,7 @@ SyntheticBeanBuildItem syntheticBean(TestRecorder recorder) {
 
 It is also possible to create a generic synthetic bean `Foo<Bar>`.
 
-**`SyntheticBeanBuildItem` Example 3**
+**`SyntheticBeanBuildItem` Example 4**
 
 ```java
 @BuildStep
@@ -671,6 +691,31 @@ void setupResourceInjection(BuildProducer<ResourceAnnotationBuildItem> resourceA
     resourceAnnotations.produce(new ResourceAnnotationBuildItem(DotName.createSimple(MyAnnotation.class.getName())));
 }
 ```
+
+<a id="suppress_condition_generator"></a>
+## Use Case - Custom Bean Suppression for Programmatic Lookup
+
+Suppressed beans cannot be obtained by programmatic lookup via `jakarta.enterprise.inject.Instance` and `io.quarkus.arc.All`. Quarkus provides built-in support for declarative suppression through the `@LookupIfProperty` and `@LookupUnlessProperty` annotations. However, sometimes you need custom logic that cannot be expressed with annotations, for example when the suppression depends on dynamic configuration property names.
+
+The `SuppressConditionGeneratorBuildItem` can be used to contribute custom logic to the generated method body of `InjectableBean#isSuppressed()`. The generator receives a `SuppressConditionGeneration` context that provides the bean metadata, the generated class, and the method body of the `isSuppressed()` method. The generator should use the Gizmo2 API to generate code that calls `BlockCreator#returnTrue()` if the bean should be suppressed. It is perfectly fine not to contribute any bytecode if the bean does not meet certain requirements, e.g. does not implement a specific interface or is not annotated with a specific annotation. Multiple generators are composed together - a bean is suppressed if any generator returns true from the method body.
+
+**`SuppressConditionGeneratorBuildItem` Example**
+
+```java
+@BuildStep
+void suppressMyBeans(BuildProducer<SuppressConditionGeneratorBuildItem> generators) {
+    generators.produce(new SuppressConditionGeneratorBuildItem(generation -> {
+        BeanInfo bean = generation.bean();
+        if (bean.getTarget().isPresent()
+                && bean.getTarget().get().asClass().hasAnnotation(DotName.createSimple(MyAnnotation.class))) { // <1>
+            generation.method().returnTrue(); // <2>
+        }
+    }));
+}
+```
+
+1. Only apply suppression to beans annotated with `@MyAnnotation`.
+2. Use `BlockCreator#returnTrue()` to suppress the bean.
 
 <a id="build_metadata"></a>
 ## Available Build Time Metadata

@@ -70,6 +70,27 @@ quarkus.lra.coordinator-url=http://localhost:8080/lra-coordinator
 
 For a Narayana coordinator the path component of the url is normally `lra-coordinator`. Coordinators can be obtained from <https://quay.io/repository/jbosstm/lra-coordinator> or you can build your own coordinator using a maven pom that includes the appropriate dependencies. A Quarkus quickstart will be provided to show how to do this, or you can take a look at one of the [Narayana quickstarts](https://github.com/jbosstm/quickstart/tree/master/rts/lra-examples/lra-coordinator). Another option would be to run it managed inside a WildFly application server.
 
+## Securing LRA with JWT
+
+Narayana LRA can forward a JWT bearer token on the Jakarta REST invocations that flow between participants and the coordinator. This is useful when the services taking part in an LRA are protected and require an `Authorization: Bearer` header.
+
+The feature is opt-in. To propagate the bearer token that arrived on an incoming request, annotate the `@LRA` method (or its class) with `io.narayana.lra.PropagateToken`:
+
+```java
+@LRA(LRA.Type.REQUIRES_NEW) // a new LRA is created on method entry
+@PropagateToken // forward the inbound bearer token on outgoing LRA calls
+@Path("/work")
+@PUT
+public void doInNewLongRunningAction(@HeaderParam(LRA_HTTP_CONTEXT_HEADER) URI lraId)
+{
+    ...
+}
+```
+
+For the token to be available, your service must authenticate the incoming request with a JWT security extension such as `quarkus-smallrye-jwt`. Once authenticated, the inbound bearer token is propagated automatically on the outgoing LRA calls; no further configuration is required.
+
+Issuing a service token to authenticate the services themselves is a coordinator-side concern and is not handled by the participant extension.
+
 ## Handling failures
 
 When an LRA is told to finish, i.e. when a method annotated with `@LRA(end = true, ...)` is invoked, the coordinator will instruct all services involved in the interaction to finish. If a service is unavailable (or still finishing) then the coordinator will retry periodically. It is the user's responsibility to restart failed services on the same endpoint that they used when they first joined the LRA, or to tell the coordinator that they wish to be notified on new endpoints. An LRA is not deemed finished until **all** participants have acknowledged that they have finished.

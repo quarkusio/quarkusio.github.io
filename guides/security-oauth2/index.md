@@ -36,7 +36,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-oauth2-quickstart \
     -Dextensions='rest-jackson,security-oauth2' \
@@ -322,7 +322,7 @@ And executed using `java -jar target/quarkus-app/quarkus-run.jar`:
 [INFO] Scanning for projects...
 ...
 $ java -jar target/quarkus-app/quarkus-run.jar
-2019-03-28 14:27:48,839 INFO  [io.quarkus] (main) Quarkus 3.40.1.2 started in 0.796s. Listening on: http://[::]:8080
+2019-03-28 14:27:48,839 INFO  [io.quarkus] (main) Quarkus 4.0.1 started in 0.796s. Listening on: http://[::]:8080
 2019-03-28 14:27:48,841 INFO  [io.quarkus] (main) Installed features: [cdi, rest, rest-jackson, security, security-oauth2]
 ```
 

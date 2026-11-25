@@ -31,6 +31,7 @@ The following table provides an overview of the observability extensions availab
 | [quarkus-opentelemetry](/guides/opentelemetry/index.md) | O, R | O, R | R |  |  | X |
 | [quarkus-micrometer](/guides/telemetry-micrometer/index.md) |  | R |  |  |  |  |
 | [quarkus-micrometer-opentelemetry](/guides/telemetry-micrometer-to-opentelemetry/index.md) | X | R | R |  |  | X |
+| [quarkus-observation](/guides/telemetry-micrometer-observation/index.md) |  | X | X |  |  |  |
 | [quarkus-jfr](/guides/jfr/index.md) |  |  |  | R |  | X |
 | [Logging in Quarkus](/guides/logging/index.md) | X |  |  |  |  |  |
 | [quarkus-logging-json](/guides/logging/index.md#json-logging) | X |  |  |  |  |  |
@@ -71,9 +72,13 @@ More recently, OpenTelemetry Metrics has become available in the [`quarkus-opent
 
 The solution is to use the [`quarkus-micrometer-opentelemetry`](/guides/telemetry-micrometer-to-opentelemetry/index.md) extension to allow using **Micrometer metrics** and **OpenTelemetry logs and traces** at the same time with a unified output using the OTLP protocol. Manual OpenTelemetry metrics can also be created with this extension and all signals are enabled by default, for convenience.
 
+The [`quarkus-observation`](/guides/telemetry-micrometer-observation/index.md) extension provides the [Micrometer Observation API](https://docs.micrometer.io/micrometer/reference/observation.html), which produces both metrics and traces from a single instrumentation point. It can be combined with any Micrometer registry (Prometheus, OpenTelemetry bridge) and optionally with `quarkus-opentelemetry` for tracing.
+
 ### Tracing
 
 Quarkus uses OpenTelemetry Tracing to provide tracing capabilities to the application. The [`quarkus-opentelemetry`](/guides/opentelemetry/index.md) and the [`quarkus-micrometer-opentelemetry`](/guides/telemetry-micrometer-to-opentelemetry/index.md) extensions are the recommended way to use for tracing.
+
+The [`quarkus-observation`](/guides/telemetry-micrometer-observation/index.md) extension also provides tracing through the Micrometer Observation API when combined with `quarkus-opentelemetry`. Observations produce OpenTelemetry spans with parent-child relationships and distributed context propagation.
 
 ### Profiling
 

@@ -40,12 +40,15 @@ will include:
 
 #### Using a configuration file
 
-If globs are not sufficiently precise for your use case and you need to rely on regular expressions, or if you prefer relying on the GraalVM infrastructure, you can also create a `resource-config.json` JSON file defining which resources should be included. This, and other native image configuration files, should be placed under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder. This way they will be automatically parsed by the native build, without additional configuration.
+If you prefer relying on the GraalVM infrastructure directly, you can also create a [reachability-metadata.json](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/) file with a `resources` section defining which resources should be included. This file should be placed under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder. This way it will be automatically parsed by the native build, without additional configuration.
 
 > [!WARNING]
 > Relying on the GraalVM infrastructure means that you are responsible for keeping the configuration file up to date as new Mandrel and GraalVM versions are released.
 >
-> Please also note that the `resource-config.json` file will be overwritten by Quarkus if placed directly under `src/main/resources/META-INF/native-image/` as Quarkus generates its own configuration file in this directory.
+> Note that the `reachability-metadata.json` file will be overwritten by Quarkus if placed directly under `src/main/resources/META-INF/native-image/` as Quarkus generates its own configuration files in this directory.
+
+> [!IMPORTANT]
+> Legacy individual configuration files (`resource-config.json`, `reflect-config.json`, `proxy-config.json`, `jni-config.json`, `serialization-config.json`) are not supported by Quarkus. Use the unified `reachability-metadata.json` format. Quarkus automatically generates `reachability-metadata.json` files for native image compilation.
 
 An example of such a file is the following:
 
@@ -53,19 +56,24 @@ An example of such a file is the following:
 {
   "resources": [
     {
-      "pattern": ".*\\.xml$"
+      "glob": "META-INF/**/*.xml"
     },
     {
-      "pattern": ".*\\.json$"
+      "glob": "config/**/*.json"
     }
   ]
 }
 ```
 
-The patterns are valid Java regexps. Here we include all the XML files and JSON files into the native executable.
+The glob patterns use the same syntax as `quarkus.native.resources.includes`. Here we include all the XML files located under `META-INF` and JSON files located under `config` into the native executable.
 
 > [!NOTE]
-> For more information about this topic, see the [GraalVM Accessing Resources in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/Resources/) guide.
+> Avoid using highly generic patterns like `**/*.xml` without a preceding literal directory. Overly broad patterns starting with a globstar `**` force GraalVM to scan the entire classpath, which can significantly increase build times and bloat the final native executable size. Too generic, globstar beginning globs will trigger a GraalVM warning during the build:
+>
+> `Warning: Pattern: **/*.xml contains ** without previous literal. This pattern is too generic and therefore can match many resources. Please make the pattern more specific by adding non-generic level before ** level.`
+
+> [!NOTE]
+> For more information about this topic, see the [GraalVM Accessing Resources in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/#resources) guide.
 
 ### Registering for reflection
 
@@ -163,6 +171,10 @@ public class MyReflectionConfiguration {
 
 Note: By default the `@RegisterForReflection` annotation will also register any potential nested classes for reflection. If you want to avoid this behavior, you can set the `ignoreNested` attribute to `true`.
 
+By default, `@RegisterForReflection` registers declared members, not members inherited from superclasses. You can set `registerFullHierarchy = true` to register the class hierarchy and dependencies, but the default hierarchy traversal excludes most JDK types, including `java.lang.Throwable`. Register such types explicitly when their members require reflective access.
+
+The Jackson extension registers the public methods of `Throwable` and `StackTraceElement` for exception serialization in native executables. Custom exception subclasses still need reflection registration for their own properties when they cannot be inferred at build time. This also applies to custom exception types used as causes or suppressed exceptions.
+
 #### Using a configuration file
 
 You can also use a configuration file to register classes for reflection, if you prefer relying on the GraalVM infrastructure.
@@ -170,26 +182,31 @@ You can also use a configuration file to register classes for reflection, if you
 > [!WARNING]
 > Relying on the GraalVM infrastructure means that you are responsible for keeping the configuration file up to date as new Mandrel and GraalVM versions are released.
 
-As an example, in order to register all methods of class `com.acme.MyClass` for reflection, we create `reflect-config.json` (the most common location is within `src/main/resources`)
+> [!IMPORTANT]
+> The legacy `reflect-config.json` file is deprecated. Use `reachability-metadata.json` with a `reflection` section instead.
+
+As an example, in order to register all methods of class `com.acme.MyClass` for reflection, we create `reachability-metadata.json` under `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>`:
 
 ```json
-[
-  {
-    "name" : "com.acme.MyClass",
-    "allDeclaredConstructors" : true,
-    "allPublicConstructors" : true,
-    "allDeclaredMethods" : true,
-    "allPublicMethods" : true,
-    "allDeclaredFields" : true,
-    "allPublicFields" : true
-  }
-]
+{
+  "reflection": [
+    {
+      "type" : "com.acme.MyClass",
+      "allDeclaredConstructors" : true,
+      "allPublicConstructors" : true,
+      "allDeclaredMethods" : true,
+      "allPublicMethods" : true,
+      "allDeclaredFields" : true,
+      "allPublicFields" : true
+    }
+  ]
+}
 ```
 
 > [!NOTE]
-> For more information about the format of this file, see the [GraalVM Reflection in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/Reflection/) guide.
+> For more information about the format of this file, see the [GraalVM Reachability Metadata](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/) guide.
 
-The final order of business is to make the configuration file known to the `native-image` executable. To do that, place the configuration file under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder. This way they will be automatically parsed by the native build, without additional configuration.
+Place the configuration file under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder. This way it will be automatically parsed by the native build, without additional configuration.
 
 ### Registering for proxy
 
@@ -212,7 +229,7 @@ public class MyReflectionConfiguration {
 ```
 
 > [!WARNING]
-> Note that the order of the specified proxy interfaces is significant. For more information, see [Proxy javadoc](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/reflect/Proxy.html).
+> Note that the order of the specified proxy interfaces is significant. For more information, see [Proxy javadoc](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/Proxy.html).
 
 ### Registering resource bundles and resource files
 
@@ -264,7 +281,7 @@ In these cases, delaying the infringing class initialization at runtime might be
 It should be added to the `native-image` configuration using the `quarkus.native.additional-build-args` configuration property as shown in the examples above.
 
 > [!NOTE]
-> For more information, see the [GraalVM Class Initialization in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/optimizations-and-performance/ClassInitialization/) guide.
+> For more information, see the [GraalVM Class Initialization in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/optimizations-and-performance/ClassInitialization/) guide.
 
 > [!NOTE]
 > When multiple classes or packages need to be specified via the `quarkus.native.additional-build-args` configuration property, the `,` symbol needs to be escaped. An example of this is the following:
@@ -287,10 +304,13 @@ While writing native application you'll need to define proxy classes at image bu
 In such a situation, the error you might encounter is:
 
 ```
-com.oracle.svm.core.jdk.UnsupportedFeatureError: Proxy class defined by interfaces [interface org.apache.http.conn.HttpClientConnectionManager, interface org.apache.http.pool.ConnPoolControl, interface com.amazonaws.http.conn.Wrapped] not found. Generating proxy classes at runtime is not supported. Proxy classes need to be defined at image build time by specifying the list of interfaces that they implement. To define proxy classes use -H:DynamicProxyConfigurationFiles=<comma-separated-config-files> and -H:DynamicProxyConfigurationResources=<comma-separated-config-resources> options.
+com.oracle.svm.core.jdk.UnsupportedFeatureError: Proxy class defined by interfaces [interface org.apache.http.conn.HttpClientConnectionManager, interface org.apache.http.pool.ConnPoolControl, interface com.amazonaws.http.conn.Wrapped] not found. Generating proxy classes at runtime is not supported. Proxy classes need to be defined at image build time by specifying the list of interfaces that they implement.
 ```
 
-To solve the issue you can create a `proxy-config.json` file under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder. For more information about the format of the `proxy-config.json`, see the [Dynamic Proxy Metadata in JSON](https://www.graalvm.org/jdk21/reference-manual/native-image/metadata/#dynamic-proxy-metadata-in-json) documentation.
+> [!IMPORTANT]
+> The legacy `proxy-config.json` file and `-H:DynamicProxyConfigurationFiles`/`-H:DynamicProxyConfigurationResources` options are deprecated. Use `reachability-metadata.json` with a `proxy` section instead.
+
+To solve the issue you can create a `reachability-metadata.json` file under the `src/main/resources/META-INF/native-image/<group-id>/<artifact-id>` folder with a `proxy` section. For more information about the format, see the [GraalVM Reachability Metadata](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/) guide.
 
 Alternatively, you can create a quarkus extension and register the proxy classes as described in [Managing Proxy Classes](#managing-proxy-classes-extension).
 
@@ -474,7 +494,7 @@ public class SaxParserProcessor {
 ```
 
 > [!NOTE]
-> For more information about reflection in GraalVM, see the [GraalVM Reflection in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/Reflection/) guide.
+> For more information about reflection in GraalVM, see the [GraalVM Reflection in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/#reflection) guide.
 
 ### Including resources
 
@@ -492,7 +512,7 @@ public class ResourcesProcessor {
 ```
 
 > [!NOTE]
-> For more information about GraalVM resource handling in native executables, see the [GraalVM Accessing Resources in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/Resources/) guide.
+> For more information about GraalVM resource handling in native executables, see the [GraalVM Accessing Resources in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/#resources) guide.
 
 ### Delay class initialization
 
@@ -512,7 +532,7 @@ public class S3Processor {
 Using such a construct means that a `--initialize-at-run-time` option will automatically be added to the `native-image` command line.
 
 > [!NOTE]
-> For more information about the `--initialize-at-run-time` option, see the [GraalVM Class Initialization in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/optimizations-and-performance/ClassInitialization/) guide.
+> For more information about the `--initialize-at-run-time` option, see the [GraalVM Class Initialization in Native Image](https://www.graalvm.org/jdk25/reference-manual/native-image/optimizations-and-performance/ClassInitialization/) guide.
 
 <a id="managing-proxy-classes-extension"></a>
 ### Managing Proxy Classes
@@ -533,12 +553,12 @@ public class S3Processor {
 
 This will allow Quarkus to generate the necessary configuration for handling the proxy class.
 
-Alternatively, you may create a `proxy-config.json` as described in [Managing Proxy Classes](#managing-proxy-classes-app).
+Alternatively, you may create a `reachability-metadata.json` file as described in [Managing Proxy Classes](#managing-proxy-classes-app).
 
 > [!NOTE]
 > In both cases the configuration will be automatically parsed by the native build, without additional configuration.
 >
-> For more information about using Proxy Classes in native executables, see [Dynamic Proxy in Native Image](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/DynamicProxy/) and [GraalVM Configure Dynamic Proxies Manually](https://www.graalvm.org/jdk21/reference-manual/native-image/guides/configure-dynamic-proxies/).
+> For more information about using Proxy Classes in native executables, see the [GraalVM reflection metadata](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/#reflection), which also covers dynamic proxies.
 
 ### Logging with Native Image
 

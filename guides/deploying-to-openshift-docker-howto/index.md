@@ -8,7 +8,7 @@ This functionality is provided by the `quarkus-openshift` extension. If you want
 
 ## Prerequisites
 
-- You have OpenJDK 17, 21, or 25 installed.
+- You have OpenJDK 21 or 25 installed.
 - You have set the `JAVA_HOME` environment variable to the location of the Java SDK.
 - You have Apache Maven 3.9.16 installed.
 - You have a Quarkus project that includes the `quarkus-openshift` extension.

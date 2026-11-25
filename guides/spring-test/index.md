@@ -11,21 +11,21 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
 
 ## Adding the dependency
 
-Add `quarkus-test-spring` to your project as a test-scoped dependency:
+Add `quarkus-spring-test` to your project as a test-scoped dependency:
 
 **pom.xml**
 
 ```xml
 <dependency>
     <groupId>io.quarkus</groupId>
-    <artifactId>quarkus-test-spring</artifactId>
+    <artifactId>quarkus-spring-test</artifactId>
     <scope>test</scope>
 </dependency>
 ```
@@ -33,7 +33,7 @@ Add `quarkus-test-spring` to your project as a test-scoped dependency:
 **build.gradle**
 
 ```gradle
-testImplementation("io.quarkus:quarkus-test-spring")
+testImplementation("io.quarkus:quarkus-spring-test")
 ```
 
 ## Writing a test

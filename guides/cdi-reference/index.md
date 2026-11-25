@@ -1,6 +1,6 @@
 # Contexts and Dependency Injection
 
-Quarkus DI solution (also called ArC) is based on the [Jakarta Contexts and Dependency Injection 4.1](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html) specification. It implements the CDI Lite specification, with selected improvements on top, and passes the CDI Lite TCK. It does not implement CDI Full. See also [the list of supported features and limitations](#supported_features_and_limitations). Most of the existing CDI code should work just fine but there are some small differences which follow from the Quarkus architecture and goals.
+Quarkus DI solution (also called ArC) is based on the [Jakarta Contexts and Dependency Injection 5.0](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html) specification. It implements the CDI Lite specification, with selected improvements on top, and passes the CDI Lite TCK. It does not implement CDI Full. See also [the list of supported features and limitations](#supported_features_and_limitations). Most of the existing CDI code should work just fine but there are some small differences which follow from the Quarkus architecture and goals.
 
 > [!TIP]
 > If you're new to CDI we recommend you to read the [Introduction to CDI](/guides/cdi/index.md) first.
@@ -11,7 +11,7 @@ Quarkus DI solution (also called ArC) is based on the [Jakarta Contexts and Depe
 <a id="bean_discovery"></a>
 ## Bean Discovery
 
-Bean discovery in CDI is a complex process which involves legacy deployment structures and accessibility requirements of the underlying module architecture. However, Quarkus is using a **simplified bean discovery**. There is only single bean archive with the [bean discovery mode `annotated`](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#default_bean_discovery) and no visibility boundaries.
+Bean discovery in CDI is a complex process which involves legacy deployment structures and accessibility requirements of the underlying module architecture. However, Quarkus is using a **simplified bean discovery**. There is only single bean archive with the [bean discovery mode `annotated`](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#default_bean_discovery) and no visibility boundaries.
 
 The bean archive is synthesized from:
 
@@ -21,7 +21,7 @@ The bean archive is synthesized from:
 - dependencies referenced by `quarkus.index-dependency` in `application.properties`,
 - and Quarkus integration code.
 
-Bean classes that don't have a [bean defining annotation](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1.html#bean_defining_annotations) are not discovered. This behavior is defined by CDI. But producer methods and fields and observer methods are discovered even if the declaring class is not annotated with a bean defining annotation (this behavior is different to what is defined in CDI). In fact, the declaring bean classes are considered annotated with `@Dependent`.
+Bean classes that don't have a [bean defining annotation](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#bean_defining_annotations) are not discovered. This behavior is defined by CDI. But producer methods and fields and observer methods are discovered even if the declaring class is not annotated with a bean defining annotation (this behavior is different to what is defined in CDI). In fact, the declaring bean classes are considered annotated with `@Dependent`.
 
 > [!NOTE]
 > Quarkus extensions may declare additional discovery rules. For example, `@Scheduled` business methods are registered even if the declaring class is not annotated with a bean defining annotation.
@@ -38,7 +38,7 @@ A dependency with a Jandex index is automatically scanned for beans. To generate
     <plugin>
       <groupId>io.smallrye</groupId>
       <artifactId>jandex-maven-plugin</artifactId>
-      <version>3.6.0</version>
+      <version>3.6.1</version>
       <executions>
         <execution>
           <id>make-index</id>
@@ -223,7 +223,7 @@ Outside of this use-case, just use `@Identifier`.
 
 ## Native Executables and Private Members
 
-Quarkus is using GraalVM to build a native executable. One of the limitations of GraalVM is the usage of [Reflection](https://www.graalvm.org/jdk21/reference-manual/native-image/dynamic-features/Reflection/). Reflective operations are supported, but all relevant members must be registered for reflection explicitly. Those registrations result in a bigger native executable.
+Quarkus is using GraalVM to build a native executable. One of the limitations of GraalVM is the usage of [Reflection](https://www.graalvm.org/jdk25/reference-manual/native-image/metadata/#reflection). Reflective operations are supported, but all relevant members must be registered for reflection explicitly. Those registrations result in a bigger native executable.
 
 And if Quarkus DI needs to access a private member it, **has to use reflection**. That's why Quarkus users are encouraged *not to use private members* in their beans. This involves injection fields, constructors and initializers, observer methods, producer methods and fields, disposers, and interceptor methods.
 
@@ -1152,7 +1152,7 @@ In this example, interceptor bindings are read from the `MyClass` class.
 > [!IMPORTANT]
 > Note that `InterceptionProxy` only supports `@AroundInvoke` interceptors declared on interceptor classes. Other kinds of interception, as well as `@AroundInvoke` interceptors declared on the target class and its superclasses, are not supported.
 
-The intercepted class should be [proxyable](https://jakarta.ee/specifications/cdi/4.1/jakarta-cdi-spec-4.1#unproxyable) and therefore should not be `final`, should not have non-private `final` methods, and should have a non-private zero-parameter constructor. If it isn't, a bytecode transformation will attempt to fix it if [enabled](#unproxyable_classes_transformation), but note that adding a zero-parameter constructor is not always possible.
+The intercepted class should be [proxyable](https://jakarta.ee/specifications/cdi/5.0/jakarta-cdi-spec-5.0.html#unproxyable) and therefore should not be `final`, should not have non-private `final` methods, and should have a non-private zero-parameter constructor. If it isn't, a bytecode transformation will attempt to fix it if [enabled](#unproxyable_classes_transformation), but note that adding a zero-parameter constructor is not always possible.
 
 It is often the case that the produced classes come from external libraries and don't contain interceptor binding annotations at all. To support such cases, the `@BindingsSource` annotation may be declared on the `InterceptionProxy` parameter:
 
@@ -1434,3 +1434,4 @@ Applications are recommended to use the default, non-strict mode, which makes CD
 | [lock] <a id="quarkus-arc_quarkus-arc-test-disable-application-lifecycle-observers"></a> [`quarkus.arc.test.disable-application-lifecycle-observers`](#quarkus-arc_quarkus-arc-test-disable-application-lifecycle-observers) config_property_copy_button:+++quarkus.arc.test.disable-application-lifecycle-observers+++[]<br><br>If set to true then disable `StartupEvent` and `ShutdownEvent` observers declared on application bean classes during the tests.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_ARC_TEST_DISABLE_APPLICATION_LIFECYCLE_OBSERVERS+++[] | boolean | `false` |
 | [lock] <a id="quarkus-arc_quarkus-arc-ignored-split-packages"></a> [`quarkus.arc.ignored-split-packages`](#quarkus-arc_quarkus-arc-ignored-split-packages) config_property_copy_button:+++quarkus.arc.ignored-split-packages+++[]<br><br>The list of packages that will not be checked for split package issues.<br><br>A package string representation can be:<br><br>\* a full name of the package, i.e. `org.acme.foo` \* a package name with suffix `.*`, i.e. `org.acme.*`, which matches a package that starts with provided value<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_ARC_IGNORED_SPLIT_PACKAGES+++[] | list of string |  |
 | [lock] <a id="quarkus-arc_quarkus-arc-context-propagation-enabled"></a> [`quarkus.arc.context-propagation.enabled`](#quarkus-arc_quarkus-arc-context-propagation-enabled) config_property_copy_button:+++quarkus.arc.context-propagation.enabled+++[]<br><br>If set to true and the SmallRye Context Propagation extension is present then the CDI contexts will be propagated by means of the MicroProfile Context Propagation API. Specifically, a `org.eclipse.microprofile.context.spi.ThreadContextProvider` implementation is registered. On the other hand, if set to false then the MicroProfile Context Propagation API will never be used to propagate the CDI contexts. Note that the CDI contexts may be propagated in a different way though. For example with the Vertx duplicated context.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_ARC_CONTEXT_PROPAGATION_ENABLED+++[] | boolean | `true` |
+| [lock] <a id="quarkus-arc_quarkus-arc-async-handler-async-type"></a> [`quarkus.arc.async-handler."async-type"`](#quarkus-arc_quarkus-arc-async-handler-async-type) config_property_copy_button:+++quarkus.arc.async-handler."async-type"+++[]<br><br>Configuration of `jakarta.enterprise.invoke.AsyncHandler AsyncHandler`s when multiple async handlers for the same async type exist. Can also be used to override a built-in async handler for the built-in async types.<br><br>The key is a fully qualified name of the async type, and the value is a fully qualified name of the async handler. For example:<br><br>```<br>quarkus.arc.async-handler."java.util.concurrent.CompletionStage"=com.example.MyCompletionStageAsyncHandler<br>```<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_ARC_ASYNC_HANDLER__ASYNC_TYPE_+++[] | Map\<String,String> |  |

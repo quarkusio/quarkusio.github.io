@@ -11,7 +11,7 @@ By default, Reactive Messaging invokes message processing methods on an event-lo
 
 The idea behind Quarkus Virtual Thread support for Reactive Messaging is to offload the message processing on virtual threads, instead of running it on an event-loop thread or a worker thread.
 
-To enable virtual thread support on a message consumer method, simply add the [@RunOnVirtualThread](https://javadoc.io/doc/io.smallrye.common/smallrye-common-annotation/latest/io/smallrye/common/annotation/RunOnVirtualThread.html) annotation to the method. If the JDK is compatible (Java 19 or later versions, we recommend 21+) then each incoming message will be offloaded to a new virtual thread. It will then be possible to perform blocking operations without blocking the platform thread upon which the virtual thread is mounted.
+To enable virtual thread support on a message consumer method, simply add the [@RunOnVirtualThread](https://javadoc.io/doc/io.smallrye.common/smallrye-common-annotation/latest/io/smallrye/common/annotation/RunOnVirtualThread.html) annotation to the method. If the JDK is compatible (Java 21 or later) then each incoming message will be offloaded to a new virtual thread. It will then be possible to perform blocking operations without blocking the platform thread upon which the virtual thread is mounted.
 
 ## Example using the Reactive Messaging Kafka extension
 
@@ -32,7 +32,7 @@ Let's see an example of how to process Kafka records on virtual threads. First, 
 implementation("io.quarkus:quarkus-messaging-kafka")
 ```
 
-You also need to make sure that you are using Java 19 or later (we recommend 21+), this can be enforced in your `pom.xml` file with the following:
+You also need to make sure that you are using Java 21 or later, this can be enforced in your `pom.xml` file with the following:
 
 **pom.xml**
 

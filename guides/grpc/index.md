@@ -10,7 +10,6 @@ The Quarkus gRPC extension integrates gRPC in Quarkus applications. It:
 - supports consuming gRPC services
 - integrates with the reactive engine from Quarkus as well as the reactive development model
 - allows plain-text communication as well as TLS, and TLS with mutual authentication
-- supports [xDS gRPC](https://grpc.github.io/grpc/core/md_doc_grpc_xds_features.html) integration
 - supports [InProcess](https://grpc.github.io/grpc-java/javadoc/io/grpc/inprocess/InProcessServerBuilder.html) gRPC development
 
 Quarkus gRPC is based on [Vert.x gRPC](https://vertx.io/docs/vertx-grpc/java/).
@@ -19,7 +18,6 @@ Quarkus gRPC is based on [Vert.x gRPC](https://vertx.io/docs/vertx-grpc/java/).
 - [Implementing a gRPC Service](/guides/grpc-service-implementation/index.md)
 - [Consuming a gRPC Service](/guides/grpc-service-consumption/index.md)
 - [Deploying your gRPC Service in Kubernetes](/guides/grpc-kubernetes/index.md)
-- [Enabling xDS gRPC support](/guides/grpc-xds/index.md)
 - [gRPC code generation reference guide](/guides/grpc-generation-reference/index.md)
 - [gRPC reference guide](/guides/grpc-reference/index.md)
 - [gRPC CLI support](/guides/grpc-cli/index.md)

@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -52,7 +52,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=kafka-avro-schema-quickstart \
     -Dextensions='rest-jackson,messaging-kafka,apicurio-registry-avro' \
@@ -111,7 +111,7 @@ quarkus build
 ./gradlew build
 ```
 
-the `movies.avsc` will get compiled to a `Movie.java` file placed in the `target/generated-sources/avsc` directory.
+the `movie.avsc` will get compiled to a `Movie.java` file placed in the `target/generated-sources/avsc` directory.
 
 Take a look at the [Avro specification](https://avro.apache.org/docs/current/specification/#schemas) to learn more about the Avro syntax and supported types.
 
@@ -352,7 +352,7 @@ services:
       LOG_DIR: "/tmp/logs"
 
   schema-registry:
-    image: quay.io/apicurio/apicurio-registry:3.1.7
+    image: quay.io/apicurio/apicurio-registry:3.3.1
     ports:
       - 8081:8080
     depends_on:

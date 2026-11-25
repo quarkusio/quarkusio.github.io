@@ -35,7 +35,7 @@ For more information about how you can secure your Quarkus applications by using
 
 ## Role-based access control
 
-Quarkus also includes built-in security to allow for role-based access control (RBAC) based on the common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST endpoints and CDI beans. For more information, see the Quarkus [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
+Quarkus also includes built-in security to allow for role-based access control (RBAC) based on the common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST endpoints and CDI beans. For more information, see the Quarkus [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
 
 <a id="basic-auth-programmatic-set-up"></a>
 ## Set up Basic authentication programmatically
@@ -68,4 +68,4 @@ public class HttpSecurityConfiguration {
 - [Quarkus Security architecture](/guides/security-architecture/index.md)
 - [Other supported authentication mechanisms](/guides/security-authentication-mechanisms/index.md#other-supported-authentication-mechanisms)
 - [Identity providers](/guides/security-identity-providers/index.md)
-- [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)
+- [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)

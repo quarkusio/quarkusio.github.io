@@ -1,5 +1,7 @@
 # Extending configuration support
 
+Quarkus reads configuration through SmallRye Config, which exposes an SPI for extending it. This guide shows how to add your own configuration sources, convert configuration values into your own types, and intercept configuration lookups.
+
 <a id="custom-config-source"></a>
 ## Custom `ConfigSource`
 
@@ -9,7 +11,7 @@ With a Custom `ConfigSource` it is possible to read additional configuration val
 
 ![config sources](/guides/images/config-sources.png)
 
-A custom `ConfigSource` requires an implementation of `org.eclipse.microprofile.config.spi.ConfigSource` or `org.eclipse.microprofile.config.spi.ConfigSourceProvider`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html) mechanism, either in `META-INF/services/org.eclipse.microprofile.config.spi.ConfigSource` or `META-INF/services/org.eclipse.microprofile.config.spi.ConfigSourceProvider` files.
+A custom `ConfigSource` requires an implementation of `org.eclipse.microprofile.config.spi.ConfigSource` or `org.eclipse.microprofile.config.spi.ConfigSourceProvider`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/ServiceLoader.html) mechanism, either in `META-INF/services/org.eclipse.microprofile.config.spi.ConfigSource` or `META-INF/services/org.eclipse.microprofile.config.spi.ConfigSourceProvider` files.
 
 ### Example
 
@@ -125,7 +127,7 @@ The *RUNTIME INIT* stage happens after *STATIC INIT*. In this stage a `ConfigSou
 
 Another way to create a `ConfigSource` is via the [SmallRye Config](https://github.com/smallrye/smallrye-config) `io.smallrye.config.ConfigSourceFactory` API. The difference between the [SmallRye Config](https://github.com/smallrye/smallrye-config) factory and the standard way to create a `ConfigSource` as specified in [MicroProfile Config](https://github.com/eclipse/microprofile-config/blob/master/spec/src/main/asciidoc/configsources.asciidoc#custom-configsources-via-configsourceprovider), is the factory ability to provide a context with access to the available configuration.
 
-Each implementation of `io.smallrye.config.ConfigSourceFactory` requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceFactory` file.
+Each implementation of `io.smallrye.config.ConfigSourceFactory` requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceFactory` file.
 
 ### Example
 
@@ -188,7 +190,7 @@ When the Factory is initializing, the provided `ConfigSourceContext` may call th
 
 It is possible to create a custom `Converter` type as specified by [MicroProfile Config](https://github.com/eclipse/microprofile-config/blob/master/spec/src/main/asciidoc/converters.asciidoc#adding-custom-converters).
 
-A custom `Converter` requires an implementation of `org.eclipse.microprofile.config.spi.Converter<T>`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/org.eclipse.microprofile.config.spi.Converter` file. Consider:
+A custom `Converter` requires an implementation of `org.eclipse.microprofile.config.spi.Converter<T>`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/org.eclipse.microprofile.config.spi.Converter` file. Consider:
 
 ```java
 package org.acme.config;
@@ -271,14 +273,27 @@ Since it converts the same value type (`MicroProfileCustomValue`) and has a prio
 
 [SmallRye Config](https://github.com/smallrye/smallrye-config) provides an interceptor chain that hooks into the configuration values resolution. This is useful to implement features like [Profiles](/guides/config-reference/index.md#profiles), [Property Expressions](/guides/config-reference/index.md#property-expressions), or just logging to find out where the config value was loaded from.
 
-An interceptor requires an implementation of `io.smallrye.config.ConfigSourceInterceptor`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceInterceptor` file.
+An interceptor requires an implementation of `io.smallrye.config.ConfigSourceInterceptor`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceInterceptor` file.
 
-The `io.smallrye.config.ConfigSourceInterceptor` is able to intercept the resolution of a configuration name with the method `ConfigValue getValue(ConfigSourceInterceptorContext context, String name)`. The `ConfigSourceInterceptorContext` is used to proceed with the interceptor chain. The chain can be short-circuited by returning an instance of `io.smallrye.config.ConfigValue`. The `ConfigValue` objects hold information about the key name, value, config source origin and ordinal.
+The `io.smallrye.config.ConfigSourceInterceptor` exposes two interception points:
+
+- `ConfigValue getValue(ConfigSourceInterceptorContext context, String name)` — intercepts the resolution of a configuration value by name. The chain can be short-circuited by returning a custom instance of `io.smallrye.config.ConfigValue`.
+- `Iterator<String> iterateNames(ConfigSourceInterceptorContext context)` — intercepts the iteration of all known configuration property names. This affects the names returned by Config#getPropertyNames()\`.
+
+The `ConfigSourceInterceptorContext` is used to proceed with the interceptor chain. The `ConfigValue` objects hold information about the key name, value, config source origin and ordinal.
 
 > [!NOTE]
 > The interceptor chain is applied before any conversion is performed on the configuration value.
 
-Interceptors may also be created with an implementation of `io.smallrye.config.ConfigSourceInterceptorFactory`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceInterceptorFactory` file.
+The `ConfigSourceInterceptorContext` provides two ways to continue the chain:
+
+- `proceed(String name)` — passes the lookup to the next interceptor in the chain. This is the standard method to use in most interceptors.
+- `restart(String name)` — re-invokes the first interceptor in the chain from the beginning. Intended for relocating or compatibility interceptors that resolve a new name and need the full chain to re-evaluate it, including profile expansion and expression resolution.
+
+> [!WARNING]
+> Passing the original name to `restart` can cause an infinite loop.
+
+Interceptors may also be created with an implementation of `io.smallrye.config.ConfigSourceInterceptorFactory`. Each implementation requires registration via the [ServiceLoader](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/ServiceLoader.html) mechanism in the `META-INF/services/io.smallrye.config.ConfigSourceInterceptorFactory` file.
 
 The `ConfigSourceInterceptorFactory` may initialize an interceptor with access to the current chain (so it can be used to configure the interceptor and retrieve configuration values) and set the priority.
 
@@ -289,24 +304,21 @@ The `ConfigSourceInterceptorFactory` may initialize an interceptor with access t
 ```java
 package org.acme.config;
 
-import static io.smallrye.config.SecretKeys.doLocked;
-
 import jakarta.annotation.Priority;
 
 import io.smallrye.config.ConfigSourceInterceptor;
-import io.smallrye.config.ConfigLogging;
+import io.smallrye.config.Priorities;
 
-@Priority(Priorities.LIBRARY + 200)
+@Priority(Priorities.APPLICATION)
 public class LoggingConfigSourceInterceptor implements ConfigSourceInterceptor {
-    private static final long serialVersionUID = 367246512037404779L;
-
     @Override
     public ConfigValue getValue(final ConfigSourceInterceptorContext context, final String name) {
-        ConfigValue configValue = doLocked(() -> context.proceed(name));
+        ConfigValue configValue = context.proceed(name);
         if (configValue != null) {
-            ConfigLogging.log.lookup(configValue.getName(), configValue.getLocation(), configValue.getValue());
+            System.out.println("Looked up: " + configValue.getName() + "=" + configValue.getValue()
+                + " from " + configValue.getConfigSourceName());
         } else {
-            ConfigLogging.log.notFound(name);
+            System.out.println("Not found: " + name);
         }
         return configValue;
     }
@@ -321,4 +333,51 @@ And registration in:
 org.acme.config.LoggingConfigSourceInterceptor
 ```
 
-The `LoggingConfigSourceInterceptor` logs looks up configuration names in the provided logging platform. The log information includes config name and value, the config source origin and location if exists.
+The `LoggingConfigSourceInterceptor` logs each configuration name lookup. The log information includes the config name and value, the config source origin and location if they exist.
+
+<a id="secret-keys-handler"></a>
+## `SecretKeysHandler`
+
+A `SecretKeysHandler` allows decoding or decrypting secret configuration values expressed as `${handler::value}`. Custom handlers can be implemented via `io.smallrye.config.SecretKeysHandler` or `io.smallrye.config.SecretKeysHandlerFactory`. Each implementation requires registration via the `ServiceLoader` mechanism in `META-INF/services/io.smallrye.config.SecretKeysHandler` or `META-INF/services/io.smallrye.config.SecretKeysHandlerFactory`.
+
+### `LazySecretKeysHandler`
+
+`SecretKeysHandlerFactory` is initialized during the first phase of SmallRye Config bootstrap, alongside regular `ConfigSource` and `ConfigSourceProvider` registrations. This means that configuration values produced by a `ConfigSourceFactory` are **not** yet available when the factory's `getSecretKeysHandler` is called.
+
+For handlers that depend on sources provided by a `ConfigSourceFactory`, wrap an inner `SecretKeysHandlerFactory` in `SecretKeysHandlerFactory.LazySecretKeysHandler`. The inner factory's `getSecretKeysHandler` is only invoked the first time a value actually needs to be decoded, by which point all sources — including those from `ConfigSourceFactory` — are fully initialized:
+
+```java
+package org.acme.config;
+
+import io.smallrye.config.ConfigSourceContext;
+import io.smallrye.config.ConfigValue;
+import io.smallrye.config.SecretKeysHandler;
+import io.smallrye.config.SecretKeysHandlerFactory;
+
+public class VaultSecretKeysHandlerFactory implements SecretKeysHandlerFactory {
+    @Override
+    public SecretKeysHandler getSecretKeysHandler(final ConfigSourceContext context) {
+        return new LazySecretKeysHandler(new SecretKeysHandlerFactory() {
+            @Override
+            public SecretKeysHandler getSecretKeysHandler(final ConfigSourceContext context) {
+                // This runs lazily, after all sources (including ConfigSourceFactory sources) are ready.
+                ConfigValue token = context.getValue("vault.token");
+                return new VaultSecretKeysHandler(token.getValue());
+            }
+
+            @Override
+            public String getName() {
+                return "vault";
+            }
+        });
+    }
+
+    @Override
+    public String getName() {
+        return "vault";
+    }
+}
+```
+
+> [!WARNING]
+> Do not call `context.getValue` in the outer `getSecretKeysHandler`. Only the inner factory's `getSecretKeysHandler` (invoked lazily) may resolve configuration values. Calling `context.getValue` in the outer factory will not have access to `ConfigSourceFactory` sources.

@@ -326,6 +326,47 @@ Please note that the password value is evaluated only once, at startup time. If 
 > [!TIP]
 > For more information about the Mailer configuration please refer to the [Configuration Reference](#configuration-reference).
 
+<a id="rotating-credentials"></a>
+### Rotating credentials
+
+The mailer supports dynamic credential rotation through the [Credentials Provider](/guides/credentials-provider/index.md) interface. This is useful for:
+
+- `XOAUTH2` tokens that expire and need refreshing
+- Credential rotation for security compliance
+- Integration with secret management systems (HashiCorp Vault, AWS Secrets Manager, etc.)
+
+> [!NOTE]
+> When a credentials provider is configured, the `quarkus.mailer.username` and `quarkus.mailer.password` properties are ignored. All credentials are fetched from the provider.
+
+To ensure new credentials are picked up promptly, tune the connection pool settings:
+
+```properties
+# Recycle idle connections after 5 minutes
+quarkus.mailer.keep-alive-timeout=5M
+# Check for expired connections every second
+quarkus.mailer.pool-cleaner-period=1S
+```
+
+> [!IMPORTANT]
+> Set `keep-alive-timeout` to less than your credential TTL so that connections are recycled before credentials expire.
+
+### Configuring XOAUTH2
+
+`XOAUTH2` is an authentication mechanism that uses OAuth 2.0 access tokens instead of passwords. It is commonly used with Gmail and other providers that support OAuth 2.0 for SMTP authentication.
+
+```properties
+quarkus.mailer.host=smtp.gmail.com
+quarkus.mailer.port=587
+quarkus.mailer.start-tls=REQUIRED
+quarkus.mailer.login=XOAUTH2
+quarkus.mailer.username=YOUREMAIL@gmail.com
+quarkus.mailer.password=YOUR_ACCESS_TOKEN
+```
+
+OAuth 2.0 access tokens are typically short-lived. To handle token refresh automatically, use a [Credentials Provider](/guides/credentials-provider/index.md) that fetches fresh tokens.
+
+The credentials provider must return the username as the `user` property and the OAuth 2.0 access token as the `password` property. See [Rotating Credentials](#rotating-credentials) for more details on connection pool tuning.
+
 ## Configuring TLS
 
 SMTP provides various way to use TLS:
@@ -363,20 +404,6 @@ quarkus.mailer.tls-configuration-name=my-mailer # Reference the named configurat
 quarkus.tls.my-mailer.trust-all=true
 ```
 
-Alternatively, you can use the *deprecated* `quarkus.mailer.trust-store.paths`  and `quarkus.mailer.trust-all` properties:
-
-```properties
-quarkus.mailer.tls=false
-quarkus.mailer.start-tls=REQUIRED
-quarkus.mailer.truststore.paths=target/certs/mailpit-ca.crt
-```
-
-```properties
-quarkus.mailer.tls=false
-quarkus.mailer.start-tls=REQUIRED
-quarkus.mailer.trust-all=true
-```
-
 > [!IMPORTANT]
 > To use `START_TLS`, make sure you set `tls` to `false` and `start-tls` to `REQUIRED` or `OPTIONAL`.
 
@@ -407,8 +434,6 @@ quarkus.mailer.tls=true
 > quarkus.tls.my-mailer.trust-all=true
 > quarkus.mailer.tls-configuration-name=my-mailer # Reference the named configuration
 > ```
->
-> You can also use the deprecated `quarkus.mailer.trust-all=true` property.
 
 ## Multiple mailer configurations
 
@@ -669,10 +694,6 @@ quarkus.mailer.mock=false # In dev mode, prevent from using the mock SMTP server
 | <a id="quarkus-mailer_quarkus-mailer-dkim-signed-headers"></a> [`quarkus.mailer.dkim.signed-headers`](#quarkus-mailer_quarkus-mailer-dkim-signed-headers) config_property_copy_button:+++quarkus.mailer.dkim.signed-headers+++[]<br><br>`quarkus.mailer."mailer-name".dkim.signed-headers` config_property_copy_button:+++quarkus.mailer."mailer-name".dkim.signed-headers+++[]<br><br>Configures the signed headers in DKIM, separated by commas. The order in the list matters.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_DKIM_SIGNED_HEADERS+++[] | list of string |  |
 | <a id="quarkus-mailer_quarkus-mailer-login"></a> [`quarkus.mailer.login`](#quarkus-mailer_quarkus-mailer-login) config_property_copy_button:+++quarkus.mailer.login+++[]<br><br>`quarkus.mailer."mailer-name".login` config_property_copy_button:+++quarkus.mailer."mailer-name".login+++[]<br><br>Sets the login mode for the connection. Either `NONE`, `DISABLED`, `REQUIRED` or `XOAUTH2`.<br><br>\* NONE means a login will be attempted if the server supports it and login credentials are set \* DISABLED means no login will be attempted \* REQUIRED means that a login will be attempted if the server supports it and the send operation will fail otherwise \* XOAUTH2 means that a login will be attempted using Google Gmail Oauth2 tokens<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_LOGIN+++[] | string | `NONE` |
 | <a id="quarkus-mailer_quarkus-mailer-auth-methods"></a> [`quarkus.mailer.auth-methods`](#quarkus-mailer_quarkus-mailer-auth-methods) config_property_copy_button:+++quarkus.mailer.auth-methods+++[]<br><br>`quarkus.mailer."mailer-name".auth-methods` config_property_copy_button:+++quarkus.mailer."mailer-name".auth-methods+++[]<br><br>Sets the allowed authentication methods. These methods will be used only if the server supports them. If not set, all supported methods may be used.<br><br>The list is given as a space separated list, such as `DIGEST-MD5 CRAM-SHA256 CRAM-SHA1 CRAM-MD5 PLAIN LOGIN`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_AUTH_METHODS+++[] | string |  |
-| <a id="quarkus-mailer_quarkus-mailer-key-store-password"></a> [`quarkus.mailer.key-store-password`](#quarkus-mailer_quarkus-mailer-key-store-password) config_property_copy_button:+++quarkus.mailer.key-store-password+++[]<br><br>`quarkus.mailer."mailer-name".key-store-password` config_property_copy_button:+++quarkus.mailer."mailer-name".key-store-password+++[]<br><br>Sets the trust store password if any.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_KEY_STORE_PASSWORD+++[] | string |  |
-| <a id="quarkus-mailer_quarkus-mailer-truststore-password"></a> [`quarkus.mailer.truststore.password`](#quarkus-mailer_quarkus-mailer-truststore-password) config_property_copy_button:+++quarkus.mailer.truststore.password+++[]<br><br>`quarkus.mailer."mailer-name".truststore.password` config_property_copy_button:+++quarkus.mailer."mailer-name".truststore.password+++[]<br><br>Sets the trust store password if any. Note that the password is only used for JKS and PCK++#++12 trust stores.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_TRUSTSTORE_PASSWORD+++[] | string |  |
-| <a id="quarkus-mailer_quarkus-mailer-truststore-paths"></a> [`quarkus.mailer.truststore.paths`](#quarkus-mailer_quarkus-mailer-truststore-paths) config_property_copy_button:+++quarkus.mailer.truststore.paths+++[]<br><br>`quarkus.mailer."mailer-name".truststore.paths` config_property_copy_button:+++quarkus.mailer."mailer-name".truststore.paths+++[]<br><br>Sets the location of the trust store files. If you use JKS or PCK++#++12, only one path is allowed. If you use PEM files, you can specify multiple paths.<br><br>The relative paths are relative to the application working directly.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_TRUSTSTORE_PATHS+++[] | list of string |  |
-| <a id="quarkus-mailer_quarkus-mailer-truststore-type"></a> [`quarkus.mailer.truststore.type`](#quarkus-mailer_quarkus-mailer-truststore-type) config_property_copy_button:+++quarkus.mailer.truststore.type+++[]<br><br>`quarkus.mailer."mailer-name".truststore.type` config_property_copy_button:+++quarkus.mailer."mailer-name".truststore.type+++[]<br><br>Sets the trust store type. By default, it guesses the type from the file name extension. For instance, `truststore.pem` will be seen as a PEM file, while `truststore.jks` will be seen as a JKS file. `truststore.p12` and `truststore.pfx` will both be seen as PKCS++#++12 files. Accepted values are: `JKS`, `PEM`, `PKCS`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_TRUSTSTORE_TYPE+++[] | string |  |
 | <a id="quarkus-mailer_quarkus-mailer-multi-part-only"></a> [`quarkus.mailer.multi-part-only`](#quarkus-mailer_quarkus-mailer-multi-part-only) config_property_copy_button:+++quarkus.mailer.multi-part-only+++[]<br><br>`quarkus.mailer."mailer-name".multi-part-only` config_property_copy_button:+++quarkus.mailer."mailer-name".multi-part-only+++[]<br><br>Whether the mail should always been sent as multipart even if they don't have attachments. When sets to true, the mail message will be encoded as multipart even for simple mails without attachments.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_MULTI_PART_ONLY+++[] | boolean | `false` |
 | <a id="quarkus-mailer_quarkus-mailer-allow-rcpt-errors"></a> [`quarkus.mailer.allow-rcpt-errors`](#quarkus-mailer_quarkus-mailer-allow-rcpt-errors) config_property_copy_button:+++quarkus.mailer.allow-rcpt-errors+++[]<br><br>`quarkus.mailer."mailer-name".allow-rcpt-errors` config_property_copy_button:+++quarkus.mailer."mailer-name".allow-rcpt-errors+++[]<br><br>Sets if sending allows recipients errors. If set to true, the mail will be sent to the recipients that the server accepted, if any.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_ALLOW_RCPT_ERRORS+++[] | boolean | `false` |
 | <a id="quarkus-mailer_quarkus-mailer-pipelining"></a> [`quarkus.mailer.pipelining`](#quarkus-mailer_quarkus-mailer-pipelining) config_property_copy_button:+++quarkus.mailer.pipelining+++[]<br><br>`quarkus.mailer."mailer-name".pipelining` config_property_copy_button:+++quarkus.mailer."mailer-name".pipelining+++[]<br><br>Enables or disables the pipelining capability if the SMTP server supports it.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_PIPELINING+++[] | boolean | `true` |
@@ -685,6 +706,8 @@ quarkus.mailer.mock=false # In dev mode, prevent from using the mock SMTP server
 | <a id="quarkus-mailer_quarkus-mailer-log-invalid-recipients"></a> [`quarkus.mailer.log-invalid-recipients`](#quarkus-mailer_quarkus-mailer-log-invalid-recipients) config_property_copy_button:+++quarkus.mailer.log-invalid-recipients+++[]<br><br>`quarkus.mailer."mailer-name".log-invalid-recipients` config_property_copy_button:+++quarkus.mailer."mailer-name".log-invalid-recipients+++[]<br><br>Log invalid recipients as warnings.<br><br>If false, the invalid recipients will not be logged and the thrown exception will not contain the invalid email address.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_LOG_INVALID_RECIPIENTS+++[] | boolean | `false` |
 | <a id="quarkus-mailer_quarkus-mailer-timeout"></a> [`quarkus.mailer.timeout`](#quarkus-mailer_quarkus-mailer-timeout) config_property_copy_button:+++quarkus.mailer.timeout+++[]<br><br>`quarkus.mailer."mailer-name".timeout` config_property_copy_button:+++quarkus.mailer."mailer-name".timeout+++[]<br><br>Sets the timeout duration for blocking mailer operations. When using the blocking mailer (`io.quarkus.mailer.Mailer` interface), this timeout determines how long to wait for the mail to be sent before throwing a `java.util.concurrent.TimeoutException`.<br><br>This prevents indefinite thread blocking when SMTP servers are misconfigured or unreachable. A value of 0 means no timeout (wait indefinitely) - which is not recommended.<br><br>Default is 60 seconds.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-mailer_quarkus-mailer) | `60S` |
 | <a id="quarkus-mailer_quarkus-mailer-max-mails-per-connection"></a> [`quarkus.mailer.max-mails-per-connection`](#quarkus-mailer_quarkus-mailer-max-mails-per-connection) config_property_copy_button:+++quarkus.mailer.max-mails-per-connection+++[]<br><br>`quarkus.mailer."mailer-name".max-mails-per-connection` config_property_copy_button:+++quarkus.mailer."mailer-name".max-mails-per-connection+++[]<br><br>Sets the max emails count per connection before it gets closed.<br><br>Some SMTP servers have the requirement to allow only a number of emails sent per connection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_MAX_MAILS_PER_CONNECTION+++[] | long |  |
+| <a id="quarkus-mailer_quarkus-mailer-credentials-provider"></a> [`quarkus.mailer.credentials-provider`](#quarkus-mailer_quarkus-mailer-credentials-provider) config_property_copy_button:+++quarkus.mailer.credentials-provider+++[]<br><br>`quarkus.mailer."mailer-name".credentials-provider` config_property_copy_button:+++quarkus.mailer."mailer-name".credentials-provider+++[]<br><br>The credentials provider name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_CREDENTIALS_PROVIDER+++[] | string |  |
+| <a id="quarkus-mailer_quarkus-mailer-credentials-provider-name"></a> [`quarkus.mailer.credentials-provider-name`](#quarkus-mailer_quarkus-mailer-credentials-provider-name) config_property_copy_button:+++quarkus.mailer.credentials-provider-name+++[]<br><br>`quarkus.mailer."mailer-name".credentials-provider-name` config_property_copy_button:+++quarkus.mailer."mailer-name".credentials-provider-name+++[]<br><br>The credentials provider bean name.<br><br>This is a bean name (as in `@Named`) of a bean that implements `CredentialsProvider`. It is used to select the credentials provider bean when multiple exist. This is unnecessary when there is only one credentials provider available.<br><br>For Vault, the credentials provider bean name is `vault-credentials-provider`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_MAILER_CREDENTIALS_PROVIDER_NAME+++[] | string |  |
 
 <a id="duration-note-anchor-quarkus-mailer_quarkus-mailer"></a>
 

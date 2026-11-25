@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 
@@ -30,6 +30,8 @@ For both discovered and owned services, the services are prepared at build time.
 #### Reuse
 
 Services can be re-used between test profiles and across live reload restarts, or a fresh service can be created each time. The extension implementation controls how much reuse there is by setting a `serviceConfig(Object)` with a uniqueness key each build.
+
+Containers can additionally be configured for Testcontainers-level reuse with `withReuse(true)`, which lets a container outlive the JVM that created it so that a later, separate run can pick it up. A `Startable` wrapping such a container must declare it by overriding `isReusable()`, otherwise Quarkus stops the container when the application shuts down. Reuse-configured services are still stopped when their configuration is no longer compatible with the application being started, such as on an incompatible profile change.
 
 ## Creating a Dev Service
 
@@ -73,7 +75,14 @@ implementation("io.quarkus:quarkus-devservices")
 
 ### Implementing a `Startable`
 
-Provide an implementation of `io.quarkus.deployment.builditem.Startable` which knows how to start and stop the service. For container-based services, extending `GenericContainer` and implementing `Startable` is the recommended pattern. In that case, `GenericContainer` already provides a `start()` method, so the only method that needs to be implemented is `close()` (which can delegate to the superclass).
+Provide an implementation of `io.quarkus.deployment.builditem.Startable` which knows how to start and stop the service. For container-based services, extending `GenericContainer` and implementing `Startable` is the recommended pattern. In that case, `GenericContainer` already provides a `start()` method, so the only method that needs to be implemented is `close()` (which can delegate to the superclass). A container configured with `withReuse(true)` must also override `isReusable()`, so that Quarkus knows not to stop it on shutdown:
+
+```java
+@Override
+public boolean isReusable() {
+    return TestcontainersConfiguration.getInstance().environmentSupportsReuse() && isShouldBeReused();
+}
+```
 
 For example, a minimal `Startable` implementation might look something like this:
 
@@ -163,15 +172,15 @@ public DevServicesResultBuildItem createContainer(MyConfig config) {
                     config.imageName(),
                     config.port()))
             .configProvider(
-                    Map.of("some-service.base-url",
-                            s -> "http://" + s.getConnectionInfo()))
+                    s -> Map.of("some-service.base-url",
+                            "http://" + s.getConnectionInfo()))
             .build();
 }
 ```
 
 With this code, you should be able to see your container starting if you add your extension to a test application and run `quarkus dev`.
 
-To allow applications to connect to the service, the build step needs to provide configuration overrides. This is done lazily, since the actual service port is usually only known at runtime. To configure the port, use `.configProvider( Map.of("the-config-key-for-the-base-url", s -> "http://" + s.getConnectionInfo())`.
+To allow applications to connect to the service, the build step needs to provide configuration overrides. This is done lazily, since the actual service port is usually only known at runtime. To configure the port, use `.configProvider( s -> Map.of("the-config-key-for-the-base-url", "http://" + s.getConnectionInfo()))`.
 
 If you need to tell the application where the service is living without using Quarkus configuration, you can pass information about the service using [recorders](https://quarkus.io/guides/writing-extensions#injecting-configuration-into-recorders).
 
@@ -191,8 +200,8 @@ The configuration object for this service. It is compared reflectively to the pr
 **`startable(Supplier<S>)`**\
 A supplier that creates the `Startable` instance. The service is created at build time, but it is not started until the right point during Quarkus startup.
 
-**`configProvider(Map<String, Function<T, String>>)`**\
-Provides configuration values that are only known after the service is started, such as mapped ports. The key in the map is the config property name; the value is a function that receives the started `Startable` and returns the config value. + For config values that are known at build time, use `config(Map<String, String>)` instead.
+**`configProvider(Function<T, Map<String, String>>)`**\
+Provides configuration values that are only known after the service is started, such as mapped ports. The function receives the started `Startable` and returns a map of config property names to their values. + For config values that are known at build time, use `config(Map<String, String>)` instead.
 
 **`postStartHook(Consumer<T>)`**\
 An action to perform after the service starts. Any methods used here will be invoked at runtime, not build time, and will affect startup times. Optional.

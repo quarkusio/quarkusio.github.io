@@ -33,7 +33,7 @@ Codestarts are working the same way when contributing to the generation of a pro
 
 - project: The project skeleton (e.g. a Quarkus project)
 - buildtool: The build tool (e.g. Maven, Gradle, Gradle with Kotlin DSL)
-- language: The coding language (e.g. Java, Kotlin, Scala)
+- language: The coding language (e.g. Java, Kotlin)
 - config: The config type (e.g. yaml, properties)
 
 **Extra codestarts (as much as wanted, added on top of the base ones):**
@@ -101,14 +101,14 @@ Quarkus provides the [`create-extension` Maven Mojo](/guides/building-my-first-e
 To generate a new extension with a Codestart skeleton provide the `-DwithCodestart` flag to this Mojo:
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create-extension -N \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create-extension -N \
     -DgroupId=org.acme \
     -DextensionId=greeting-extension \
     -DwithCodestart
 ```
 
 ```shell
-[INFO] --- quarkus-maven-plugin:3.40.1.2:create-extension (default-cli) @ standalone-pom ---
+[INFO] --- quarkus-maven-plugin:4.0.1:create-extension (default-cli) @ standalone-pom ---
 
 Detected layout type is 'standalone'
 Generated runtime artifactId is 'greeting-extension'
@@ -214,6 +214,18 @@ In your extension:
     ...
     codestart:
       name: "aloha"
+      languages:
+      - "java"
+      artifact: "io.quarkiverse.aloha:quarkus-aloha:codestarts:jar:${project.version}"
+  ```
+
+  If your extension provides a base codestart but also needs to activate additional codestarts (e.g., for shared configuration or common setup provided by other codestarts in the same artifact), you can use the `extra-names` property alongside `name`:
+
+  ```yaml
+    codestart:
+      name: "aloha"
+      extra-names:
+      - "aloha-extra"
       languages:
       - "java"
       artifact: "io.quarkiverse.aloha:quarkus-aloha:codestarts:jar:${project.version}"
@@ -332,7 +344,7 @@ In your extension:
 
 You have to use `org.acme` as the package name in your extension codestart sources. In the generated project, the user specified package (or Group) will be used (and automatically replace `org.acme`).
 
-The package will be automatically replaced in all the source files (.java, .kt, .scala). The package directory will also be automatically adjusted. If for some reason, another type of file needs the user package name then you should use a [Templates (Qute)](#qute-templates) for it and the `{project.package-name}` data placeholder ([find an example in the grpc proto file](https://github.com/quarkusio/quarkus/blob/main/devtools/project-core-extension-codestarts/src/main/resources/codestarts/quarkus/extension-codestarts/grpc-codestart/base/src/main/proto/hello.tpl.qute.proto#L4)).
+The package will be automatically replaced in all the source files (.java, .kt). The package directory will also be automatically adjusted. If for some reason, another type of file needs the user package name then you should use a [Templates (Qute)](#qute-templates) for it and the `{project.package-name}` data placeholder ([find an example in the grpc proto file](https://github.com/quarkusio/quarkus/blob/main/devtools/project-core-extension-codestarts/src/main/resources/codestarts/quarkus/extension-codestarts/grpc-codestart/base/src/main/proto/hello.tpl.qute.proto#L4)).
 
 <a id="codestart-yml"></a>
 ### codestart.yml
@@ -363,7 +375,7 @@ metadata:
 
 - `codestart.yml` must be at the root of the codestart
 - `./base` contains all the files that will be processed independently of the specified language
-- `./[java/kotlin/scala]` contains all the files that will be processed only if the specified language has been selected (overriding base)
+- `./[java/kotlin]` contains all the files that will be processed only if the specified language has been selected (overriding base)
 
 ### Dynamic Config Keys in Codestart
 
@@ -394,8 +406,7 @@ quarkus.gradle-plugin.version = Quarkus Gradle plugin version
 quarkus.version = Quarkus version
 java.version = Java version
 kotlin.version = Kotlin version
-scala.version = Scala version
-scala-maven-plugin.version = Scala Maven plugin version
+
 maven-compiler-plugin.version = Maven compiler plugin version
 maven-surefire-plugin.version = Maven Surefire plugin version
 ```

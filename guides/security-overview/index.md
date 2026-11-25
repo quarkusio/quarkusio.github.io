@@ -8,10 +8,11 @@ Before building security into your Quarkus applications, learn about the [Quarku
 
 The Quarkus Security framework provides built-in security authentication mechanisms for Basic, Form-based, and mutual TLS (mTLS) authentication. You can also use other well-known [authentication mechanisms](/guides/security-authentication-mechanisms/index.md#other-supported-authentication-mechanisms), such as OpenID Connect (OIDC) and WebAuthn. Authentication mechanisms depend on [Identity providers](/guides/security-identity-providers/index.md) to verify the authentication credentials and map them to a `SecurityIdentity` instance with the username, roles, original authentication credentials, and other attributes.
 
-Quarkus also includes built-in security to allow for role-based access control (RBAC) based on the common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST endpoints, and Contexts and Dependency Injection (CDI) beans. For more information, see the Quarkus [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
+Quarkus also includes built-in security to allow for role-based access control (RBAC) based on the common security annotations `@RolesAllowed`, `@DenyAll`, `@PermitAll` on REST endpoints, and Contexts and Dependency Injection (CDI) beans. For more information, see the Quarkus [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
 
 Quarkus Security also supports the following features:
 
+- [Programmatic setup with the `HttpSecurity` API](#programmatic-set-up)
 - [Proactive authentication](/guides/security-proactive-authentication/index.md)
 - [Secure connections with SSL/TLS](/guides/http-reference/index.md#ssl)
 - [Cross-origin resource sharing](#cross-origin-resource-sharing)
@@ -31,6 +32,20 @@ To get started with security in Quarkus, consider securing your Quarkus applicat
 Complete the steps in the [Getting started with Security by using Basic authentication and Jakarta Persistence](/guides/security-getting-started-tutorial/index.md) tutorial.
 
 After successfully securing your Quarkus application with Basic authentication, you can increase the security further by adding more advanced authentication mechanisms, for example, the Quarkus [OpenID Connect (OIDC) authorization code flow mechanism](/guides/security-oidc-code-flow-authentication/index.md) guide.
+
+<a id="programmatic-set-up"></a>
+## Programmatic setup
+
+You can set up authentication mechanisms, OIDC tenants, path-specific authorization, CORS, and CSRF prevention in code instead of the `application.properties` file, for example, to build the setup from values that your code reads when the application starts. A method that observes the `io.quarkus.vertx.http.security.HttpSecurity` CDI event configures these features with a fluent API, and runtime configuration properties are available to that method. OIDC tenants use the same approach with a different event: a method that observes `io.quarkus.oidc.Oidc` registers tenants with the `OidcTenantConfig` builder. For instructions, see the following sections:
+
+- [Programmatic path-specific authorization](/guides/security-authorize-web-endpoints-reference/index.md#path-specific-authz-programmatic-set-up)
+- [Set up Basic authentication programmatically](/guides/security-basic-authentication/index.md#basic-auth-programmatic-set-up)
+- [Set up Form-based authentication programmatically](/guides/security-authentication-mechanisms/index.md#form-based-auth-programmatic-set-up)
+- [Set up the mutual TLS client authentication programmatically](/guides/security-authentication-mechanisms/index.md#mtls-programmatic-set-up)
+- [Programmatic OIDC start-up for multitenant application](/guides/security-openid-connect-multitenancy/index.md#programmatic-startup)
+- [Creating OIDC configuration programmatically](/guides/security-oidc-expanded-configuration/index.md#creating-tenants-programmatically)
+- [Configuring the CORS filter programmatically](/guides/security-cors/index.md#cors-filter-programmatic-set-up)
+- [Configuring the CSRF prevention programmatically](/guides/security-csrf-prevention/index.md#csrf-prevention-programmatic-set-up)
 
 ## Quarkus Security testing
 

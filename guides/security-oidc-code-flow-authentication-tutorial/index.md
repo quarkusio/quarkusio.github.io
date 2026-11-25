@@ -14,7 +14,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -56,7 +56,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-openid-connect-web-authentication-quickstart \
     -Dextensions='rest,oidc' \
@@ -220,7 +220,7 @@ Finally, the `quarkus.http.auth.permission.authenticated` permission is set to t
 To start a Keycloak server, use Docker and run the following command:
 
 ```bash
-docker run --name keycloak -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:26.7.4 start-dev
+docker run --name keycloak -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:26.8.2 start-dev
 ```
 
 You can access your Keycloak Server at [localhost:8180](http://localhost:8180).

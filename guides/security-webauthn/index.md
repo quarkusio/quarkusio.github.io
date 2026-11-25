@@ -17,7 +17,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -88,7 +88,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-webauthn-quickstart \
     -Dextensions='security-webauthn,jdbc-postgresql,rest,hibernate-orm-panache' \
@@ -326,7 +326,7 @@ You can allow (if you want, but you don't have to) your users to have more than 
 
 ### Exposing your entities to Quarkus WebAuthn
 
-You need to define a bean implementing the [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) in order to allow the Quarkus WebAuthn extension to load and store credentials. This is where you tell Quarkus how to turn your data model into the WebAuthn security model:
+You need to define a bean implementing the [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) in order to allow the Quarkus WebAuthn extension to load and store credentials. This is where you tell Quarkus how to turn your data model into the WebAuthn security model:
 
 ```java
 import java.util.Collections;
@@ -591,7 +591,7 @@ There are two modes of operation for how you want to handle user and credential 
 
 By default, the solution we have seen handles user and credential creation and logins automatically via the [\[WebAuthn endpoints\]](<#WebAuthn endpoints>) provided out of the box by this extension.
 
-In this scenario, all you have to to is provide a [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to tell Quarkus how to find, store and update your credentials (see [\[Exposing your entities to Quarkus WebAuthn\]](<#Exposing your entities to Quarkus WebAuthn>)).
+In this scenario, all you have to to is provide a [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to tell Quarkus how to find, store and update your credentials (see [\[Exposing your entities to Quarkus WebAuthn\]](<#Exposing your entities to Quarkus WebAuthn>)).
 
 Thus, triggering a registration on the client requires obtaining a challenge from the server (see [\[Obtain a registration challenge\]](<#Obtain a registration challenge>)), which will then be returned to the client which uses that to create new credentials and send them to the server (see [\[Trigger a registration\]](<#Trigger a registration>)) which will store the credentials and log you in:
 
@@ -662,7 +662,7 @@ Query parameters:
 
 - `username` is a username. Required.
 
-This uses the challenge cookie set by the registration challenge and clears it. It also uses your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to store the new credentials, and sets up the [session cookie](#configuration-reference) to log you in.
+This uses the challenge cookie set by the registration challenge and clears it. It also uses your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to store the new credentials, and sets up the [session cookie](#configuration-reference) to log you in.
 
 > [!NOTE]
 > This is only enabled if the `quarkus.webauthn.enable-registration-endpoint` configuration is set to `true`.
@@ -720,7 +720,7 @@ This causes a cookie to be set for the challenge, it will be used by the login s
 
 ### Trigger a login
 
-This uses the challenge cookie set by the login challenge and clears it. It also uses your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to find and update the credentials, and sets up the [session cookie](#configuration-reference) to log you in.
+This uses the challenge cookie set by the login challenge and clears it. It also uses your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) to find and update the credentials, and sets up the [session cookie](#configuration-reference) to log you in.
 
 > [!NOTE]
 > This is only enabled if the `quarkus.webauthn.enable-login-endpoint` configuration is set to `true`.
@@ -753,7 +753,7 @@ This returns a 302 redirect to the root URI of your application.
 
 ### Related Origins
 
-`GET /.well-known/webauthn`: Retreives the list of [related origins](https://passkeys.dev/docs/advanced/related-origins/).
+`GET /.well-known/webauthn`: Retrieves the list of [related origins](https://passkeys.dev/docs/advanced/related-origins/).
 
 This defaults to the current origin on which Quarkus is deployed, but can be [configured](#quarkus-security-webauthn_quarkus-webauthn-origins).
 
@@ -899,7 +899,7 @@ Sometimes, you will want to ask for more data than just a username in order to r
 
 In this case, you can use the `WebAuthn.loginClientSteps` and `WebAuthn.registerClientSteps` methods from the JavaScript library, store the authenticator data in hidden form elements, and send them as part of your form payload to the server to your custom login or registration endpoints.
 
-If you are storing them in form input elements, you can then use the [`WebAuthnLoginResponse`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnLoginResponse.html) and [`WebAuthnRegistrationResponse`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnRegistrationResponse.html) classes, mark them as `@BeanParam` and then use the [`WebAuthnSecurity.login`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html#login(io.quarkus.security.webauthn.WebAuthnLoginResponse,io.vertx.ext.web.RoutingContext)) and [`WebAuthnSecurity.register`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html#register(io.quarkus.security.webauthn.WebAuthnRegisterResponse,io.vertx.ext.web.RoutingContext)) methods to replace the `/q/webauthn/login` and `/q/webauthn/register` endpoints.
+If you are storing them in form input elements, you can then use the [`WebAuthnLoginResponse`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnLoginResponse.html) and [`WebAuthnRegistrationResponse`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnRegistrationResponse.html) classes, mark them as `@BeanParam` and then use the [`WebAuthnSecurity.login`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html#login(io.quarkus.security.webauthn.WebAuthnLoginResponse,io.vertx.ext.web.RoutingContext)) and [`WebAuthnSecurity.register`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html#register(io.quarkus.security.webauthn.WebAuthnRegisterResponse,io.vertx.ext.web.RoutingContext)) methods to replace the `/q/webauthn/login` and `/q/webauthn/register` endpoints.
 
 In most cases you can keep using the `/q/webauthn/login-options-challenge` and `/q/webauthn/register-options-challenge` challenge-initiating endpoints, because this is not where custom logic is required.
 
@@ -911,7 +911,7 @@ Similarly, the login flow is a little different because you will write your own 
 
 ![webauthn custom login](/guides/images/webauthn-custom-login.svg)
 
-If you handle user and credential creation and logins yourself in your endpoints, you only need to provide a read-only view of your entities in your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html), so you can skip the `store` and `update` methods:
+If you handle user and credential creation and logins yourself in your endpoints, you only need to provide a read-only view of your entities in your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html), so you can skip the `store` and `update` methods:
 
 ```java
 package org.acme.security.webauthn;
@@ -963,7 +963,7 @@ public class MyWebAuthnSetup implements WebAuthnUserProvider {
 > [!NOTE]
 > When setting up your own login and registration endpoints, you don't need to enable the default endpoints, so you can remove the `quarkus.webauthn.enable-login-endpoint` and `quarkus.webauthn.enable-registration-endpoint` configuration.
 
-Thankfully, you can use the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html) bean to handle the WebAuthn-specific part of your registration and login endpoints, and focus on your own logic:
+Thankfully, you can use the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html) bean to handle the WebAuthn-specific part of your registration and login endpoints, and focus on your own logic:
 
 ```java
 package org.acme.security.webauthn;
@@ -1060,19 +1060,19 @@ public class LoginResource {
 ```
 
 > [!NOTE]
-> The [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods do not set or read the [session cookie](#configuration-reference), so you will have to take care of it yourself, but it allows you to use other means of storing the user, such as JWT. You can use the [`WebAuthnSecurity.rememberUser`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html#rememberUser(java.lang.String,io.vertx.ext.web.RoutingContext)) and [`WebAuthnSecurity.logout`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html#logout(io.vertx.ext.web.RoutingContext)) methods on the same [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html) class if you want to manually set up login cookies.
+> The [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods do not set or read the [session cookie](#configuration-reference), so you will have to take care of it yourself, but it allows you to use other means of storing the user, such as JWT. You can use the [`WebAuthnSecurity.rememberUser`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html#rememberUser(java.lang.String,io.vertx.ext.web.RoutingContext)) and [`WebAuthnSecurity.logout`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html#logout(io.vertx.ext.web.RoutingContext)) methods on the same [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html) class if you want to manually set up login cookies.
 
 ## Blocking version
 
-If you're using a blocking data access to the database, you can safely block on the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods, with `.await().indefinitely()`, because nothing is async in the `register` and `login` methods, besides the data access with your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html).
+If you're using a blocking data access to the database, you can safely block on the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods, with `.await().indefinitely()`, because nothing is async in the `register` and `login` methods, besides the data access with your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html).
 
-You will have to add the `@Blocking` annotation on your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) class in order for the Quarkus WebAuthn endpoints to defer those calls to the worker pool.
+You will have to add the `@Blocking` annotation on your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) class in order for the Quarkus WebAuthn endpoints to defer those calls to the worker pool.
 
 ## Virtual-Threads version
 
-If you're using a blocking data access to the database, you can safely block on the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods, with `.await().indefinitely()`, because nothing is async in the `register` and `login` methods, besides the data access with your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html).
+If you're using a blocking data access to the database, you can safely block on the [`WebAuthnSecurity`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnSecurity.html) methods, with `.await().indefinitely()`, because nothing is async in the `register` and `login` methods, besides the data access with your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html).
 
-You will have to add the `@RunOnVirtualThread` annotation on your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) class in order to tell the Quarkus WebAuthn endpoints to defer those calls to the worker pool.
+You will have to add the `@RunOnVirtualThread` annotation on your [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) class in order to tell the Quarkus WebAuthn endpoints to defer those calls to the worker pool.
 
 ## Testing WebAuthn
 
@@ -1094,7 +1094,7 @@ Testing WebAuthn can be complicated because normally you need a hardware token, 
 testImplementation("io.quarkus:quarkus-test-security-webauthn")
 ```
 
-With this, you can use [`WebAuthnHardware`](https://javadoc.io/doc/io.quarkus/quarkus-test-security-webauthn/3.40.1.2/io/quarkus/test/security/webauthn/WebAuthnHardware.html) to emulate an authenticator token, as well as the [`WebAuthnEndpointHelper`](https://javadoc.io/doc/io.quarkus/quarkus-test-security-webauthn/3.40.1.2/io/quarkus/test/security/webauthn/WebAuthnEndpointHelper.html) helper methods in order to invoke the WebAuthn endpoints, or even fill your form data for custom endpoints:
+With this, you can use [`WebAuthnHardware`](https://javadoc.io/doc/io.quarkus/quarkus-test-security-webauthn/4.0.1/io/quarkus/test/security/webauthn/WebAuthnHardware.html) to emulate an authenticator token, as well as the [`WebAuthnEndpointHelper`](https://javadoc.io/doc/io.quarkus/quarkus-test-security-webauthn/4.0.1/io/quarkus/test/security/webauthn/WebAuthnEndpointHelper.html) helper methods in order to invoke the WebAuthn endpoints, or even fill your form data for custom endpoints:
 
 ```java
 package org.acme.security.webauthn.test;
@@ -1283,7 +1283,7 @@ public class WebAuthnResourceTest {
 }
 ```
 
-For this test, since we're testing both the provided callback endpoint, which updates users in its [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) and the manual `LoginResource` endpoint, which deals with users manually, we need to override the [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/3.40.1.2/io/quarkus/security/webauthn/WebAuthnUserProvider.html) with one that doesn't update the `scooby` user:
+For this test, since we're testing both the provided callback endpoint, which updates users in its [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) and the manual `LoginResource` endpoint, which deals with users manually, we need to override the [`WebAuthnUserProvider`](https://javadoc.io/doc/io.quarkus/quarkus-security-webauthn/4.0.1/io/quarkus/security/webauthn/WebAuthnUserProvider.html) with one that doesn't update the `scooby` user:
 
 ```java
 package org.acme.security.webauthn.test;

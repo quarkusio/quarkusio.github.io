@@ -109,7 +109,12 @@ The embedded dependency SBOM can be exposed through a REST endpoint, making it a
 quarkus.cyclonedx.endpoint.enabled=true
 ```
 
-The embedded SBOM will be served at `/.well-known/sbom` with the `application/vnd.cyclonedx+json` content type (or `application/vnd.cyclonedx+xml` for XML SBOMs). The path can be customized using the `quarkus.cyclonedx.endpoint.path` property.
+The embedded SBOM will be served at `/.well-known/sbom`. The content type is determined by the embedded SBOM format:
+
+- `application/vnd.cyclonedx+json` for JSON SBOMs (default)
+- `application/vnd.cyclonedx+xml` for XML SBOMs
+
+The path can be customized using the `quarkus.cyclonedx.endpoint.path` property.
 
 Enabling the endpoint will automatically trigger SBOM embedding, even if `quarkus.cyclonedx.embedded.enabled` is not explicitly set to `true`.
 
@@ -153,7 +158,7 @@ To generate CycloneDX distribution SBOMs, add `io.quarkus:quarkus-cyclonedx` as 
 - `<executable-name>` is the base file name (without the extension) of the executable that launches the application;
 - `<format>` is either `json` (the default) or `xml`, which can be configured using the `quarkus.cyclonedx.format` property. If both formats are desired, `quarkus.cyclonedx.format` can be set to `all`.
 
-By default, generated JSON SBOMs are not pretty-printed. To enable pretty-printing:
+By default, generated SBOMs are not pretty-printed. To enable pretty-printing:
 
 ```properties
 quarkus.cyclonedx.pretty-print=true
@@ -294,6 +299,14 @@ podman run --rm -v $(pwd):/tmp:z anchore/syft scan myapp -o cyclonedx-json
 
 > [!NOTE]
 > The SBOM is always GZIP-compressed before being embedded as a global symbol, as required by the GraalVM SBOM specification and regardless of the `quarkus.cyclonedx.embedded.compress` setting. Since the classpath resource is always stored uncompressed, Quarkus compresses it at native image build time.
+
+#### Extracting the embedded SBOM using Mandrel
+
+In addition to `syft`, the embedded SBOM can also be extracted using the `native-image-configure` tool included in Mandrel version `25.0.4` or later. See also the [Mandrel 25.0.4.0-Final release notes](https://github.com/graalvm/mandrel/releases/tag/mandrel-25.0.4.0-Final):
+
+```bash
+$GRAALVM_HOME/bin/native-image-configure extract-sbom --image-path=/path/to/quarkus-app --output-file=quarkus-app.sbom.json
+```
 
 ### Mutable JAR
 
@@ -574,7 +587,7 @@ SbomContributionBuildItem contributeNpmComponents() {
 | --- | --- | --- |
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-enabled"></a> [`quarkus.cyclonedx.enabled`](#quarkus-cyclonedx_quarkus-cyclonedx-enabled) config_property_copy_button:+++quarkus.cyclonedx.enabled+++[]<br><br>Whether to CycloneDX SBOM generation is enabled. If this option is false, the rest of the configuration will be ignored.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_ENABLED+++[] | boolean | `true` |
-| [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-format"></a> [`quarkus.cyclonedx.format`](#quarkus-cyclonedx_quarkus-cyclonedx-format) config_property_copy_button:+++quarkus.cyclonedx.format+++[]<br><br>SBOM file format. Supported formats are ++{++code json++}++ and ++{++code xml++}++. The default format is JSON. If both are desired then `all` could be used as the value of this option.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_FORMAT+++[] | string | `json` |
+| [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-format"></a> [`quarkus.cyclonedx.format`](#quarkus-cyclonedx_quarkus-cyclonedx-format) config_property_copy_button:+++quarkus.cyclonedx.format+++[]<br><br>SBOM file format. Supported formats are `json` and `xml`. The default format is JSON. If both are desired then `all` could be used as the value of this option.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_FORMAT+++[] | string | `json` |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-schema-version"></a> [`quarkus.cyclonedx.schema-version`](#quarkus-cyclonedx_quarkus-cyclonedx-schema-version) config_property_copy_button:+++quarkus.cyclonedx.schema-version+++[]<br><br>CycloneDX specification version. The default value be the latest supported by the integrated CycloneDX library.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_SCHEMA_VERSION+++[] | string |  |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-include-license-text"></a> [`quarkus.cyclonedx.include-license-text`](#quarkus-cyclonedx_quarkus-cyclonedx-include-license-text) config_property_copy_button:+++quarkus.cyclonedx.include-license-text+++[]<br><br>Whether to include the license text into generated SBOMs.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_INCLUDE_LICENSE_TEXT+++[] | boolean | `false` |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-pretty-print"></a> [`quarkus.cyclonedx.pretty-print`](#quarkus-cyclonedx_quarkus-cyclonedx-pretty-print) config_property_copy_button:+++quarkus.cyclonedx.pretty-print+++[]<br><br>Whether to pretty-print the generated SBOM output.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_PRETTY_PRINT+++[] | boolean | `false` |
@@ -584,7 +597,7 @@ SbomContributionBuildItem contributeNpmComponents() {
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-product-attribution"></a> [`quarkus.cyclonedx.product-attribution`](#quarkus-cyclonedx_quarkus-cyclonedx-product-attribution) config_property_copy_button:+++quarkus.cyclonedx.product-attribution+++[]<br><br>When Quarkus platform members include product information (a CPE and the extensions/artifacts bound to an offering) and this option is enabled, each product is represented in the SBOM as a top-level component of type `framework` that `provides` the artifacts attributed to it (CycloneDX 1.6 `dependency.provides`; recorded as `dependsOn` on older schema versions).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_PRODUCT_ATTRIBUTION+++[] | boolean | `true` |
 | <a id="quarkus-cyclonedx_section_quarkus-cyclonedx-embedded"></a> [Embedded dependency SBOM configuration](#quarkus-cyclonedx_section_quarkus-cyclonedx-embedded) | Type | Default |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-embedded-enabled"></a> [`quarkus.cyclonedx.embedded.enabled`](#quarkus-cyclonedx_quarkus-cyclonedx-embedded-enabled) config_property_copy_button:+++quarkus.cyclonedx.embedded.enabled+++[]<br><br>Whether a dependency SBOM should be embedded in the final application.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_EMBEDDED_ENABLED+++[] | boolean | `false` |
-| [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-embedded-resource-name"></a> [`quarkus.cyclonedx.embedded.resource-name`](#quarkus-cyclonedx_quarkus-cyclonedx-embedded-resource-name) config_property_copy_button:+++quarkus.cyclonedx.embedded.resource-name+++[]<br><br>Resource name for the embedded dependency SBOM. The SBOM is always stored uncompressed under this exact name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_EMBEDDED_RESOURCE_NAME+++[] | string | `META-INF/sbom/dependency.cdx.json` |
+| [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-embedded-resource-name"></a> [`quarkus.cyclonedx.embedded.resource-name`](#quarkus-cyclonedx_quarkus-cyclonedx-embedded-resource-name) config_property_copy_button:+++quarkus.cyclonedx.embedded.resource-name+++[]<br><br>Resource name for the embedded dependency SBOM. The SBOM is always stored uncompressed under this exact name. The format is determined by the resource name extension: `.json` for JSON, `.xml` for XML.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_EMBEDDED_RESOURCE_NAME+++[] | string | `META-INF/sbom/dependency.cdx.json` |
 | [lock] <a id="quarkus-cyclonedx_quarkus-cyclonedx-embedded-compress"></a> [`quarkus.cyclonedx.embedded.compress`](#quarkus-cyclonedx_quarkus-cyclonedx-embedded-compress) config_property_copy_button:+++quarkus.cyclonedx.embedded.compress+++[]<br><br>Controls whether the embedded SBOM is served GZIP-compressed through the *endpoint*. This option does not affect how the SBOM is stored in the application: the embedded SBOM resource is always stored uncompressed.<br><br>\* if set to `true`, the endpoint always serves the SBOM compressed with `Content-Encoding: gzip`; \* if set to `false`, the endpoint always serves the SBOM uncompressed; \* if not set, the endpoint negotiates the encoding based on the request's `Accept-Encoding` header, serving the SBOM compressed only when the client accepts `gzip`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CYCLONEDX_EMBEDDED_COMPRESS+++[] | boolean |  |
 
 [lock] Configuration property fixed at build time - All other configuration properties are overridable at runtime

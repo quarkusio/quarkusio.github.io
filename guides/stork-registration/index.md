@@ -13,9 +13,9 @@ This guide explains how to enable automatic registration and deregistration of a
 
 ## Overview
 
-SmallRye Stork supports service registration backends like Consul and Eureka. Traditionally, developers [had to explicitly configure and manually register](https://github.com/quarkusio/quarkus-quickstarts/tree/main/stork-programmatic-custom-registration-quickstart) their service instances using code. With this feature, Quarkus applications can automatically register with a supported registry (e.g., Consul) during startup and deregister during shutdown — without writing boilerplate code.
+SmallRye Stork supports service registration backends like Consul and Eureka. Traditionally, developers had to explicitly configure and manually register their service instances using code. With this feature, Quarkus applications can automatically register with a supported registry (e.g., Consul) during startup and deregister during shutdown — without writing boilerplate code.
 
-**IMPORTANT**: Note that automatic registration is possible **only** for built-in registrars such as Consul, Eureka, and Static. If you're using a custom registrar, registration must still be handled programmatically. Check the `stork-programmatic-custom-registration-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/stork-programmatic-custom-registration-quickstart) example for this use case.
+**IMPORTANT**: Note that automatic registration is possible **only** for built-in registrars such as Consul, Eureka, and Static. If you're using a custom registrar, registration must still be handled programmatically. See the [stork.adoc](https://smallrye.io/smallrye-stork/2.7.10/programmatic-api/)\[Stork API documentation\] for an example of programmatic service registration.
 
 This integration minimizes configuration effort and adheres to Quarkus' philosophy of doing as much as possible at build time.
 
@@ -28,7 +28,7 @@ When the application starts and the `stork-service-registration-consul` dependen
 - **During startup**, the application registers itself automatically using the detected or configured IP address and port.
 - During shutdown, the service is automatically deregistered.
 
-The solution is located in the `stork-automatic-consul-registration-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/stork-automatic-consul-registration-quickstart).
+The `stork-quickstart` [directory](https://github.com/quarkusio/quarkus-quickstarts/tree/main/stork-quickstart) demonstrates Stork with Consul service discovery, which can be extended with automatic registration as shown below.
 
 ## Use cases/configuration options
 
@@ -102,6 +102,16 @@ quarkus.stork.my-service.service-registrar.ip-address=203.0.113.25
 quarkus.stork.my-service.service-registrar.port=80
 ```
 
+## Registration timeout
+
+When the application starts, Quarkus waits for each service instance to be registered, and when it stops, for each service instance to be deregistered. If the service registry does not respond within 10 seconds, a warning is logged and the application continues to start or stop.
+
+You can change this timeout, for example when the service registry takes longer to respond:
+
+```properties
+quarkus.stork.registration-timeout=30s
+```
+
 ## IP detection
 
 By default, Quarkus attempts to determine the IP address using the first available, non-loopback network interface. If this fails, it falls back to `localhost`.
@@ -132,3 +142,21 @@ Note that in Docker/Kubernetes environments, this detection may result in intern
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-enabled"></a> [`quarkus.stork."service-name".service-registrar.enabled`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-enabled) config_property_copy_button:+++quarkus.stork."service-name".service-registrar.enabled+++[]<br><br>Whether automatic registration and deregistration of service instances is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-type"></a> [`quarkus.stork."service-name".service-registrar.type`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-type) config_property_copy_button:+++quarkus.stork."service-name".service-registrar.type+++[]<br><br>Configures service registrar type, e.g. "consul". A ServiceRegistrarProvider for the type has to be available<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR_TYPE+++[] | string |  |
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-parameters"></a> [`quarkus.stork."service-name".service-registrar."parameters"`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-parameters) config_property_copy_button:+++quarkus.stork."service-name".service-registrar."parameters"+++[]<br><br>Service Registrar parameters. Check the documentation of the selected registrar type for available parameters<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR__PARAMETERS_+++[] | Map\<String,String> |  |
+| <a id="quarkus-smallrye-stork_quarkus-stork-registration-timeout"></a> [`quarkus.stork.registration-timeout`](#quarkus-smallrye-stork_quarkus-stork-registration-timeout) config_property_copy_button:+++quarkus.stork.registration-timeout+++[]<br><br>The maximum time to wait for a service instance to be registered when the application starts, and deregistered when the application stops.<br><br>If the service registrar does not complete the operation in time, a warning is logged and the application continues to start or stop.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK_REGISTRATION_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-smallrye-stork_quarkus-stork) | `10S` |
+
+<a id="duration-note-anchor-quarkus-smallrye-stork_quarkus-stork"></a>
+
+> [!NOTE]
+> **About the Duration format**
+>
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() Java API documentation](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+>
+> You can also use a simplified format, starting with a number:
+>
+> - If the value is only a number, it represents time in seconds.
+> - If the value is a number followed by `ms`, it represents time in milliseconds.
+>
+> In other cases, the simplified format is translated to the `java.time.Duration` format for parsing:
+>
+> - If the value is a number followed by `h`, `m`, or `s`, it is prefixed with `PT`.
+> - If the value is a number followed by `d`, it is prefixed with `P`.

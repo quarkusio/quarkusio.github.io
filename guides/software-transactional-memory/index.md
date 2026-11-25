@@ -1,4 +1,4 @@
-# Using Software Transactional Memory in Quarkus
+# Using Software Transactional Memory
 
 Software Transactional Memory (STM) has been around in research environments since the late 1990's and has relatively recently started to appear in products and various programming languages. We won't go into all the details behind STM but the interested reader could look at [this paper](https://groups.csail.mit.edu/tds/papers/Shavit/ShavitTouitou-podc95.pdf). However, suffice it to say that STM offers an approach to developing transactional applications in a highly concurrent environment with some of the same characteristics of ACID transactions, which you've probably already used through JTA. Importantly though, the Durability property is relaxed (removed) within STM implementations, or at least made optional. This is not the situation with JTA, where state changes are made durable to a relational database which supports [https://pubs.opengroup.org/onlinepubs/009680699/toc.pdf\[the](https://pubs.opengroup.org/onlinepubs/009680699/toc.pdf[the) X/Open XA standard\].
 

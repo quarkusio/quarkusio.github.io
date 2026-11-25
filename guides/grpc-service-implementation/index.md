@@ -197,58 +197,9 @@ If you wish to scale your server, you can set the number of server instances by 
 |  |  |  |
 | --- | --- | --- |
 | <mark>Configuration property</mark> | Type | Default |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-use-separate-server"></a> [`quarkus.grpc.server.use-separate-server`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-use-separate-server) config_property_copy_button:+++quarkus.grpc.server.use-separate-server+++[]<br><br>Do we use separate HTTP server to serve gRPC requests. Set this to false if you want to use new Vert.x gRPC support, which uses existing Vert.x HTTP server.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_USE_SEPARATE_SERVER+++[] | boolean | `true` |
-| <a id="quarkus-grpc_quarkus-grpc-server_section_quarkus-grpc-server-xds"></a> [Configure XDS usage, if enabled](#quarkus-grpc_quarkus-grpc-server_section_quarkus-grpc-server-xds) | Type | Default |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-xds-enabled"></a> [`quarkus.grpc.server.xds.enabled`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-xds-enabled) config_property_copy_button:+++quarkus.grpc.server.xds.enabled+++[]<br><br>Explicitly enable use of XDS.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_XDS_ENABLED+++[] | boolean | `false` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-xds-secure"></a> [`quarkus.grpc.server.xds.secure`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-xds-secure) config_property_copy_button:+++quarkus.grpc.server.xds.secure+++[]<br><br>Use secure credentials.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_XDS_SECURE+++[] | boolean | `false` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-in-process-enabled"></a> [`quarkus.grpc.server.in-process.enabled`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-in-process-enabled) config_property_copy_button:+++quarkus.grpc.server.in-process.enabled+++[]<br><br>Explicitly enable use of in-process.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_IN_PROCESS_ENABLED+++[] | boolean | `false` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-in-process-name"></a> [`quarkus.grpc.server.in-process.name`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-in-process-name) config_property_copy_button:+++quarkus.grpc.server.in-process.name+++[]<br><br>Set in-process name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_IN_PROCESS_NAME+++[] | string | `quarkus-grpc` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-port"></a> [`quarkus.grpc.server.port`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-port) config_property_copy_button:+++quarkus.grpc.server.port+++[]<br><br>The gRPC Server port.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_PORT+++[] | int | `9000` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-test-port"></a> [`quarkus.grpc.server.test-port`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-test-port) config_property_copy_button:+++quarkus.grpc.server.test-port+++[]<br><br>The gRPC Server port used for tests.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_TEST_PORT+++[] | int | `9001` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-host"></a> [`quarkus.grpc.server.host`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-host) config_property_copy_button:+++quarkus.grpc.server.host+++[]<br><br>The gRPC server host.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_HOST+++[] | string | `0.0.0.0` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-handshake-timeout"></a> [`quarkus.grpc.server.handshake-timeout`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-handshake-timeout) config_property_copy_button:+++quarkus.grpc.server.handshake-timeout+++[]<br><br>The gRPC handshake timeout.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_HANDSHAKE_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-grpc_quarkus-grpc-server) |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-message-size"></a> [`quarkus.grpc.server.max-inbound-message-size`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-message-size) config_property_copy_button:+++quarkus.grpc.server.max-inbound-message-size+++[]<br><br>The max inbound message size in bytes.<br><br>When using a single server (using `quarkus.grpc.server.use-separate-server=false`), the default value is 256KB. When using a separate server (using `quarkus.grpc.server.use-separate-server=true`), the default value is 4MB.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_MAX_INBOUND_MESSAGE_SIZE+++[] | int |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-metadata-size"></a> [`quarkus.grpc.server.max-inbound-metadata-size`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-metadata-size) config_property_copy_button:+++quarkus.grpc.server.max-inbound-metadata-size+++[]<br><br>The max inbound metadata size in bytes<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_MAX_INBOUND_METADATA_SIZE+++[] | int |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-certificate"></a> [`quarkus.grpc.server.ssl.certificate`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-certificate) config_property_copy_button:+++quarkus.grpc.server.ssl.certificate+++[]<br><br>The classpath path or file path to a server certificate or certificate chain in PEM format.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_CERTIFICATE+++[] | path |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key"></a> [`quarkus.grpc.server.ssl.key`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key) config_property_copy_button:+++quarkus.grpc.server.ssl.key+++[]<br><br>The classpath path or file path to the corresponding certificate private key file in PEM format.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY+++[] | path |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store"></a> [`quarkus.grpc.server.ssl.key-store`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store) config_property_copy_button:+++quarkus.grpc.server.ssl.key-store+++[]<br><br>An optional keystore that holds the certificate information instead of specifying separate files. The keystore can be either on classpath or an external file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY_STORE+++[] | path |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-type"></a> [`quarkus.grpc.server.ssl.key-store-type`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-type) config_property_copy_button:+++quarkus.grpc.server.ssl.key-store-type+++[]<br><br>An optional parameter to specify the type of the keystore file. If not given, the type is automatically detected based on the file name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY_STORE_TYPE+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-password"></a> [`quarkus.grpc.server.ssl.key-store-password`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-password) config_property_copy_button:+++quarkus.grpc.server.ssl.key-store-password+++[]<br><br>A parameter to specify the password of the keystore file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY_STORE_PASSWORD+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-alias"></a> [`quarkus.grpc.server.ssl.key-store-alias`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-alias) config_property_copy_button:+++quarkus.grpc.server.ssl.key-store-alias+++[]<br><br>A parameter to specify the alias of the keystore file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY_STORE_ALIAS+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-alias-password"></a> [`quarkus.grpc.server.ssl.key-store-alias-password`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-key-store-alias-password) config_property_copy_button:+++quarkus.grpc.server.ssl.key-store-alias-password+++[]<br><br>A parameter to specify the alias password of the keystore file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_KEY_STORE_ALIAS_PASSWORD+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store"></a> [`quarkus.grpc.server.ssl.trust-store`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store) config_property_copy_button:+++quarkus.grpc.server.ssl.trust-store+++[]<br><br>An optional trust store which holds the certificate information of the certificates to trust<br><br>The trust store can be either on classpath or an external file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_TRUST_STORE+++[] | path |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store-type"></a> [`quarkus.grpc.server.ssl.trust-store-type`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store-type) config_property_copy_button:+++quarkus.grpc.server.ssl.trust-store-type+++[]<br><br>An optional parameter to specify type of the trust store file. If not given, the type is automatically detected based on the file name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_TRUST_STORE_TYPE+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store-password"></a> [`quarkus.grpc.server.ssl.trust-store-password`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-trust-store-password) config_property_copy_button:+++quarkus.grpc.server.ssl.trust-store-password+++[]<br><br>A parameter to specify the password of the trust store file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_TRUST_STORE_PASSWORD+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-cipher-suites"></a> [`quarkus.grpc.server.ssl.cipher-suites`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-cipher-suites) config_property_copy_button:+++quarkus.grpc.server.ssl.cipher-suites+++[]<br><br>The cipher suites to use. If none is given, a reasonable default is selected.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_CIPHER_SUITES+++[] | list of string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-protocols"></a> [`quarkus.grpc.server.ssl.protocols`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-protocols) config_property_copy_button:+++quarkus.grpc.server.ssl.protocols+++[]<br><br>Sets the ordered list of enabled SSL/TLS protocols.<br><br>If not set, it defaults to `"TLSv1.3, TLSv1.2"`. The following list of protocols are supported: `TLSv1, TLSv1.1, TLSv1.2, TLSv1.3`. To only enable `TLSv1.3`, set the value to `to "TLSv1.3"`.<br><br>Note that setting an empty list, and enabling SSL/TLS is invalid. You must at least have one protocol.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_PROTOCOLS+++[] | list of string | `TLSv1.3`, `TLSv1.2` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-client-auth"></a> [`quarkus.grpc.server.ssl.client-auth`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-ssl-client-auth) config_property_copy_button:+++quarkus.grpc.server.ssl.client-auth+++[]<br><br>Configures the engine to require/request client authentication. NONE, REQUEST, REQUIRED<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_SSL_CLIENT_AUTH+++[] | `none`, `request`, `required` | `none` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-plain-text"></a> [`quarkus.grpc.server.plain-text`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-plain-text) config_property_copy_button:+++quarkus.grpc.server.plain-text+++[]<br><br>Disables SSL, and uses plain text instead. If disabled, configure the ssl configuration.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_PLAIN_TEXT+++[] | boolean | `true` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-alpn"></a> [`quarkus.grpc.server.alpn`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-alpn) config_property_copy_button:+++quarkus.grpc.server.alpn+++[]<br><br>Whether ALPN should be used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_ALPN+++[] | boolean | `true` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-transport-security-certificate"></a> [`quarkus.grpc.server.transport-security.certificate`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-transport-security-certificate) config_property_copy_button:+++quarkus.grpc.server.transport-security.certificate+++[]<br><br>The path to the certificate file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_TRANSPORT_SECURITY_CERTIFICATE+++[] | string |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-transport-security-key"></a> [`quarkus.grpc.server.transport-security.key`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-transport-security-key) config_property_copy_button:+++quarkus.grpc.server.transport-security.key+++[]<br><br>The path to the private key file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_TRANSPORT_SECURITY_KEY+++[] | string |  |
+| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-message-size"></a> [`quarkus.grpc.server.max-inbound-message-size`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-max-inbound-message-size) config_property_copy_button:+++quarkus.grpc.server.max-inbound-message-size+++[]<br><br>The max inbound message size in bytes.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_MAX_INBOUND_MESSAGE_SIZE+++[] | int |  |
 | <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-enable-reflection-service"></a> [`quarkus.grpc.server.enable-reflection-service`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-enable-reflection-service) config_property_copy_button:+++quarkus.grpc.server.enable-reflection-service+++[]<br><br>Enables the gRPC Reflection Service. By default, the reflection service is only exposed in `dev` mode. This setting allows overriding this choice and enable the reflection service every time.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_ENABLE_REFLECTION_SERVICE+++[] | boolean | `false` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-instances"></a> [`quarkus.grpc.server.instances`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-instances) config_property_copy_button:+++quarkus.grpc.server.instances+++[]<br><br>Number of gRPC server verticle instances. This is useful for scaling easily across multiple cores. The number should not exceed the amount of event loops.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_INSTANCES+++[] | int | `1` |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-keep-alive-time"></a> [`quarkus.grpc.server.netty.keep-alive-time`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-keep-alive-time) config_property_copy_button:+++quarkus.grpc.server.netty.keep-alive-time+++[]<br><br>Sets a custom keep-alive duration. This configures the time before sending a `keepalive` ping when there is no read activity.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_NETTY_KEEP_ALIVE_TIME+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-grpc_quarkus-grpc-server) |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-permit-keep-alive-time"></a> [`quarkus.grpc.server.netty.permit-keep-alive-time`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-permit-keep-alive-time) config_property_copy_button:+++quarkus.grpc.server.netty.permit-keep-alive-time+++[]<br><br>Sets a custom permit-keep-alive duration. This configures the most aggressive keep-alive time clients are permitted to configure. The server will try to detect clients exceeding this rate and when detected will forcefully close the connection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_NETTY_PERMIT_KEEP_ALIVE_TIME+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-grpc_quarkus-grpc-server) |  |
-| <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-permit-keep-alive-without-calls"></a> [`quarkus.grpc.server.netty.permit-keep-alive-without-calls`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-netty-permit-keep-alive-without-calls) config_property_copy_button:+++quarkus.grpc.server.netty.permit-keep-alive-without-calls+++[]<br><br>Sets whether to allow clients to send keep-alive HTTP/2 PINGs even if there are no outstanding RPCs on the connection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_NETTY_PERMIT_KEEP_ALIVE_WITHOUT_CALLS+++[] | boolean |  |
 | <a id="quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-compression"></a> [`quarkus.grpc.server.compression`](#quarkus-grpc_quarkus-grpc-server_quarkus-grpc-server-compression) config_property_copy_button:+++quarkus.grpc.server.compression+++[]<br><br>gRPC compression, e.g. "gzip"<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_GRPC_SERVER_COMPRESSION+++[] | string |  |
-
-<a id="duration-note-anchor-quarkus-grpc_quarkus-grpc-server"></a>
-
-> [!NOTE]
-> **About the Duration format**
->
-> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() Java API documentation](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
->
-> You can also use a simplified format, starting with a number:
->
-> - If the value is only a number, it represents time in seconds.
-> - If the value is a number followed by `ms`, it represents time in milliseconds.
->
-> In other cases, the simplified format is translated to the `java.time.Duration` format for parsing:
->
-> - If the value is a number followed by `h`, `m`, or `s`, it is prefixed with `PT`.
-> - If the value is a number followed by `d`, it is prefixed with `P`.
 
 > [!IMPORTANT]
 > When you disable `quarkus.grpc.server.use-separate-server`, you are then using the new Vert.x gRPC server implementation which uses the existing HTTP server. Which means that the server port is now `8080` (or the port configured with `quarkus.http.port`). Also, most of the other configuration properties are no longer applied, since it's the HTTP server that should already be properly configured.
@@ -323,6 +274,26 @@ public interface ServerBuilderCustomizer<T extends ServerBuilder<T>> {
     }
 }
 ```
+
+### Domain Socket
+
+The gRPC server uses the Quarkus HTTP server, so you can configure it to listen on a Unix domain socket using the standard HTTP configuration properties:
+
+```properties
+quarkus.http.domain-socket-enabled=true
+quarkus.http.domain-socket=/var/run/grpc.sock
+```
+
+When a domain socket is enabled, the gRPC server automatically accepts gRPC requests on it — no gRPC-specific configuration is required.
+
+To listen **only** on the domain socket (disabling TCP), set:
+
+```properties
+quarkus.http.host-enabled=false
+```
+
+> [!NOTE]
+> Unix domain sockets require JDK 16+ and are not available on Windows. Native transport (`quarkus.vertx.native-transport`) is not required.
 
 ## Server Interceptors
 
@@ -487,6 +458,22 @@ grpc_server_requests_received_messages_total{method="SayHello",methodType="UNARY
 ```
 
 The service name, method and type can be found in the *tags*.
+
+By default, processing duration is exported as a Prometheus summary (`_count`, `_sum`, `_max`). To publish aggregatable histogram buckets (for example for `histogram_quantile`), enable:
+
+```properties
+quarkus.micrometer.binder.grpc-server.histogram=true
+```
+
+This uses Micrometer's default percentile histogram buckets (about `1ms` to `30s`). Optionally add extra SLO boundaries and/or clamp the published bucket range to reduce cardinality:
+
+```properties
+quarkus.micrometer.binder.grpc-server.slos=5ms,10ms,25ms,50ms,100ms,1s
+quarkus.micrometer.binder.grpc-server.minimum-expected-value=1ms
+quarkus.micrometer.binder.grpc-server.maximum-expected-value=10s
+```
+
+Histograms are disabled by default because they increase memory usage and metric cardinality.
 
 ### Disabling metrics collection
 

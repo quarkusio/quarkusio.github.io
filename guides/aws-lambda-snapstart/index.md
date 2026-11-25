@@ -10,7 +10,7 @@
 If you use the Quarkus AWS Lambda extension, SnapStart optimizations are automatically enabled. However, you can enable/disable it explicitly using:
 
 ```properties
-quarkus.snapstart.enable=true|false
+quarkus.snapstart.enabled=true|false
 ```
 
 > [!IMPORTANT]

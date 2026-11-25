@@ -1,6 +1,6 @@
 # Using JWT RBAC
 
-This guide explains how to integrate [SmallRye JWT](https://github.com/smallrye/smallrye-jwt/) into your Quarkus application to implement [JSON Web Token (JWT)](https://tools.ietf.org/html/rfc7519) security in compliance with the MicroProfile JWT specification. You’ll learn how to verify JWTs, represent them as MicroProfile JWT `org.eclipse.microprofile.jwt.JsonWebToken`, and secure Quarkus HTTP endpoints using bearer token authorization and [Role-Based Access Control](https://en.wikipedia.org/wiki/Role-based_access_control).
+This guide explains how to integrate [SmallRye JWT](https://github.com/smallrye/smallrye-jwt/) into your Quarkus application to implement [JSON Web Token (JWT)](https://tools.ietf.org/html/rfc7519) security in compliance with the MicroProfile JWT 2.2 specification. You’ll learn how to verify JWTs, represent them as MicroProfile JWT `org.eclipse.microprofile.jwt.JsonWebToken`, and secure Quarkus HTTP endpoints using bearer token authorization and [Role-Based Access Control](https://en.wikipedia.org/wiki/Role-based_access_control).
 
 > [!NOTE]
 > The Quarkus OpenID Connect (`quarkus-oidc`) extension also supports bearer token authorization and uses `smallrye-jwt` to represent bearer tokens as `JsonWebToken`. For details, see the [OIDC Bearer Token Authentication](/guides/security-oidc-bearer-token-authentication/index.md) guide.
@@ -13,7 +13,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -51,7 +51,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-jwt-quickstart \
     -Dextensions='rest-jackson,smallrye-jwt,smallrye-jwt-build' \
@@ -459,6 +459,26 @@ f3cg+fr8aou7pr9SHhJlZCU=
 
 Later, you configure the `smallrye.jwt.sign.key.location` property to specify the location of the private signing key.
 
+<a id="generating-keys-with-the-quarkus-cli"></a>
+
+> [!TIP]
+> **Generating keys with the Quarkus CLI**
+>
+> You can generate a public and private key pair by using the Quarkus CLI:
+>
+> ```shell
+> quarkus jwt generate-key
+> ```
+>
+> This generates RSA 2048-bit keys by default. You can also generate EC keys or specify a different key size:
+>
+> ```shell
+> quarkus jwt generate-key --algo EC
+> quarkus jwt generate-key --algo RSA --size 4096
+> ```
+>
+> The keys are written to `src/main/resources/privateKey.pem` and `src/main/resources/publicKey.pem` in PKCS#8 format, and the required JWT configuration properties are automatically added to `application.properties`.
+
 > [!NOTE]
 > **Generating keys with OpenSSL**
 >
@@ -475,7 +495,7 @@ Later, you configure the `smallrye.jwt.sign.key.location` property to specify th
 >
 > **`openssl` commands to perform the conversion**
 >
-> ```bash
+> ```shell
 > openssl pkcs8 -topk8 -nocrypt -inform pem -in rsaPrivateKey.pem -outform pem -out privateKey.pem
 > ```
 >
@@ -650,7 +670,7 @@ You can run the application as a standard Java application.
 
 2. Run the application:
 
-   ```bash
+   ```shell
    java -jar target/quarkus-app/quarkus-run.jar
    ```
 
@@ -683,7 +703,7 @@ quarkus build --native
 
 1. Run the following binary directly:
 
-```bash
+```shell
 ./target/security-jwt-quickstart-1.0.0-SNAPSHOT-runner
 ```
 
@@ -721,7 +741,7 @@ public class TokenSecuredResource {
 
 Note you can also use the injected `JsonWebToken` to access the individual claims, but setting `@RequestScoped` is unnecessary in this case.
 
-Please see [MP JWT CDI Injection Requirements](https://download.eclipse.org/microprofile/microprofile-jwt-auth-1.2/microprofile-jwt-auth-spec-1.2.html#_cdi_injection_requirements) for more details.
+Please see [MP JWT CDI Injection Requirements](https://download.eclipse.org/microprofile/microprofile-jwt-auth-2.2.1/microprofile-jwt-auth-spec-2.2.1.html#_cdi_injection_requirements) for more details.
 
 <a id="supported-public-key-formats"></a>
 ### Supported public key formats
@@ -890,7 +910,7 @@ Please see the [Token Propagation](/guides/security-openid-connect-client-refere
 <a id="auto-generated-keys"></a>
 #### Automatic key generation
 
-This extension generates an asymmetric RSA 2024 bit signing key pair in the dev and test modes if the verification key has not been configured. Once the key pair is generated, the public RSA key is used to configure the `mp.jwt.verify.publickey` property, and the RSA private key is available to tests to sign tokens using `smallrye-jwt-build`, for example:
+This extension generates an asymmetric RSA 2048-bit signing key pair in the dev and test modes if the verification key has not been configured. Once the key pair is generated, the public RSA key is used to configure the `mp.jwt.verify.publickey` property, and the RSA private key is available to tests to sign tokens using `smallrye-jwt-build`, for example:
 
 ```java
 import io.smallrye.jwt.build.Jwt;
@@ -902,7 +922,9 @@ public String token() {
 }
 ```
 
-See [signing claims guide](/guides/security-jwt-build/index.md#sign-claims) for mode details.
+See [signing claims guide](/guides/security-jwt-build/index.md#sign-claims) for more details.
+
+For production, you can generate your own key pair with `quarkus jwt generate-key`, which also adds the required configuration to `application.properties`.
 
 You can disable automatic key generation by setting at least one of the following properties:
 
@@ -1200,8 +1222,8 @@ SmallRye JWT provides more properties that can be used to customize the token pr
 
 ## References
 
-- [MP JWT 1.2 HTML](https://download.eclipse.org/microprofile/microprofile-jwt-auth-1.2/microprofile-jwt-auth-spec-1.2.html)
-- [MP JWT 1.2 PDF](https://download.eclipse.org/microprofile/microprofile-jwt-auth-1.2/microprofile-jwt-auth-spec-1.2.pdf)
+- [MP JWT 2.2 HTML](https://download.eclipse.org/microprofile/microprofile-jwt-auth-2.2.1/microprofile-jwt-auth-spec-2.2.1.html)
+- [MP JWT 2.2 PDF](https://download.eclipse.org/microprofile/microprofile-jwt-auth-2.2.1/microprofile-jwt-auth-spec-2.2.1.pdf)
 - [SmallRye JWT](https://github.com/smallrye/smallrye-jwt)
 - [JSON Web Token](https://tools.ietf.org/html/rfc7519)
 - [JSON Web Signature](https://tools.ietf.org/html/rfc7515)

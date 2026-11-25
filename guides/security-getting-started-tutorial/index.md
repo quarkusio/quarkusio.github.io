@@ -14,7 +14,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -74,7 +74,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-jpa-quickstart \
     -Dextensions='security-jpa,jdbc-postgresql,rest,hibernate-orm-panache' \
@@ -287,7 +287,7 @@ public class User extends PanacheEntity {
      * @param password the unencrypted password (it is encrypted with bcrypt)
      * @param role the comma-separated roles
      */
-    public static void add(String username, String password, String role) { <5>
+    public static void add(String username, char[] password, String role) { <5>
         User user = new User();
         user.username = username;
         user.password = BcryptUtil.bcryptHash(password);
@@ -312,8 +312,7 @@ The `quarkus-security-jpa` extension only initializes if a single entity is anno
 
 - Always pass plain text passwords to `BcryptUtil.bcryptHash()` - never pre-hash them.
 - The bcrypt hash includes the salt, so no separate salt storage is needed.
-- To verify passwords during authentication, the framework automatically uses `BcryptUtil.matches(plainPassword, hashedPassword)`.
-- For custom iterations: `BcryptUtil.bcryptHash(password, iterationCount)` where higher iterations (12-14) provide more security but slower performance.
+- To verify passwords during authentication, the framework calculates a Bcrypt hash of the password provided in the request and compares it with the stored hash.
 
   - For more information about configuring passwords and roles, see [Configure the application](#configure-the-application).
   - For more information on hashing passwords and available options, see [Password storage and hashing](/guides/security-jpa/index.md#password-storage-and-hashing).
@@ -380,8 +379,8 @@ By adding the `%prod.` profile prefix, you ensure that the data source propertie
       public void loadUsers(@Observes StartupEvent evt) {
           // reset and load all test users
           User.deleteAll();
-          User.add("admin", "admin", "admin");
-          User.add("user", "user", "user");
+          User.add("admin", "admin".toCharArray(), "admin");
+          User.add("user", "user".toCharArray(), "user");
       }
   }
   ```

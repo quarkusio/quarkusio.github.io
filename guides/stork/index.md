@@ -21,7 +21,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -81,7 +81,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=stork-quickstart \
     -Dextensions='quarkus-rest-client,quarkus-rest,quarkus-smallrye-stork' \
@@ -303,7 +303,7 @@ It injects and uses the REST client as usual.
 
 ## Stork Filter
 
-The `baseUri` configured in the REST client will be processed by `StorkClientRequestFilter` class, this is a [Jakarta REST filter](https://quarkus.io/specs/jaxrs/2.1/index.html#filters). If you need to process the metadata associated with a message: HTTP headers, query parameters, media type, and other metadata, you can implement another filter to configure what you need. Let’s implement a custom filter to add logging capability to our service. We create `CustomLoggingFilter` and annotating it with the @Provider annotation:
+The `baseUri` configured in the REST client will be processed by `StorkClientRequestFilter` class, this is a [Jakarta REST filter](https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1.html#filters). If you need to process the metadata associated with a message: HTTP headers, query parameters, media type, and other metadata, you can implement another filter to configure what you need. Let’s implement a custom filter to add logging capability to our service. We create `CustomLoggingFilter` and annotating it with the @Provider annotation:
 
 ```java
 package org.acme;
@@ -327,7 +327,7 @@ public class CustomLoggingFilter implements ResteasyReactiveClientRequestFilter 
 }
 ```
 
-The order in which filters are executed is defined by [Priorities](https://quarkus.io/specs/jaxrs/2.1/index.html#priorities). Note that `CustomLoggingFilter` is using a default value, so the user-level priority and the `StorkClientRequestFilter` uses the security authentication filter priority. This means that `StorkClientRequestFilter` will be executed before our `CustomLoggingFilter`. Use `@Priority` annotation to change this behaviour.
+The order in which filters are executed is defined by [Priorities](https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1.html#priorities). Note that `CustomLoggingFilter` is using a default value, so the user-level priority and the `StorkClientRequestFilter` uses the security authentication filter priority. This means that `StorkClientRequestFilter` will be executed before our `CustomLoggingFilter`. Use `@Priority` annotation to change this behaviour.
 
 ## Stork configuration
 

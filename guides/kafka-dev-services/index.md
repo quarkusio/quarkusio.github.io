@@ -92,7 +92,7 @@ quarkus.kafka.devservices.redpanda.transaction-enabled=false
 ```
 
 > [!NOTE]
-> Redpanda transactions does not support exactly-once processing.
+> Redpanda transactions do not support exactly-once processing.
 
 <a id="Compose"></a>
 ## Compose

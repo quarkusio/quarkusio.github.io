@@ -12,7 +12,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -41,7 +41,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=jfr-quickstart \
     -Dextensions='quarkus-rest,quarkus-jfr' \
@@ -221,7 +221,7 @@ This means that after we identify the trace and span IDs of interest from the UI
 
 If we have not enabled the OpenTelemetry extension, this extension creates an ID for each request and links it to JFR events as a traceId. In this case, the span ID will be null.
 
-For now, Quarkus only records REST events, but we plan to use this ID to link each event to each other as we add more events in the future.
+For now, Quarkus only records REST server and REST Client events, but we plan to use this ID to link each event to each other as we add more events in the future.
 
 ### Event Implementation Policy
 
@@ -268,6 +268,42 @@ Resource Class records the class that was executed. We can check whether the Res
 Resource Method records the method that was executed. We can check if the Resource Method was executed as expected by the HTTP Method and URI.
 
 Client records information about the accessing client.
+
+### REST Client Event
+
+This event is recorded when the Quarkus REST Client extension is enabled.
+
+**RestClient**
+
+
+
+Records the time period from the moment the REST Client starts sending a request until the response has been received or the request has failed.
+
+This event has the following information.
+
+- HTTP Method
+- URI
+- Address
+- Client Name
+- Status
+- Failure
+
+HTTP Method records the HTTP Method of the outgoing request.
+
+URI records the URI path template of the invoked REST Client method, for example `/hello/{name}`. If no template is available, the URI path is recorded instead. Query parameters are never recorded.
+
+Address records the host and port of the remote endpoint.
+
+Client Name records the config key of the REST Client that sent the request.
+
+Status records the HTTP status code of the response, or `0` if no response was received.
+
+Failure records the class name of the exception if the request failed, for example when the connection was refused.
+
+When the request is sent while a REST server request is being processed, the event shares the trace ID of the corresponding REST server event. This makes it possible to see which remote calls were made by each REST server request.
+
+> [!NOTE]
+> Requests whose response is streamed as a `Multi` are not recorded.
 
 ### Runtime Event
 
@@ -495,4 +531,5 @@ public class NewInterceptor {
 | <mark>Configuration property</mark> | Type | Default |
 | <a id="quarkus-jfr_quarkus-jfr-enabled"></a> [`quarkus.jfr.enabled`](#quarkus-jfr_quarkus-jfr-enabled) config_property_copy_button:+++quarkus.jfr.enabled+++[]<br><br>If false, only quarkus-jfr events are not recorded even if JFR is enabled. In this case, Java standard API and virtual machine information will be recorded according to the setting. Default value is `true`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_JFR_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-jfr_quarkus-jfr-rest-enabled"></a> [`quarkus.jfr.rest.enabled`](#quarkus-jfr_quarkus-jfr-rest-enabled) config_property_copy_button:+++quarkus.jfr.rest.enabled+++[]<br><br>If false, only REST events in quarkus-jfr are not recorded even if JFR is enabled. In this case, other quarkus-jfr, Java standard API and virtual machine information will be recorded according to the setting. Default value is `true`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_JFR_REST_ENABLED+++[] | boolean | `true` |
+| <a id="quarkus-jfr_quarkus-jfr-rest-client-enabled"></a> [`quarkus.jfr.rest-client.enabled`](#quarkus-jfr_quarkus-jfr-rest-client-enabled) config_property_copy_button:+++quarkus.jfr.rest-client.enabled+++[]<br><br>If false, only REST Client events in quarkus-jfr are not recorded even if JFR is enabled. In this case, other quarkus-jfr, Java standard API and virtual machine information will be recorded according to the setting. Default value is `true`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_JFR_REST_CLIENT_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-jfr_quarkus-jfr-runtime-enabled"></a> [`quarkus.jfr.runtime.enabled`](#quarkus-jfr_quarkus-jfr-runtime-enabled) config_property_copy_button:+++quarkus.jfr.runtime.enabled+++[]<br><br>If false, only Runtime events in quarkus-jfr are not recorded even if JFR is enabled. In this case, other quarkus-jfr, Java standard API and virtual machine information will be recorded according to the setting. Default value is `true`<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_JFR_RUNTIME_ENABLED+++[] | boolean | `true` |

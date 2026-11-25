@@ -19,7 +19,7 @@ To complete this guide, you need:
 
 - Roughly 5 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
 
 - [JBang](https://jbang.dev/download)
@@ -30,7 +30,7 @@ Normally we would link to a Git repository to clone but in this case there is no
 
 ```java
 //usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS io.quarkus.platform:quarkus-bom:3.40.1.2@pom
+//DEPS io.quarkus.platform:quarkus-bom:4.0.1@pom
 //DEPS io.quarkus:quarkus-rest
 //JAVAC_OPTIONS -parameters
 //JAVA_OPTIONS -Djava.util.logging.manager=org.jboss.logmanager.LogManager
@@ -116,7 +116,7 @@ illustrate how you add dependencies to this script. This is a feature of JBang.
 Go ahead and update this line to include the `quarkus-bom` and the `quarkus-rest` dependency like so:
 
 ```java
-//DEPS io.quarkus.platform:quarkus-bom:3.40.1.2@pom
+//DEPS io.quarkus.platform:quarkus-bom:4.0.1@pom
 //DEPS io.quarkus:quarkus-rest
 ```
 
@@ -126,7 +126,7 @@ Now, run `jbang quarkusapp.java` and you will see JBang resolving this dependenc
 $ jbang quarkusapp.java
 
 [jbang] Resolving dependencies...
-[jbang]     Resolving io.quarkus:quarkus-resteasy:3.40.1.2...Done
+[jbang]     Resolving io.quarkus:quarkus-resteasy:4.0.1...Done
 [jbang] Dependencies resolved
 [jbang] Building jar...
 [jbang] Post build with io.quarkus.launcher.JBangIntegration
@@ -197,7 +197,7 @@ __  ____  __  _____   ___  __ ____  ______
  --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
  -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
 --\___\_\____/_/ |_/_/|_/_/|_|\____/___/
-2023-03-22 09:48:39,891 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT on JVM (powered by Quarkus 3.40.1.2) started in 0.283s. Listening on: http://0.0.0.0:8080
+2023-03-22 09:48:39,891 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT on JVM (powered by Quarkus 4.0.1) started in 0.283s. Listening on: http://0.0.0.0:8080
 2023-03-22 09:48:39,904 INFO  [io.quarkus] (main) Profile prod activated.
 2023-03-22 09:48:39,904 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
 ```
@@ -256,7 +256,7 @@ Edit the `quarksapp` class to inject the `GreetingService` and create a new endp
 
 ```java
 //usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS io.quarkus.platform:quarkus-bom:3.40.1.2@pom
+//DEPS io.quarkus.platform:quarkus-bom:4.0.1@pom
 //DEPS io.quarkus:quarkus-rest
 
 import io.quarkus.runtime.Quarkus;
@@ -402,7 +402,7 @@ __  ____  __  _____   ___  __ ____  ______
  --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
  -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
 --\___\_\____/_/ |_/_/|_/_/|_|\____/___/
-2023-03-22 09:37:57,471 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT native (powered by 3.40.1.2) started in 0.009s. Listening on: http://0.0.0.0:8080
+2023-03-22 09:37:57,471 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT native (powered by 4.0.1) started in 0.009s. Listening on: http://0.0.0.0:8080
 2023-03-22 09:37:57,472 INFO  [io.quarkus] (main) Profile prod activated.
 2023-03-22 09:37:57,472 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
 ```
@@ -415,7 +415,7 @@ __  ____  __  _____   ___  __ ____  ______
  --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
  -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
 --\___\_\____/_/ |_/_/|_/_/|_|\____/___/
-2023-03-22 09:38:45,450 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT native (powered by 3.40.1.2) started in 0.009s. Listening on: http://0.0.0.0:8080
+2023-03-22 09:38:45,450 INFO  [io.quarkus] (main) quarkus 999-SNAPSHOT native (powered by 4.0.1) started in 0.009s. Listening on: http://0.0.0.0:8080
 2023-03-22 09:38:45,450 INFO  [io.quarkus] (main) Profile prod activated.
 2023-03-22 09:38:45,450 INFO  [io.quarkus] (main) Installed features: [cdi, rest, smallrye-context-propagation, vertx]
 ```

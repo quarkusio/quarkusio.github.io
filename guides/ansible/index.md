@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 10 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
 
 You'll need to [install Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) on your workstation. Once this is done, you can install this extension for Ansible dedicated to Quarkus with the following command:
@@ -148,11 +148,11 @@ Here again, it checks that the appropriate OpenJDK is available on the target sy
 With those requirements in place, the jar can be deployed on the target, along with the required configuration for the app integration into systemd as a service. Any change to the systemd configuration requires reloading its daemon, which the collection ensures will happen whenever it is needed. With all of that in place, the only thing that remains is to start the service itself, which Ansible will also take care of.
 
 > [!NOTE]
-> By default, the Ansible collection for Quarkus will install and use the OpenJDK 17 available in the Yum repositories of the target host (or the controller). If you want to use a different version of OpenJDK, define the following variable:
+> By default, the Ansible collection for Quarkus installs and uses the OpenJDK 21 available in the Yum repositories of the target host (or the controller). To use a different version of OpenJDK, set the `quarkus_java_version` variable, which sets both the package that the collection installs and `quarkus_java_home`:
 >
 > ```bash
 > $ ansible-playbook -i inventory ...
->     -e quarkus_java_package_version: java-17-openjdk
+>     -e quarkus_java_version=25
 > ```
 
 ### Validate that deployment was successful

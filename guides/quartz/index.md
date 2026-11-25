@@ -11,7 +11,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Docker and Docker Compose or [Podman](/guides/podman/index.md), and Docker Compose
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -49,7 +49,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=quartz-quickstart \
     -Dextensions='rest-jackson,quartz,hibernate-orm-panache,flyway,jdbc-postgresql' \
@@ -249,7 +249,6 @@ quarkus.datasource.jdbc.url=jdbc:postgresql://localhost/quarkus_test
 # Hibernate configuration
 quarkus.hibernate-orm.schema-management.strategy=none
 quarkus.hibernate-orm.log.sql=true
-quarkus.hibernate-orm.sql-load-script=no-file
 
 # flyway configuration
 quarkus.flyway.connect-retries=10
@@ -597,7 +596,7 @@ The method must return `void` and your Java runtime must provide support for vir
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-quartz_quarkus-quartz-clustered"></a> [`quarkus.quartz.clustered`](#quarkus-quartz_quarkus-quartz-clustered) config_property_copy_button:+++quarkus.quartz.clustered+++[]<br><br>Enable cluster mode or not.<br><br>If enabled make sure to set the appropriate cluster properties.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_CLUSTERED+++[] | boolean | `false` |
 | [lock] <a id="quarkus-quartz_quarkus-quartz-cluster-checkin-interval"></a> [`quarkus.quartz.cluster-checkin-interval`](#quarkus-quartz_quarkus-quartz-cluster-checkin-interval) config_property_copy_button:+++quarkus.quartz.cluster-checkin-interval+++[]<br><br>The frequency (in milliseconds) at which the scheduler instance checks-in with other instances of the cluster.<br><br>Ignored if using a `ram` store i.e `StoreType#RAM`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_CLUSTER_CHECKIN_INTERVAL+++[] | long | `15000` |
-| [lock] <a id="quarkus-quartz_quarkus-quartz-store-type"></a> [`quarkus.quartz.store-type`](#quarkus-quartz_quarkus-quartz-store-type) config_property_copy_button:+++quarkus.quartz.store-type+++[]<br><br>The type of store to use.<br><br>When using `StoreType#JDBC_CMT` or `StoreType#JDBC_TX` configuration values make sure that you have the datasource configured. See [Configuring your datasource](https://quarkus.io/guides/datasource) for more information.<br><br>To create Quartz tables, you can perform a schema migration via the [Flyway extension](https://quarkus.io/guides/flyway) using a SQL script matching your database picked from [Quartz repository](https://github.com/quartz-scheduler/quartz/blob/master/quartz-core/src/main/resources/org/quartz/impl/jdbcjobstore).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_STORE_TYPE+++[] | `ram`, `jdbc-tx`, `jdbc-cmt` | `ram` |
+| [lock] <a id="quarkus-quartz_quarkus-quartz-store-type"></a> [`quarkus.quartz.store-type`](#quarkus-quartz_quarkus-quartz-store-type) config_property_copy_button:+++quarkus.quartz.store-type+++[]<br><br>The type of store to use.<br><br>When using `StoreType#JDBC_CMT` or `StoreType#JDBC_TX` configuration values make sure that you have the datasource configured. See [Configuring your datasource](https://quarkus.io/guides/datasource) for more information.<br><br>To create Quartz tables, you can perform a schema migration via the [Flyway extension](https://quarkus.io/guides/flyway) using a SQL script matching your database picked from [Quartz repository](https://github.com/quartz-scheduler/quartz/tree/main/quartz/src/main/resources/org/quartz/impl/jdbcjobstore).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_STORE_TYPE+++[] | `ram`, `jdbc-tx`, `jdbc-cmt` | `ram` |
 | [lock] <a id="quarkus-quartz_quarkus-quartz-thread-pool-class"></a> [`quarkus.quartz.thread-pool-class`](#quarkus-quartz_quarkus-quartz-thread-pool-class) config_property_copy_button:+++quarkus.quartz.thread-pool-class+++[]<br><br>The class name of the thread pool implementation to use.<br><br>It's important to bear in mind that Quartz threads are not used to execute scheduled methods, instead the regular Quarkus thread pool is used by default. See also `quarkus.quartz.run-blocking-scheduled-method-on-quartz-thread`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_THREAD_POOL_CLASS+++[] | string | `org.quartz.simpl.SimpleThreadPool` |
 | [lock] <a id="quarkus-quartz_quarkus-quartz-datasource"></a> [`quarkus.quartz.datasource`](#quarkus-quartz_quarkus-quartz-datasource) config_property_copy_button:+++quarkus.quartz.datasource+++[]<br><br>The name of the datasource to use.<br><br>Ignored if using a `ram` store i.e `StoreType#RAM`.<br><br>Optionally needed when using the `jdbc-tx` or `jdbc-cmt` store types. If not specified, defaults to using the default datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_DATASOURCE+++[] | string |  |
 | [lock] <a id="quarkus-quartz_quarkus-quartz-defer-datasource-check"></a> [`quarkus.quartz.defer-datasource-check`](#quarkus-quartz_quarkus-quartz-defer-datasource-check) config_property_copy_button:+++quarkus.quartz.defer-datasource-check+++[]<br><br>If set to true, defers datasource check to runtime. False by default.<br><br>Used in combination with runtime configuration `QuartzRuntimeConfig#deferredDatasourceName()`.<br><br>It is considered a configuration error to specify a datasource via `QuartzBuildTimeConfig#dataSourceName()` along with setting this property to `true`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_QUARTZ_DEFER_DATASOURCE_CHECK+++[] | boolean | `false` |

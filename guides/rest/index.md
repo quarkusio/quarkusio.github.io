@@ -241,12 +241,12 @@ The following HTTP request elements may be obtained by your endpoint method:
 
 | HTTP element | Annotation | Usage |
 | --- | --- | --- |
-| <a id="path-parameter"></a>Path parameter | [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestPath.html) (or nothing) | URI template parameter (simplified version of the [URI Template specification](https://tools.ietf.org/html/rfc6570)), see [URI parameters](#uri-parameters) for more information. |
-| Query parameter | [`@RestQuery`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestQuery.html) | The value of a [URI query parameter](https://tools.ietf.org/html/rfc3986#section-3.4) |
-| Header | [`@RestHeader`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestHeader.html) | The value of an [HTTP header](https://tools.ietf.org/html/rfc7230#section-3.2) |
-| Cookie | [`@RestCookie`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestCookie.html) | The value of an [HTTP cookie](https://tools.ietf.org/html/rfc6265#section-4.2) |
-| Form parameter | [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestForm.html) | The value of an [HTTP URL-encoded FORM](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/POST) |
-| Matrix parameter | [`@RestMatrix`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestMatrix.html) | The value of an [URI path segment parameter](https://tools.ietf.org/html/rfc3986#section-3.3) |
+| <a id="path-parameter"></a>Path parameter | [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestPath.html) (or nothing) | URI template parameter (simplified version of the [URI Template specification](https://tools.ietf.org/html/rfc6570)), see [URI parameters](#uri-parameters) for more information. |
+| Query parameter | [`@RestQuery`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestQuery.html) | The value of a [URI query parameter](https://tools.ietf.org/html/rfc3986#section-3.4) |
+| Header | [`@RestHeader`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestHeader.html) | The value of an [HTTP header](https://tools.ietf.org/html/rfc7230#section-3.2) |
+| Cookie | [`@RestCookie`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestCookie.html) | The value of an [HTTP cookie](https://tools.ietf.org/html/rfc6265#section-4.2) |
+| Form parameter | [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestForm.html) | The value of an [HTTP URL-encoded FORM](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/POST) |
+| Matrix parameter | [`@RestMatrix`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestMatrix.html) | The value of an [URI path segment parameter](https://tools.ietf.org/html/rfc3986#section-3.3) |
 
 For each of those annotations, you may specify the name of the element they refer to, otherwise, they will use the name of the annotated method parameter.
 
@@ -294,7 +294,7 @@ public class Endpoint {
 ```
 
 > [!NOTE]
-> The [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestPath.html) annotation is optional: any parameter whose name matches an existing URI template variable will be automatically assumed to have [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestPath.html).
+> The [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestPath.html) annotation is optional: any parameter whose name matches an existing URI template variable will be automatically assumed to have [`@RestPath`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestPath.html).
 
 You can also use any of the Jakarta REST annotations [`@PathParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/PathParam.html), [`@QueryParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/QueryParam.html), [`@HeaderParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/HeaderParam.html), [`@CookieParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/CookieParam.html), [`@FormParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/FormParam.html) or [`@MatrixParam`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/MatrixParam.html) for this, but they require you to specify the parameter name.
 
@@ -420,16 +420,16 @@ The following parameter types will be supported out of the box:
 
 | Type | Usage |
 | --- | --- |
-| [`File`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/File.html) | The entire request body in a temporary file |
+| [`File`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/File.html) | The entire request body in a temporary file |
 | `byte[]` | The entire request body, not decoded |
 | `char[]` | The entire request body, decoded |
-| [`String`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html) | The entire request body, decoded |
-| [`InputStream`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/InputStream.html) | The request body in a blocking stream |
-| [`Reader`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/Reader.html) | The request body in a blocking stream |
+| [`String`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html) | The entire request body, decoded |
+| [`InputStream`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/InputStream.html) | The request body in a blocking stream |
+| [`Reader`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/Reader.html) | The request body in a blocking stream |
 | All Java primitives and their wrapper classes | Java primitive types |
-| [`BigDecimal`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/math/BigDecimal.html), [`BigInteger`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/math/BigInteger.html) | Large integers and decimals. |
+| [`BigDecimal`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/math/BigDecimal.html), [`BigInteger`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/math/BigInteger.html) | Large integers and decimals. |
 | [`JsonArray`](https://javadoc.io/doc/jakarta.json/jakarta.json-api/2.1.2/jakarta.json/jakarta/json/JsonArray.html), [`JsonObject`](https://javadoc.io/doc/jakarta.json/jakarta.json-api/2.1.2/jakarta.json/jakarta/json/JsonObject.html), [`JsonStructure`](https://javadoc.io/doc/jakarta.json/jakarta.json-api/2.1.2/jakarta.json/jakarta/json/JsonStructure.html), [`JsonValue`](https://javadoc.io/doc/jakarta.json/jakarta.json-api/2.1.2/jakarta.json/jakarta/json/JsonValue.html) | JSON value types |
-| [`Buffer`](https://javadoc.io/static/io.vertx/vertx-core/4.4.6/io/vertx/core/buffer/Buffer.html) | Vert.x Buffer |
+| [`Buffer`](https://javadoc.io/doc/io.vertx/vertx-core/5.1.10/io/vertx/core/buffer/Buffer.html) | Vert.x Buffer |
 | any other type | Will be [mapped from JSON to that type](#json) |
 
 > [!NOTE]
@@ -438,7 +438,7 @@ The following parameter types will be supported out of the box:
 <a id="multipart"></a>
 ### Handling Multipart Form data
 
-To handle HTTP requests that have `multipart/form-data` as their content type, you can use the regular [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestForm.html) annotation, but we have special types that allow you to access the parts as files or as entities. Let us look at an example of its use.
+To handle HTTP requests that have `multipart/form-data` as their content type, you can use the regular [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestForm.html) annotation, but we have special types that allow you to access the parts as files or as entities. Let us look at an example of its use.
 
 Assuming an HTTP request containing a file upload, a JSON entity and a form value containing a string description, we could write the following endpoint:
 
@@ -467,23 +467,25 @@ public class MultipartResource {
 }
 ```
 
-The `description` parameter will contain the data contained in the part of HTTP request called `description` (because [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestForm.html) does not define a value, the field name is used), while the `file` parameter will contain data about the uploaded file in the `image` part of HTTP request, and the `person` parameter will read the `Person` entity using the `JSON` [body reader](#json).
+The `description` parameter will contain the data contained in the part of HTTP request called `description` (because [`@RestForm`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestForm.html) does not define a value, the field name is used), while the `file` parameter will contain data about the uploaded file in the `image` part of HTTP request, and the `person` parameter will read the `Person` entity using the `JSON` [body reader](#json).
 
-The size of every part in a multipart request must conform to the value of `quarkus.http.limits.max-form-attribute-size`, for which the default is 2048 bytes. Any request with a part of a size exceeding this configuration will result in HTTP status code 413.
+The size of every non-file part in a multipart request must conform to the value of `quarkus.http.limits.max-form-attribute-size`, for which the default is 2048 bytes. File parts are only bounded by `quarkus.http.limits.max-body-size` (the limit for the whole request, 10 MB by default) unless `quarkus.http.limits.max-multipart-file-size` is set, in which case every file part must conform to it individually. Any request with a part of a size exceeding these limits will result in HTTP status code 413. Note that `quarkus.http.limits.max-body-size` needs to be raised to accept large uploads at all.
 
 > [!NOTE]
-> [`FileUpload`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/multipart/FileUpload.html) provides access to various metadata of the uploaded file. If however all you need is a handle to the uploaded file, `java.nio.file.Path` or `java.io.File` could be used.
+> [`FileUpload`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/multipart/FileUpload.html) provides access to various metadata of the uploaded file. If however all you need is a handle to the uploaded file, `java.nio.file.Path` or `java.io.File` could be used.
 
 If you need access to all uploaded files for all parts regardless of their names, you can do it with `@RestForm(FileUpload.ALL) List<FileUpload>`.
 
 > [!NOTE]
-> [`@PartType`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/PartType.html) is used to aid in deserialization of the corresponding part of the request into the desired Java type. It is only required if you need to use a [special body parameter type](#readers-writers) for that particular parameter.
+> [`@PartType`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/PartType.html) is used to aid in deserialization of the corresponding part of the request into the desired Java type. It is only required if you need to use a [special body parameter type](#readers-writers) for that particular parameter.
 
 > [!NOTE]
 > Just like for any other request parameter type, you can also group them into a [container class](#parameter-grouping).
 
 > [!WARNING]
 > When handling file uploads, it is very important to move the file to permanent storage (like a database, a dedicated file system or a cloud storage) in your code that handles the POJO. Otherwise, the file will no longer be accessible when the request terminates. Moreover, if `quarkus.http.body.delete-uploaded-files-on-end` is set to true, Quarkus will delete the uploaded file when the HTTP response is sent. If the setting is disabled, the file will reside on the file system of the server (in the directory defined by the `quarkus.http.body.uploads-directory` configuration option), but as the uploaded files are saved with a UUID file name and no additional metadata is saved, these files are essentially a random dump of files.
+
+By default, every file part is written to the uploads directory. Setting `quarkus.http.body.multipart.file-size-threshold` (for example to `16K`) keeps file parts up to that size in memory instead: such parts are reported by `FileItem#isInMemory()` and are only written to the uploads directory if their file is requested, e.g. through `FileUpload#uploadedFile()`. Parameters of type `byte[]`, `String` or `InputStream` read them directly from memory.
 
 > [!TIP]
 > When a Resource method needs to handle various types of multipart requests, then the `org.jboss.resteasy.reactive.server.multipart.MultipartFormDataInput` method type can be used as provides access to all the parts of the request.
@@ -624,12 +626,12 @@ In addition, the following return types are also supported:
 
 | Type | Usage |
 | --- | --- |
-| [`Path`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html) | The contents of the file specified by the given path |
-| [`PathPart`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/PathPart.html) | The partial contents of the file specified by the given path |
-| [`FilePart`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/FilePart.html) | The partial contents of a file |
-| [`AsyncFile`](https://javadoc.io/static/io.vertx/vertx-core/4.4.6/io/vertx/core/file/AsyncFile.html) | Vert.x AsyncFile, which can be in full, or partial |
+| [`Path`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html) | The contents of the file specified by the given path |
+| [`PathPart`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/PathPart.html) | The partial contents of the file specified by the given path |
+| [`FilePart`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/FilePart.html) | The partial contents of a file |
+| [`AsyncFile`](https://javadoc.io/doc/io.vertx/vertx-core/5.1.10/io/vertx/core/file/AsyncFile.html) | Vert.x AsyncFile, which can be in full, or partial |
 
-Alternately, you can also return a [reactive type](#reactive) such as [`Uni`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html), [`Multi`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Multi.html) or [`CompletionStage`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletionStage.html) that resolve to one of the mentioned return types.
+Alternately, you can also return a [reactive type](#reactive) such as [`Uni`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html), [`Multi`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Multi.html) or [`CompletionStage`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/CompletionStage.html) that resolve to one of the mentioned return types.
 
 ### Setting other response properties
 
@@ -823,7 +825,7 @@ public class Endpoint {
 
 This allows you to not block the event-loop thread while the book is being fetched from the database, and allows Quarkus to serve more requests until your book is ready to be sent to the client and terminate this request. See [Execution Model documentation](#execution-model) for more information.
 
-The [`CompletionStage`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletionStage.html) return type is also supported.
+The [`CompletionStage`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/CompletionStage.html) return type is also supported.
 
 #### Request cancellation
 
@@ -1129,11 +1131,11 @@ public class Endpoint {
 
 ### Controlling HTTP Caching features
 
-Quarkus REST provides the [`@Cache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/Cache.html) and [`@NoCache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/NoCache.html) annotations to facilitate handling HTTP caching semantics, i.e. setting the 'Cache-Control' HTTP header.
+Quarkus REST provides the [`@Cache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/Cache.html) and [`@NoCache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/NoCache.html) annotations to facilitate handling HTTP caching semantics, i.e. setting the 'Cache-Control' HTTP header.
 
 These annotations can be placed either on a Resource Method or a Resource Class (in which case it applies to all Resource Methods of the class that do **not** contain the same annotation) and allow users to return domain objects and not have to deal with building up the `Cache-Control` HTTP header explicitly.
 
-While [`@Cache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/Cache.html) builds a complex `Cache-Control` header, [`@NoCache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/NoCache.html) is a simplified notation to say that you don't want anything cached; i.e. `Cache-Control: nocache`.
+While [`@Cache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/Cache.html) builds a complex `Cache-Control` header, [`@NoCache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/NoCache.html) is a simplified notation to say that you don't want anything cached; i.e. `Cache-Control: nocache`.
 
 > [!NOTE]
 > More information on the `Cache-Control` header and be found in [RFC 7234](https://datatracker.ietf.org/doc/html/rfc7234)
@@ -1149,17 +1151,17 @@ While [`@Cache`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-re
 | [`HttpHeaders`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/HttpHeaders.html) | All the request headers |
 | [`ResourceInfo`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/container/ResourceInfo.html) | Information about the current endpoint method and class (requires reflection) |
 | [`SecurityContext`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/SecurityContext.html) | Access to the current user and roles |
-| [`SimpleResourceInfo`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/SimpleResourceInfo.html) | Information about the current endpoint method and class (no reflection required) |
+| [`SimpleResourceInfo`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/SimpleResourceInfo.html) | Information about the current endpoint method and class (no reflection required) |
 | [`UriInfo`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/UriInfo.html) | Provides information about the current endpoint and application URI |
 | [`Application`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Application.html) | Advanced: Current Jakarta REST application class |
 | [`Configuration`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Configuration.html) | Advanced: Configuration about the deployed Jakarta REST application |
 | [`Providers`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/ext/Providers.html) | Advanced: Runtime access to Jakarta REST providers |
 | [`Request`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Request.html) | Advanced: Access to the current HTTP method and [Preconditions](#preconditions) |
 | [`ResourceContext`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/ResourceContext.html) | Advanced: access to instances of endpoints |
-| [`ServerRequestContext`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/spi/ServerRequestContext.html) | Advanced: Quarkus REST access to the current request/response |
+| [`ServerRequestContext`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/spi/ServerRequestContext.html) | Advanced: Quarkus REST access to the current request/response |
 | [`Sse`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/sse/Sse.html) | Advanced: Complex SSE use-cases |
-| [`HttpServerRequest`](https://javadoc.io/static/io.vertx/vertx-core/4.4.6/io/vertx/core/http/HttpServerRequest.html) | Advanced: Vert.x HTTP Request |
-| [`HttpServerResponse`](https://javadoc.io/static/io.vertx/vertx-core/4.4.6/io/vertx/core/http/HttpServerResponse.html) | Advanced: Vert.x HTTP Response |
+| [`HttpServerRequest`](https://javadoc.io/doc/io.vertx/vertx-core/5.1.10/io/vertx/core/http/HttpServerRequest.html) | Advanced: Vert.x HTTP Request |
+| [`HttpServerResponse`](https://javadoc.io/doc/io.vertx/vertx-core/5.1.10/io/vertx/core/http/HttpServerResponse.html) | Advanced: Vert.x HTTP Response |
 
 For example, here is how you can return the name of the currently logged-in user:
 
@@ -1183,7 +1185,7 @@ public class Endpoint {
 }
 ```
 
-You can also inject those context objects using [`@Inject`](https://javadoc.io/static/jakarta.inject/jakarta.inject-api/2.0.1/jakarta.inject/jakarta/inject/Inject.html) on fields of the same type:
+You can also inject those context objects using [`@Inject`](https://javadoc.io/doc/jakarta.inject/jakarta.inject-api/2.0.1/jakarta.inject/jakarta/inject/Inject.html) on fields of the same type:
 
 ```java
 package org.acme.rest;
@@ -1319,7 +1321,7 @@ public class Person {
 }
 ```
 
-1. The `io.quarkus.resteasy.reactive.jackson.SecureField.rolesAllowed` property supports [property expressions](/guides/config-reference/index.md#property-expressions) exactly in the same fashion the `jakarta.annotation.security.RolesAllowed` annotation does. For more information, please refer to the [Standard security annotations](/guides/security-authorize-web-endpoints-reference/index.md#standard-security-annotations) section of the Authorization of web endpoints guide.
+1. The `io.quarkus.resteasy.reactive.jackson.SecureField.rolesAllowed` property supports [property expressions](/guides/config-reference/index.md#property-expressions) exactly in the same fashion the `jakarta.annotation.security.RolesAllowed` annotation does. For more information, please refer to the [Authorize with security annotations](/guides/security-authorize-web-endpoints-reference/index.md#standard-security-annotations) section of the Authorize access to web endpoints guide.
 
 A very simple Jakarta REST Resource that uses `Person` could be:
 
@@ -1467,16 +1469,16 @@ Setting this property applies reflection-free optimization to deserialization an
 
 When enabled, Quarkus generates `StdSerializer` and `StdDeserializer` implementations at build time for each class requiring JSON conversion. The application then processes objects returned by REST endpoints using these generated serializers and deserializers, eliminating reliance on reflection and improving performance.
 
-Developers can further customize JSON processing by implementing the `ObjectMapperCustomizer` interface. This interface allows fine-grained control over the `ObjectMapper`, enabling the registration of custom serializers and deserializers while ensuring compatibility with the reflection-free optimization. If additional configuration is needed, implement an `ObjectMapperCustomizer` bean and register any necessary modules or settings.
+Developers can further customize JSON processing by implementing the `JsonMapperBuilderCustomizer` interface. This interface allows fine-grained control over the `JsonMapper.Builder`, enabling the registration of custom serializers and deserializers while ensuring compatibility with the reflection-free optimization. If additional configuration is needed, implement a `JsonMapperBuilderCustomizer` bean and register any necessary modules or settings.
 
 > [!NOTE]
 > Reflection-free serializers are not compatible with Kotlin classes, since they break Kotlin-specific features such as default parameter values and non-null type enforcement. As a result, reflection-free serializers are not generated for Kotlin classes.
 
 ##### Completely customized per method serialization/deserialization
 
-There are times when you need to completely customize the serialization/deserialization of a POJO on a per Jakarta REST method basis or on a per Jakarta REST resource basis. For such use cases, you can use the `@io.quarkus.resteasy.reactive.jackson.CustomSerialization` and `@io.quarkus.resteasy.reactive.jackson.CustomDeserialization` annotations in the REST method or in the REST resource at class level. These annotations allow you to fully configure the `com.fasterxml.jackson.databind.ObjectWriter`/`com.fasterxml.jackson.databind.ObjectReader`.
+There are times when you need to completely customize the serialization/deserialization of a POJO on a per Jakarta REST method basis or on a per Jakarta REST resource basis. For such use cases, you can use the `@io.quarkus.resteasy.reactive.jackson.CustomSerialization` and `@io.quarkus.resteasy.reactive.jackson.CustomDeserialization` annotations in the REST method or in the REST resource at class level. These annotations allow you to fully configure the `tools.jackson.databind.ObjectWriter`/`tools.jackson.databind.ObjectReader`.
 
-Here is an example use case to customize the `com.fasterxml.jackson.databind.ObjectWriter`:
+Here is an example use case to customize the `tools.jackson.databind.ObjectWriter`:
 
 ```java
 @CustomSerialization(UnquotedFields.class)
@@ -1503,7 +1505,7 @@ Essentially what this class does is force Jackson to not include quotes in the f
 
 It is important to note that this customization is only performed for the serialization of the Jakarta REST methods that use `@CustomSerialization(UnquotedFields.class)`.
 
-Following the previous example, let's now customize the `com.fasterxml.jackson.databind.ObjectReader` to read JSON requests with unquoted field names:
+Following the previous example, let's now customize the `tools.jackson.databind.ObjectReader` to read JSON requests with unquoted field names:
 
 ```java
 @CustomDeserialization(SupportUnquotedFields.class)
@@ -1970,7 +1972,11 @@ public class Endpoint {
 }
 ```
 
-If a method or class is annotated with `jakarta.transaction.Transactional` then it will also be treated as a blocking method. This is because JTA is a blocking technology, and is generally used with other blocking technology such as Hibernate and JDBC. An explicit `@Blocking` or `@NonBlocking` on the class will override this behaviour.
+If a method or class is annotated with `jakarta.transaction.Transactional`, it is no longer automatically treated as a blocking method (since Quarkus 3.35). The default behavior is now based on the return type: methods returning `Uni` (or other reactive types) execute on the event loop, while others execute on a worker thread.
+
+If you have a blocking method that returns a `Uni` and uses JTA transactions (e.g., with Hibernate ORM or JDBC), you must add an explicit `@Blocking` annotation.
+
+This change was made to support `@Transactional` with Hibernate Reactive, where the transaction runs on the event loop within the reactive pipeline. An explicit `@Blocking` or `@NonBlocking` annotation on the class or method will override the default behavior.
 
 #### Overriding the default behaviour
 
@@ -2014,7 +2020,7 @@ public class Endpoint {
 > quarkus.log.category."WebApplicationException".level=DEBUG
 > ```
 
-If your endpoint method is delegating calls to another service layer which does not know of Jakarta REST, you need a way to turn service exceptions to an HTTP response, and you can do that using the [`@ServerExceptionMapper`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/ServerExceptionMapper.html) annotation on a method, with one parameter of the exception type you want to handle, and turning that exception into a [`RestResponse`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestResponse.html) (or a [`Uni<RestResponse<?>>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html)):
+If your endpoint method is delegating calls to another service layer which does not know of Jakarta REST, you need a way to turn service exceptions to an HTTP response, and you can do that using the [`@ServerExceptionMapper`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/ServerExceptionMapper.html) annotation on a method, with one parameter of the exception type you want to handle, and turning that exception into a [`RestResponse`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestResponse.html) (or a [`Uni<RestResponse<?>>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html)):
 
 ```java
 package org.acme.rest;
@@ -2172,7 +2178,7 @@ It may declare any of the following return types:
 
 | Type | Usage |
 | --- | --- |
-| [`RestResponse`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) | The response to send to the client when the exception occurs |
+| [`RestResponse`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) | The response to send to the client when the exception occurs |
 | [`Uni<RestResponse>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html) or [`Uni<Response>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html) | An asynchronous response to send to the client when the exception occurs |
 
 > [!NOTE]
@@ -2194,7 +2200,7 @@ You can declare functions that are invoked in the following phases of the reques
 
 These filters allow you to do various things such as examine the request URI, HTTP method, influence routing, look or change request headers, abort the request, or modify the response.
 
-Request filters can be declared with the [`@ServerRequestFilter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/ServerRequestFilter.html) annotation:
+Request filters can be declared with the [`@ServerRequestFilter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/ServerRequestFilter.html) annotation:
 
 ```java
 import java.util.Optional;
@@ -2227,7 +2233,7 @@ class Filters {
 >
 > Keep in mind however that the information above does **not** apply to pre-matching filters (`@ServerRequestFilter(preMatching = true)`). These filters are **always** run on an event-loop thread.
 
-Similarly, response filters can be declared with the [`@ServerResponseFilter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/ServerResponseFilter.html) annotation:
+Similarly, response filters can be declared with the [`@ServerResponseFilter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/ServerResponseFilter.html) annotation:
 
 ```java
 class Filters {
@@ -2253,7 +2259,7 @@ Your filters may declare any of the following parameter types:
 | Any of the [Context objects](#context-objects) |  |
 | [`ContainerRequestContext`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/container/ContainerRequestContext.html) | A context object to access the current request |
 | [`ContainerResponseContext`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/container/ContainerResponseContext.html) | A context object to access the current response |
-| [`Throwable`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Throwable.html) | Any thrown and [handled](#exception-mapping) exception, or `null` (only for response filters). |
+| [`Throwable`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Throwable.html) | Any thrown and [handled](#exception-mapping) exception, or `null` (only for response filters). |
 
 It may declare any of the following return types:
 
@@ -2261,8 +2267,8 @@ It may declare any of the following return types:
 
 | Type | Usage |
 | --- | --- |
-| [`RestResponse<?>`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) | The response to send to the client instead of continuing the filter chain, or `null` if the filter chain should proceed |
-| [`Optional<RestResponse<?>>`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html) or [`Optional<Response>`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Optional.html) | An optional response to send to the client instead of continuing the filter chain, or an empty value if the filter chain should proceed |
+| [`RestResponse<?>`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) | The response to send to the client instead of continuing the filter chain, or `null` if the filter chain should proceed |
+| [`Optional<RestResponse<?>>`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Optional.html) or [`Optional<Response>`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Optional.html) | An optional response to send to the client instead of continuing the filter chain, or an empty value if the filter chain should proceed |
 | [`Uni<RestResponse<?>>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html) or [`Uni<Response>`](https://javadoc.io/doc/io.smallrye.reactive/mutiny/2.1.0/io.smallrye.mutiny/io/smallrye/mutiny/Uni.html) | An asynchronous response to send to the client instead of continuing the filter chain, or `null` if the filter chain should proceed |
 
 > [!NOTE]
@@ -2326,7 +2332,7 @@ Now, whenever a REST method is invoked, the request will be logged into the cons
 ### Readers and Writers: mapping entities and HTTP bodies
 
 <a id="readers-writers"></a>
-Whenever your endpoint methods return an object (or when they return a [`RestResponse<?>`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/3.40.1.2/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) with an entity), Quarkus REST will look for a way to map that into an HTTP response body.
+Whenever your endpoint methods return an object (or when they return a [`RestResponse<?>`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive-common/4.0.1/org/jboss/resteasy/reactive/RestResponse.html) or [`Response`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/core/Response.html) with an entity), Quarkus REST will look for a way to map that into an HTTP response body.
 
 Similarly, whenever your endpoint method takes an object as parameter, we will look for a way to map the HTTP request body into that object.
 
@@ -2424,7 +2430,7 @@ public class CheeseBodyHandler implements MessageBodyReader<Cheese>,
 }
 ```
 
-If you want to get the most performance out of your writer, you can extend the [`ServerMessageBodyWriter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/3.40.1.2/org/jboss/resteasy/reactive/server/spi/ServerMessageBodyWriter.html) instead of [`MessageBodyWriter`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/ext/MessageBodyWriter.html) where you will be able to use less reflection and bypass the blocking IO layer:
+If you want to get the most performance out of your writer, you can extend the [`ServerMessageBodyWriter`](https://javadoc.io/doc/io.quarkus.resteasy.reactive/resteasy-reactive/4.0.1/org/jboss/resteasy/reactive/server/spi/ServerMessageBodyWriter.html) instead of [`MessageBodyWriter`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/ext/MessageBodyWriter.html) where you will be able to use less reflection and bypass the blocking IO layer:
 
 ```java
 package org.acme.rest;
@@ -2547,13 +2553,13 @@ However, you can change this default behavior and constrain a provider to:
 <a id="parameter-mapping"></a>
 ### Parameter mapping
 
-All [Request Parameters](#request-parameters) can be declared as [`String`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html), but also as any of the following types:
+All [Request Parameters](#request-parameters) can be declared as [`String`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html), but also as any of the following types:
 
 1. Types for which a [`ParamConverter`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/ext/ParamConverter.html) is available via a registered [`ParamConverterProvider`](https://javadoc.io/doc/jakarta.ws.rs/jakarta.ws.rs-api/3.1.0/jakarta.ws.rs/jakarta/ws/rs/ext/ParamConverterProvider.html).
 2. Primitive types.
-3. Types that have a constructor that accepts a single [`String`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html) argument.
-4. Types that have a static method named `valueOf` or `fromString` with a single [`String`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/String.html) argument that return an instance of the type. If both methods are present then `valueOf` will be used unless the type is an `enum` in which case `fromString` will be used.
-5. [`List<T>`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html), [`Set<T>`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Set.html), or [`SortedSet<T>`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/SortedSet.html), where `T` satisfies 1, 3 or 4 above.
+3. Types that have a constructor that accepts a single [`String`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html) argument.
+4. Types that have a static method named `valueOf` or `fromString` with a single [`String`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html) argument that return an instance of the type. If both methods are present then `valueOf` will be used unless the type is an `enum` in which case `fromString` will be used.
+5. [`List<T>`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/List.html), [`Set<T>`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Set.html), or [`SortedSet<T>`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/SortedSet.html), where `T` satisfies 1, 3 or 4 above.
 
 For 3 and 4, constructor instantiation is prioritesed above method instantiation. Public, protected, and package private constructors and methods are supported for instantiation.
 
@@ -2698,6 +2704,43 @@ GET /hello?name=foo,bar HTTP/1.1
 ```
 
 then the response will be `hello foo bar`.
+
+#### Collecting all query parameters or headers
+
+Instead of binding a single query parameter or header, you can annotate a `jakarta.ws.rs.core.MultivaluedMap<String, String>` parameter with a bare `@RestQuery` or `@RestHeader` (without specifying a name) to collect, respectively, all the query parameters or all the headers of the request. Each entry in the map corresponds to one parameter name, and its value is the list of all the values given for that name.
+
+```java
+@Path("hello")
+public static class HelloResource {
+
+    @GET
+    public String hello(@RestQuery MultivaluedMap<String, String> queryParams,
+            @RestHeader MultivaluedMap<String, String> headers) {
+        return queryParams.toString() + " " + headers.toString();
+    }
+}
+```
+
+Given the following request:
+
+```http
+GET /hello?name=foo&city=bar HTTP/1.1
+X-Name: foo
+X-City: bar
+```
+
+the `queryParams` map will contain `name=[foo]` and `city=[bar]`, and the `headers` map will contain `X-Name=[foo]` and `X-City=[bar]`. If the same query parameter or header is repeated, such as in:
+
+```http
+GET /hello?name=foo&name=bar HTTP/1.1
+X-Name: foo
+X-Name: bar
+```
+
+then `queryParams` will contain a single `name` entry with both values: `name=[foo, bar]`, and `headers` will contain a single `X-Name` entry with both values: `X-Name=[foo, bar]`.
+
+> [!NOTE]
+> The `@RestQuery` or `@RestHeader` annotation must not specify a name (i.e. use `@RestQuery`/`@RestHeader`, not `@RestQuery("name")`/`@RestHeader("name")`) for this collection behavior to apply, since it is meant to gather every query parameter or header rather than a single named one.
 
 #### Handling dates
 
@@ -2911,7 +2954,7 @@ Similarly, you can `PUT` two different representations. JSON:
 > {"name": "brie"}
 
 < HTTP/1.1 200 OK
-< Content-Type: application/json;charset=UTF-8
+< Content-Type: application/json
 < Content-Length: 15
 <
 < {"name":"brie"}
@@ -2928,12 +2971,13 @@ Or plain text:
 > roquefort
 
 < HTTP/1.1 200 OK
-< Content-Type: application/json;charset=UTF-8
+< Content-Type: application/json
 < Content-Length: 20
 <
 < {"name":"roquefort"}
 ```
 
+<a id="http-compression"></a>
 ### HTTP Compression
 
 The body of an HTTP response is not compressed by default. You can enable the HTTP compression support by means of `quarkus.http.enable-compression=true`.
@@ -2953,6 +2997,11 @@ The response body is never compressed if:
 
 > [!NOTE]
 > If the client does not support HTTP compression then the response body is not compressed.
+
+You can also set a minimum response body size (in bytes) for compression using `quarkus.http.compression-content-size-threshold`, control the compression level with `quarkus.http.compression-level`, and enable Brotli by adding the `com.aayushatharva.brotli4j:brotli4j` dependency and `br` to `quarkus.http.compressors`.
+
+> [!TIP]
+> See the [HTTP reference guide](/guides/http-reference/index.md#http-compression) for the full list of compression configuration options including minimum response size, compression level, Brotli, and request decompression.
 
 ## Include/Exclude Jakarta REST classes
 
@@ -3014,6 +3063,7 @@ See the [REST Client Guide](/guides/rest-client/index.md) for more information a
 | --- | --- | --- |
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-rest-common_quarkus-rest-path"></a> [`quarkus.rest.path`](#quarkus-rest-common_quarkus-rest-path) config_property_copy_button:+++quarkus.rest.path+++[]<br><br>Set this to define the application path that serves as the base URI for all JAX-RS resource URIs provided by `@Path` annotations when there are no `@ApplicationPath` annotations defined on `Application` classes.<br><br>This value is always resolved relative to `quarkus.http.root-path`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_PATH+++[] | string |  |
+| [lock] <a id="quarkus-rest-common_quarkus-rest-blocking-signatures-execution-mode"></a> [`quarkus.rest.blocking.signatures.execution.mode`](#quarkus-rest-common_quarkus-rest-blocking-signatures-execution-mode) config_property_copy_button:+++quarkus.rest.blocking.signatures.execution.mode+++[]<br><br>The execution mode used for blocking endpoints without an explicit `@Blocking`, `@NonBlocking` or `@RunOnVirtualThread` annotation.<br><br>When set to `virtual-thread`, such endpoints are executed on virtual threads instead of worker threads. Endpoints considered non-blocking, for instance because they return a reactive type, keep running on the event loop, and explicit annotations on the endpoint method, the resource class or the `Application` class always take precedence.<br><br>Before changing this, make sure the application does not suffer from thread pinning (mostly resolved since JDK 24) or carrier thread monopolization. See the virtual threads guide for more details on how to monitor this with JFR events.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_BLOCKING_SIGNATURES_EXECUTION_MODE+++[] | `worker`, `virtual-thread` | `worker` |
 | [lock] <a id="quarkus-rest-common_quarkus-rest-exception-mapping-disable-mapper-for"></a> [`quarkus.rest.exception-mapping.disable-mapper-for`](#quarkus-rest-common_quarkus-rest-exception-mapping-disable-mapper-for) config_property_copy_button:+++quarkus.rest.exception-mapping.disable-mapper-for+++[]<br><br>A list of exception mapper classes that should be disabled. This allows users to override the default built-in exception mappers provided by Quarkus extensions.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_EXCEPTION_MAPPING_DISABLE_MAPPER_FOR+++[] | list of string |  |
 | [lock] <a id="quarkus-rest-common_quarkus-rest-input-buffer-size"></a> [`quarkus.rest.input-buffer-size`](#quarkus-rest-common_quarkus-rest-input-buffer-size) config_property_copy_button:+++quarkus.rest.input-buffer-size+++[]<br><br>The amount of memory that can be used to buffer input before switching to blocking IO, up to `Long.MAX_VALUE` bytes.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_INPUT_BUFFER_SIZE+++[] | MemorySize [[question circle]](#memory-size-note-anchor-quarkus-rest-common_quarkus-rest) | `10k` |
 | [lock] <a id="quarkus-rest-common_quarkus-rest-min-chunk-size"></a> [`quarkus.rest.min-chunk-size`](#quarkus-rest-common_quarkus-rest-min-chunk-size) config_property_copy_button:+++quarkus.rest.min-chunk-size+++[]<br><br>The size of the chunks of memory allocated when writing data.<br><br>This is a very advanced setting that should only be set if you understand exactly how it affects the output IO operations of the application.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_REST_MIN_CHUNK_SIZE+++[] | int | `128` |

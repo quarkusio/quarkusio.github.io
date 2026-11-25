@@ -99,7 +99,7 @@ ifndef::prerequisites-time[]
 endif::[]
 * An IDE
 ifdef::prerequisites-ide[{prerequisites-ide}]
-* JDK 17+ installed with `JAVA_HOME` configured appropriately
+* JDK {jdk-version-earliest}+ installed with `JAVA_HOME` configured appropriately
 ifndef::prerequisites-no-maven[]
 * Apache Maven {maven-version}
 endif::[]
@@ -277,7 +277,7 @@ Run the test in one of the following ways:
 
 ### Use the Vale CLI
 
-If you install the [Vale CLI](https://vale.sh/docs/vale-cli/installation/), you must specify the configuration file and the directory or list of files to scan:
+If you install the [Vale CLI](https://docs.vale.sh/topics/installation), you must specify the configuration file and the directory or list of files to scan:
 
 ```shell
 # Run from the Quarkus project root
@@ -291,7 +291,7 @@ For more information, see the [Vale CLI Manual](https://vale.sh/manual/).
 
 ### Vale IDE plugins
 
-[Vale IDE integrations](https://vale.sh/docs/integrations/guide/) require the Vale CLI to be installed.
+[Vale IDE integrations](https://docs.vale.sh/guides/lsp) require the Vale CLI to be installed.
 
 Each IDE integration has its own configuration requirements. The Visual Studio Code IDE extension, for example, requires a definition of the Vale CLI path:
 
@@ -323,7 +323,7 @@ If you disagree with the Vale results, add the yellow PR label `needs-vale-rule-
 
 ## Previewing doc changes on the Quarkus website
 
-After your PR is merged to `main` and the branch is synchronized with the [Quarkus.io](https://github.com/quarkusio/quarkusio.github.io/tree/develop/_generated-doc) website repository, you can preview the resulting build output on the [Main branch (SNAPSHOT)](https://quarkus.io/version/main/guides/) documentation page of the Quarkus site.
+After your PR is merged to `main` and the branch is synchronized with the [Quarkus.io](https://github.com/quarkusio/quarkusio.github.io) website repository, you can preview the resulting build output on the [Main branch (SNAPSHOT)](https://quarkus.io/version/main/guides/) documentation page of the Quarkus site.
 
 > [!IMPORTANT]
 > The `main` branch of the `quarkus` repository is synchronized daily at 1 AM GMT, so you cannot preview your changes on the [Main branch (SNAPSHOT)](https://quarkus.io/version/main/guides/) until after the next site refresh occurs.

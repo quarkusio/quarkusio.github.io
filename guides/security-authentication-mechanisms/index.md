@@ -1093,4 +1093,4 @@ Proactive authentication is enabled in Quarkus by default. This means that if an
 - [Quarkus Security overview](/guides/security-overview/index.md)
 - [Quarkus Security architecture](/guides/security-architecture/index.md)
 - [Identity providers](/guides/security-identity-providers/index.md)
-- [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)
+- [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md)

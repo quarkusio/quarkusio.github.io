@@ -44,7 +44,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -125,7 +125,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-keycloak-authorization-quickstart \
     -Dextensions='oidc,keycloak-authorization,rest-jackson' \
@@ -266,22 +266,20 @@ You can use the OpenID Connect extension to configure the adapter settings throu
 %prod.quarkus.oidc.auth-server-url=https://localhost:8543/realms/quarkus <1>
 quarkus.oidc.client-id=backend-service <2>
 quarkus.oidc.credentials.secret=secret <3>
-quarkus.oidc.tls.verification=none <4>
 
 # Enable Policy Enforcement
-quarkus.keycloak.policy-enforcer.enabled=true <5>
+quarkus.keycloak.policy-enforcer.enabled=true <4>
 
 # Import the realm file with Dev Services for Keycloak
 # Note: This property is effective only in dev mode, not in JVM or native modes
-quarkus.keycloak.devservices.realm-path=quarkus-realm.json <6>
+quarkus.keycloak.devservices.realm-path=quarkus-realm.json <5>
 ```
 
 1. Specifies the URL of the Keycloak server and the realm used for authentication.
 2. Identifies the client application within the Keycloak realm.
 3. Defines the client secret for authentication with the Keycloak server.
-4. Disables TLS verification for development purposes, not recommended for production.
-5. Enables the Keycloak policy enforcer to manage access control based on defined permissions.
-6. Configures Dev Services to import a specified realm file, effective only in dev mode and not in JVM or native modes.
+4. Enables the Keycloak policy enforcer to manage access control based on defined permissions.
+5. Configures Dev Services to import a specified realm file, effective only in dev mode and not in JVM or native modes.
 
 > [!NOTE]
 > Adding the `%prod.` profile prefix to `quarkus.oidc.auth-server-url` ensures that Dev Services for Keycloak automatically launches a container in development mode. For more details, see the [Running the application in Dev mode](#keycloak-dev-mode) section.
@@ -305,7 +303,7 @@ docker run --name keycloak \
   -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
   -p 8543:8443 \
   -v "$(pwd)"/config/keycloak-keystore.jks:/etc/keycloak-keystore.jks \
-  quay.io/keycloak/keycloak:26.7.4 \
+  quay.io/keycloak/keycloak:26.8.2 \
   start --hostname-strict=false --https-key-store-file=/etc/keycloak-keystore.jks <1>
 ```
 
@@ -540,11 +538,11 @@ The time required to pre-load resources from Keycloak during startup depends on 
 
 In the default configuration, Keycloak manages the roles and decides who can access which routes.
 
-To configure the protected routes by using the `@RolesAllowed` annotation or the `application.properties` file, check the [OpenID Connect (OIDC) Bearer token authentication](/guides/security-oidc-bearer-token-authentication/index.md) and [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guides. For more details, check the [Quarkus Security overview](/guides/security-overview/index.md).
+To configure the protected routes by using the `@RolesAllowed` annotation or the `application.properties` file, check the [OpenID Connect (OIDC) Bearer token authentication](/guides/security-oidc-bearer-token-authentication/index.md) and [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guides. For more details, check the [Quarkus Security overview](/guides/security-overview/index.md).
 
 ## Access to public resources
 
-To allow access to a public resource without applying `quarkus-keycloak-authorization` policies, define a `permit` HTTP policy in the `application.properties` file. For more information, see the [Authorization of web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
+To allow access to a public resource without applying `quarkus-keycloak-authorization` policies, define a `permit` HTTP policy in the `application.properties` file. For more information, see the [Authorize access to web endpoints](/guides/security-authorize-web-endpoints-reference/index.md) guide.
 
 You do not need to disable policy checks for a Keycloak Authorization Policy when using configurations like the following:
 
@@ -640,7 +638,7 @@ public class ProtectedResource {
 
 1. The `/standard-way` sub-path requires both the resource permission and the `read` scope, based on the configuration set in the `application.properties` file.
 2. The `/programmatic-way` sub-path checks only for the `Scope Permission Resource` permission by default. However, you can enforce additional constraints, such as scope requirements, by using `SecurityIdentity#checkPermission`.
-3. The `@PermissionsAllowed` annotation at `/annotation-way` restricts access to requests that have the `Scope Permission Resource` permission along with the `read` scope. For more information, see the section [Authorization using annotations](/guides/security-authorize-web-endpoints-reference/index.md#standard-security-annotations) of the Authorization of web endpoints guide.
+3. The `@PermissionsAllowed` annotation at `/annotation-way` restricts access to requests that have the `Scope Permission Resource` permission along with the `read` scope. For more information, see the section [Authorize with permissions](/guides/security-authorize-web-endpoints-reference/index.md#permission-annotation) of the Authorize access to web endpoints guide.
 
 ## Multi-tenancy
 
@@ -766,8 +764,6 @@ This configuration adheres to the official [Keycloak Policy Enforcer Configurati
 | <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-enforcement-mode"></a> [`quarkus.keycloak.policy-enforcer.paths."paths".enforcement-mode`](#quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-enforcement-mode) config_property_copy_button:+++quarkus.keycloak.policy-enforcer.paths."paths".enforcement-mode+++[]<br><br>Specifies how policies are enforced<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__ENFORCEMENT_MODE+++[] | `permissive`, `enforcing`, `disabled` | `enforcing` |
 | <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-complex-config"></a> [`quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."complex-config"`](#quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-complex-config) config_property_copy_button:+++quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."complex-config"+++[]<br><br>Complex config.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__COMPLEX_CONFIG_+++[] | Map\<String,Map\<String,Map\<String,String>>> |  |
 | <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-simple-config"></a> [`quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."simple-config"`](#quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-claim-information-point-simple-config) config_property_copy_button:+++quarkus.keycloak.policy-enforcer.paths."paths".claim-information-point."simple-config"+++[]<br><br>Simple config.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__CLAIM_INFORMATION_POINT__SIMPLE_CONFIG_+++[] | Map\<String,Map\<String,String>> |  |
-| [lock] <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-enable"></a> <mark>link:#quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-enable\[`quarkus.keycloak.policy-enforcer.enable`\]</mark> config_property_copy_button:+++quarkus.keycloak.policy-enforcer.enable+++[]<br><br>*This property is deprecated since `3.26`: use `quarkus.keycloak.policy-enforcer.enabled` instead.*<br><br>Enables policy enforcement.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK_POLICY_ENFORCER_ENABLE+++[] | boolean |  |
-| <a id="quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-path"></a> <mark>link:#quarkus-keycloak-authorization_quarkus-keycloak-policy-enforcer-paths-paths-path\[`quarkus.keycloak.policy-enforcer.paths."paths".path`\]</mark> config_property_copy_button:+++quarkus.keycloak.policy-enforcer.paths."paths".path+++[]<br><br>*This property is deprecated since `Quarkus 3.10`.*<br><br>A URI relative to the application’s context path that should be protected by the policy enforcer<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK_POLICY_ENFORCER_PATHS__PATHS__PATH+++[] | string |  |
 | <a id="quarkus-keycloak-authorization_section_quarkus-keycloak"></a> [Additional named tenants](#quarkus-keycloak-authorization_section_quarkus-keycloak) | Type | Default |
 | <a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-connection-pool-size"></a> [`quarkus.keycloak."tenant".connection-pool-size`](#quarkus-keycloak-authorization_quarkus-keycloak-tenant-connection-pool-size) config_property_copy_button:+++quarkus.keycloak."tenant".connection-pool-size+++[]<br><br>Adapters will make separate HTTP invocations to the Keycloak server to turn an access code into an access token. This config option defines how many connections to the Keycloak server should be pooled<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK__TENANT__CONNECTION_POOL_SIZE+++[] | int | `20` |
 | <a id="quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-enforcement-mode"></a> [`quarkus.keycloak."tenant".policy-enforcer.enforcement-mode`](#quarkus-keycloak-authorization_quarkus-keycloak-tenant-policy-enforcer-enforcement-mode) config_property_copy_button:+++quarkus.keycloak."tenant".policy-enforcer.enforcement-mode+++[]<br><br>Specifies how policies are enforced.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_KEYCLOAK__TENANT__POLICY_ENFORCER_ENFORCEMENT_MODE+++[] | `permissive`, `enforcing`, `disabled` | `enforcing` |

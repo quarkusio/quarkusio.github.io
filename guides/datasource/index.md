@@ -1,6 +1,6 @@
-# Configure data sources in Quarkus
+# Configure data sources
 
-Use a unified configuration model to define data sources for Java Database Connectivity (JDBC) and Reactive drivers.
+With Quarkus, you define data sources for Java Database Connectivity (JDBC) and Reactive drivers in one configuration model.
 
 Applications use datasources to access relational databases. Quarkus provides a unified configuration model to define datasources for Java Database Connectivity (JDBC) and Reactive database drivers.
 
@@ -49,7 +49,6 @@ For more details and optional configurations, see [Dev Services for databases](/
 1. Configure your JDBC datasource:
 
    ```properties
-   quarkus.datasource.db-kind=postgresql <1>
    quarkus.datasource.username=<your username>
    quarkus.datasource.password=<your password>
 
@@ -57,10 +56,6 @@ For more details and optional configurations, see [Dev Services for databases](/
    quarkus.datasource.jdbc.max-size=16
    ```
 
-   1. This configuration value is only required if there is more than one database extension on the classpath.
-
-
-If only one viable extension is available, Quarkus assumes this is the correct one. When you add a driver to the test scope, Quarkus automatically includes it in testing.
 
 #### JDBC connection pool size adjustment
 
@@ -72,7 +67,7 @@ For more information about pool size adjustment properties, see the [JDBC config
 
 #### Read-only JDBC pools
 
-You can mark a JDBC pool as read-only so that connections are created with [`Connection.setReadOnly(true)`](https://docs.oracle.com/en/java/javase/17/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)). The JDBC driver is responsible for enforcing read-only mode.
+You can mark a JDBC pool as read-only so that connections are created with [`Connection.setReadOnly(true)`](https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html#setReadOnly(boolean)). The JDBC driver is responsible for enforcing read-only mode.
 
 This is useful for secondary pools that target read replicas.
 
@@ -103,15 +98,12 @@ When the property is unset, Quarkus does not configure read-only mode and Agroal
 1. Configure your reactive datasource:
 
    ```properties
-   quarkus.datasource.db-kind=postgresql <1>
    quarkus.datasource.username=<your username>
    quarkus.datasource.password=<your password>
 
    quarkus.datasource.reactive.url=postgresql:///your_database
    quarkus.datasource.reactive.max-size=20
    ```
-
-   1. This configuration value is only required if there is more than one Reactive driver extension on the classpath.
 
 
 <a id="configure-datasources"></a>
@@ -123,35 +115,6 @@ The following section describes the configuration for single or multiple datasou
 ### Configure a single datasource
 
 A datasource can be JDBC, reactive, or both. This depends on the configuration and the selection of project extensions.
-
-1. Define a datasource with the following configuration property, where `db-kind` defines which database platform to connect to, for example, `h2`:
-
-   ```properties
-   quarkus.datasource.db-kind=h2
-   ```
-
-   Quarkus derives the JDBC driver class from the `db-kind` database platform value.
-
-   > [!NOTE]
-   > This step is required only if your application depends on multiple database drivers. If the application uses a single driver, Quarkus detects that driver automatically.
-
-   Quarkus currently includes the following built-in database kinds:
-
-
-- DB2: `db2`
-- H2: `h2`
-- MariaDB: `mariadb`
-- Microsoft SQL Server: `mssql`
-- MySQL: `mysql`
-- Oracle: `oracle`
-- PostgreSQL: `postgresql`, `pgsql` or `pg`
-- To use a database kind that is not built-in, use `other` and define the JDBC driver explicitly
-
-  > [!NOTE]
-  > You can use any JDBC driver in a Quarkus app in JVM mode as described in [Custom databases and drivers](#other-databases). However, using a non-built-in database kind is unlikely to work when compiling your application to a native executable.
-  >
-  > For native executable builds, use the available JDBC Quarkus extensions, or contribute a custom extension for your specific driver.
-
 
 1. Configure the following properties to define credentials:
 
@@ -196,7 +159,7 @@ JDBC is the most common database connection pattern, typically needed when used 
   ```
 
   > [!NOTE]
-  > When you add a built-in JDBC driver extension, Quarkus also adds the `quarkus-agroal` extension. Agroal provides the JDBC connection pool for built-in and custom JDBC drivers. When you use a custom JDBC driver, add `quarkus-agroal` explicitly.
+  > If your application depends on multiple JDBC driver extensions, you will also need to [select one through configuration](#datasource-db-kind).
 
 
 .. For use with a custom JDBC driver, add the `quarkus-agroal` dependency to your project alongside the extension for your relational database driver: +
@@ -205,7 +168,7 @@ JDBC is the most common database connection pattern, typically needed when used 
 ./mvnw quarkus:add-extension -Dextensions="agroal"
 ```
 
-\+ To use a JDBC driver for another database, [use a database with no built-in extension or with a different driver](#other-databases).
+\+ Then follow instructions found in [Custom databases and drivers](#other-databases).
 
 1. Configure the JDBC connection by defining the JDBC URL property:
 
@@ -271,7 +234,8 @@ Quarkus offers several reactive clients for use with a reactive datasource.
    - Oracle: `quarkus-reactive-oracle-client`
    - PostgreSQL: `quarkus-reactive-pg-client`
 
-   The installed extension must be consistent with the `quarkus.datasource.db-kind` you define in your datasource configuration.
+   > [!NOTE]
+   > If your application depends on multiple reactive SQL client extensions, you will also need to [select one through configuration](#datasource-db-kind).
 
 
 1. After adding the driver, configure the connection URL and define a proper size for your connection pool.
@@ -293,7 +257,7 @@ For more information about pool size adjustment properties, see the [Reactive da
 <a id="jdbc-and-reactive-datasources-simultaneously"></a>
 #### JDBC and reactive datasources simultaneously
 
-When you add both a JDBC extension and a reactive datasource extension for the same `db-kind`, Quarkus creates both JDBC and reactive datasources by default.
+When you add both a JDBC extension and a reactive datasource extension for the same database kind, Quarkus creates both JDBC and reactive datasources by default.
 
 - To use the [JDBC](#jdbc-datasource) and [reactive](#reactive-datasource) datasources simultaneously:
 
@@ -340,26 +304,21 @@ Each with its configuration:
 ```properties
 quarkus.datasource.db-kind=h2
 quarkus.datasource.username=username-default
-quarkus.datasource.jdbc.url=jdbc:h2:mem:default
 quarkus.datasource.jdbc.max-size=13
 
 quarkus.datasource.users.db-kind=h2
 quarkus.datasource.users.username=username1
-quarkus.datasource.users.jdbc.url=jdbc:h2:mem:users
 quarkus.datasource.users.jdbc.max-size=11
 
 quarkus.datasource.inventory.db-kind=h2
 quarkus.datasource.inventory.username=username2
-quarkus.datasource.inventory.jdbc.url=jdbc:h2:mem:inventory
 quarkus.datasource.inventory.jdbc.max-size=12
 ```
 
-Notice there is an extra section in the configuration property. The syntax is as follows: `quarkus.datasource.[optional name.][datasource property]`.
+Notice there is an extra section in the configuration property key. The syntax is as follows: `quarkus.datasource.[optional name.][datasource property]`.
 
 > [!NOTE]
-> Even when you install only one database extension, named datasources must set at least one build-time property so Quarkus can detect them. In most cases, set `db-kind`.
->
-> You can also set Dev Services properties to create named datasources as described in the [Dev Services for Databases](/guides/databases-dev-services/index.md) guide.
+> Named datasources must set at least one build-time property so Quarkus can detect them. Setting `db-kind` is the most common approach. If the datasource is used by Hibernate ORM, it will be detected automatically; see [Conditions for datasource creation](#datasource-detection).
 
 #### Named datasource injection
 
@@ -379,6 +338,52 @@ AgroalDataSource usersDataSource;
 @DataSource("inventory")
 AgroalDataSource inventoryDataSource;
 ```
+
+<a id="datasource-detection"></a>
+### Conditions for datasource creation
+
+Quarkus creates a datasource when it detects that one is needed, i.e. when any of the following conditions is met:
+
+- It is requested by another extension (e.g. Hibernate ORM, Flyway, Liquibase). For example, when Hibernate ORM has entities to manage, it will automatically request the datasource(s) it needs.
+- OR at least one build-time property is set for it (e.g. `db-kind`).
+- OR no datasource is defined at all: then the default datasource is created.
+
+When a named datasource is not used by any extension that requests it automatically, you need to set at least one build-time property for it to be created. Setting [`db-kind`](#datasource-db-kind) is the most common approach. This is particularly relevant for named datasources used only through direct injection (e.g. `@Inject @DataSource("inventory") AgroalDataSource`).
+
+When a datasource is used by Hibernate ORM, you may not need any configuration for it while developing, as the database type ([`db-kind`](#datasource-db-kind)) will be inferred automatically if you only have one JDBC driver in the classpath, and the database URL, username and password will be filled in automatically by [Dev Services](#dev-services).
+
+<a id="datasource-db-kind"></a>
+### Applications with multiple datasource extensions
+
+If your application depends on multiple database drivers, Quarkus may be unable to determine which database kind a given datasource is meant to target. In that case, the build may fail and prompt you to select a datasource extension through configuration.
+
+> [!NOTE]
+> Some ambiguities, in particular related to testing, are resolved automatically; see [Testing with in-memory databases](#in-memory-databases).
+
+Selecting a datasource extension for the default datasource is achieved with the following configuration property:
+
+```properties
+quarkus.datasource.db-kind=postgresql
+```
+
+Below are the `db-kind` values for each of the built-in JDBC drivers:
+
+- DB2: `db2`
+- H2: `h2`
+- MariaDB: `mariadb`
+- Microsoft SQL Server: `mssql`
+- MySQL: `mysql`
+- Oracle: `oracle`
+- PostgreSQL: `postgresql`, `pgsql` or `pg`
+
+Below are the `db-kind` values for each of the built-in reactive SQL clients:
+
+- DB2: `db2`
+- MariaDB: `mariadb`
+- Microsoft SQL Server: `mssql`
+- MySQL: `mysql`
+- Oracle: `oracle`
+- PostgreSQL: `postgresql`, `pgsql` or `pg`
 
 <a id="datasource-active"></a>
 ### Activate or deactivate datasources
@@ -522,18 +527,6 @@ If XA cannot be enabled for one of your datasources:
 - Be aware that enabling XA for all datasources *except one* (and only one) is still supported through [Last Resource Commit Optimization (LRCO)](https://www.narayana.io/docs/project/index.html#_last_resource_commit_optimization_lrco).
 - If you do not need a rollback for one datasource to trigger a rollback for other datasources, consider splitting your code into multiple transactions. To do so, use [`QuarkusTransaction.requiringNew()`](/guides/transaction/index.md#programmatic-approach)/[`@Transactional(REQUIRES_NEW)`](/guides/transaction/index.md#declarative-approach) (preferably) or [`UserTransaction`](/guides/transaction/index.md#legacy-api-approach) (for more complex use cases).
 
-> [!CAUTION]
-> If no other solution works and compatibility with Quarkus 3.8 or earlier is required, set `quarkus.transaction-manager.unsafe-multiple-last-resources` to `allow` to enable unsafe transaction handling across multiple non-XA datasources.
->
-> With this property set to `allow`, a transaction rollback might only apply to the last non-XA datasource, while other non-XA datasources may have already committed their changes. This can leave the system in an inconsistent state.
->
-> Alternatively, allow the same unsafe behavior but with warnings when it occurs:
->
-> - Setting the property to `warn-each` logs a warning for **each** offending transaction.
-> - Setting the property to `warn-first` logs a warning for the **first** offending transaction.
->
-> We do not recommend using this configuration property and plan to remove it in the future. You should update your application accordingly. If you believe your use case justifies keeping this option, open an issue in the [Quarkus tracker](https://github.com/quarkusio/quarkus/issues/new?assignees=&labels=kind%2Fenhancement&projects=&template=feature_request.yml) explaining why.
-
 ## Datasource integrations
 
 <a id="datasource-health-check"></a>
@@ -603,7 +596,7 @@ When a datasource is configured for XA transactions by setting `quarkus.datasour
 > [!IMPORTANT]
 > Change this setting only in advanced use cases and only if you are certain recovery is not required. Incorrect configuration can lead to data loss, data unavailability, or both, due to resources remaining locked indefinitely.
 
-For more information, see the [Configuration reference](#configuration-reference) section below. To facilitate the storage of transaction logs in a database by using JDBC, see the [Configuring transaction logs to be stored in a datasource](/guides/transaction/index.md#jdbcstore) section of the [Using transactions in Quarkus](/guides/transaction/index.md) guide.
+For more information, see the [Configuration reference](#configuration-reference) section below. To facilitate the storage of transaction logs in a database by using JDBC, see the [Configuring transaction logs to be stored in a datasource](/guides/transaction/index.md#jdbcstore) section of the [Using transactions](/guides/transaction/index.md) guide.
 
 <a id="in-memory-databases"></a>
 ### Testing with in-memory databases
@@ -619,6 +612,9 @@ Embedded databases such as H2 work in JVM mode.
 In native mode, do not embed H2 in the native image. Use a remote connection to a separate database, or use Dev Services to run the database outside the native image.
 
 #### Run an integration test
+
+> [!WARNING]
+> `H2DatabaseTestResource` is deprecated. Dev Services for H2 automatically starts an in-process database when `quarkus.datasource.db-kind=h2` is set and no JDBC URL is configured. See [Dev Services for databases](/guides/databases-dev-services/index.md) for details.
 
 1. Add a dependency on the artifacts providing the additional tools that are under the following Maven coordinates:
    - `io.quarkus:quarkus-test-h2` for H2
@@ -666,8 +662,9 @@ In native mode, do not embed H2 in the native image. Use a remote connection to 
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-health-enabled"></a> [`quarkus.datasource.health.enabled`](#quarkus-datasource_quarkus-datasource-health-enabled) config_property_copy_button:+++quarkus.datasource.health.enabled+++[]<br><br>Whether or not a health check is published in case the smallrye-health extension is present.<br><br>This is a global setting and is not specific to a datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_HEALTH_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-metrics-enabled"></a> [`quarkus.datasource.metrics.enabled`](#quarkus-datasource_quarkus-datasource-metrics-enabled) config_property_copy_button:+++quarkus.datasource.metrics.enabled+++[]<br><br>Whether datasource metrics are published in case a metrics extension is present.<br><br>This is a global setting and is not specific to a datasource.<br><br>> [!NOTE]<br>> This is different from the `quarkus.datasource."datasource name".jdbc.metrics.enabled` property that needs to be set on the JDBC datasource level to enable collection of metrics for that datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_METRICS_ENABLED+++[] | boolean | `false` |
+| [lock] <a id="quarkus-datasource_quarkus-datasource-db-version-defaults"></a> [`quarkus.datasource.db-version-defaults`](#quarkus-datasource_quarkus-datasource-db-version-defaults) config_property_copy_button:+++quarkus.datasource.db-version-defaults+++[]<br><br>Controls whether default database versions are applied when not explicitly configured.<br><br>This is a global setting and is not specific to a datasource.<br><br>When set to `recent` (the default), Quarkus will use recent stable versions as defaults for each database kind. This optimizes for performance and features but requires your database to be reasonably up-to-date.<br><br>When set to `compatible`, no default versions are applied. You must explicitly set `quarkus.datasource.db-version` (or `quarkus.datasource."datasource-name".db-version`) for each datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DB_VERSION_DEFAULTS+++[] | `recent`, `compatible` | `recent` |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-db-kind"></a> [`quarkus.datasource.db-kind`](#quarkus-datasource_quarkus-datasource-db-kind) config_property_copy_button:+++quarkus.datasource.db-kind+++[]<br><br>`quarkus.datasource."datasource-name".db-kind` config_property_copy_button:+++quarkus.datasource."datasource-name".db-kind+++[]<br><br>The kind of database we will connect to (e.g. h2, postgresql...).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DB_KIND+++[] | string |  |
-| [lock] <a id="quarkus-datasource_quarkus-datasource-db-version"></a> [`quarkus.datasource.db-version`](#quarkus-datasource_quarkus-datasource-db-version) config_property_copy_button:+++quarkus.datasource.db-version+++[]<br><br>`quarkus.datasource."datasource-name".db-version` config_property_copy_button:+++quarkus.datasource."datasource-name".db-version+++[]<br><br>The version of the database we will connect to (e.g. '10.0').<br><br>> [!CAUTION]<br>> The version number set here should follow the same numbering scheme as the string returned by `java.sql.DatabaseMetaData#getDatabaseProductVersion()` for your database's JDBC driver. This numbering scheme may be different from the most popular one for your database; for example Microsoft SQL Server 2016 would be version `13`, and Oracle Database 26ai would be version `23.26`.<br><br>As a rule, the version set here should be as high as possible, but must be lower than or equal to the version of any database your application will connect to.<br><br>A high version will allow better performance and using more features (e.g. Hibernate ORM may generate more efficient SQL, avoid workarounds and take advantage of more database features), but if it is higher than the version of the database you want to connect to, it may lead to runtime exceptions (e.g. Hibernate ORM may generate invalid SQL that your database will reject).<br><br>Some extensions (like the Hibernate ORM extension) will try to check this version against the actual database version on startup, leading to a startup failure when the actual version is lower or simply a warning in case the database cannot be reached.<br><br>The default for this property is specific to each extension; the Hibernate ORM extension will default to the oldest version it supports.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DB_VERSION+++[] | string |  |
+| [lock] <a id="quarkus-datasource_quarkus-datasource-db-version"></a> [`quarkus.datasource.db-version`](#quarkus-datasource_quarkus-datasource-db-version) config_property_copy_button:+++quarkus.datasource.db-version+++[]<br><br>`quarkus.datasource."datasource-name".db-version` config_property_copy_button:+++quarkus.datasource."datasource-name".db-version+++[]<br><br>The version of the database we will connect to (e.g. '10.0').<br><br>> [!CAUTION]<br>> The version number set here should follow the same numbering scheme as the string returned by `java.sql.DatabaseMetaData#getDatabaseProductVersion()` for your database's JDBC driver. This numbering scheme may be different from the most popular one for your database; for example Microsoft SQL Server 2016 would be version `13`, and Oracle Database 26ai would be version `23.26`.<br><br>As a rule, the version set here should be as high as possible, but must be lower than or equal to the version of any database your application will connect to.<br><br>A high version will allow better performance and using more features (e.g. Hibernate ORM may generate more efficient SQL, avoid workarounds and take advantage of more database features), but if it is higher than the version of the database you want to connect to, it may lead to runtime exceptions (e.g. Hibernate ORM may generate invalid SQL that your database will reject).<br><br>Some extensions (like the Hibernate ORM extension) will try to check this version against the actual database version on startup, leading to a startup failure when the actual version is lower or simply a warning in case the database cannot be reached.<br><br>If not set, the default depends on the `db-kind`:<br><br>- DB2: `12.1`<br>- MariaDB: `11.4`<br>- Microsoft SQL Server: `16`<br>- MySQL: `8.4`<br>- Oracle: `23`<br>- PostgreSQL: `16`<br><br>If you are connecting to an older database version, you must explicitly set this property to match your actual database version to avoid runtime errors.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DB_VERSION+++[] | string | `` Depends on `db-kind`, see description. `` |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-health-exclude"></a> [`quarkus.datasource.health-exclude`](#quarkus-datasource_quarkus-datasource-health-exclude) config_property_copy_button:+++quarkus.datasource.health-exclude+++[]<br><br>`quarkus.datasource."datasource-name".health-exclude` config_property_copy_button:+++quarkus.datasource."datasource-name".health-exclude+++[]<br><br>Whether this particular data source should be excluded from the health check if the general health check for data sources is enabled.<br><br>By default, the health check includes all configured data sources (if it is enabled).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_HEALTH_EXCLUDE+++[] | boolean | `false` |
 | <a id="quarkus-datasource_quarkus-datasource-active"></a> [`quarkus.datasource.active`](#quarkus-datasource_quarkus-datasource-active) config_property_copy_button:+++quarkus.datasource.active+++[]<br><br>`quarkus.datasource."datasource-name".active` config_property_copy_button:+++quarkus.datasource."datasource-name".active+++[]<br><br>Whether this datasource should be active at runtime.<br><br>See [this section of the documentation](/guides/datasource/index.md#datasource-active).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_ACTIVE+++[] | boolean | `` `true` if the URL is set, `false` otherwise `` |
 | <a id="quarkus-datasource_quarkus-datasource-username"></a> [`quarkus.datasource.username`](#quarkus-datasource_quarkus-datasource-username) config_property_copy_button:+++quarkus.datasource.username+++[]<br><br>`quarkus.datasource."datasource-name".username` config_property_copy_button:+++quarkus.datasource."datasource-name".username+++[]<br><br>The datasource username<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_USERNAME+++[] | string |  |
@@ -676,7 +673,7 @@ In native mode, do not embed H2 in the native image. Use a remote connection to 
 | <a id="quarkus-datasource_quarkus-datasource-credentials-provider-name"></a> [`quarkus.datasource.credentials-provider-name`](#quarkus-datasource_quarkus-datasource-credentials-provider-name) config_property_copy_button:+++quarkus.datasource.credentials-provider-name+++[]<br><br>`quarkus.datasource."datasource-name".credentials-provider-name` config_property_copy_button:+++quarkus.datasource."datasource-name".credentials-provider-name+++[]<br><br>The credentials provider bean name.<br><br>This is a bean name (as in `@Named`) of a bean that implements `CredentialsProvider`. It is used to select the credentials provider bean when multiple exist. This is unnecessary when there is only one credentials provider available.<br><br>For Vault, the credentials provider bean name is `vault-credentials-provider`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_CREDENTIALS_PROVIDER_NAME+++[] | string |  |
 | <a id="quarkus-datasource_section_quarkus-datasource-devservices"></a> [Dev Services](#quarkus-datasource_section_quarkus-datasource-devservices) | Type | Default |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-enabled"></a> [`quarkus.datasource.devservices.enabled`](#quarkus-datasource_quarkus-datasource-devservices-enabled) config_property_copy_button:+++quarkus.datasource.devservices.enabled+++[]<br><br>`quarkus.datasource."datasource-name".devservices.enabled` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.enabled+++[]<br><br>Whether this Dev Service should start with the application in dev mode or tests.<br><br>Dev Services are enabled by default unless connection configuration (e.g. the JDBC URL or reactive client URL) is set explicitly.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_ENABLED+++[] | boolean |  |
-| [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-image-name"></a> [`quarkus.datasource.devservices.image-name`](#quarkus-datasource_quarkus-datasource-devservices-image-name) config_property_copy_button:+++quarkus.datasource.devservices.image-name+++[]<br><br>`quarkus.datasource."datasource-name".devservices.image-name` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.image-name+++[]<br><br>The container image name for container-based Dev Service providers.<br><br>This has no effect if the provider is not a container-based database, such as H2 or Derby.<br><br>Defaults depend on the configured `datasource`:<br><br>- DB2: `icr.io/db2_community/db2:12.1.5.0`<br>- MariaDB: `docker.io/library/mariadb:12.1`<br>- Microsoft SQL Server: `{mssql-image}`\<br>On ARM (aarch64),`mcr.microsoft.com/azure-sql-edge:latest` is used instead, because the standard MS SQL Server image does not run on ARM.<br>- MySQL: `docker.io/library/mysql:9.5`<br>- Oracle Express Edition: `docker.io/gvenzl/oracle-free:23-slim-faststart`<br>- PostgreSQL: `docker.io/library/postgres:18`<br><br>For certain databases, the default image may be automatically adjusted based on required database features (e.g., spatial or vector support). Explicitly setting this property overrides the automatic image selection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_IMAGE_NAME+++[] | string |  |
+| [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-image-name"></a> [`quarkus.datasource.devservices.image-name`](#quarkus-datasource_quarkus-datasource-devservices-image-name) config_property_copy_button:+++quarkus.datasource.devservices.image-name+++[]<br><br>`quarkus.datasource."datasource-name".devservices.image-name` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.image-name+++[]<br><br>The container image name for container-based Dev Service providers.<br><br>This has no effect if the provider is not a container-based database, such as H2 or Derby.<br><br>Defaults depend on the configured `datasource`:<br><br>- DB2: `icr.io/db2_community/db2:12.1.5.0`<br>- MariaDB: `docker.io/library/mariadb:12.3`<br>- Microsoft SQL Server: `{mssql-image}`\<br>On ARM (aarch64),`mcr.microsoft.com/azure-sql-edge:latest` is used instead, because the standard MS SQL Server image does not run on ARM.<br>- MySQL: `docker.io/library/mysql:9.7`<br>- Oracle Express Edition: `docker.io/gvenzl/oracle-free:23-slim-faststart`<br>- PostgreSQL: `docker.io/library/postgres:18`<br><br>For certain databases, the default image may be automatically adjusted based on required database features (e.g., spatial or vector support). Explicitly setting this property overrides the automatic image selection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_IMAGE_NAME+++[] | string | `` Depends on `db-kind`, see description. `` |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-container-env-environment-variable-name"></a> [`quarkus.datasource.devservices.container-env."environment-variable-name"`](#quarkus-datasource_quarkus-datasource-devservices-container-env-environment-variable-name) config_property_copy_button:+++quarkus.datasource.devservices.container-env."environment-variable-name"+++[]<br><br>`quarkus.datasource."datasource-name".devservices.container-env."environment-variable-name"` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.container-env."environment-variable-name"+++[]<br><br>Environment variables that are passed to the container.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_CONTAINER_ENV__ENVIRONMENT_VARIABLE_NAME_+++[] | Map\<String,String> |  |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-container-properties-property-key"></a> [`quarkus.datasource.devservices.container-properties."property-key"`](#quarkus-datasource_quarkus-datasource-devservices-container-properties-property-key) config_property_copy_button:+++quarkus.datasource.devservices.container-properties."property-key"+++[]<br><br>`quarkus.datasource."datasource-name".devservices.container-properties."property-key"` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.container-properties."property-key"+++[]<br><br>Generic properties that are passed for additional container configuration.<br><br>Properties defined here are database-specific and are interpreted specifically in each database dev service implementation.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_CONTAINER_PROPERTIES__PROPERTY_KEY_+++[] | Map\<String,String> |  |
 | [lock] <a id="quarkus-datasource_quarkus-datasource-devservices-properties-property-key"></a> [`quarkus.datasource.devservices.properties."property-key"`](#quarkus-datasource_quarkus-datasource-devservices-properties-property-key) config_property_copy_button:+++quarkus.datasource.devservices.properties."property-key"+++[]<br><br>`quarkus.datasource."datasource-name".devservices.properties."property-key"` config_property_copy_button:+++quarkus.datasource."datasource-name".devservices.properties."property-key"+++[]<br><br>Generic properties that are added to the database connection URL.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_DEVSERVICES_PROPERTIES__PROPERTY_KEY_+++[] | Map\<String,String> |  |
@@ -898,6 +895,8 @@ When using one of the built-in datasource kinds, the JDBC and Reactive drivers a
 | <mark>Configuration property</mark> | Type | Default |
 | [lock] <a id="quarkus-reactive-datasource_quarkus-datasource-reactive"></a> [`quarkus.datasource.reactive`](#quarkus-reactive-datasource_quarkus-datasource-reactive) config_property_copy_button:+++quarkus.datasource.reactive+++[]<br><br>`quarkus.datasource."datasource-name".reactive` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive+++[]<br><br>If we create a Reactive datasource for this datasource.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE+++[] | boolean | `true` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-cache-prepared-statements"></a> [`quarkus.datasource.reactive.cache-prepared-statements`](#quarkus-reactive-datasource_quarkus-datasource-reactive-cache-prepared-statements) config_property_copy_button:+++quarkus.datasource.reactive.cache-prepared-statements+++[]<br><br>`quarkus.datasource."datasource-name".reactive.cache-prepared-statements` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.cache-prepared-statements+++[]<br><br>Whether prepared statements should be cached on the client side.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_CACHE_PREPARED_STATEMENTS+++[] | boolean | `true for PostgreSQL/MySQL/MariaDB/Db2, false otherwise` |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-prepared-statement-cache-max-size"></a> [`quarkus.datasource.reactive.prepared-statement-cache-max-size`](#quarkus-reactive-datasource_quarkus-datasource-reactive-prepared-statement-cache-max-size) config_property_copy_button:+++quarkus.datasource.reactive.prepared-statement-cache-max-size+++[]<br><br>`quarkus.datasource."datasource-name".reactive.prepared-statement-cache-max-size` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.prepared-statement-cache-max-size+++[]<br><br>The maximum number of prepared statements that the client will cache.<br><br>Only effective when `cache-prepared-statements` is enabled (PostgreSQL, MySQL/MariaDB, Db2).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_PREPARED_STATEMENT_CACHE_MAX_SIZE+++[] | int | `256` |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-prepared-statement-cache-sql-limit"></a> [`quarkus.datasource.reactive.prepared-statement-cache-sql-limit`](#quarkus-reactive-datasource_quarkus-datasource-reactive-prepared-statement-cache-sql-limit) config_property_copy_button:+++quarkus.datasource.reactive.prepared-statement-cache-sql-limit+++[]<br><br>`quarkus.datasource."datasource-name".reactive.prepared-statement-cache-sql-limit` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.prepared-statement-cache-sql-limit+++[]<br><br>The maximum length of SQL text that the client will cache in a prepared statement. Queries exceeding this limit are not cached.<br><br>Only effective when `cache-prepared-statements` is enabled (PostgreSQL, MySQL/MariaDB, Db2).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_PREPARED_STATEMENT_CACHE_SQL_LIMIT+++[] | int | `2048` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-url"></a> [`quarkus.datasource.reactive.url`](#quarkus-reactive-datasource_quarkus-datasource-reactive-url) config_property_copy_button:+++quarkus.datasource.reactive.url+++[]<br><br>`quarkus.datasource."datasource-name".reactive.url` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.url+++[]<br><br>The datasource URLs.<br><br>If multiple values are set, this datasource will create a pool with a list of servers instead of a single server. The pool uses round-robin load balancing for server selection during connection establishment. Note that certain drivers might not accommodate multiple values in this context.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_URL+++[] | list of string |  |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-max-size"></a> [`quarkus.datasource.reactive.max-size`](#quarkus-reactive-datasource_quarkus-datasource-reactive-max-size) config_property_copy_button:+++quarkus.datasource.reactive.max-size+++[]<br><br>`quarkus.datasource."datasource-name".reactive.max-size` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.max-size+++[]<br><br>The datasource pool maximum size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MAX_SIZE+++[] | int | `20` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-event-loop-size"></a> [`quarkus.datasource.reactive.event-loop-size`](#quarkus-reactive-datasource_quarkus-datasource-reactive-event-loop-size) config_property_copy_button:+++quarkus.datasource.reactive.event-loop-size+++[]<br><br>`quarkus.datasource."datasource-name".reactive.event-loop-size` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.event-loop-size+++[]<br><br>When a new connection object is created, the pool assigns it an event loop.<br><br>When `#event-loop-size` is set to a strictly positive value, the pool assigns as many event loops as specified, in a round-robin fashion. By default, the number of event loops configured or calculated by Quarkus is used. If `#event-loop-size` is set to zero or a negative value, the pool assigns the current event loop to the new connection.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_EVENT_LOOP_SIZE+++[] | int |  |
@@ -922,6 +921,10 @@ When using one of the built-in datasource kinds, the JDBC and Reactive drivers a
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-reconnect-attempts"></a> [`quarkus.datasource.reactive.reconnect-attempts`](#quarkus-reactive-datasource_quarkus-datasource-reactive-reconnect-attempts) config_property_copy_button:+++quarkus.datasource.reactive.reconnect-attempts+++[]<br><br>`quarkus.datasource."datasource-name".reactive.reconnect-attempts` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.reconnect-attempts+++[]<br><br>The number of reconnection attempts when a pooled connection cannot be established on first try.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_RECONNECT_ATTEMPTS+++[] | int | `0` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-reconnect-interval"></a> [`quarkus.datasource.reactive.reconnect-interval`](#quarkus-reactive-datasource_quarkus-datasource-reactive-reconnect-interval) config_property_copy_button:+++quarkus.datasource.reactive.reconnect-interval+++[]<br><br>`quarkus.datasource."datasource-name".reactive.reconnect-interval` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.reconnect-interval+++[]<br><br>The interval between reconnection attempts when a pooled connection cannot be established on first try.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_RECONNECT_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-reactive-datasource_quarkus-datasource) | `1S` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-hostname-verification-algorithm"></a> [`quarkus.datasource.reactive.hostname-verification-algorithm`](#quarkus-reactive-datasource_quarkus-datasource-reactive-hostname-verification-algorithm) config_property_copy_button:+++quarkus.datasource.reactive.hostname-verification-algorithm+++[]<br><br>`quarkus.datasource."datasource-name".reactive.hostname-verification-algorithm` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.hostname-verification-algorithm+++[]<br><br>The hostname verification algorithm to use in case the server's identity should be checked. Should be `HTTPS`, `LDAPS` or `NONE`. `NONE` is the default value and disables the verification.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_HOSTNAME_VERIFICATION_ALGORITHM+++[] | string | `NONE` |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-tls-configuration-name"></a> [`quarkus.datasource.reactive.tls-configuration-name`](#quarkus-reactive-datasource_quarkus-datasource-reactive-tls-configuration-name) config_property_copy_button:+++quarkus.datasource.reactive.tls-configuration-name+++[]<br><br>`quarkus.datasource."datasource-name".reactive.tls-configuration-name` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.tls-configuration-name+++[]<br><br>The name of the TLS configuration to use.<br><br>If set, the TLS configuration with the given name is used for SSL/TLS. When set, manual trust/key certificate properties are ignored.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_TLS_CONFIGURATION_NAME+++[] | string |  |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-connection-timeout"></a> [`quarkus.datasource.reactive.connection-timeout`](#quarkus-reactive-datasource_quarkus-datasource-reactive-connection-timeout) config_property_copy_button:+++quarkus.datasource.reactive.connection-timeout+++[]<br><br>`quarkus.datasource."datasource-name".reactive.connection-timeout` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.connection-timeout+++[]<br><br>The maximum time to wait for a connection from the pool.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_CONNECTION_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-reactive-datasource_quarkus-datasource) | `30S` |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-max-wait-queue-size"></a> [`quarkus.datasource.reactive.max-wait-queue-size`](#quarkus-reactive-datasource_quarkus-datasource-reactive-max-wait-queue-size) config_property_copy_button:+++quarkus.datasource.reactive.max-wait-queue-size+++[]<br><br>`quarkus.datasource."datasource-name".reactive.max-wait-queue-size` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.max-wait-queue-size+++[]<br><br>The maximum number of requests allowed in the wait queue of the pool. If the queue is full, further requests are rejected.<br><br>A value of -1 means there is no limit.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MAX_WAIT_QUEUE_SIZE+++[] | int | `-1` |
+| <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-pool-cleaner-period"></a> [`quarkus.datasource.reactive.pool-cleaner-period`](#quarkus-reactive-datasource_quarkus-datasource-reactive-pool-cleaner-period) config_property_copy_button:+++quarkus.datasource.reactive.pool-cleaner-period+++[]<br><br>`quarkus.datasource."datasource-name".reactive.pool-cleaner-period` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.pool-cleaner-period+++[]<br><br>How often the pool is checked for idle connections eligible for removal.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POOL_CLEANER_PERIOD+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-reactive-datasource_quarkus-datasource) | `1S` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-idle-timeout"></a> [`quarkus.datasource.reactive.idle-timeout`](#quarkus-reactive-datasource_quarkus-datasource-reactive-idle-timeout) config_property_copy_button:+++quarkus.datasource.reactive.idle-timeout+++[]<br><br>`quarkus.datasource."datasource-name".reactive.idle-timeout` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.idle-timeout+++[]<br><br>The maximum time a connection remains unused in the pool before it is closed.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_IDLE_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-reactive-datasource_quarkus-datasource) | `no timeout` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-max-lifetime"></a> [`quarkus.datasource.reactive.max-lifetime`](#quarkus-reactive-datasource_quarkus-datasource-reactive-max-lifetime) config_property_copy_button:+++quarkus.datasource.reactive.max-lifetime+++[]<br><br>`quarkus.datasource."datasource-name".reactive.max-lifetime` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.max-lifetime+++[]<br><br>The maximum time a connection remains in the pool, after which it will be closed upon return and replaced as necessary.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MAX_LIFETIME+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-reactive-datasource_quarkus-datasource) | `no timeout` |
 | <a id="quarkus-reactive-datasource_quarkus-datasource-reactive-shared"></a> [`quarkus.datasource.reactive.shared`](#quarkus-reactive-datasource_quarkus-datasource-reactive-shared) config_property_copy_button:+++quarkus.datasource.reactive.shared+++[]<br><br>`quarkus.datasource."datasource-name".reactive.shared` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.shared+++[]<br><br>Set to true to share the pool among datasources. There can be multiple shared pools distinguished by name, when no specific name is set, the `__vertx.DEFAULT` name is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_SHARED+++[] | boolean | `false` |
@@ -966,10 +969,12 @@ When using one of the built-in datasource kinds, the JDBC and Reactive drivers a
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-charset"></a> [`quarkus.datasource.reactive.mysql.charset`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-charset) config_property_copy_button:+++quarkus.datasource.reactive.mysql.charset+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.charset` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.charset+++[]<br><br>Charset for connections.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_CHARSET+++[] | string |  |
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-collation"></a> [`quarkus.datasource.reactive.mysql.collation`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-collation) config_property_copy_button:+++quarkus.datasource.reactive.mysql.collation+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.collation` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.collation+++[]<br><br>Collation for connections.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_COLLATION+++[] | string |  |
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-ssl-mode"></a> [`quarkus.datasource.reactive.mysql.ssl-mode`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-ssl-mode) config_property_copy_button:+++quarkus.datasource.reactive.mysql.ssl-mode+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.ssl-mode` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.ssl-mode+++[]<br><br>Desired security state of the connection to the server.<br><br>See [MySQL Reference Manual](https://dev.mysql.com/doc/refman/8.0/en/connection-options.html#option_general_ssl-mode).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_SSL_MODE+++[] | `disabled`, `preferred`, `required`, `verify-ca`, `verify-identity` | `disabled` |
-| <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-connection-timeout"></a> [`quarkus.datasource.reactive.mysql.connection-timeout`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-connection-timeout) config_property_copy_button:+++quarkus.datasource.reactive.mysql.connection-timeout+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.connection-timeout` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.connection-timeout+++[]<br><br>Connection timeout in seconds<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_CONNECTION_TIMEOUT+++[] | int |  |
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-authentication-plugin"></a> [`quarkus.datasource.reactive.mysql.authentication-plugin`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-authentication-plugin) config_property_copy_button:+++quarkus.datasource.reactive.mysql.authentication-plugin+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.authentication-plugin` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.authentication-plugin+++[]<br><br>The authentication plugin the client should use. By default, it uses the plugin name specified by the server in the initial handshake packet.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_AUTHENTICATION_PLUGIN+++[] | `default`, `mysql-clear-password`, `mysql-native-password`, `sha256-password`, `caching-sha2-password` | `default` |
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-pipelining-limit"></a> [`quarkus.datasource.reactive.mysql.pipelining-limit`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-pipelining-limit) config_property_copy_button:+++quarkus.datasource.reactive.mysql.pipelining-limit+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.pipelining-limit` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.pipelining-limit+++[]<br><br>The maximum number of inflight database commands that can be pipelined. By default, pipelining is disabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_PIPELINING_LIMIT+++[] | int |  |
 | <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-use-affected-rows"></a> [`quarkus.datasource.reactive.mysql.use-affected-rows`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-use-affected-rows) config_property_copy_button:+++quarkus.datasource.reactive.mysql.use-affected-rows+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.use-affected-rows` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.use-affected-rows+++[]<br><br>Whether to return the number of rows matched by the *WHERE* clause in *UPDATE* statements, instead of the number of rows actually changed.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_USE_AFFECTED_ROWS+++[] | boolean | `false` |
+| <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-character-encoding"></a> [`quarkus.datasource.reactive.mysql.character-encoding`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-character-encoding) config_property_copy_button:+++quarkus.datasource.reactive.mysql.character-encoding+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.character-encoding` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.character-encoding+++[]<br><br>Set the Java charset to use to encode query string and parameter values. The charset is UTF-8 by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_CHARACTER_ENCODING+++[] | string | `UTF-8` |
+| <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-server-rsa-public-key-path"></a> [`quarkus.datasource.reactive.mysql.server-rsa-public-key-path`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-server-rsa-public-key-path) config_property_copy_button:+++quarkus.datasource.reactive.mysql.server-rsa-public-key-path+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.server-rsa-public-key-path` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.server-rsa-public-key-path+++[]<br><br>Path to the server RSA public key file.<br><br>Used to securely encrypt the password during login when using SHA-256 authentication plugins (e.g., `caching_sha2_password`) over unencrypted (non-TLS) connections. Specifying this locally prevents Man-in-the-Middle attacks by avoiding automatic public key retrieval from the server.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_SERVER_RSA_PUBLIC_KEY_PATH+++[] | string |  |
+| <a id="quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-server-rsa-public-key-value"></a> [`quarkus.datasource.reactive.mysql.server-rsa-public-key-value`](#quarkus-reactive-mysql-client_quarkus-datasource-reactive-mysql-server-rsa-public-key-value) config_property_copy_button:+++quarkus.datasource.reactive.mysql.server-rsa-public-key-value+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mysql.server-rsa-public-key-value` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mysql.server-rsa-public-key-value+++[]<br><br>The server RSA public key content.<br><br>Used to securely encrypt the password during login when using SHA-256 authentication plugins (e.g., `caching_sha2_password`) over unencrypted (non-TLS) connections. Specifying this locally prevents Man-in-the-Middle attacks by avoiding automatic public key retrieval from the server.<br><br>If set, takes precedence over `server-rsa-public-key-path`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MYSQL_SERVER_RSA_PUBLIC_KEY_VALUE+++[] | string |  |
 
 #### Reactive Microsoft SQL server-specific configuration
 
@@ -981,6 +986,7 @@ When using one of the built-in datasource kinds, the JDBC and Reactive drivers a
 | <a id="quarkus-reactive-mssql-client_section_quarkus-datasource"></a> [Datasources](#quarkus-reactive-mssql-client_section_quarkus-datasource) | Type | Default |
 | <a id="quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-packet-size"></a> [`quarkus.datasource.reactive.mssql.packet-size`](#quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-packet-size) config_property_copy_button:+++quarkus.datasource.reactive.mssql.packet-size+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mssql.packet-size` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mssql.packet-size+++[]<br><br>The desired size (in bytes) for TDS packets.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MSSQL_PACKET_SIZE+++[] | int |  |
 | <a id="quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-ssl"></a> [`quarkus.datasource.reactive.mssql.ssl`](#quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-ssl) config_property_copy_button:+++quarkus.datasource.reactive.mssql.ssl+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mssql.ssl` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mssql.ssl+++[]<br><br>Whether SSL/TLS is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MSSQL_SSL+++[] | boolean | `false` |
+| <a id="quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-encryption-mode"></a> [`quarkus.datasource.reactive.mssql.encryption-mode`](#quarkus-reactive-mssql-client_quarkus-datasource-reactive-mssql-encryption-mode) config_property_copy_button:+++quarkus.datasource.reactive.mssql.encryption-mode+++[]<br><br>`quarkus.datasource."datasource-name".reactive.mssql.encryption-mode` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.mssql.encryption-mode+++[]<br><br>The encryption mode for the connection.<br><br>Determines the TDS protocol version and whether TLS encryption is used:<br><br>\* `EncryptionMode#OFF` — no encryption, TDS 7.x. \* `EncryptionMode#ON` — optional encryption, TDS 7.x. Equivalent to setting `ssl=true`. \* `EncryptionMode#STRICT` — mandatory encryption, TDS 8.0.<br><br>When this option is set it takes precedence over `ssl()`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_MSSQL_ENCRYPTION_MODE+++[] | `off`, `on`, `strict` |  |
 
 #### Reactive Oracle-specific configuration
 
@@ -1001,6 +1007,8 @@ When using one of the built-in datasource kinds, the JDBC and Reactive drivers a
 | <a id="quarkus-reactive-pg-client_section_quarkus-datasource"></a> [Datasources](#quarkus-reactive-pg-client_section_quarkus-datasource) | Type | Default |
 | <a id="quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-pipelining-limit"></a> [`quarkus.datasource.reactive.postgresql.pipelining-limit`](#quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-pipelining-limit) config_property_copy_button:+++quarkus.datasource.reactive.postgresql.pipelining-limit+++[]<br><br>`quarkus.datasource."datasource-name".reactive.postgresql.pipelining-limit` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.postgresql.pipelining-limit+++[]<br><br>The maximum number of inflight database commands that can be pipelined.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POSTGRESQL_PIPELINING_LIMIT+++[] | int |  |
 | <a id="quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-ssl-mode"></a> [`quarkus.datasource.reactive.postgresql.ssl-mode`](#quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-ssl-mode) config_property_copy_button:+++quarkus.datasource.reactive.postgresql.ssl-mode+++[]<br><br>`quarkus.datasource."datasource-name".reactive.postgresql.ssl-mode` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.postgresql.ssl-mode+++[]<br><br>SSL operating mode of the client.<br><br>See [Protection Provided in Different Modes](https://www.postgresql.org/docs/current/libpq-ssl.html#LIBPQ-SSL-PROTECTION).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POSTGRESQL_SSL_MODE+++[] | `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full` | `disable` |
+| <a id="quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-ssl-negotiation"></a> [`quarkus.datasource.reactive.postgresql.ssl-negotiation`](#quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-ssl-negotiation) config_property_copy_button:+++quarkus.datasource.reactive.postgresql.ssl-negotiation+++[]<br><br>`quarkus.datasource."datasource-name".reactive.postgresql.ssl-negotiation` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.postgresql.ssl-negotiation+++[]<br><br>SSL negotiation mode.<br><br>Determines how SSL/TLS negotiation is performed with the PostgreSQL server:<br><br>\* `SslNegotiation#POSTGRES` — traditional negotiation; the client sends an SSL request message before the TLS handshake. Compatible with all PostgreSQL versions. \* `SslNegotiation#DIRECT` — direct SSL; the TLS handshake starts immediately on connect, with no prior SSL request message. Requires PostgreSQL 17 or later.<br><br>When not set, the Vert.x client default applies (`SslNegotiation#POSTGRES`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POSTGRESQL_SSL_NEGOTIATION+++[] | `postgres`, `direct` |  |
+| <a id="quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-channel-binding"></a> [`quarkus.datasource.reactive.postgresql.channel-binding`](#quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-channel-binding) config_property_copy_button:+++quarkus.datasource.reactive.postgresql.channel-binding+++[]<br><br>`quarkus.datasource."datasource-name".reactive.postgresql.channel-binding` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.postgresql.channel-binding+++[]<br><br>Channel binding mode used during SCRAM authentication.<br><br>Channel binding is a method for the server to authenticate itself to the client. It is only supported over SSL connections with PostgreSQL 11 or later servers using the SCRAM authentication method.<br><br>\* `disable` — prevents the use of channel binding. \* `prefer` — the client chooses channel binding if available. \* `require` — the connection must employ channel binding.<br><br>See [libpq channel_binding](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-CHANNEL-BINDING).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POSTGRESQL_CHANNEL_BINDING+++[] | `disable`, `prefer`, `require` | `prefer` |
 | <a id="quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-use-layer7-proxy"></a> [`quarkus.datasource.reactive.postgresql.use-layer7-proxy`](#quarkus-reactive-pg-client_quarkus-datasource-reactive-postgresql-use-layer7-proxy) config_property_copy_button:+++quarkus.datasource.reactive.postgresql.use-layer7-proxy+++[]<br><br>`quarkus.datasource."datasource-name".reactive.postgresql.use-layer7-proxy` config_property_copy_button:+++quarkus.datasource."datasource-name".reactive.postgresql.use-layer7-proxy+++[]<br><br>Level 7 proxies can load balance queries on several connections to the actual database. When it happens, the client can be confused by the lack of session affinity and unwanted errors can happen like ERROR: unnamed prepared statement does not exist (26000). See [Using a level 7 proxy](https://vertx.io/docs/vertx-pg-client/java/#_using_a_level_7_proxy)<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_DATASOURCE_REACTIVE_POSTGRESQL_USE_LAYER7_PROXY+++[] | boolean | `false` |
 
 <a id="reactive-url"></a>

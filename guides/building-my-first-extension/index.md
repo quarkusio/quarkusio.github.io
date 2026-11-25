@@ -15,7 +15,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -85,15 +85,15 @@ It will try to auto-detect its options:
 - we may introduce other layout types in the future.
 
 > [!TIP]
-> You may call it without any parameter to use the interactive mode: `mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create-extension -N`
+> You may call it without any parameter to use the interactive mode: `mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create-extension -N`
 
 ```shell
-$ mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create-extension -N \
+$ mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create-extension -N \
     -DgroupId=org.acme \ # <1>
     -DextensionId=greeting-extension \  # <2>
     -DwithoutTests # <3>
 
-[INFO] --- quarkus-maven-plugin:3.40.1.2:create-extension (default-cli) @ standalone-pom ---
+[INFO] --- quarkus-maven-plugin:4.0.1:create-extension (default-cli) @ standalone-pom ---
 
 Detected layout type is 'standalone' # <4>
 Generated runtime artifactId is 'greeting-extension' # <5>
@@ -146,10 +146,10 @@ Your extension is a multi-module project. So let's start by checking out the par
   <properties>
     <compiler-plugin.version>3.15.0</compiler-plugin.version><!--2-->
     <failsafe-plugin.version>${surefire-plugin.version}</failsafe-plugin.version>
-    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <quarkus.version>3.40.1.2</quarkus.version>
+    <quarkus.version>4.0.1</quarkus.version>
     <surefire-plugin.version>3.5.4</surefire-plugin.version>
   </properties>
   <dependencyManagement>
@@ -673,7 +673,7 @@ $ mvn clean install
 [INFO]  T E S T S
 [INFO] -------------------------------------------------------
 [INFO] Running org.acme.greeting.extension.deployment.GreetingExtensionTest
-2021-01-27 10:24:42,506 INFO  [io.quarkus] (main) Quarkus 3.40.1.2 on JVM started in 0.470s. Listening on: http://localhost:8081
+2021-01-27 10:24:42,506 INFO  [io.quarkus] (main) Quarkus 4.0.1 on JVM started in 0.470s. Listening on: http://localhost:8081
 2021-01-27 10:24:42,508 INFO  [io.quarkus] (main) Profile test activated.
 2021-01-27 10:24:42,508 INFO  [io.quarkus] (main) Installed features: [cdi, greeting-extension, servlet]
 2021-01-27 10:24:43,764 INFO  [io.quarkus] (main) Quarkus stopped in 0.018s
@@ -760,7 +760,7 @@ mvn clean install
 Then from another directory, use our tooling to create a new `greeting-app` Quarkus application with your new extension:
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
      -DprojectGroupId=org.acme \
      -DprojectArtifactId=greeting-app \
      -Dextensions="org.acme:greeting-extension:1.0.0-SNAPSHOT" \
@@ -785,13 +785,13 @@ $ mvn quarkus:dev
 [INFO] --- maven-compiler-plugin:3.15.0:compile (default-compile) @ greeting-app ---
 [INFO] Nothing to compile - all classes are up to date
 [INFO]
-[INFO] --- quarkus-maven-plugin:3.40.1.2:dev (default-cli) @ greeting-app ---
+[INFO] --- quarkus-maven-plugin:4.0.1:dev (default-cli) @ greeting-app ---
 Listening for transport dt_socket at address: 5005
 __  ____  __  _____   ___  __ ____  ______
  --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
  -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
 --\___\_\____/_/ |_/_/|_/_/|_|\____/___/
-2022-11-20 04:25:36,885 INFO  [io.quarkus] (Quarkus Main Thread) greeting-app 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.40.1.2) started in 4.591s. Listening on: http://localhost:8080
+2022-11-20 04:25:36,885 INFO  [io.quarkus] (Quarkus Main Thread) greeting-app 1.0.0-SNAPSHOT on JVM (powered by Quarkus 4.0.1) started in 4.591s. Listening on: http://localhost:8080
 2022-11-20 04:25:36,911 INFO  [io.quarkus] (Quarkus Main Thread) Profile dev activated. Live Coding activated.
 2022-11-20 04:25:36,913 INFO  [io.quarkus] (Quarkus Main Thread) Installed features: [cdi, greeting-extension, resteasy-reactive, smallrye-context-propagation, vertx]
 ```
@@ -800,7 +800,7 @@ From an extension developer standpoint, the Maven publication strategy is very h
 
 **Quarkus Platform**
 
-Quarkus platform is a set of extensions that target the primary use-cases of Quarkus as a development framework and can safely be used in any combination in the same application without creating a dependency conflict. From an application developer perspective, a Quarkus platform is represented as one or more Maven BOMs, for example `io.quarkus.platform:quarkus-bom:3.40.1.2`, `io.quarkus.platform:quarkus-camel-bom:3.40.1.2`, etc, whose dependency version constraints were globally aligned so that these BOMs can be imported in the same application in any order without introducing a dependency conflict.
+Quarkus platform is a set of extensions that target the primary use-cases of Quarkus as a development framework and can safely be used in any combination in the same application without creating a dependency conflict. From an application developer perspective, a Quarkus platform is represented as one or more Maven BOMs, for example `io.quarkus.platform:quarkus-bom:4.0.1`, `io.quarkus.platform:quarkus-camel-bom:4.0.1`, etc, whose dependency version constraints were globally aligned so that these BOMs can be imported in the same application in any order without introducing a dependency conflict.
 
 **Quarkiverse Hub**
 

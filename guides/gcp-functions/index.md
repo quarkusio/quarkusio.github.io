@@ -17,7 +17,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -54,7 +54,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=google-cloud-functions \
     -Dextensions='google-cloud-functions' \
@@ -267,7 +267,7 @@ The result of the previous command is a single JAR file inside the `target/deplo
 Then you will be able to use `gcloud` to deploy your function to Google Cloud. The `gcloud` command will be different depending on which event triggers your function.
 
 > [!NOTE]
-> We will use the Java 21 runtime but you can switch to the Java 17 runtime by using `--runtime=java17` instead of `--runtime=java21` on the deploy commands.
+> We will use the Java 25 runtime but you can switch to the Java 21 runtime by using `--runtime=java21` instead of `--runtime=java25` on the deploy commands.
 
 > [!WARNING]
 > The first time you launch this command, you can have the following error message:
@@ -285,7 +285,7 @@ This is an example command to deploy your `HttpFunction` to Google Cloud:
 ```bash
 gcloud functions deploy quarkus-example-http \
   --entry-point=io.quarkus.gcp.functions.QuarkusHttpFunction \
-  --runtime=java21 --trigger-http --allow-unauthenticated --source=target/deployment
+  --runtime=java25 --trigger-http --allow-unauthenticated --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -307,7 +307,7 @@ This is an example command to deploy your `BackgroundFunction` to Google Cloud, 
 gcloud functions deploy quarkus-example-storage \
     --entry-point=io.quarkus.gcp.functions.QuarkusBackgroundFunction \
     --trigger-resource quarkus-hello --trigger-event google.storage.object.finalize \
-    --runtime=java21 --source=target/deployment
+    --runtime=java25 --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -329,7 +329,7 @@ This is an example command to deploy your `RawBackgroundFunction` to Google Clou
 ```bash
 gcloud functions deploy quarkus-example-pubsub \
   --entry-point=io.quarkus.gcp.functions.QuarkusBackgroundFunction \
-  --runtime=java21 --trigger-resource hello_topic --trigger-event google.pubsub.topic.publish --source=target/deployment
+  --runtime=java25 --trigger-resource hello_topic --trigger-event google.pubsub.topic.publish --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -348,7 +348,7 @@ This is an example command to deploy your `CloudEventsFunction` to Google Cloud,
 ```bash
 gcloud functions deploy quarkus-example-cloud-event \
   --entry-point=io.quarkus.gcp.functions.QuarkusCloudEventsFunction \
-  --runtime=java21 --trigger-bucket=example-cloud-event --source=target/deployment
+  --runtime=java25 --trigger-bucket=example-cloud-event --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -364,7 +364,7 @@ You can download it via Maven using the following command:
 
 ```bash
 mvn dependency:copy \
-  -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.0' \
+  -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.2' \
   -DoutputDirectory=.
 ```
 
@@ -393,7 +393,7 @@ quarkus build
 For an `HttpFunction`, you can use this command to launch your function locally.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.gcp.functions.QuarkusHttpFunction
 ```
@@ -408,7 +408,7 @@ Your endpoints will be available on <http://localhost:8080>.
 For background functions, you launch the invoker with a target class of `io.quarkus.gcp.functions.BackgroundFunction`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.gcp.functions.QuarkusBackgroundFunction
 ```
@@ -429,7 +429,7 @@ This will call your Storage background function with an event `{"name":"hello.tx
 For background functions, you launch the invoker with a target class of `io.quarkus.gcp.functions.BackgroundFunction`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.gcp.functions.QuarkusBackgroundFunction
 ```
@@ -450,7 +450,7 @@ This will call your PubSub background function with a PubSubMessage `{"greeting"
 For cloud events functions, you launch the invoker with a target class of `io.quarkus.gcp.functions.QuarkusCloudEventsFunction`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.gcp.functions.QuarkusCloudEventsFunction
 ```

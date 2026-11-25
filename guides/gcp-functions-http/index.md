@@ -19,7 +19,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -56,7 +56,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=google-cloud-functions-http \
     -Dextensions='google-cloud-functions-http,rest-jackson,undertow,reactive-routes,funqy-http' \
@@ -176,12 +176,12 @@ Package your application using the standard `mvn clean package` command. The res
 Then you will be able to use `gcloud` to deploy your function to Google Cloud.
 
 > [!NOTE]
-> We will use the Java 21 runtime, but you can switch to the Java 17 runtime by using `--runtime=java17` instead of `--runtime=java21` on the deploy commands.
+> We will use the Java 25 runtime, but you can switch to the Java 21 runtime by using `--runtime=java21` instead of `--runtime=java25` on the deploy commands.
 
 ```bash
 gcloud functions deploy quarkus-example-http \
   --entry-point=io.quarkus.gcp.functions.http.QuarkusHttpFunction \
-  --runtime=java21 --trigger-http --allow-unauthenticated --source=target/deployment
+  --runtime=java25 --trigger-http --allow-unauthenticated --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -213,7 +213,7 @@ You can download it via Maven using the following command:
 
 ```bash
 mvn dependency:copy \
-  -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.0' \
+  -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.2' \
   -DoutputDirectory=.
 ```
 
@@ -222,7 +222,7 @@ Before using the invoker, you first need to build your function via `mvn package
 Then you can use it to launch your function locally.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/deployment/google-cloud-functions-http-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.gcp.functions.http.QuarkusHttpFunction
 ```

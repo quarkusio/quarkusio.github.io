@@ -160,14 +160,12 @@ Quarkus is an excellent choice for both full-stack web components and full-stack
 
 For example the [Quarkus documentation search engine](https://github.com/quarkusio/search.quarkus.io) on [quarkus.io](https://quarkus.io) uses the Web Bundler to create a full-stack web-component. With Lit Element for the web-component and OpenSearch for the indexation it is a nice way to enhance the static web-site experience in a dynamic way.
 
-More content about this is coming soon... // Blog article in prep: <https://github.com/quarkusio/quarkusio.github.io/issues/1934>
-
 ## Other ways
 
-We described Quarkus most common ways to create web applications but there are other options:
+We described the most common ways to create web applications with Quarkus but there are other options:
 
 - [Vaadin Flow extension](https://quarkus.io/extensions/com.vaadin/vaadin-quarkus-extension/), for this unique framework that lets you build web apps directly from Java code without writing HTML or JavaScript.
-- JavaServer Faces (jsf) is a specification for building component-based web apps in Java. It available in Quarkus, the [MyFaces](https://quarkus.io/extensions/org.apache.myfaces.core.extensions.quarkus/myfaces-quarkus/) extension is an implementation of Faces for Quarkus. [PrimeFaces](https://quarkus.io/extensions/io.quarkiverse.primefaces/quarkus-primefaces/) is a Faces components suite, and [OmniFaces](https://quarkus.io/extensions/io.quarkiverse.omnifaces/quarkus-omnifaces/), a utility library. More information is available in [this blog post](https://www.melloware.com/quarkus-faces-using-jsf-with-quarkus/).
+- JavaServer Faces (jsf) is a specification for building component-based web apps in Java. It available in Quarkus, the [MyFaces](https://quarkus.io/extensions/org.apache.myfaces.core.extensions.quarkus/myfaces-quarkus/) extension is an implementation of Faces for Quarkus. [PrimeFaces](https://quarkus.io/extensions/io.quarkiverse.primefaces/quarkus-primefaces/) is a Faces components suite, and [OmniFaces](https://quarkus.io/extensions/io.quarkiverse.omnifaces/quarkus-omnifaces/), a utility library. More information is available in [this blog post](https://www.melloware.com/blog/quarkus-faces/).
 - Create [a new extension](/guides/building-my-first-extension/index.md) for your favorite web framework.
 
 ## Testing your web applications

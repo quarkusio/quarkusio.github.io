@@ -1,6 +1,6 @@
 # Context propagation in Quarkus
 
-Traditional blocking code uses [`ThreadLocal`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/ThreadLocal.html) variables to store contextual objects in order to avoid passing them as parameters everywhere. Many Quarkus extensions require those contextual objects to operate properly: [Quarkus REST (formerly RESTEasy Reactive)](/guides/rest-json/index.md), [ArC](/guides/cdi-reference/index.md) and [Transaction](/guides/transaction/index.md) for example.
+Traditional blocking code uses [`ThreadLocal`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ThreadLocal.html) variables to store contextual objects in order to avoid passing them as parameters everywhere. Many Quarkus extensions require those contextual objects to operate properly: [Quarkus REST (formerly RESTEasy Reactive)](/guides/rest-json/index.md), [ArC](/guides/cdi-reference/index.md) and [Transaction](/guides/transaction/index.md) for example.
 
 If you write reactive/async code, you have to cut your work into a pipeline of code blocks that get executed "later", and in practice after the method you defined them in has returned. As such, `try/finally` blocks as well as `ThreadLocal` variables stop working, because your reactive code gets executed in another thread, after the caller ran its `finally` block.
 
@@ -88,7 +88,7 @@ Notice that thanks to Mutiny support for context propagation, this works out of 
 
 ## Usage example for `CompletionStage`
 
-If you are using [`CompletionStage`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletionStage.html) you need manual context propagation. You can do that by injecting a `ThreadContext` or `ManagedExecutor` that will propagate every context. For example, here we use the [Vert.x Web Client](/guides/vertx/index.md) to get the list of Star Wars people, then store them in the database using [Hibernate ORM with Panache](/guides/hibernate-orm-panache/index.md) (all in the same transaction) before returning them to the client as JSON using [Jackson or JSON-B](/guides/rest-json/index.md):
+If you are using [`CompletionStage`](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/CompletionStage.html) you need manual context propagation. You can do that by injecting a `ThreadContext` or `ManagedExecutor` that will propagate every context. For example, here we use the [Vert.x Web Client](/guides/vertx/index.md) to get the list of Star Wars people, then store them in the database using [Hibernate ORM with Panache](/guides/hibernate-orm-panache/index.md) (all in the same transaction) before returning them to the client as JSON using [Jackson or JSON-B](/guides/rest-json/index.md):
 
 ```java
     @Inject ThreadContext threadContext;
@@ -146,13 +146,13 @@ The following contexts are available in Quarkus either out of the box, or depend
 
 | Context Name | Name Constant | Description |
 | --- | --- | --- |
-| `None` | [`ThreadContext.NONE`](https://javadoc.io/static/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.2/org/eclipse/microprofile/context/ThreadContext.html#NONE) | Can be used to specify an empty set of contexts, but setting the value to empty works too |
-| `Remaining` | [`ThreadContext.ALL_REMAINING`](https://javadoc.io/static/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.2/org/eclipse/microprofile/context/ThreadContext.html#ALL_REMAINING) | All the contexts that are not explicitly listed in other sets |
-| `Transaction` | [`ThreadContext.TRANSACTION`](https://javadoc.io/static/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.2/org/eclipse/microprofile/context/ThreadContext.html#TRANSACTION) | The JTA transaction context |
-| `CDI` | [`ThreadContext.CDI`](https://javadoc.io/static/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.2/org/eclipse/microprofile/context/ThreadContext.html#CDI) | The CDI (ArC) context |
+| `None` | [`ThreadContext.NONE`](https://javadoc.io/doc/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.3/org/eclipse/microprofile/context/ThreadContext.html#NONE) | Can be used to specify an empty set of contexts, but setting the value to empty works too |
+| `Remaining` | [`ThreadContext.ALL_REMAINING`](https://javadoc.io/doc/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.3/org/eclipse/microprofile/context/ThreadContext.html#ALL_REMAINING) | All the contexts that are not explicitly listed in other sets |
+| `Transaction` | [`ThreadContext.TRANSACTION`](https://javadoc.io/doc/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.3/org/eclipse/microprofile/context/ThreadContext.html#TRANSACTION) | The JTA transaction context |
+| `CDI` | [`ThreadContext.CDI`](https://javadoc.io/doc/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.3/org/eclipse/microprofile/context/ThreadContext.html#CDI) | The CDI (ArC) context |
 | `Servlet` | N/A | The servlet context |
 | `Jakarta REST` | N/A | The Quarkus REST or RESTEasy Classic context |
-| `Application` | [`ThreadContext.APPLICATION`](https://javadoc.io/static/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.2/org/eclipse/microprofile/context/ThreadContext.html#APPLICATION) | The current `ThreadContextClassLoader` |
+| `Application` | [`ThreadContext.APPLICATION`](https://javadoc.io/doc/org.eclipse.microprofile.context-propagation/microprofile-context-propagation-api/1.3/org/eclipse/microprofile/context/ThreadContext.html#APPLICATION) | The current `ThreadContextClassLoader` |
 
 ### Overriding the propagated contexts using annotations
 

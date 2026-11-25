@@ -17,7 +17,7 @@ To complete this guide, you need:
 
 - Roughly 30 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -58,7 +58,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=funqy-google-cloud-functions \
     -Dextensions='funqy-google-cloud-functions' \
@@ -174,7 +174,7 @@ To build your application, you can package your application via `mvn clean packa
 Then you will be able to use `gcloud` to deploy your function to Google Cloud. The `gcloud` command will be different depending on which event triggers your function.
 
 > [!NOTE]
-> We will use the Java 21 runtime, but you can switch to the Java 17 runtime by using `--runtime=java17` instead of `--runtime=java21` on the deploy commands.
+> We will use the Java 25 runtime, but you can switch to the Java 21 runtime by using `--runtime=java21` instead of `--runtime=java25` on the deploy commands.
 
 > [!WARNING]
 > The first time you launch the `gcloud functions deploy`, you can have the following error message:
@@ -192,7 +192,7 @@ Use this command to deploy to Google Cloud Functions:
 ```bash
 gcloud functions deploy quarkus-example-funky-pubsub \
   --entry-point=io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction \
-  --runtime=java21 --trigger-resource hello_topic --trigger-event google.pubsub.topic.publish \
+  --runtime=java25 --trigger-resource hello_topic --trigger-event google.pubsub.topic.publish \
   --source=target/deployment
 ```
 
@@ -222,7 +222,7 @@ Then, use this command to deploy to Google Cloud Functions:
 ```bash
 gcloud functions deploy quarkus-example-funky-storage \
   --entry-point=io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction \
-  --runtime=java21 --trigger-resource quarkus-hello --trigger-event google.storage.object.finalize \
+  --runtime=java25 --trigger-resource quarkus-hello --trigger-event google.storage.object.finalize \
   --source=target/deployment
 ```
 
@@ -254,7 +254,7 @@ Then, use this command to deploy to Google Cloud Functions:
 ```bash
 gcloud functions deploy quarkus-example-cloud-event \
   --entry-point=io.quarkus.funqy.gcp.functions.FunqyCloudEventsFunction \
-  --runtime=java21 --trigger-bucket=example-cloud-event --source=target/deployment
+  --runtime=java25 --trigger-bucket=example-cloud-event --source=target/deployment
 ```
 
 > [!IMPORTANT]
@@ -272,7 +272,7 @@ You can download it via Maven using the following command:
 
 ```bash
 mvn dependency:copy \
-    -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.0' \
+    -Dartifact='com.google.cloud.functions.invoker:java-function-invoker:2.0.2' \
     -DoutputDirectory=.
 ```
 
@@ -303,7 +303,7 @@ Then you can use it to launch your function locally, again, the command depends 
 For background functions, you launch the invoker with a target class of `io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/funqy-google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction
 ```
@@ -324,7 +324,7 @@ This will call your PubSub background function with a PubSubMessage `{"data":"he
 For background functions, you launch the invoker with a target class of `io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/funqy-google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.funqy.gcp.functions.FunqyBackgroundFunction
 ```
@@ -345,7 +345,7 @@ This will call your PubSub background function with a Cloud Storage event `{"nam
 For cloud events functions, you launch the invoker with a target class of `io.quarkus.funqy.gcp.functions.FunqyCloudEventsFunction`\`.
 
 ```bash
-java -jar java-function-invoker-2.0.0.jar \
+java -jar java-function-invoker-2.0.2.jar \
   --classpath target/funqy-google-cloud-functions-1.0.0-SNAPSHOT-runner.jar \
   --target io.quarkus.funqy.gcp.functions.FunqyCloudEventsFunction
 ```

@@ -16,7 +16,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - A working container runtime (Docker or [Podman](/guides/podman/index.md))
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
@@ -64,7 +64,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=security-openid-connect-multi-tenancy-quickstart \
     -Dextensions='oidc,rest-jackson' \
@@ -195,11 +195,10 @@ package org.acme.quickstart.oidc;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
-import org.eclipse.microprofile.config.ConfigProvider;
-
+import io.smallrye.config.Config;
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.runtime.OidcUtils;
 import io.smallrye.mutiny.Uni;
@@ -213,7 +212,7 @@ public class CustomTenantResolver implements TenantConfigResolver {
         String path = context.request().path();
 
         if (path.startsWith("/tenant-a")) {
-           String keycloakUrl = ConfigProvider.getConfig().getValue("keycloak.url", String.class);
+           String keycloakUrl = Config.get().getValue("keycloak.url", String.class);
 
             OidcTenantConfig config = OidcTenantConfig
                     .authServerUrl(keycloakUrl + "/realms/tenant-a")
@@ -358,7 +357,7 @@ However, using a static tenant resolution, which involves configuring tenants in
 To start a Keycloak server, you can use Docker and run the following command:
 
 ```bash
-docker run --name keycloak -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:26.7.4 start-dev
+docker run --name keycloak -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin -p 8180:8080 quay.io/keycloak/keycloak:26.8.2 start-dev
 ```
 
 Access your Keycloak server at [localhost:8180](http://localhost:8180).
@@ -820,7 +819,7 @@ public class CustomTenantConfigResolver implements TenantConfigResolver {
 3. Use the resolved configuration to create a builder and update it as required.
 4. Create an initial configuration if no configuration already exists.
 
-This is all you have to do update the already resolved dynamic tenantr configuration, without having to reconnect to the provider.
+This is all you have to do to update the already resolved dynamic tenant configuration, without having to reconnect to the provider.
 
 If reconnecting is necessary, for example, the `UserInfo` endpoint address may have changed for the tenant to rediscover it, then simply set a `RoutingContext` `replace-tenant-configuration-context` property to `true`:
 
@@ -925,7 +924,7 @@ quarkus.oidc.b.tenant-paths=/*/hello <3>
 3. The wildcard in the `/*/hello` represents exactly one path segment. Nevertheless, the wildcard is less specific than the `api`, therefore the `hr` tenant will be used.
 
 > [!TIP]
-> Path-matching mechanism works exactly same as in the [Authorization using configuration](/guides/security-authorize-web-endpoints-reference/index.md#authorization-using-configuration).
+> Path-matching mechanism works exactly same as in the [Path-matching rules](/guides/security-authorize-web-endpoints-reference/index.md#path-matching-rules) section.
 
 <a id="issuer-based-tenant-resolver"></a>
 #### Resolve tenants with a token issuer claim
@@ -1058,7 +1057,7 @@ package io.quarkus.it.keycloak;
 import jakarta.enterprise.context.ApplicationScoped;
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.runtime.OidcUtils;
 import io.smallrye.mutiny.Uni;
@@ -1120,7 +1119,7 @@ package io.quarkus.it.keycloak;
 import jakarta.enterprise.context.ApplicationScoped;
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.runtime.OidcUtils;
 import io.smallrye.mutiny.Uni;
@@ -1183,7 +1182,7 @@ package io.quarkus.it.keycloak;
 import jakarta.enterprise.context.ApplicationScoped;
 import io.quarkus.oidc.OidcRequestContext;
 import io.quarkus.oidc.OidcTenantConfig;
-import io.quarkus.oidc.OidcTenantConfig.ApplicationType;
+import io.quarkus.oidc.runtime.OidcTenantConfig.ApplicationType;
 import io.quarkus.oidc.TenantConfigResolver;
 import io.quarkus.oidc.runtime.OidcUtils;
 import io.smallrye.mutiny.Uni;

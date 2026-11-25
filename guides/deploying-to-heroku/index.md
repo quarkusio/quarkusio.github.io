@@ -18,7 +18,7 @@ To complete this guide, you need:
 
 - Roughly 1 hour for all modalities
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 
@@ -55,7 +55,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=getting-started-with-heroku
 cd getting-started-with-heroku
@@ -109,10 +109,10 @@ For the first variant, two additional files are needed in your application's roo
 - `system.properties` to configure the Java version
 - `Procfile` to configure how Heroku starts your application
 
-Quarkus needs JDK 17, so we specify that first:
+Quarkus needs JDK 21 or later, so we specify the Java version first:
 
 ```bash
-echo "java.runtime.version=17" >> system.properties
+echo "java.runtime.version=25" >> system.properties
 git add system.properties
 git commit -am "Configure the Java version for Heroku."
 ```

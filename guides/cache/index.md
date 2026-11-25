@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -50,7 +50,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=cache-quickstart \
     -Dextensions='cache,rest-jackson' \
@@ -323,6 +323,9 @@ This annotation cannot be used on a method returning `void`.
 > [!NOTE]
 > Quarkus is able to also cache `null` values unlike the underlying Caffeine provider. See [more on this topic below](#negative-cache).
 
+> [!NOTE]
+> `@CacheResult` can be used on a Kotlin `suspend` function if the `io.quarkus:quarkus-kotlin` extension is part of the application.
+
 ### @CacheInvalidate
 
 Removes an entry from the cache.
@@ -355,6 +358,8 @@ Cache keys are built by the annotations API using the following logic:
 
 > [!WARNING]
 > Each non-primitive method argument that is part of the key must implement `equals()` and `hashCode()` correctly for the cache to work as expected.
+>
+> For that reason, an injected normal-scoped bean (for example a `@RequestScoped` `JsonWebToken`, `Principal` or `SecurityIdentity`, but also an `@ApplicationScoped` one) cannot be used as a key argument: what gets injected is a CDI client proxy, and the CDI specification leaves every method a proxy inherits from `Object` undefined apart from `toString()`. Such an argument is rejected with a `CacheException`, whether it is the key itself, part of a composite key, or returned by a `CacheKeyGenerator`. Pass a value derived from the bean instead, such as `principal.getName()`.
 
 When a cache key is built from several method arguments, whether they are explicitly identified with `@CacheKey` or not, the building logic depends on the order of these arguments in the method signature. On the other hand, the arguments names are not used at all and do not have any effect on the cache key.
 
@@ -568,6 +573,12 @@ public class CachedExpensiveService {
             // Put an expensive call here.
         }).await().indefinitely(); // <4>
     }
+
+    public Uni<String> getWithCustomExpiration(Object key, Duration expiresAfter) {
+        return cache.get(key, k -> {
+            // Put an expensive call here.
+        }, expiresAfter); // <5>
+    }
 }
 ```
 
@@ -575,6 +586,7 @@ public class CachedExpensiveService {
 2. This method returns the `Uni<String>` type which is non-blocking.
 3. The `k` argument contains the cache key value.
 4. If you don't need the call to be non-blocking, this is how you can retrieve the cache value in a blocking way.
+5. You can optionally specify a custom `Duration expiresAfter` to control per-item expiration. For Caffeine caches, this requires enabling per-item expiration on the cache with `quarkus.cache.caffeine."cache-name".per-item-expiration=true`. Enabling per-item expiration adds a small amount of memory overhead per cache entry and a per-read computation cost, even for entries that do not use a custom expiration.
 
 ### Retrieving a `Cache` from the `CacheManager`
 
@@ -794,11 +806,13 @@ Each of the Caffeine caches backing up the Quarkus application data caching exte
 | <a id="quarkus-cache_quarkus-cache-caffeine-expire-after-write"></a> [`quarkus.cache.caffeine.expire-after-write`](#quarkus-cache_quarkus-cache-caffeine-expire-after-write) config_property_copy_button:+++quarkus.cache.caffeine.expire-after-write+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, or the most recent replacement of its value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_EXPIRE_AFTER_WRITE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-expire-after-access"></a> [`quarkus.cache.caffeine.expire-after-access`](#quarkus-cache_quarkus-cache-caffeine-expire-after-access) config_property_copy_button:+++quarkus.cache.caffeine.expire-after-access+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, the most recent replacement of its value, or its last read.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_EXPIRE_AFTER_ACCESS+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-metrics-enabled"></a> [`quarkus.cache.caffeine.metrics-enabled`](#quarkus-cache_quarkus-cache-caffeine-metrics-enabled) config_property_copy_button:+++quarkus.cache.caffeine.metrics-enabled+++[]<br><br>Whether or not metrics are recorded if the application depends on the Micrometer extension. Setting this value to `true` will enable the accumulation of cache stats inside Caffeine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_METRICS_ENABLED+++[] | boolean |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-per-item-expiration"></a> [`quarkus.cache.caffeine.per-item-expiration`](#quarkus-cache_quarkus-cache-caffeine-per-item-expiration) config_property_copy_button:+++quarkus.cache.caffeine.per-item-expiration+++[]<br><br>Whether per-item expiration is enabled for this cache. When enabled, individual cache entries can have custom expiration durations set via the programmatic API (`get(key, valueLoader, expiresAfter)`).<br><br>Enabling this option adds a small amount of memory overhead per cache entry and a per-read computation cost, even for entries that do not use a custom expiration. Only enable this if you need per-item expiration control.<br><br>Note: regardless of this setting, each Caffeine cache entry carries a small fixed wrapper overhead to support the per-item expiration infrastructure.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE_PER_ITEM_EXPIRATION+++[] | boolean | `false` |
 | <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-initial-capacity"></a> [`quarkus.cache.caffeine."cache-name".initial-capacity`](#quarkus-cache_quarkus-cache-caffeine-cache-name-initial-capacity) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".initial-capacity+++[]<br><br>Minimum total size for the internal data structures. Providing a large enough estimate at construction time avoids the need for expensive resizing operations later, but setting this value unnecessarily high wastes memory.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__INITIAL_CAPACITY+++[] | int |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-maximum-size"></a> [`quarkus.cache.caffeine."cache-name".maximum-size`](#quarkus-cache_quarkus-cache-caffeine-cache-name-maximum-size) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".maximum-size+++[]<br><br>Maximum number of entries the cache may contain. Note that the cache **may evict an entry before this limit is exceeded or temporarily exceed the threshold while evicting**. As the cache size grows close to the maximum, the cache evicts entries that are less likely to be used again. For example, the cache may evict an entry because it hasn't been used recently or very often.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__MAXIMUM_SIZE+++[] | long |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-write"></a> [`quarkus.cache.caffeine."cache-name".expire-after-write`](#quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-write) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".expire-after-write+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, or the most recent replacement of its value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__EXPIRE_AFTER_WRITE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-access"></a> [`quarkus.cache.caffeine."cache-name".expire-after-access`](#quarkus-cache_quarkus-cache-caffeine-cache-name-expire-after-access) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".expire-after-access+++[]<br><br>Specifies that each entry should be automatically removed from the cache once a fixed duration has elapsed after the entry's creation, the most recent replacement of its value, or its last read.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__EXPIRE_AFTER_ACCESS+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-cache_quarkus-cache) |  |
 | <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-metrics-enabled"></a> [`quarkus.cache.caffeine."cache-name".metrics-enabled`](#quarkus-cache_quarkus-cache-caffeine-cache-name-metrics-enabled) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".metrics-enabled+++[]<br><br>Whether or not metrics are recorded if the application depends on the Micrometer extension. Setting this value to `true` will enable the accumulation of cache stats inside Caffeine.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__METRICS_ENABLED+++[] | boolean |  |
+| <a id="quarkus-cache_quarkus-cache-caffeine-cache-name-per-item-expiration"></a> [`quarkus.cache.caffeine."cache-name".per-item-expiration`](#quarkus-cache_quarkus-cache-caffeine-cache-name-per-item-expiration) config_property_copy_button:+++quarkus.cache.caffeine."cache-name".per-item-expiration+++[]<br><br>Whether per-item expiration is enabled for this cache. When enabled, individual cache entries can have custom expiration durations set via the programmatic API (`get(key, valueLoader, expiresAfter)`).<br><br>Enabling this option adds a small amount of memory overhead per cache entry and a per-read computation cost, even for entries that do not use a custom expiration. Only enable this if you need per-item expiration control.<br><br>Note: regardless of this setting, each Caffeine cache entry carries a small fixed wrapper overhead to support the per-item expiration infrastructure.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_CACHE_CAFFEINE__CACHE_NAME__PER_ITEM_EXPIRATION+++[] | boolean | `false` |
 
 <a id="duration-note-anchor-quarkus-cache_quarkus-cache"></a>
 

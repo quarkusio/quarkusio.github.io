@@ -9,6 +9,7 @@ The Quarkus CLI is available in several developer-oriented package managers such
 - [SDKMAN!](https://sdkman.io)
 - [Homebrew](https://brew.sh)
 - [Chocolatey](https://community.chocolatey.org/packages/quarkus)
+- [Mise](https://mise-versions.jdx.dev/tools/quarkus)
 - [Scoop](https://scoop.sh)
 
 If you already use (or want to use) one of these tools, it is the simplest way to install the Quarkus CLI and keep it updated.
@@ -62,11 +63,23 @@ If you have built Quarkus locally, you can use that version:
 jbang app install --force --name qss ~/.m2/repository/io/quarkus/quarkus-cli/999-SNAPSHOT/quarkus-cli-999-SNAPSHOT-runner.jar
 ```
 
+If the CLI or a CLI plugin needs artifacts that are not on Maven Central, point JBang at those repositories with `run.repos`. Put this in `.jbang/jbang.properties` in the project root (used only when the CLI runs in that project) or in `~/.jbang/jbang.properties` for a global default:
+
+```properties
+run.repos=central,https://maven.repository.redhat.com/ga/
+```
+
+If JBang is already installed, the same setting can be written globally with:
+
+```bash
+jbang config set run.repos central,https://maven.repository.redhat.com/ga/
+```
+
 Once installed `quarkus` will be in your `$PATH` and if you run `quarkus --version` it will print the installed version:
 
 ```shell
 quarkus --version
-3.40.1.2
+4.0.1
 ```
 
 > [!CAUTION]
@@ -99,7 +112,7 @@ Once installed `quarkus` will be in your `$PATH` and if you run `quarkus --versi
 
 ```shell
 quarkus --version
-3.40.1.2
+4.0.1
 ```
 
 SDKMAN! will let you know when new versions are available so updates will be straightforward:
@@ -117,7 +130,7 @@ You can use Homebrew to install (and update) the Quarkus CLI.
 > [!NOTE]
 > Make sure you have a JDK installed before installing the Quarkus CLI. We haven't added an explicit dependency as we wanted to make sure you could use your preferred JDK version.
 >
-> You can install a JDK with `brew install openjdk` for the latest Java version, `brew install openjdk@17` for Java 17, or `brew install openjdk@21` for Java 21.
+> You can install a JDK with `brew install openjdk` for the latest Java version, `brew install openjdk@25` for Java 25, or `brew install openjdk@21` for Java 21.
 
 To install the Quarkus CLI using Homebrew, run the following command:
 
@@ -131,7 +144,7 @@ Once installed `quarkus` will be in your `$PATH` and if you run `quarkus --versi
 
 ```shell
 quarkus --version
-3.40.1.2
+4.0.1
 ```
 
 You can upgrade the Quarkus CLI with:
@@ -153,7 +166,7 @@ You can use Chocolatey to install (and update) the Quarkus CLI.
 > [!NOTE]
 > Make sure you have a JDK installed before installing the Quarkus CLI.
 >
-> You can install a JDK with `choco install temurin17` for Java 17 or `choco install temurin21` for Java 21.
+> You can install a JDK with `choco install temurin25` for Java 25 or `choco install temurin21` for Java 21.
 
 To install the Quarkus CLI using Chocolatey, run the following command:
 
@@ -167,7 +180,7 @@ Once installed `quarkus` will be in your `$PATH` and if you run `quarkus --versi
 
 ```shell
 quarkus --version
-3.40.1.2
+4.0.1
 ```
 
 You can upgrade the Quarkus CLI with:
@@ -181,7 +194,7 @@ choco upgrade quarkus
 [Scoop](https://scoop.sh) is a package manager for Windows. You can use Scoop to install (and update) the Quarkus CLI.
 
 > [!NOTE]
-> Make sure you have a JDK installed before installing the Quarkus CLI. You can install a JDK with `scoop install openjdk17` for Java 17 or `scoop install openjdk21` for Java 21.
+> Make sure you have a JDK installed before installing the Quarkus CLI. You can install a JDK with `scoop install openjdk25` for Java 25 or `scoop install openjdk21` for Java 21.
 
 To install the Quarkus CLI using Scoop, run the following command:
 
@@ -193,7 +206,7 @@ It will install the latest version of the Quarkus CLI. Once installed `quarkus` 
 
 ```shell
 quarkus --version
-3.40.1.2
+4.0.1
 ```
 
 You can upgrade the Quarkus CLI with:
@@ -345,7 +358,7 @@ Both `quarkus create` and `quarkus extension list` allow you to explicitly speci
 
    A [Quarkus Platform release BOM](/guides/platform/index.md#quarkus-platform-bom) is identified by `groupId:artifactId:version` (GAV) coordinates. When specifying a platform release BOM, you may use empty segments to fall back to default values (shown with `quarkus create app --help`). If you specify only one segment (no `:`), it is assumed to be a version.
 
-   `io.quarkus.platform` is the default `groupId`. Specifying `-P :quarkus-bom:` is equivalent to `-P io.quarkus.platform:quarkus-bom:3.40.1.2`. Note that you need to specify the `groupId` to work with a snapshot, e.g. `-P io.quarkus::999-SNAPSHOT` is equivalent to `-P io.quarkus:quarkus-bom:999-SNAPSHOT`.
+   `io.quarkus.platform` is the default `groupId`. Specifying `-P :quarkus-bom:` is equivalent to `-P io.quarkus.platform:quarkus-bom:4.0.1`. Note that you need to specify the `groupId` to work with a snapshot, e.g. `-P io.quarkus::999-SNAPSHOT` is equivalent to `-P io.quarkus:quarkus-bom:999-SNAPSHOT`.
 
    Default values are subject to change. Use the `--dry-run` option to see the computed value.
 
@@ -508,6 +521,14 @@ Tests paused, press [r] to resume
 
 > [!NOTE]
 > Run `quarkus dev --clean` to perform clean as part of the build.
+
+To connect to an application running in remote development mode, add `--remote`:
+
+```shell
+quarkus dev --remote -Dquarkus.live-reload.url=http://my-remote-host:8080
+```
+
+The remote application must be packaged as a mutable jar and share the `quarkus.live-reload.password`, as described in [Remote Development Mode](/guides/maven-tooling/index.md#remote-development-mode). Remote development mode is not available for JBang projects.
 
 ## Shell autocomplete and aliases
 

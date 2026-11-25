@@ -1,6 +1,6 @@
-# Using transactions in Quarkus
+# Using transactions
 
-The `quarkus-narayana-jta` extension provides a Transaction Manager that coordinates and exposes transactions to your applications as described in the [Jakarta Transactions](https://jakarta.ee/specifications/transactions/) specification, formerly known as Java Transaction API (JTA).
+With Quarkus, you manage transactions in your application through the Transaction Manager that the `quarkus-narayana-jta` extension provides. The Transaction Manager coordinates transactions and exposes them to your application as described in the [Jakarta Transactions](https://jakarta.ee/specifications/transactions/) specification, formerly known as Java Transaction API (JTA).
 
 When discussing Quarkus transactions, this guide refers to Jakarta Transactions transaction style and uses only the term *transaction* to address them.
 
@@ -237,7 +237,7 @@ public class SantaClausService {
 You can configure the default transaction timeout, the timeout that applies to all transactions managed by the transaction manager, via the property [`quarkus.transaction-manager.default-transaction-timeout`](#quarkus-narayana-jta_quarkus-transaction-manager-default-transaction-timeout), specified as a duration.
 
 > [!NOTE]
-> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
 >
 > You can also use a simplified format, starting with a number:
 >
@@ -291,7 +291,7 @@ quarkus.transaction-manager.reaper.zombie-max=8
 ```
 
 > [!NOTE]
-> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() javadoc](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
 >
 > You can also use a simplified format, starting with a number:
 >
@@ -339,11 +339,14 @@ public class MyTransactionScopedBean {
     }
 
     @PreDestroy
-    void onBeforeEndTransaction() {
-        // This gets invoked before a transaction ends (commit or rollback).
+    void onAfterEndTransaction() {
+        // This gets invoked after a transaction ends (commit or rollback).
     }
 }
 ```
+
+> [!NOTE]
+> The transaction context is destroyed once the transaction has completed, so `@PreDestroy` callbacks of `@TransactionScoped` beans run after the commit or rollback, when the transaction is no longer active. To run code before the transaction completes, while it is still active, observe the `@BeforeDestroyed(TransactionScoped.class)` event as shown below, or use a transactional observer method with `@Observes(during = TransactionPhase.BEFORE_COMPLETION)`.
 
 Alternatively, if you don't necessarily need to hold state during the transaction, and just want to react to transaction start/end events, you can simply declare event listeners in a differently scoped bean:
 
@@ -403,7 +406,7 @@ For more configuration information, see the **Narayana JTA - Transaction manager
 - The transaction recovery service is automatically enabled when XA JDBC datasources are detected (i.e. `quarkus.datasource.jdbc.transactions=XA`). For other XA resource providers such as `quarkus-pooled-jms`, set [`quarkus.transaction-manager.enable-recovery=true`](#quarkus-narayana-jta_quarkus-transaction-manager-enable-recovery) to enable recovery. You can also set it to `false` to explicitly disable recovery even when XA datasources are present.
 
 > [!NOTE]
-> To work around the current known issue of [Agroal having a different view on running transaction checks](https://issues.redhat.com/browse/AG-209), set the datasource transaction type for the datasource responsible for writing the transaction logs to `disabled`:
+> The datasource that writes the transaction logs must not take part in transactions. Set its transaction type to `disabled`, or the application fails to start:
 >
 > ```
 > quarkus.datasource.TX_LOG.jdbc.transactions=disabled
@@ -471,7 +474,6 @@ It's not a mess in Quarkus :) Resource-level was introduced to support Jakarta P
 | <a id="quarkus-narayana-jta_quarkus-transaction-manager-object-store-create-table"></a> [`quarkus.transaction-manager.object-store.create-table`](#quarkus-narayana-jta_quarkus-transaction-manager-object-store-create-table) config_property_copy_button:+++quarkus.transaction-manager.object-store.create-table+++[]<br><br>Whether to create the table if it does not exist.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TRANSACTION_MANAGER_OBJECT_STORE_CREATE_TABLE+++[] | boolean | `false` |
 | <a id="quarkus-narayana-jta_quarkus-transaction-manager-object-store-drop-table"></a> [`quarkus.transaction-manager.object-store.drop-table`](#quarkus-narayana-jta_quarkus-transaction-manager-object-store-drop-table) config_property_copy_button:+++quarkus.transaction-manager.object-store.drop-table+++[]<br><br>Whether to drop the table on startup.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TRANSACTION_MANAGER_OBJECT_STORE_DROP_TABLE+++[] | boolean | `false` |
 | <a id="quarkus-narayana-jta_quarkus-transaction-manager-object-store-table-prefix"></a> [`quarkus.transaction-manager.object-store.table-prefix`](#quarkus-narayana-jta_quarkus-transaction-manager-object-store-table-prefix) config_property_copy_button:+++quarkus.transaction-manager.object-store.table-prefix+++[]<br><br>The prefix to apply to the table.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TRANSACTION_MANAGER_OBJECT_STORE_TABLE_PREFIX+++[] | string | `quarkus_` |
-| [lock] <a id="quarkus-narayana-jta_quarkus-transaction-manager-unsafe-multiple-last-resources"></a> <mark>link:#quarkus-narayana-jta_quarkus-transaction-manager-unsafe-multiple-last-resources\[`quarkus.transaction-manager.unsafe-multiple-last-resources`\]</mark> config_property_copy_button:+++quarkus.transaction-manager.unsafe-multiple-last-resources+++[]<br><br>*This property is deprecated: This property is planned for removal in a future version.*<br><br>Define the behavior when using multiple XA unaware resources in the same transactional demarcation.<br><br>Defaults to `fail`. `warn-each`, `warn-first`, and `allow` are UNSAFE and should only be used for compatibility. Either use XA for all resources if you want consistency, or split the code into separate methods with separate transactions.<br><br>Note that using a single XA unaware resource together with XA aware resources, known as the Last Resource Commit Optimization (LRCO), is different from using multiple XA unaware resources. Although LRCO allows most transactions to complete normally, some errors can cause an inconsistent transaction outcome. Using multiple XA unaware resources is not recommended since the probability of inconsistent outcomes is significantly higher and much harder to recover from than LRCO. For this reason, use LRCO as a last resort.<br><br>We do not recommend using this configuration property, and we plan to remove it in the future, so you should plan fixing your application accordingly. If you think your use case of this feature is valid and this option should be kept around, open an issue in our tracker explaining why.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_TRANSACTION_MANAGER_UNSAFE_MULTIPLE_LAST_RESOURCES+++[] | tooltip:allow[Allow using multiple XA unaware resources in the same transactional demarcation.  This will log a warning once on application startup,opts=but not on each use of multiple XA unaware resources in the same transactional demarcation.], tooltip:warn-first[Allow using multiple XA unaware resources in the same transactional demarcation,opts=but log a warning on the first occurrence.], tooltip:warn-each[Allow using multiple XA unaware resources in the same transactional demarcation,opts=but log a warning on each occurrence.], tooltip:fail[Allow using multiple XA unaware resources in the same transactional demarcation,opts=but log a warning on each occurrence.] | tooltip:fail[Allow using multiple XA unaware resources in the same transactional demarcation,opts=but log a warning on each occurrence.] |
 
 <a id="duration-note-anchor-quarkus-narayana-jta_quarkus-transaction-manager"></a>
 

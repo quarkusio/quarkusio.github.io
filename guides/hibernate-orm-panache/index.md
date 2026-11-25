@@ -548,7 +548,7 @@ public class PersonResource {
 > [!NOTE]
 > Be careful to use the `@Transactional` annotation on the operations that modify the database, you can add the annotation at the class level for simplicity purpose.
 
-To make it easier to showcase some capabilities of Hibernate ORM with Panache on Quarkus with Dev mode, some test data should be inserted into the database by adding the following content to a new file named src/main/resources/import.sql:
+To make it easier to showcase some capabilities of Hibernate ORM with Panache on Quarkus with Dev mode, some test data should be inserted into the database by adding the following content to a new file named src/main/resources/data.sql:
 
 ```sql
 INSERT INTO person (id, birth, name, status) VALUES (1, '1995-09-12', 'Emily Brown', 0);
@@ -556,7 +556,7 @@ ALTER SEQUENCE person_seq RESTART WITH 2;
 ```
 
 > [!NOTE]
-> If you would like to initialize the DB when you start the Quarkus app in your demo ("production") environment, add `quarkus.hibernate-orm.schema-management.strategy=drop-and-create` to the Quarkus startup options in addition to `import.sql`.
+> If you would like to initialize the DB when you start the Quarkus app in your demo ("production") environment, add `quarkus.hibernate-orm.schema-management.strategy=drop-and-create` and `quarkus.hibernate-orm.data-management.strategy=create` to the Quarkus startup options in addition to `data.sql`.
 
 After that, you can see the people list and add new person as followings:
 
@@ -702,7 +702,7 @@ If your delete query does not start with `delete`, we support the following addi
 - `<query>` will expand to `delete from EntityName where <query>`
 
 > [!NOTE]
-> You can also write your queries in plain [HQL](https://docs.hibernate.org/orm/7.4/userguide/html_single/#hql):
+> You can also write your queries in plain [HQL](https://docs.hibernate.org/orm/8.0/userguide/html_single/#hql):
 
 ```java
 Order.find("select distinct o from Order o left join fetch o.lineItems");
@@ -782,7 +782,7 @@ Query projection can be done with the `project(Class)` method on the `PanacheQue
 
 You can use it to restrict which fields will be returned by the database.
 
-Hibernate will use **DTO projection** and generate a SELECT clause with the attributes from the projection class. This is also called **dynamic instantiation** or **constructor expression**, more info can be found on the Hibernate guide: [hql select clause](https://docs.hibernate.org/orm/7.4/userguide/html_single/#hql-select-clause)
+Hibernate will use **DTO projection** and generate a SELECT clause with the attributes from the projection class. This is also called **dynamic instantiation** or **constructor expression**, more info can be found on the Hibernate guide: [hql select clause](https://docs.hibernate.org/orm/8.0/userguide/html_single/#hql-select-clause)
 
 The projection class needs to have a constructor that contains all its attributes, this constructor will be used to instantiate the projection DTO instead of using the entity class. This class must have a matching constructor with all the class attributes as parameters.
 

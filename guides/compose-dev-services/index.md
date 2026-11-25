@@ -77,7 +77,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   cache:
-    image: docker.io/library/redis:7
+    image: docker.io/library/redis:8
     command: redis-server --save 60 1 --loglevel warning
     ports:
       - '6379'
@@ -333,7 +333,7 @@ Compose Dev Services automatically exposes the configuration of discovered servi
 ```yaml
 services:
   db:
-    image: docker.io/library/mysql:9.5
+    image: docker.io/library/mysql:9.7
     ports:
       - '9906:3306'
     labels:

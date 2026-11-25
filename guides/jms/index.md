@@ -17,7 +17,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -61,7 +61,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=jms-quickstart \
     -Dextensions='rest,qpid-jms' \
@@ -95,10 +95,10 @@ implementation("org.amqphub.quarkus:quarkus-qpid-jms")
 <a id="starting-the-broker"></a>
 ### Starting the broker
 
-Then, we need an AMQP broker. In this case we will use an Apache ActiveMQ Artemis server. You can follow the instructions from the [Apache Artemis website](https://activemq.apache.org/components/artemis/) or start a broker via docker using the [ArtemisCloud](https://artemiscloud.io/) container image:
+Then, we need an AMQP broker. In this case we will use an Apache ActiveMQ Artemis server. You can follow the instructions from the [Apache Artemis website](https://activemq.apache.org/components/artemis/) or start a broker via docker using the [ArtemisCloud](https://github.com/artemiscloud/activemq-artemis-broker-image) container image:
 
 ```bash
-docker run -it --rm -p 8161:8161 -p 61616:61616 -p 5672:5672 -e AMQ_USER=quarkus -e AMQ_PASSWORD=quarkus quay.io/arkmq-org/arkmq-org-broker:artemis.2.55.0
+docker run -it --rm -p 8161:8161 -p 61616:61616 -p 5672:5672 -e AMQ_USER=quarkus -e AMQ_PASSWORD=quarkus quay.io/arkmq-org/arkmq-org-broker:artemis.2.57.0
 ```
 
 ### The price producer
@@ -412,7 +412,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=jms-quickstart \
     -Dextensions='rest,artemis-jms' \

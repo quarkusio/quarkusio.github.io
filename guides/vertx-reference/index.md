@@ -50,6 +50,9 @@ You can configure the Vert.x instance from the `application.properties` file. Th
 |  |  |  |
 | --- | --- | --- |
 | <mark>Configuration property</mark> | Type | Default |
+| [lock] <a id="quarkus-vertx_quarkus-vertx-use-async-dns"></a> [`quarkus.vertx.use-async-dns`](#quarkus-vertx_quarkus-vertx-use-async-dns) config_property_copy_button:+++quarkus.vertx.use-async-dns+++[]<br><br>Enables the async DNS resolver. This must be configured at build time. When disabled, native executables exclude the async DNS resolver to reduce their size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_USE_ASYNC_DNS+++[] | boolean | `false` |
+| [lock] <a id="quarkus-vertx_quarkus-vertx-native-transport"></a> [`quarkus.vertx.native-transport`](#quarkus-vertx_quarkus-vertx-native-transport) config_property_copy_button:+++quarkus.vertx.native-transport+++[]<br><br>Whether and how strictly native transport should be used.<br><br>Supported values:<br><br>\* `disabled` - Do not use native transport (default). Vert.x always uses Java NIO. \* `if-available` - Use native transport if available, fall back to Java NIO otherwise. \* `required` - Require native transport. If the transport dependency is missing, the build fails. If the native library cannot load at runtime, the application fails to start.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_NATIVE_TRANSPORT+++[] | tooltip:disabled[Do not use native transport. Quarkus will always use Java NIO.], tooltip:if-available[Use native transport if available,opts=fall back to Java NIO otherwise.], tooltip:required[Require native transport. If the transport dependency is missing from the classpath,opts=the build fails. If the native library cannot be loaded at runtime,the application fails to start.] | tooltip:disabled[Do not use native transport. Quarkus will always use Java NIO.] |
+| [lock] <a id="quarkus-vertx_quarkus-vertx-native-transport-type"></a> [`quarkus.vertx.native-transport-type`](#quarkus-vertx_quarkus-vertx-native-transport-type) config_property_copy_button:+++quarkus.vertx.native-transport-type+++[]<br><br>The type of native transport to use.<br><br>When set to a value other than `auto`, the application will attempt to use the specified native transport. If the transport is not available at runtime, the behavior depends on `native-transport()`.<br><br>Setting this to a specific transport type implicitly enables native transport (i.e., `native-transport()` is treated as at least `if-available`).<br><br>Supported values:<br><br>\* `auto` - Let Vert.x pick the best available transport (default) \* `epoll` - Use Linux epoll transport \* `kqueue` - Use macOS kqueue transport \* `io-uring` - Use Linux io_uring transport<br><br>Note that, if not set to `auto`, Quarkus checks at build time that the requested transport type is available in the classpath. At runtime, it checks whether the transport can be used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_NATIVE_TRANSPORT_TYPE+++[] | tooltip:auto[Pick the most appropriate one. This is the default.], tooltip:epoll[EPOLL (Linux Only)  link\:https\://man7.org/linux/man-pages/man7/epoll.7.html\\]See epoll man page\].], tooltip:kqueue[KQUEUE (OSX only)  link\:https\://en.wikipedia.org/wiki/Kqueue\\]See KQueue on Wikipedia\]], tooltip:io-uring[IO_URING (Linux only,opts=need a recent Linux kernel (5.10{plus})).  link\:https\://man7.org/linux/man-pages/man7/io_uring.7.html\\]See io_uring man page\].] | tooltip:auto[Pick the most appropriate one. This is the default.] |
 | <a id="quarkus-vertx_quarkus-vertx-caching"></a> [`quarkus.vertx.caching`](#quarkus-vertx_quarkus-vertx-caching) config_property_copy_button:+++quarkus.vertx.caching+++[]<br><br>Enables or disables the Vert.x cache.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CACHING+++[] | boolean | `true` |
 | <a id="quarkus-vertx_quarkus-vertx-cache-directory"></a> [`quarkus.vertx.cache-directory`](#quarkus-vertx_quarkus-vertx-cache-directory) config_property_copy_button:+++quarkus.vertx.cache-directory+++[]<br><br>Configure the file cache directory. When not set, the cache is stored in the system temporary directory (read from the `java.io.tmpdir` system property). If the `java.io.tmpdir` is not set `.` is used.<br><br>Note that this property is ignored if the `vertx.cacheDirBase` system property is set.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CACHE_DIRECTORY+++[] | string |  |
 | <a id="quarkus-vertx_quarkus-vertx-classpath-resolving"></a> [`quarkus.vertx.classpath-resolving`](#quarkus-vertx_quarkus-vertx-classpath-resolving) config_property_copy_button:+++quarkus.vertx.classpath-resolving+++[]<br><br>Enables or disabled the Vert.x classpath resource resolver.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLASSPATH_RESOLVING+++[] | boolean | `true` |
@@ -62,54 +65,13 @@ You can configure the Vert.x instance from the `application.properties` file. Th
 | <a id="quarkus-vertx_quarkus-vertx-growth-resistance"></a> [`quarkus.vertx.growth-resistance`](#quarkus-vertx_quarkus-vertx-growth-resistance) config_property_copy_button:+++quarkus.vertx.growth-resistance+++[]<br><br>The executor growth resistance.<br><br>A resistance factor applied after the core pool is full; values applied here will cause that fraction of submissions to create new threads when no idle thread is available. A value of `0.0f` implies that threads beyond the core size should be created as aggressively as threads within it; a value of `1.0f` implies that threads beyond the core size should never be created.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_GROWTH_RESISTANCE+++[] | float | `0` |
 | <a id="quarkus-vertx_quarkus-vertx-keep-alive-time"></a> [`quarkus.vertx.keep-alive-time`](#quarkus-vertx_quarkus-vertx-keep-alive-time) config_property_copy_button:+++quarkus.vertx.keep-alive-time+++[]<br><br>The amount of time a thread will stay alive with no work.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_KEEP_ALIVE_TIME+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `30S` |
 | <a id="quarkus-vertx_quarkus-vertx-prefill"></a> [`quarkus.vertx.prefill`](#quarkus-vertx_quarkus-vertx-prefill) config_property_copy_button:+++quarkus.vertx.prefill+++[]<br><br>Prefill thread pool when creating a new Executor. When `io.vertx.core.spi.ExecutorServiceFactory#createExecutor` is called, initialise with the number of defined threads at startup<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_PREFILL+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-use-async-dns"></a> [`quarkus.vertx.use-async-dns`](#quarkus-vertx_quarkus-vertx-use-async-dns) config_property_copy_button:+++quarkus.vertx.use-async-dns+++[]<br><br>Enables the async DNS resolver.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_USE_ASYNC_DNS+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem"></a> [`quarkus.vertx.eventbus.key-certificate-pem`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pem+++[]<br><br>PEM Key/cert config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PEM+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem-keys"></a> [`quarkus.vertx.eventbus.key-certificate-pem.keys`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem-keys) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pem.keys+++[]<br><br>Comma-separated list of the path to the key files (Pem format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PEM_KEYS+++[] | list of string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem-certs"></a> [`quarkus.vertx.eventbus.key-certificate-pem.certs`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pem-certs) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pem.certs+++[]<br><br>Comma-separated list of the path to the certificate files (Pem format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PEM_CERTS+++[] | list of string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks"></a> [`quarkus.vertx.eventbus.key-certificate-jks`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-jks+++[]<br><br>JKS config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_JKS+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks-path"></a> [`quarkus.vertx.eventbus.key-certificate-jks.path`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks-path) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-jks.path+++[]<br><br>Path of the key file (JKS format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_JKS_PATH+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks-password"></a> [`quarkus.vertx.eventbus.key-certificate-jks.password`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-jks-password) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-jks.password+++[]<br><br>Password of the key file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_JKS_PASSWORD+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx"></a> [`quarkus.vertx.eventbus.key-certificate-pfx`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pfx+++[]<br><br>PFX config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PFX+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx-path"></a> [`quarkus.vertx.eventbus.key-certificate-pfx.path`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx-path) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pfx.path+++[]<br><br>Path to the key file (PFX format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PFX_PATH+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx-password"></a> [`quarkus.vertx.eventbus.key-certificate-pfx.password`](#quarkus-vertx_quarkus-vertx-eventbus-key-certificate-pfx-password) config_property_copy_button:+++quarkus.vertx.eventbus.key-certificate-pfx.password+++[]<br><br>Password of the key.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_KEY_CERTIFICATE_PFX_PASSWORD+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pem"></a> [`quarkus.vertx.eventbus.trust-certificate-pem`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pem) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-pem+++[]<br><br>PEM Trust config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_PEM+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pem-certs"></a> [`quarkus.vertx.eventbus.trust-certificate-pem.certs`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pem-certs) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-pem.certs+++[]<br><br>Comma-separated list of the trust certificate files (Pem format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_PEM_CERTS+++[] | list of string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks"></a> [`quarkus.vertx.eventbus.trust-certificate-jks`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-jks+++[]<br><br>JKS config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_JKS+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks-path"></a> [`quarkus.vertx.eventbus.trust-certificate-jks.path`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks-path) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-jks.path+++[]<br><br>Path of the key file (JKS format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_JKS_PATH+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks-password"></a> [`quarkus.vertx.eventbus.trust-certificate-jks.password`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-jks-password) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-jks.password+++[]<br><br>Password of the key file.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_JKS_PASSWORD+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx"></a> [`quarkus.vertx.eventbus.trust-certificate-pfx`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-pfx+++[]<br><br>PFX config is disabled by default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_PFX+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx-path"></a> [`quarkus.vertx.eventbus.trust-certificate-pfx.path`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx-path) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-pfx.path+++[]<br><br>Path to the key file (PFX format).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_PFX_PATH+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx-password"></a> [`quarkus.vertx.eventbus.trust-certificate-pfx.password`](#quarkus-vertx_quarkus-vertx-eventbus-trust-certificate-pfx-password) config_property_copy_button:+++quarkus.vertx.eventbus.trust-certificate-pfx.password+++[]<br><br>Password of the key.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_CERTIFICATE_PFX_PASSWORD+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-accept-backlog"></a> [`quarkus.vertx.eventbus.accept-backlog`](#quarkus-vertx_quarkus-vertx-eventbus-accept-backlog) config_property_copy_button:+++quarkus.vertx.eventbus.accept-backlog+++[]<br><br>The accept backlog.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_ACCEPT_BACKLOG+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-client-auth"></a> [`quarkus.vertx.eventbus.client-auth`](#quarkus-vertx_quarkus-vertx-eventbus-client-auth) config_property_copy_button:+++quarkus.vertx.eventbus.client-auth+++[]<br><br>The client authentication.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_CLIENT_AUTH+++[] | string | `NONE` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-connect-timeout"></a> [`quarkus.vertx.eventbus.connect-timeout`](#quarkus-vertx_quarkus-vertx-eventbus-connect-timeout) config_property_copy_button:+++quarkus.vertx.eventbus.connect-timeout+++[]<br><br>The connect timeout.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_CONNECT_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `60S` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-idle-timeout"></a> [`quarkus.vertx.eventbus.idle-timeout`](#quarkus-vertx_quarkus-vertx-eventbus-idle-timeout) config_property_copy_button:+++quarkus.vertx.eventbus.idle-timeout+++[]<br><br>The idle timeout in milliseconds.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_IDLE_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-receive-buffer-size"></a> [`quarkus.vertx.eventbus.receive-buffer-size`](#quarkus-vertx_quarkus-vertx-eventbus-receive-buffer-size) config_property_copy_button:+++quarkus.vertx.eventbus.receive-buffer-size+++[]<br><br>The receive buffer size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_RECEIVE_BUFFER_SIZE+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-reconnect-attempts"></a> [`quarkus.vertx.eventbus.reconnect-attempts`](#quarkus-vertx_quarkus-vertx-eventbus-reconnect-attempts) config_property_copy_button:+++quarkus.vertx.eventbus.reconnect-attempts+++[]<br><br>The number of reconnection attempts.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_RECONNECT_ATTEMPTS+++[] | int | `0` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-reconnect-interval"></a> [`quarkus.vertx.eventbus.reconnect-interval`](#quarkus-vertx_quarkus-vertx-eventbus-reconnect-interval) config_property_copy_button:+++quarkus.vertx.eventbus.reconnect-interval+++[]<br><br>The reconnection interval in milliseconds.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_RECONNECT_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `1S` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-reuse-address"></a> [`quarkus.vertx.eventbus.reuse-address`](#quarkus-vertx_quarkus-vertx-eventbus-reuse-address) config_property_copy_button:+++quarkus.vertx.eventbus.reuse-address+++[]<br><br>Whether to reuse the address.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_REUSE_ADDRESS+++[] | boolean | `true` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-reuse-port"></a> [`quarkus.vertx.eventbus.reuse-port`](#quarkus-vertx_quarkus-vertx-eventbus-reuse-port) config_property_copy_button:+++quarkus.vertx.eventbus.reuse-port+++[]<br><br>Whether to reuse the port.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_REUSE_PORT+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-send-buffer-size"></a> [`quarkus.vertx.eventbus.send-buffer-size`](#quarkus-vertx_quarkus-vertx-eventbus-send-buffer-size) config_property_copy_button:+++quarkus.vertx.eventbus.send-buffer-size+++[]<br><br>The send buffer size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_SEND_BUFFER_SIZE+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-so-linger"></a> [`quarkus.vertx.eventbus.so-linger`](#quarkus-vertx_quarkus-vertx-eventbus-so-linger) config_property_copy_button:+++quarkus.vertx.eventbus.so-linger+++[]<br><br>The so linger.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_SO_LINGER+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-ssl"></a> [`quarkus.vertx.eventbus.ssl`](#quarkus-vertx_quarkus-vertx-eventbus-ssl) config_property_copy_button:+++quarkus.vertx.eventbus.ssl+++[]<br><br>Enables or Disabled SSL.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_SSL+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-tcp-keep-alive"></a> [`quarkus.vertx.eventbus.tcp-keep-alive`](#quarkus-vertx_quarkus-vertx-eventbus-tcp-keep-alive) config_property_copy_button:+++quarkus.vertx.eventbus.tcp-keep-alive+++[]<br><br>Whether to keep the TCP connection opened (keep-alive).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TCP_KEEP_ALIVE+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-tcp-no-delay"></a> [`quarkus.vertx.eventbus.tcp-no-delay`](#quarkus-vertx_quarkus-vertx-eventbus-tcp-no-delay) config_property_copy_button:+++quarkus.vertx.eventbus.tcp-no-delay+++[]<br><br>Configure the TCP no delay.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TCP_NO_DELAY+++[] | boolean | `true` |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-traffic-class"></a> [`quarkus.vertx.eventbus.traffic-class`](#quarkus-vertx_quarkus-vertx-eventbus-traffic-class) config_property_copy_button:+++quarkus.vertx.eventbus.traffic-class+++[]<br><br>Configure the traffic class.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRAFFIC_CLASS+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-eventbus-trust-all"></a> [`quarkus.vertx.eventbus.trust-all`](#quarkus-vertx_quarkus-vertx-eventbus-trust-all) config_property_copy_button:+++quarkus.vertx.eventbus.trust-all+++[]<br><br>Enables or disables the trust all parameter.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_EVENTBUS_TRUST_ALL+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-host"></a> [`quarkus.vertx.cluster.host`](#quarkus-vertx_quarkus-vertx-cluster-host) config_property_copy_button:+++quarkus.vertx.cluster.host+++[]<br><br>The host name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_HOST+++[] | string | `localhost` |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-port"></a> [`quarkus.vertx.cluster.port`](#quarkus-vertx_quarkus-vertx-cluster-port) config_property_copy_button:+++quarkus.vertx.cluster.port+++[]<br><br>The port.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_PORT+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-public-host"></a> [`quarkus.vertx.cluster.public-host`](#quarkus-vertx_quarkus-vertx-cluster-public-host) config_property_copy_button:+++quarkus.vertx.cluster.public-host+++[]<br><br>The public host name.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_PUBLIC_HOST+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-public-port"></a> [`quarkus.vertx.cluster.public-port`](#quarkus-vertx_quarkus-vertx-cluster-public-port) config_property_copy_button:+++quarkus.vertx.cluster.public-port+++[]<br><br>The public port.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_PUBLIC_PORT+++[] | int |  |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-clustered"></a> [`quarkus.vertx.cluster.clustered`](#quarkus-vertx_quarkus-vertx-cluster-clustered) config_property_copy_button:+++quarkus.vertx.cluster.clustered+++[]<br><br>Enables or disables the clustering.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_CLUSTERED+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-ping-interval"></a> [`quarkus.vertx.cluster.ping-interval`](#quarkus-vertx_quarkus-vertx-cluster-ping-interval) config_property_copy_button:+++quarkus.vertx.cluster.ping-interval+++[]<br><br>The ping interval.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_PING_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `20S` |
-| <a id="quarkus-vertx_quarkus-vertx-cluster-ping-reply-interval"></a> [`quarkus.vertx.cluster.ping-reply-interval`](#quarkus-vertx_quarkus-vertx-cluster-ping-reply-interval) config_property_copy_button:+++quarkus.vertx.cluster.ping-reply-interval+++[]<br><br>The ping reply interval.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_CLUSTER_PING_REPLY_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `20S` |
-| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-max-time-to-live"></a> [`quarkus.vertx.resolver.cache-max-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-max-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-max-time-to-live+++[]<br><br>The maximum amount of time in seconds that a successfully resolved address will be cached.<br><br>If not set explicitly, resolved addresses may be cached forever.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_MAX_TIME_TO_LIVE+++[] | int | `2147483647` |
-| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-min-time-to-live"></a> [`quarkus.vertx.resolver.cache-min-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-min-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-min-time-to-live+++[]<br><br>The minimum amount of time in seconds that a successfully resolved address will be cached.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_MIN_TIME_TO_LIVE+++[] | int | `0` |
-| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-negative-time-to-live"></a> [`quarkus.vertx.resolver.cache-negative-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-negative-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-negative-time-to-live+++[]<br><br>The amount of time in seconds that an unsuccessful attempt to resolve an address will be cached.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_NEGATIVE_TIME_TO_LIVE+++[] | int | `0` |
+| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-max-time-to-live"></a> [`quarkus.vertx.resolver.cache-max-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-max-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-max-time-to-live+++[]<br><br>The maximum amount of time that a successfully resolved address will be cached.<br><br>If not set explicitly, resolved addresses may be cached forever.<br><br>The value must be a duration of at least 1 second.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_MAX_TIME_TO_LIVE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `2147483647S` |
+| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-min-time-to-live"></a> [`quarkus.vertx.resolver.cache-min-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-min-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-min-time-to-live+++[]<br><br>The minimum amount of time that a successfully resolved address will be cached.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_MIN_TIME_TO_LIVE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `0S` |
+| <a id="quarkus-vertx_quarkus-vertx-resolver-cache-negative-time-to-live"></a> [`quarkus.vertx.resolver.cache-negative-time-to-live`](#quarkus-vertx_quarkus-vertx-resolver-cache-negative-time-to-live) config_property_copy_button:+++quarkus.vertx.resolver.cache-negative-time-to-live+++[]<br><br>The amount of time that an unsuccessful attempt to resolve an address will be cached.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_CACHE_NEGATIVE_TIME_TO_LIVE+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `0S` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-max-queries"></a> [`quarkus.vertx.resolver.max-queries`](#quarkus-vertx_quarkus-vertx-resolver-max-queries) config_property_copy_button:+++quarkus.vertx.resolver.max-queries+++[]<br><br>The maximum number of queries to be sent during a resolution.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_MAX_QUERIES+++[] | int | `4` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-query-timeout"></a> [`quarkus.vertx.resolver.query-timeout`](#quarkus-vertx_quarkus-vertx-resolver-query-timeout) config_property_copy_button:+++quarkus.vertx.resolver.query-timeout+++[]<br><br>The duration after which a DNS query is considered to be failed.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_QUERY_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `5S` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-hosts-path"></a> [`quarkus.vertx.resolver.hosts-path`](#quarkus-vertx_quarkus-vertx-resolver-hosts-path) config_property_copy_button:+++quarkus.vertx.resolver.hosts-path+++[]<br><br>Set the path of an alternate hosts configuration file to use instead of the one provided by the os.<br><br>The default value is `null`, so the operating system hosts config (e.g. `/etc/hosts`) is used.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_HOSTS_PATH+++[] | string |  |
-| <a id="quarkus-vertx_quarkus-vertx-resolver-host-refresh-period"></a> [`quarkus.vertx.resolver.host-refresh-period`](#quarkus-vertx_quarkus-vertx-resolver-host-refresh-period) config_property_copy_button:+++quarkus.vertx.resolver.host-refresh-period+++[]<br><br>Set the hosts configuration refresh period in millis, `0` (default) disables it.<br><br>The resolver caches the hosts configuration (configured using `quarkus.vertx.resolver.hosts-path` after it has read it. When the content of this file can change, setting a positive refresh period will load the configuration file again when necessary.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_HOST_REFRESH_PERIOD+++[] | int | `0` |
+| <a id="quarkus-vertx_quarkus-vertx-resolver-host-refresh-period"></a> [`quarkus.vertx.resolver.host-refresh-period`](#quarkus-vertx_quarkus-vertx-resolver-host-refresh-period) config_property_copy_button:+++quarkus.vertx.resolver.host-refresh-period+++[]<br><br>The hosts configuration refresh period.<br><br>The resolver caches the hosts configuration (configured using `quarkus.vertx.resolver.hosts-path` after it has read it. When the content of this file can change, setting a positive refresh period will load the configuration file again when necessary.<br><br>A value of `0` (the default) disables the refresh.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_HOST_REFRESH_PERIOD+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `0S` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-servers"></a> [`quarkus.vertx.resolver.servers`](#quarkus-vertx_quarkus-vertx-resolver-servers) config_property_copy_button:+++quarkus.vertx.resolver.servers+++[]<br><br>Set the list of DNS server addresses, an address is the IP of the dns server, followed by an optional colon and a port, e.g `8.8.8.8` or `192.168.0.1:40000`. When the list is empty, the resolver will use the list of the system DNS server addresses from the environment, if that list cannot be retrieved it will use Google's public DNS servers `"8.8.8.8"` and `"8.8.4.4"`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_SERVERS+++[] | list of string |  |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-opt-resource-enabled"></a> [`quarkus.vertx.resolver.opt-resource-enabled`](#quarkus-vertx_quarkus-vertx-resolver-opt-resource-enabled) config_property_copy_button:+++quarkus.vertx.resolver.opt-resource-enabled+++[]<br><br>Set to true to enable the automatic inclusion in DNS queries of an optional record that hints the remote DNS server about how much data the resolver can read per response.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_OPT_RESOURCE_ENABLED+++[] | boolean | `false` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-rd-flag"></a> [`quarkus.vertx.resolver.rd-flag`](#quarkus-vertx_quarkus-vertx-resolver-rd-flag) config_property_copy_button:+++quarkus.vertx.resolver.rd-flag+++[]<br><br>Set the DNS queries *Recursion Desired* flag value.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_RD_FLAG+++[] | boolean | `true` |
@@ -117,8 +79,7 @@ You can configure the Vert.x instance from the `application.properties` file. Th
 | <a id="quarkus-vertx_quarkus-vertx-resolver-ndots"></a> [`quarkus.vertx.resolver.ndots`](#quarkus-vertx_quarkus-vertx-resolver-ndots) config_property_copy_button:+++quarkus.vertx.resolver.ndots+++[]<br><br>Set the ndots value used when resolving using search domains, the default value is `-1` which determines the value from the OS on Linux or uses the value `1`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_NDOTS+++[] | int | `-1` |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-rotate-servers"></a> [`quarkus.vertx.resolver.rotate-servers`](#quarkus-vertx_quarkus-vertx-resolver-rotate-servers) config_property_copy_button:+++quarkus.vertx.resolver.rotate-servers+++[]<br><br>Set to `true` to enable round-robin selection of the dns server to use. It spreads the query load among the servers and avoids all lookup to hit the first server of the list.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_ROTATE_SERVERS+++[] | boolean |  |
 | <a id="quarkus-vertx_quarkus-vertx-resolver-round-robin-inet-address"></a> [`quarkus.vertx.resolver.round-robin-inet-address`](#quarkus-vertx_quarkus-vertx-resolver-round-robin-inet-address) config_property_copy_button:+++quarkus.vertx.resolver.round-robin-inet-address+++[]<br><br>Set to `true` to enable round-robin inet address selection of the ip address to use.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_RESOLVER_ROUND_ROBIN_INET_ADDRESS+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-prefer-native-transport"></a> [`quarkus.vertx.prefer-native-transport`](#quarkus-vertx_quarkus-vertx-prefer-native-transport) config_property_copy_button:+++quarkus.vertx.prefer-native-transport+++[]<br><br>Enable or disable native transport<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_PREFER_NATIVE_TRANSPORT+++[] | boolean | `false` |
-| <a id="quarkus-vertx_quarkus-vertx-worker-pool-size"></a> <mark>link:#quarkus-vertx_quarkus-vertx-worker-pool-size\[`quarkus.vertx.worker-pool-size`\]</mark> config_property_copy_button:+++quarkus.vertx.worker-pool-size+++[]<br><br>*This property is deprecated: use `quarkus.thread-pool.max-threads` instead.*<br><br>The size of the worker pool size.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_WORKER_POOL_SIZE+++[] | int | `${quarkus.thread-pool.max-threads:20}` |
+| <a id="quarkus-vertx_quarkus-vertx-blocked-thread-check-interval"></a> [`quarkus.vertx.blocked-thread-check-interval`](#quarkus-vertx_quarkus-vertx-blocked-thread-check-interval) config_property_copy_button:+++quarkus.vertx.blocked-thread-check-interval+++[]<br><br>The interval of the blocked thread checker. The blocked thread checker periodically checks if any event loop or worker thread has been blocked for longer than the configured thresholds (`max-event-loop-execute-time` and `max-worker-execute-time`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_VERTX_BLOCKED_THREAD_CHECK_INTERVAL+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-vertx_quarkus-vertx) | `1S` |
 
 <a id="duration-note-anchor-quarkus-vertx_quarkus-vertx"></a>
 
@@ -714,7 +675,7 @@ Read [the virtual thread guide](/guides/virtual-threads/index.md) for more detai
 
 ### Use codecs
 
-The [Vert.x Event Bus](++https://vertx.io/docs/vertx-core/java/#event_bus++) uses [codecs](++https://vertx.io/docs/vertx-core/java/#_message_codecs++) to *serialize* and *deserialize* message objects. Quarkus provides a default codec for local delivery. This codec is automatically used for return types and message body parameters of local consumers, i.e. methods annotated with `@ConsumeEvent` where `ConsumeEvent#local() == true` (which is the default).
+The [Vert.x Event Bus](++https://vertx.io/docs/vertx-core/java/#event_bus++) uses [codecs](++https://vertx.io/docs/vertx-core/java/#_message_codecs++) to *serialize* and *deserialize* message objects. Quarkus provides a default codec for local delivery. This codec is automatically used for return types and message body parameters of methods annotated with `@ConsumeEvent`.
 
 So that you can exchange the message objects as follows:
 
@@ -910,99 +871,9 @@ The browser must use the `vertx-eventbus` JavaScript library to consume the mess
 ```
 
 <a id="native-transport"></a>
-## Use native transports
+## Native transports
 
-> [!IMPORTANT]
-> Native transports are not supported in native executables.
-
-> [!NOTE]
-> To use `io_uring`, refer to the [Use io_uring](#use-io_uring) section.
-
-Vert.x is capable of using [Netty's native transports](https://netty.io/wiki/native-transports.html), which offers performance improvements on specific platforms. To enable them, you must include the appropriate dependency for your platform. It's usually a good idea to have both to keep your application platform-agnostic. Netty is smart enough to use the correct one, that includes none at all on unsupported platforms:
-
-**pom.xml**
-
-```xml
-<dependency>
-  <groupId>io.netty</groupId>
-  <artifactId>netty-transport-native-epoll</artifactId>
-  <classifier>linux-x86_64</classifier>
-</dependency>
-
-<dependency>
-  <groupId>io.netty</groupId>
-  <artifactId>netty-transport-native-kqueue</artifactId>
-  <classifier>osx-x86_64</classifier>
-</dependency>
-```
-
-**build.gradle**
-
-```gradle
-implementation("io.netty:netty-transport-native-epoll::linux-x86_64")
-
-implementation("io.netty:netty-transport-native-kqueue::osx-x86_64")
-```
-
-You will also have to explicitly configure Vert.x to use the native transport. In `application.properties` add:
-
-```properties
-quarkus.vertx.prefer-native-transport=true
-```
-
-Or in `application.yml`:
-
-```yml
-quarkus:
-  vertx:
-    prefer-native-transport: true
-```
-
-If all is well quarkus will log:
-
-```
-[io.qua.ver.cor.run.VertxCoreRecorder] (main) Vertx has Native Transport Enabled: true
-```
-
-### Native Linux transport
-
-On Linux you can enable the following socket options:
-
-- SO_REUSEPORT
-
-  ```
-  quarkus.http.so-reuse-port=true
-  ```
-
-- TCP_QUICKACK
-
-  ```
-  quarkus.http.tcp-quick-ack=true
-  ```
-
-- TCP_CORK
-
-  ```
-  quarkus.http.tcp-cork=true
-  ```
-
-- TCP_FASTOPEN
-
-  ```
-  quarkus.http.tcp-fast-open=true
-  ```
-
-
-### Native macOS transport
-
-On macOS Sierra and above you can enable the following socket options:
-
-- SO_REUSEPORT
-
-  ```
-  quarkus.http.so-reuse-port=true
-  ```
-
+Quarkus supports Netty's native transports (epoll, kqueue, io_uring) for improved I/O performance on specific platforms. See the [Native Transport Reference](/guides/native-transport-reference/index.md) for configuration, dependencies, and platform-specific details.
 
 ## Use a Vert.x context-aware scheduler
 
@@ -1043,20 +914,18 @@ class MyVerticle extends AbstractVerticle {
 
 In this example a scheduler is created by capturing the context of the Vert.x event-loop that calls `asyncStart()`. The `delayIt` operator uses that scheduler, and we can check that the context that we get in `invoke` is a Vert.x duplicated context where the data for key `"foo"` has been propagated.
 
-## Use a Unix domain socket
+## Use a Unix Domain Socket
 
-Listening on a Unix domain socket allows us to dispense with the overhead of TCP if the connection to the quarkus service is established from the same host. This can happen if access to the service goes through a proxy which is often the case if you're setting up a service mesh with a proxy like Envoy.
+Listening on a Unix Domain Socket allows us to dispense with the overhead of TCP if the connection to the quarkus service is established from the same host. This can happen if access to the service goes through a proxy which is often the case if you're setting up a service mesh with a proxy like Envoy.
 
-> [!IMPORTANT]
-> This will only work on platforms that support [Use native transports](#native-transport).
+Unix Domain Sockets are supported in both JVM and native modes.
 
-Enable the appropriate [Use native transports](#native-transport) and set the following environment property:
+> [!NOTE]
+> Unix domain sockets require a native transport dependency. See the [Native Transport Reference](/guides/native-transport-reference/index.md) for details.
 
 ```
 quarkus.http.domain-socket=/var/run/io.quarkus.app.socket
 quarkus.http.domain-socket-enabled=true
-
-quarkus.vertx.prefer-native-transport=true
 ```
 
 By itself this will not disable the tcp socket which by default will open on `0.0.0.0:8080`. It can be explicitly disabled:
@@ -1068,94 +937,7 @@ quarkus.http.host-enabled=false
 These properties can be set through Java's `-D` command line parameter or on `application.properties`.
 
 > [!IMPORTANT]
-> Do not forget to add the native transport dependency. See [Use native transports](#native-transport) for details.
-
-> [!IMPORTANT]
 > Make sure your application has the right permissions to write to the socket.
-
-<a id="use-io_uring"></a>
-## Use io_uring
-
-> [!IMPORTANT]
-> `io_uring` is not supported in native executables.
-
-> [!NOTE]
-> `io_uring` support is experimental
-
-`io_uring` is a Linux kernel interface that allows you to send and receive data asynchronously. It provides unified semantics for both file and network I/O. It was originally designed to target block devices and files but has since gained the ability to work with things like network sockets. It has the potential to provide modest performance benefits to network I/O on its own and greater benefits for mixed file and network I/O application workloads.
-
-To learn more about `io_uring`, we recommend the following links:
-
-- [Why you should use io_uring for network I/O](https://developers.redhat.com/articles/2023/04/12/why-you-should-use-iouring-network-io): The main benefit of io_uring for network I/O is a modern asynchronous API that is straightforward to use and provides unified semantics for file and network I/O. A potential performance benefit of io_uring for network I/O is reducing the number of syscalls. This could provide the biggest benefit for high volumes of small operations where the overhead of system calls can be significant.
-- [The Backend Revolution and Why io_uring Is So Important](https://dzone.com/articles/the-backend-revolution-or-why-io-uring-is-so-impor): The io_uring API uses two ring buffers for communication between application and kernel (hence the API name) and designed in a way that enables natural batching of requests and responses. Besides, it provides a way to submit multiple requests in one system call, which can reduce overhead.
-- [What exactly is io_uring?](https://stackoverflow.com/questions/61767702/what-exactly-is-io-uring): io_uring is a Linux kernel interface to efficiently allow you to send and receive data asynchronously. It was originally designed to target block devices and files but has since gained the ability to work with things like network sockets.
-
-To use `io_uring`, you need to add two dependencies to your project and enable native transport. First add the following dependencies to your project:
-
-**pom.xml**
-
-```xml
-<dependency>
-    <groupId>io.netty.incubator</groupId>
-    <artifactId>netty-incubator-transport-native-io_uring</artifactId>
-    <version>0.0.21.Final</version> <!-- Update this version (https://github.com/netty/netty-incubator-transport-io_uring/tags) -->
-    <classifier>linux-x86_64</classifier>
-</dependency>
-<dependency>
-      <groupId>io.vertx</groupId>
-      <artifactId>vertx-io_uring-incubator</artifactId>
-</dependency>
-```
-
-**build.gradle**
-
-```gradle
-// Update the io_uring version by picking the latest from https://github.com/netty/netty-incubator-transport-io_uring/tags
-implementation("io.netty.incubator:netty-incubator-transport-native-io_uring:0.0.21.Final")
-implementation("io.vertx:vertx-io_uring-incubator")
-```
-
-Then, in the `application.properties`, add:
-
-```properties
-quarkus.vertx.prefer-native-transport=true
-```
-
-> [!NOTE]
-> **Can I use io_uring on my Linux machine?**
->
-> To check if you can use `io_uring` on your Linux machine, execute the following command:
->
-> ```shell
-> > grep io_uring_setup /proc/kallsyms
-> 0000000000000000 t __pfx_io_uring_setup
-> 0000000000000000 t io_uring_setup
-> 0000000000000000 T __pfx___x64_sys_io_uring_setup
-> 0000000000000000 T __x64_sys_io_uring_setup
-> 0000000000000000 T __pfx___ia32_sys_io_uring_setup
-> 0000000000000000 T __ia32_sys_io_uring_setup
-> 0000000000000000 d event_exit__io_uring_setup
-> 0000000000000000 d event_enter__io_uring_setup
-> 0000000000000000 d __syscall_meta__io_uring_setup
-> 0000000000000000 d args__io_uring_setup
-> 0000000000000000 d types__io_uring_setup
-> 0000000000000000 d __event_exit__io_uring_setup
-> 0000000000000000 d __event_enter__io_uring_setup
-> 0000000000000000 d __p_syscall_meta__io_uring_setup
-> ```
->
-> If it prints something like above, you can use `io_uring`.
-
-> [!NOTE]
-> **Troubleshooting**
->
-> `io_uring` support is still experimental. Check the [Netty io_uring FAQ](https://github.com/netty/netty-incubator-transport-io_uring#faq) if you see some odd behavior. Also, the [netty io_uring was slower than epoll](https://github.com/netty/netty-incubator-transport-io_uring/issues/152) issue describes a few configuration mistakes.
-
-> [!IMPORTANT]
-> Domain sockets are not yet supported with io_uring.
-
-> [!IMPORTANT]
-> The Vert.x asynchronous file system API does not use io_uring yet.
 
 ## Deploy on read-only environments
 
@@ -1170,6 +952,10 @@ Assuming `/tmp/` is writable this can be fixed by setting the `vertx.cacheDirBas
 ```properties
 quarkus.vertx.cache-directory=/tmp/vertx
 ```
+
+## DNS resolution
+
+By default, Quarkus uses the blocking DNS resolver. To enable the Vert.x asynchronous DNS resolver, set `quarkus.vertx.use-async-dns=true` **at build time**. This setting is fixed at build time for both JVM applications and native executables; changing it requires rebuilding the application. When asynchronous DNS is disabled, native executables omit the asynchronous resolver code to reduce their size.
 
 <a id="customizing-the-vert-x-configuration"></a>
 ## Customize the Vert.x configuration
@@ -1191,7 +977,7 @@ The *customizer* beans received the `VertxOptions` (coming from the application 
 
 ## Brotli4J and cross-platform support
 
-Brotli4J is a native library that provides support for the Brotli compression algorithm. By default, Quarkus includes the Brotli native library matching the platform you are running on. But sometimes, you need to include the native library for a different platform.
+Brotli4J is a native library that provides support for the Brotli compression algorithm. It is not included by default: see [the HTTP reference guide](/guides/http-reference/index.md#http-compression) to enable it. When added with Maven, the `com.aayushatharva.brotli4j:brotli4j` dependency brings the Brotli native library matching the platform you are running on. But sometimes, you need to include the native library for a different platform, for example when building a native executable in a container.
 
 In this case, you need to explicitly add a dependency to your project. For example, if you need to include the native library for `linux-aarch64`, you can add the following dependency:
 
@@ -1214,5 +1000,5 @@ Here is the list of available brotli4j artifacts for the different platforms:
 - `native-linux-riscv64`
 - `native-windows-x86_64`
 - `native-windows-aarch64`
-- `native-macos-x86_64`
-- `native-macos-aarch64`
+- `native-osx-x86_64`
+- `native-osx-aarch64`

@@ -36,7 +36,7 @@ Most extensions use Jandex as a source of truth to find out what to do. Those ex
 
 ### Something in my classpath has @Inject annotations, which are confusing CDI. How can I fix that?
 
-You will need to implement an `AnnotationsTransformer` and strip out out the problematic injection sites. (Remember, if the use case involves CDI, it needs to be an `AnnotationsTransformer`, not a BytecodeTransformer`.) See link:https://quarkus.io/blog/solving-problems-with-extensions-2/[this blog] about on using an `AnnotationsTransformer` extension to clean non `@Inject\` annotations from the Airline library so that it can be used in CDI-enabled runtimes.
+You will need to implement an `AnnotationsTransformer` and strip out the problematic injection sites. (Remember, if the use case involves CDI, it needs to be an `AnnotationsTransformer`, not a BytecodeTransformer`.) See link:https://quarkus.io/blog/solving-problems-with-extensions-2/[this blog] about on using an `AnnotationsTransformer` extension to clean non `@Inject\` annotations from the Airline library so that it can be used in CDI-enabled runtimes.
 
 ## Cross-cutting concerns
 

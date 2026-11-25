@@ -186,6 +186,7 @@ quarkus.oidc.credentials.jwt.key-id=mykeyAlias
 Using `client_secret_jwt` or `private_key_jwt` authentication methods ensures that a client secret is not sent to the OIDC provider, thereby avoiding the risk of interception by a 'man-in-the-middle' attack.
 
 <a id="jwt-bearer-client-authentication"></a>
+#### JWT Bearer
 
 **Example: Using a JWT Bearer token to authenticate a client**
 
@@ -199,7 +200,12 @@ quarkus.oidc.credentials.jwt.token-path=/var/run/secrets/tokens <2>
 1. Use a JWT bearer token to authenticate the OIDC provider client. For more information, see the [Using JWTs for Client Authentication](https://www.rfc-editor.org/rfc/rfc7523#section-2.2) section.
 2. Path to a JWT bearer token. Quarkus loads a new token from the filesystem and reloads it when the token expires.
 
+<a id="spiffe-jwt-client-authentication"></a>
+#### SPIFFE JWT-SVID
+
 [SPIFFE](https://spiffe.io) (Secure Production Identity Framework for Everyone) JWT-SVID tokens can be used as client assertions for client authentication. When the JWT source is set to `spiffe-jwt`, the `client_assertion_type` parameter is set to `urn:ietf:params:oauth:client-assertion-type:jwt-spiffe` and the token's `sub` claim must contain a valid SPIFFE ID starting with `spiffe://`.
+
+**Example: Using a SPIFFE JWT-SVID token to authenticate a client**
 
 ```properties
 quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus/
@@ -209,7 +215,24 @@ quarkus.oidc.credentials.jwt.token-path=/var/run/secrets/tokens <2>
 ```
 
 1. Use a SPIFFE JWT-SVID token to authenticate the OIDC provider client.
-2. Path to a SPIFFE JWT-SVID token. Quarkus loads a new token from the filesystem and reloads it when the token expires. The token's `sub` claim is verified to start with the `spiffe://` scheme.
+2. Path to a SPIFFE JWT-SVID token.
+
+Quarkus loads a new token from the filesystem and reloads it when the token expires. The token's `sub` claim is verified to start with the `spiffe://` scheme.
+
+When no `quarkus.oidc.credentials.jwt.token-path` is set but the [SPIFFE Client extension](/guides/security-spiffe-client/index.md) is present, Quarkus retrieves JWT-SVID tokens directly from the local SPIRE Agent instead of reading them from the file system.
+
+Tokens are cached and refreshed automatically before they expire.
+
+> [!TIP]
+> For development and testing with Keycloak, see [SPIFFE integration with Dev Services for Keycloak](/guides/security-spiffe-client/index.md#keycloak-dev-svc-integration).
+
+```properties
+quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.jwt.source=spiffe-jwt
+```
+
+The JWT-SVID audience defaults to the `quarkus.oidc.auth-server-url` value. If the OIDC provider's issuer differs from `quarkus.oidc.auth-server-url`, set `quarkus.oidc.credentials.jwt.audience` explicitly.
 
 #### Additional JWT authentication options
 
@@ -242,6 +265,8 @@ quarkus.oidc.credentials.jwt.subject=custom-subject
 quarkus.oidc.credentials.jwt.issuer=custom-issuer
 ```
 
+You can also use `quarkus.oidc.credentials.jwt.audience` to customize a SPIFFE JWT-SVID audience when `quarkus.oidc.credentials.jwt.source=spiffe-jwt` but no `quarkus.oidc.credentials.jwt.token-path` is set and the [SPIFFE Client extension](/guides/security-spiffe-client/index.md) is present. See the [SPIFFE JWT-SVID](#spiffe-jwt-client-authentication) for more information.
+
 #### Apple POST JWT
 
 The Apple OIDC provider uses a `client_secret_post` method, in which the secret is a JWT produced with a `private_key_jwt` authentication method, but with the Apple account-specific issuer and subject claims.
@@ -261,7 +286,7 @@ quarkus.oidc.credentials.jwt.subject=${apple.subject}
 quarkus.oidc.credentials.jwt.issuer=${apple.issuer}
 ```
 
-#### mutual TLS (mTLS)
+#### Mutual TLS (mTLS)
 
 Some OIDC providers might require that a client be authenticated as part of the mutual TLS  authentication process.
 
@@ -298,6 +323,145 @@ quarkus.oidc.client-id=quarkus-app
 quarkus.oidc.credentials.client-secret.value=mysecret
 quarkus.oidc.credentials.client-secret.method=query
 ```
+
+#### Attestation-based client authentication
+
+[OAuth2 Attestation-Based Client Authentication](https://datatracker.ietf.org/doc/draft-ietf-oauth-attestation-based-client-auth/) allows clients to authenticate without a pre-shared secret.
+
+When attestation is enabled, Quarkus OIDC generates a key pair, requests an Attestation JWT from a default or registered Client Attester, generates a Proof of Possession JWT that proves it owns a private key and is cryptographically bound to the Attestation JWT and sends both JWTs as HTTP headers:
+
+- `OAuth-Client-Attestation` — a Client Attestation JWT containing the public key in the `cnf` claim
+- `OAuth-Client-Attestation-PoP` — a Proof of Possession JWT signed with the corresponding private key
+
+To enable attestation-based client authentication:
+
+```properties
+quarkus.oidc.auth-server-url=http://localhost:8180/realms/quarkus/
+quarkus.oidc.client-id=quarkus-app
+quarkus.oidc.credentials.attestation.enabled=true
+```
+
+The signature algorithm defaults to `ES256`. Only EC algorithms (`ES256`, `ES384`, `ES512`) are currently supported. This algorithm is used for proof-of-possession (PoP) JWTs and self-attested attestation JWTs. Custom attesters may use different algorithms for signing attestation JWTs. To use a different EC algorithm:
+
+```properties
+quarkus.oidc.credentials.attestation.signature-algorithm=ES384
+```
+
+The default Client Attester performs self-attestation: it acts as both Client Instance and Client Attester. It uses separate key pairs for the attestation JWT and the client instance. The attestation JWT is signed with the attestation key pair whose public key is exposed via a JWKS endpoint at `/.well-known/attestation-jwks` for the default tenant, or `/.well-known/attestation-jwks/<tenant-id>` for named OIDC tenants. The client instance key pair is used for the `cnf` claim and for signing the proof-of-possession JWT.
+
+To obtain an Attestation JWT from an external Client Attester, provide a custom `io.quarkus.oidc.common.ClientAttester` CDI bean:
+
+> [!NOTE]
+> The `io.quarkus.oidc.common.ClientAttester` API is currently experimental and may change in future releases.
+
+```java
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.common.ClientAttester;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.WebClient;
+
+@Singleton
+@Unremovable
+public class CustomClientAttester implements ClientAttester {
+
+    @Inject
+    Vertx vertx;
+
+    @Override
+    public Uni<String> attest(ClientAttestationContext context) {
+        // Send the client's public key and other required attestation data
+        // to the remote attestation service.
+        // The remote attester will include it in the attestation JWT's `cnf` claim
+        // and sign the JWT with its own private key.
+        // The format of the request data is custom client attester specific.
+        JsonObject requestBody = new JsonObject()
+                .put("client_id", context.clientId())
+                .put("public_key", context.clientPublicKeyJwk());
+
+        return WebClient.create(vertx)
+                .postAbs("https://attestation.example.com/attest")
+                .sendJsonObject(requestBody)
+                .onItem().transform(response -> response.bodyAsString());
+    }
+}
+```
+
+Without a qualifier, the custom bean overrides the default `ClientAttester` for all tenants. To restrict a custom attestation to specific tenants, use the `@TenantFeature` qualifier:
+
+```java
+import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.common.ClientAttester;
+import io.smallrye.mutiny.Uni;
+
+@Singleton
+@Unremovable
+@TenantFeature("my-tenant")
+public class CustomClientAttester implements ClientAttester {
+
+    @Override
+    public Uni<String> attest(ClientAttestationContext context) {
+        // Only used for the "my-tenant" OIDC tenant
+        ...
+    }
+}
+```
+
+By default, a custom `ClientAttester` is assumed to delegate to a remote attestation service, so Quarkus does not publish an attestation public key for its tenant and the attestation JWKS endpoint is not registered.
+
+If instead a custom attester self-attests the client by signing the Client Attestation JWT with the attestation key pair managed by Quarkus, it must override `selfAttesting()` to return `true`. This tells Quarkus to publish the attestation public key at the attestation JWKS endpoint so the OAuth2 authorization server can verify the Client Attestation JWT.
+
+A self-attesting custom attester signs the Client Attestation JWT with the attestation signing key provided in the attestation context. This key is only available to attesters which return `true` from `selfAttesting()`:
+
+```java
+import jakarta.inject.Singleton;
+
+import io.quarkus.arc.Unremovable;
+import io.quarkus.oidc.TenantFeature;
+import io.quarkus.oidc.common.ClientAttester;
+import io.quarkus.oidc.common.runtime.OidcConstants;
+import io.smallrye.jwt.build.Jwt;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.json.JsonObject;
+
+@Singleton
+@Unremovable
+@TenantFeature("my-tenant")
+public class SelfAttestingClientAttester implements ClientAttester {
+
+    @Override
+    public Uni<String> attest(ClientAttestationContext context) {
+        AttestationSigningKey signingKey = context.attestationSigningKey();
+        JsonObject cnf = new JsonObject().put("jwk", context.clientPublicKeyJwk().getMap());
+        String jwt = Jwt.issuer(context.clientId())
+                .subject(context.clientId())
+                .claim("cnf", cnf.getMap())
+                .expiresIn(signingKey.lifespan())
+                .jws()
+                .type(OidcConstants.CLIENT_ATTESTATION_JWT_TYPE)
+                .algorithm(signingKey.signatureAlgorithm())
+                .keyId(signingKey.kid())
+                .sign(signingKey.signingKey());
+        return Uni.createFrom().item(jwt);
+    }
+
+    @Override
+    public boolean selfAttesting() {
+        return true;
+    }
+}
+```
+
+The Proof of Possession JWT is always generated by the Quarkus Client Instance.
+
+Note that the client attestation may also be used alongside other forms of the client authentication to prove the workload provenance.
 
 #### Introspection endpoint authentication
 
@@ -635,9 +799,9 @@ public class SessionExpiredOidcRedirectFilter implements OidcRedirectFilter {
         AuthorizationCodeTokens tokens = context.routingContext().get(AuthorizationCodeTokens.class.getName()); <2>
         String userName = OidcUtils.decodeJwtContent(tokens.getIdToken()).getString(Claims.preferred_username.name()); <3>
         String jwe = Jwt.preferredUserName(userName).jwe()
-                .encryptWithSecret(context.oidcTenantConfig().credentials.secret.get()); <4>
+                .encryptWithSecret(context.oidcTenantConfig().credentials().secret().get()); <4>
         OidcUtils.createCookie(context.routingContext(), context.oidcTenantConfig(), "session_expired",
-                jwe + "|" + context.oidcTenantConfig().tenantId.get(), 10); <5>
+                jwe + "|" + context.oidcTenantConfig().tenantId().get(), 10); <5>
      }
     }
 }
@@ -682,10 +846,10 @@ public class SessionExpiredResource {
 
         String[] pair = sessionExpired.split("\\|"); <2>
         OidcTenantConfig oidcConfig = tenantConfig.getStaticTenantsConfig().get(pair[1]).getOidcTenantConfig(); <3>
-        JsonWebToken jwt = new DefaultJWTParser().decrypt(pair[0], oidcConfig.credentials.secret.get()); <4>
+        JsonWebToken jwt = new DefaultJWTParser().decrypt(pair[0], oidcConfig.credentials().secret().get()); <4>
         OidcUtils.removeCookie(context, oidcConfig, "session_expired"); <5>
         return jwt.getClaim(Claims.preferred_username) + ", your session has expired. "
-                + "Please login again at http://localhost:8081/" + oidcConfig.tenantId.get(); <6>
+                + "Please login again at http://localhost:8081/" + oidcConfig.tenantId().get(); <6>
     }
 }
 ```
@@ -1333,7 +1497,7 @@ You might also want to set `quarkus.oidc.authentication.cookie-path` to a path v
 >
 > According to the [RP-initiated logout](https://openid.net/specs/openid-connect-session-1_0.html#RPLogout) specification, the `quarkus.oidc.logout.post-logout-path` property is represented as a `post_logout_redirect_uri` query parameter, which is not recognized by the providers that do not support this specification.
 >
-> You can use `quarkus.oidc.logout.post-logout-url-param` to work around this issue. You can also request that more logout query parameters be added with `quarkus.oidc.logout.extra-params`. For example, here is how you can support a logout with `Auth0`:
+> You can use `quarkus.oidc.logout.post-logout-uri-param` to work around this issue. You can also request that more logout query parameters be added with `quarkus.oidc.logout.extra-params`. For example, here is how you can support a logout with `Auth0`:
 >
 > ```properties
 > quarkus.oidc.auth-server-url=https://dev-xxx.us.auth0.com
@@ -1372,9 +1536,11 @@ quarkus.oidc.application-type=web-app
 quarkus.oidc.logout.backchannel.path=/back-channel-logout
 ```
 
-The absolute `back-channel logout` URL is calculated by adding `quarkus.oidc.back-channel-logout.path` to the current endpoint URL, for example, `http://localhost:8080/back-channel-logout`. You will need to configure this URL in the admin console of your OIDC provider.
+The absolute `back-channel logout` URL is calculated by adding `quarkus.oidc.logout.backchannel.path` to the current endpoint URL, for example, `http://localhost:8080/back-channel-logout`. You will need to configure this URL in the admin console of your OIDC provider.
 
 You will also need to configure a token age property for the logout token verification to succeed if your OIDC provider does not set an expiry claim in the current logout token. For example, set `quarkus.oidc.token.age=10S` to ensure that no more than 10 seconds elapse since the logout token's `iat` (issued at) time.
+
+A logout token which has a `sid` (session id) claim logs out only the session whose ID token has the same `sid` claim, so make sure that the OIDC provider includes the `sid` claim in its ID tokens. By default, a logout token without the `sid` claim logs out only one session of the user identified by the logout token `sub` (subject) claim: the first session which accesses the application after the logout token has arrived. If the same user logs in from several browsers, set `quarkus.oidc.logout.backchannel.logout-all-sessions=true` to log out every session this user had when the logout token was issued. Quarkus then keeps such a logout token cached and makes a best effort to log out all the other sessions of this user. A logout token stays cached until the session it targets accesses the application, which may never happen. A logout token which targets all the sessions of the user is removed only by the cleanup timer or when the cache is full. Set `quarkus.oidc.logout.backchannel.clean-up-timer-interval` to activate the cleanup timer and keep `quarkus.oidc.logout.backchannel.token-cache-time-to-live` short so that stale logout tokens are removed promptly. Increase `quarkus.oidc.logout.backchannel.token-cache-size` if many logout tokens can arrive within this period.
 
 <a id="front-channel-logout"></a>
 #### Front-channel logout
@@ -2329,6 +2495,7 @@ For more complex setup involving multiple tenants, see the [Programmatic OIDC st
 
 ## References
 
+- [OAuth Client ID Metadata Document](/guides/security-oidc-client-id-metadata-document/index.md)
 - [OIDC configuration properties](/guides/security-oidc-configuration-properties-reference/index.md)
 - [Expanded OIDC Configuration Reference](/guides/security-oidc-expanded-configuration/index.md)
 - [Configuring well-known OpenID Connect providers](/guides/security-openid-connect-providers/index.md)

@@ -10,7 +10,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -47,7 +47,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=microprofile-health-quickstart \
     -Dextensions='smallrye-health' \
@@ -102,11 +102,14 @@ implementation("io.quarkus:quarkus-smallrye-health")
 
 ## Running the health check
 
-Importing the `smallrye-health` extension directly exposes three REST endpoints:
+Importing the `smallrye-health` extension directly exposes the following REST endpoints:
 
 - `/q/health/live` - The application is up and running.
 - `/q/health/ready` - The application is ready to serve requests.
 - `/q/health/started` - The application is started.
+- `/q/health/well` - The wellness checks, annotated with `@Wellness`.
+- `/q/health/group` - The checks in all health groups.
+- `/q/health/group/<name>` - The checks in one group, annotated with `@HealthGroup("<name>")`.
 - `/q/health` - Accumulating all health check procedures in the application.
 
 To check that the `smallrye-health` extension is working as expected:
@@ -356,10 +359,6 @@ This functionality is specifically useful in failure scenarios where you can pas
         }
 ```
 
-## Context propagation into the health check invocations
-
-For performance reasons, the context (e.g., CDI or security context) is not propagated into each health check invocation. However, if you need to enable this functionality you can set the config property `quarkus.smallrye-health.context-propagation=true` to allow the context propagation into every health check call.
-
 ## Reactive health checks
 
 MicroProfile Health currently doesn't support returning reactive types, but SmallRye Health does.
@@ -392,23 +391,23 @@ public class LivenessAsync implements AsyncHealthCheck {
 
 If you need to react to change of the health status of your application, the Smallrye Health extension provides a CDI event that can notify you about the individual health status changes.
 
-To observe the health status change, you can observe the `io.smallrye.health.api.event.HealthStatusChangeEvent` with the standard CDI observation mechanism. Since we cannot guarantee that the observer method runs all the time on the worker thread (meaning it can run on the event loop thread), it's recommended that you never block in the in observer method.
+To observe the health status change, you can observe the `io.smallrye.health.event.SmallRyeHealthStatusChangeEvent` with the standard CDI observation mechanism. Since we cannot guarantee that the observer method runs all the time on the worker thread (meaning it can run on the event loop thread), it's recommended that you never block in the in observer method.
 
 ```java
-import io.smallrye.health.api.event.HealthStatusChangeEvent;
+import io.smallrye.health.event.SmallRyeHealthStatusChangeEvent;
 
 @ApplicationScoped
 public class HealthObserver {
 
-    public void observeHealthChange(@Observes @Default HealthStatusChangeEvent event) {
+    public void observeHealthChange(@Observes @Default SmallRyeHealthStatusChangeEvent event) {
         ...
     }
 
-    public void observeReadinessChange(@Observes @Readiness HealthStatusChangeEvent event) {
+    public void observeReadinessChange(@Observes @Readiness SmallRyeHealthStatusChangeEvent event) {
         ...
     }
 
-    public void observeLivenessChange(@Observes @Liveness HealthStatusChangeEvent event) {
+    public void observeLivenessChange(@Observes @Liveness SmallRyeHealthStatusChangeEvent event) {
         ...
     }
 }
@@ -420,7 +419,7 @@ Some extension may provide default health checks, including the extension will a
 
 For example, `quarkus-agroal` that is used to manage Quarkus datasource(s) automatically register a readiness health check that will validate each datasource: [Datasource Health Check](/guides/datasource/index.md#datasource-health-check).
 
-You can disable extension health checks via the property `quarkus.health.extensions.enabled` so none will be automatically registered.
+You can disable extension health checks via the property `quarkus.smallrye-health.extensions.enabled` so none will be automatically registered.
 
 <a id="ui"></a>
 ## Health UI
@@ -516,8 +515,6 @@ All that is needed to enable the SmallRye Health features in Quarkus is:
 | <a id="quarkus-smallrye-health_quarkus-smallrye-health-ui-enabled"></a> [`quarkus.smallrye-health.ui.enabled`](#quarkus-smallrye-health_quarkus-smallrye-health-ui-enabled) config_property_copy_button:+++quarkus.smallrye-health.ui.enabled+++[]<br><br>If Health UI should be enabled. By default, Health UI is enabled if it is included (see `always-include`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_UI_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-smallrye-health_quarkus-smallrye-health-additional-property-property-name"></a> [`quarkus.smallrye-health.additional.property."property-name"`](#quarkus-smallrye-health_quarkus-smallrye-health-additional-property-property-name) config_property_copy_button:+++quarkus.smallrye-health.additional.property."property-name"+++[]<br><br>Additional top-level properties to be included in the resulting JSON object.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_ADDITIONAL_PROPERTY__PROPERTY_NAME_+++[] | Map\<String,String> |  |
 | <a id="quarkus-smallrye-health_quarkus-smallrye-health-check-check-classname-enabled"></a> [`quarkus.smallrye-health.check."check-classname".enabled`](#quarkus-smallrye-health_quarkus-smallrye-health-check-check-classname-enabled) config_property_copy_button:+++quarkus.smallrye-health.check."check-classname".enabled+++[]<br><br>Whether the HealthCheck should be enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_CHECK__CHECK_CLASSNAME__ENABLED+++[] | boolean | `false` |
-| [lock] <a id="quarkus-smallrye-health_quarkus-smallrye-health-context-propagation"></a> <mark>link:#quarkus-smallrye-health_quarkus-smallrye-health-context-propagation\[`quarkus.smallrye-health.context-propagation`\]</mark> config_property_copy_button:+++quarkus.smallrye-health.context-propagation+++[]<br><br>*This property is deprecated since `3.30`.*<br><br>Whether the context should be propagated to each health check invocation.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_CONTEXT_PROPAGATION+++[] | boolean | `false` |
-| <a id="quarkus-smallrye-health_quarkus-smallrye-health-ui-enable"></a> <mark>link:#quarkus-smallrye-health_quarkus-smallrye-health-ui-enable\[`quarkus.smallrye-health.ui.enable`\]</mark> config_property_copy_button:+++quarkus.smallrye-health.ui.enable+++[]<br><br>*This property is deprecated since `3.26`: use `quarkus.smallrye-health.ui.enabled` instead.*<br><br>If Health UI should be enabled. By default, Health UI is enabled if it is included (see `always-include`).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_UI_ENABLE+++[] | boolean |  |
 | <a id="quarkus-smallrye-health_section_quarkus-smallrye-health-ui"></a> [SmallRye Health UI configuration](#quarkus-smallrye-health_section_quarkus-smallrye-health-ui) | Type | Default |
 | [lock] <a id="quarkus-smallrye-health_quarkus-smallrye-health-ui-root-path"></a> [`quarkus.smallrye-health.ui.root-path`](#quarkus-smallrye-health_quarkus-smallrye-health-ui-root-path) config_property_copy_button:+++quarkus.smallrye-health.ui.root-path+++[]<br><br>The path where Health UI is available. The value `/` is not allowed as it blocks the application from serving anything else. By default, this value will be resolved as a path relative to `${quarkus.http.non-application-root-path}`.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_UI_ROOT_PATH+++[] | string | `health-ui` |
 | [lock] <a id="quarkus-smallrye-health_quarkus-smallrye-health-ui-always-include"></a> [`quarkus.smallrye-health.ui.always-include`](#quarkus-smallrye-health_quarkus-smallrye-health-ui-always-include) config_property_copy_button:+++quarkus.smallrye-health.ui.always-include+++[]<br><br>Always include the UI. By default, this will only be included in dev and test. Setting this to true will also include the UI in Prod<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_SMALLRYE_HEALTH_UI_ALWAYS_INCLUDE+++[] | boolean | `false` |

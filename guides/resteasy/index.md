@@ -36,7 +36,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-json-quickstart \
     -Dextensions='resteasy-jackson' \
@@ -70,7 +70,7 @@ implementation("io.quarkus:quarkus-resteasy-jackson")
 > [!NOTE]
 > To improve user experience, Quarkus registers the three Jackson [Java 8 modules](https://github.com/FasterXML/jackson-modules-java8), so you do not need to do it manually.
 
-Quarkus also supports [JSON-B](https://eclipse-ee4j.github.io/jsonb-api/), so if you prefer JSON-B over Jackson, you can create a project relying on the RESTEasy JSON-B extension instead:
+Quarkus also supports [JSON-B](https://jakarta.ee/specifications/jsonb/), so if you prefer JSON-B over Jackson, you can create a project relying on the RESTEasy JSON-B extension instead:
 
 **CLI**
 
@@ -88,7 +88,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=rest-json-quickstart \
     -Dextensions='resteasy-jsonb' \
@@ -102,7 +102,7 @@ For Windows users:
 
 - If using Powershell, wrap `-D` parameters in double quotes e.g. `"-DprojectArtifactId=rest-json-quickstart"`
 
-This command generates a new project importing the RESTEasy/Jakarta REST and [JSON-B](https://eclipse-ee4j.github.io/jsonb-api/) extensions, and in particular, adds the following dependency:
+This command generates a new project importing the RESTEasy/Jakarta REST and [JSON-B](https://jakarta.ee/specifications/jsonb/) extensions, and in particular, adds the following dependency:
 
 **pom.xml**
 
@@ -190,7 +190,7 @@ public class FruitResource {
 
 The implementation is pretty straightforward, and you just need to define your endpoints using the Jakarta REST annotations.
 
-The `Fruit` objects will be automatically serialized/deserialized by [JSON-B](https://eclipse-ee4j.github.io/jsonb-api/) or [Jackson](https://github.com/FasterXML/jackson), depending on the extension you chose when initializing the project.
+The `Fruit` objects will be automatically serialized/deserialized by [JSON-B](https://jakarta.ee/specifications/jsonb/) or [Jackson](https://github.com/FasterXML/jackson), depending on the extension you chose when initializing the project.
 
 > [!NOTE]
 > When a JSON extension like `quarkus-resteasy-jackson` or `quarkus-resteasy-jsonb` is installed, Quarkus defaults to the `application/json` media type for most return values. This can be overridden using `@Produces` or `@Consumes` annotations, except for certain well-known types like `String` (defaulting to `text/plain`) and `File` (defaulting to `application/octet-stream`).
@@ -212,48 +212,55 @@ Additionally, the `ObjectMapper` formats dates and times in ISO-8601 (by disabli
 
 To restore Jackson's default behavior, use `quarkus.jackson.write-dates-as-timestamps=true` in your `application.properties`. For custom date format on a single field, use the `@JsonFormat` annotation.
 
-Quarkus simplifies Jackson configuration via CDI beans. Create a CDI bean of type `io.quarkus.jackson.ObjectMapperCustomizer` to apply various Jackson settings. Here's an example for registering a custom module:
+Quarkus simplifies Jackson configuration via CDI beans. Create a CDI bean of type `io.quarkus.jackson.JsonMapperBuilderCustomizer` to apply various Jackson settings. Here's an example for registering a custom module:
 
-```java @ApplicationScoped public class MyObjectMapperCustomizer implements ObjectMapperCustomizer { @Override public void customize(ObjectMapper objectMapper) { // Add custom Jackson configuration here } } ```
+```java @ApplicationScoped public class MyJsonMapperBuilderCustomizer implements JsonMapperBuilderCustomizer { @Override public void customize(JsonMapper.Builder builder) { // Add custom Jackson configuration here } } ```
 
 This approach is recommended for configuring Jackson settings.
 
 ```java
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import jakarta.inject.Singleton;
+import tools.jackson.databind.json.JsonMapper;
 
 @Singleton
-public class RegisterCustomModuleCustomizer implements ObjectMapperCustomizer {
+public class RegisterCustomModuleCustomizer implements JsonMapperBuilderCustomizer {
 
-    public void customize(ObjectMapper mapper) {
-        mapper.registerModule(new CustomModule());
+    public void customize(JsonMapper.Builder builder) {
+        builder.addModule(new CustomModule());
     }
 }
 ```
 
-Users can even provide their own `ObjectMapper` bean if they so choose. If this is done, it is very important to manually inject and apply all `io.quarkus.jackson.ObjectMapperCustomizer` beans in the CDI producer that produces `ObjectMapper`. Failure to do so will prevent Jackson-specific customizations provided by various extensions from being applied.
+Users can even provide their own `JsonMapper` bean if they so choose. If this is done, it is very important to manually inject and apply all `io.quarkus.jackson.JsonMapperBuilderCustomizer` beans in the CDI producer that produces `JsonMapper`. Failure to do so will prevent Jackson-specific customizations provided by various extensions from being applied.
 
 ```java
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.arc.All;
-import io.quarkus.jackson.ObjectMapperCustomizer;
+import io.quarkus.jackson.JsonFactoryBuilderCustomizer;
+import io.quarkus.jackson.JsonMapperBuilderCustomizer;
 import java.util.List;
+import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.json.JsonFactoryBuilder;
+import tools.jackson.databind.json.JsonMapper;
 
 public class CustomObjectMapper {
 
-    // Replaces the CDI producer for ObjectMapper built into Quarkus
+    // Replaces the CDI producer for JsonMapper built into Quarkus
     @Singleton
-    ObjectMapper objectMapper(@All List<ObjectMapperCustomizer> customizers) {
-        ObjectMapper mapper = myObjectMapper(); // Custom `ObjectMapper`
+    @Produces
+    JsonMapper jsonMapper(@All List<JsonMapperBuilderCustomizer> customizers,
+            @All List<JsonFactoryBuilderCustomizer> factoryCustomizers) {
+        JsonFactoryBuilder factoryBuilder = JsonFactory.builder();
+        factoryCustomizers.stream().sorted().forEach(customizer -> customizer.customize(factoryBuilder));
 
-        // Apply all ObjectMapperCustomizer beans (incl. Quarkus)
-        for (ObjectMapperCustomizer customizer : customizers) {
-            customizer.customize(mapper);
-        }
+        JsonMapper.Builder builder = JsonMapper.builder(factoryBuilder.build());
 
-        return mapper;
+        // Apply all JsonMapperBuilderCustomizer beans (including Quarkus customizers)
+        customizers.stream().sorted().forEach(customizer -> customizer.customize(builder));
+
+        return builder.build();
     }
 }
 ```

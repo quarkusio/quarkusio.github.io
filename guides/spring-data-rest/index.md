@@ -8,7 +8,7 @@ To complete this guide, you need:
 
 - Roughly 15 minutes
 - An IDE
-- JDK 17+ installed with `JAVA_HOME` configured appropriately
+- JDK 21+ installed with `JAVA_HOME` configured appropriately
 - Apache Maven 3.9.16
 - Optionally the [Quarkus CLI](/guides/cli-tooling/index.md) if you want to use it
 - Optionally Mandrel or GraalVM installed and [configured appropriately](/guides/building-native-image/index.md#configuring-graalvm) if you want to build a native executable (or Docker if you use a native container build)
@@ -41,7 +41,7 @@ For more information about how to install and use the Quarkus CLI, see the [Quar
 **Maven**
 
 ```bash
-mvn io.quarkus.platform:quarkus-maven-plugin:3.40.1.2:create \
+mvn io.quarkus.platform:quarkus-maven-plugin:4.0.1:create \
     -DprojectGroupId=org.acme \
     -DprojectArtifactId=spring-data-rest-quickstart \
     -Dextensions='spring-data-rest,rest-jackson,quarkus-jdbc-postgresql' \
@@ -191,7 +191,7 @@ quarkus.datasource.db-kind=postgresql <1>
 
 ## Prepare the data
 
-To make it easier to showcase some capabilities of Spring Data REST on Quarkus, some test data should be inserted into the database by adding the following content to a new file named `src/main/resources/import.sql`:
+To make it easier to showcase some capabilities of Spring Data REST on Quarkus, some test data should be inserted into the database by adding the following content to a new file named `src/main/resources/data.sql`:
 
 ```sql
 INSERT INTO fruit(id, name, color) VALUES (1, 'Cherry', 'Red');
@@ -199,6 +199,7 @@ INSERT INTO fruit(id, name, color) VALUES (2, 'Apple', 'Red');
 INSERT INTO fruit(id, name, color) VALUES (3, 'Banana', 'Yellow');
 INSERT INTO fruit(id, name, color) VALUES (4, 'Avocado', 'Green');
 INSERT INTO fruit(id, name, color) VALUES (5, 'Strawberry', 'Red');
+ALTER SEQUENCE fruit_seq RESTART WITH 6;
 ```
 
 Hibernate ORM will execute these queries on application startup.

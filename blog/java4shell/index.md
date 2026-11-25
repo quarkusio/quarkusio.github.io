@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > This post is updated as the situation evolves.
 >
-> **Last updated:** 20 November 2026, 08:00UTC
+> **Last updated:** 25 November 2026, 08:30UTC
 
 ## TL;DR / Current status
 
@@ -14,6 +14,7 @@
 - UBI Java images (UBI 8, UBI 9 and UBI 10): **fixed** on 19 November 2026. Rebuild your container images on the fixed base image, or apply the `-XX:-UseBASE64Intrinsics` workaround. See [JVM in a container, UBI Java runtime image](#ubi-images).
 - The UBI 9 `1.23` images (used by default by Quarkus 3.27) are **not** fixed and will not be. Switch to `1.24`.
 - JVM on bare metal: if your JDK is patched, you are fine. Otherwise, add `-XX:-UseBASE64Intrinsics` as workaround.
+- The incident is closed from a Quarkus perspective. The JDK vendors are responsible for fixing the JDK if you are running it on bare metal.
 
 | Deployment model | Status | Action |
 | --- | --- | --- |
@@ -224,6 +225,7 @@ Thanks to [@zakkak](https://github.com/zakkak), [@Karm](https://github.com/Karm)
 
 ## Updates
 
+- **25 November 2026, 08:30 UTC**: The incident is closed from a Quarkus perspective. The JDK vendors are responsible for fixing the JDK if you are running it on bare metal.
 - **20 November 2026, 08:00 UTC**: Highlight the need to re-pull the base image before rebuilding the container image.
 - **19 November 2026, 21:45 UTC**: The UBI 8, UBI 9 and UBI 10 Java images are fixed. Rebuild your container images on the fixed base images. Quarkus 3.27 users have to switch to the UBI 9 `1.24` images.
 - **19 November 2026, 09:00 UTC**: Explain the impact on native executables and builder images.

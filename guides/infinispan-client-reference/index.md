@@ -77,9 +77,9 @@ You need at least one running instance of the Infinispan Server.
 
 If you are running a Docker instance, you can use [Infinispan Dev Services](/guides/infinispan-dev-services/index.md) and connect without configuration.
 
-If you want to run the server yourself using Docker, check out the 5-minute [Getting stated with Infinispan](https://infinispan.org/get-started/) tutorial to run Infinispan Server
+If you want to run the server yourself using Docker, check out the 5-minute [Getting started with Infinispan](https://infinispan.org/get-started/) tutorial to run Infinispan Server
 
-You can also [download](https://infinispan.org/download/) ${infinispan.version} Server bare metal distribution and run the following command from the distribution folder.
+You can also [download](https://infinispan.org/downloads/releases) ${infinispan.version} Server bare metal distribution and run the following command from the distribution folder.
 
 ```bash
 $ ./bin/server.sh
@@ -95,7 +95,7 @@ Infinispan Server **enables authentication and security authorization by default
   ```
 
 
-In Kubernetes, we recommend the [Infinispan Operator](https://infinispan.org/docs/infinispan-operator/main/operator.html). Additionally, grab a look to the [Cross Site Replication](https://infinispan.org/tutorials/simple/simple_tutorials.html#cross-site-replication_remote-cache-tutorials) tutorial. You will learn how to run two separate Infinispan Clusters with docker compose (for local dev) and the Operator.
+In Kubernetes, we recommend the [Infinispan Operator](https://infinispan.org/docs/infinispan-operator/main/operator.html). Additionally, grab a look to the [Cross Site Replication](https://infinispan.org/tutorials/remote-cross-site-replication/) tutorial. You will learn how to run two separate Infinispan Clusters with docker compose (for local dev) and the Operator.
 
 ### Configuring the connection
 
@@ -166,7 +166,7 @@ By default, Protobuf Schemas will also be uploaded to the backup clusters. Howev
 
 ### Default and named connections
 
-This extension lets you configure a *default* Infinispan client connections and *named* ones. Named connections are essential to connect to multiple Infinispan clusters.
+This extension lets you configure a *default* Infinispan client connection and *named* ones. Named connections are essential to connect to multiple Infinispan clusters.
 
 The default connection is configured using the `quarkus.infinispan-client.*` properties as seen above. When using the default connection, you can inject using a *plain* `@Inject`:
 
@@ -226,7 +226,7 @@ quarkus.infinispan-client.cache.authors.configuration-uri=/file/authorsIndexedCa
 If  `configuration-resource`, `configuration` and `configuration-uri` are configured for the same cache with the same Quarkus profile, `configuration-uri` gets the highest preference, over `configuration-resource` and `configuration`. `configuration-resource` gets preference over `configuration`.
 
 > [!WARNING]
-> The `configuration-resource` is build time property and the file will be included in the native build automatically. `configuration-uri` can also point to a file under the `resources` folder. However, the file won't be automatically included in the native executable, unless you configure the property `quarkus.native.resources.includes`.
+> The `configuration-resource` is a build time property and the file will be included in the native build automatically. `configuration-uri` can also point to a file under the `resources` folder. However, the file won't be automatically included in the native executable, unless you configure the property `quarkus.native.resources.includes`.
 
 > [!TIP]
 > Cache configuration can be provided in XML, JSON or YAML. Use the Infinispan Console and the cache configuration Wizard to learn more about Infinispan Caches and create guided configurations.
@@ -303,7 +303,7 @@ public record Book(String title,
 Serialization of user types uses a library based on protobuf, called [Protostream](https://github.com/infinispan/protostream).
 
 > [!TIP]
-> Infinispan caches can store keys and values in different encodings, but recommend using [Protocol Buffers (Protobuf)](https://developers.google.com/protocol-buffers).
+> Infinispan caches can store keys and values in different encodings, but we recommend using [Protocol Buffers (Protobuf)](https://developers.google.com/protocol-buffers).
 >
 > For more information see our [Cache Encoding and Marshalling](https://infinispan.org/docs/stable/titles/encoding/encoding.html) guide.
 
@@ -353,7 +353,7 @@ public record Book(@Text String title, // <2>
 
 1. Indicates that the entity will be indexed. Necessary to perform distributed full-text query operations.
 2. Indicates the `title` should be indexed as text
-3. Indicates the `description` field field should be indexed as a Keyword.
+3. Indicates the `description` field should be indexed as a Keyword.
 4. Collections are supported
 5. Protostream provides default Protobuf mappers for commonly used types as `BigDecimal`, included in the `org.infinispan.protostream.types` package.
 
@@ -401,7 +401,7 @@ The previous method is suggested for any case when the user can annotate their c
        required string description = 2;
        required int32 publicationYear = 3; // no native Date type available in Protobuf
        repeated Author authors = 4;
-       requited double price = 5; // no native BigDecimal type available in Protobuf but you can use the adapter
+       required double price = 5; // no native BigDecimal type available in Protobuf but you can use the adapter
      }
 
      message Author {
@@ -715,7 +715,7 @@ List<Book> list = query.execute().list();
 >
 > 1. Breaking change in 3.9
 >
-> This code won't work anymore since `RemoteCache` is now an `@ApplicationScoped` proxy bean. `Search.getQueryFactory` will raise a ClassCastException. Remove the unecessary indirection by using the `query` method in the `RemoteCache` API as follows.
+> This code won't work anymore since `RemoteCache` is now an `@ApplicationScoped` proxy bean. `Search.getQueryFactory` will raise a ClassCastException. Remove the unnecessary indirection by using the `query` method in the `RemoteCache` API as follows.
 >
 > ```java
 > Query<Book> query = booksCache.<Book>query("from book_sample.Book");
@@ -737,7 +737,7 @@ You can read more about [clustered counters](https://infinispan.org/docs/stable/
 
 ## Near Caching
 
-Near caching is disabled by default, but you can enable it on a per cache basic by configuring the following properties:
+Near caching is disabled by default, but you can enable it on a per cache basis by configuring the following properties:
 
 ```properties
 quarkus.infinispan-client.cache.books.near-cache-mode=INVALIDATED <1>
@@ -790,7 +790,7 @@ The Infinispan Client has additional features that were not mentioned here. This
 <a id="dev-services"></a>
 ## Dev Services for Infinispan
 
-When you use the infinispan-client extension in dev mode or in test, Quarkus automatically starts an Infinispan server and configure your application.
+When you use the infinispan-client extension in dev mode or in test, Quarkus automatically starts an Infinispan server and configures your application.
 
 ### Enabling / Disabling Dev Services for Infinispan
 
@@ -857,10 +857,6 @@ By default, Dev Services for Infinispan picks a random port and configures the a
 | <a id="quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-hosts"></a> [`quarkus.infinispan-client.backup-cluster."backup-cluster".hosts`](#quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-hosts) config_property_copy_button:+++quarkus.infinispan-client.backup-cluster."backup-cluster".hosts+++[]<br><br>Sets the host name/port to connect to. Each one is separated by a semicolon (eg. hostA:11222;hostB:11222).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_BACKUP_CLUSTER__BACKUP_CLUSTER__HOSTS+++[] | string | required [exclamation circle] |
 | <a id="quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-client-intelligence"></a> [`quarkus.infinispan-client.backup-cluster."backup-cluster".client-intelligence`](#quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-client-intelligence) config_property_copy_button:+++quarkus.infinispan-client.backup-cluster."backup-cluster".client-intelligence+++[]<br><br>Sets client intelligence used by authentication Available values: ++**++ `BASIC` - Means that the client doesn't handle server topology changes and therefore will only use the list of servers supplied at configuration time. ++**++ `TOPOLOGY_AWARE` - Use this provider if you don't want the client to present any certificates to the remote TLS host. ++\*++ `HASH_DISTRIBUTION_AWARE` - Like `TOPOLOGY_AWARE` but with the additional advantage that each request involving keys will be routed to the server who is the primary owner which improves performance greatly. This is the default.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_BACKUP_CLUSTER__BACKUP_CLUSTER__CLIENT_INTELLIGENCE+++[] | `basic`, `topology-aware`, `hash-distribution-aware` | `hash-distribution-aware` |
 | <a id="quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-use-schema-registration"></a> [`quarkus.infinispan-client.backup-cluster."backup-cluster".use-schema-registration`](#quarkus-infinispan-client_quarkus-infinispan-client-backup-cluster-backup-cluster-use-schema-registration) config_property_copy_button:+++quarkus.infinispan-client.backup-cluster."backup-cluster".use-schema-registration+++[]<br><br>Enables or disables Protobuf generated schemas upload to the backup. Set it to 'false' when you need to handle the lifecycle of the Protobuf Schemas on Server side yourself. Default is 'true'. This setting will be ignored if the Global Setting is set up to false.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_BACKUP_CLUSTER__BACKUP_CLUSTER__USE_SCHEMA_REGISTRATION+++[] | boolean | `true` |
-| [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-near-cache-max-entries"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-near-cache-max-entries\[`quarkus.infinispan-client.near-cache-max-entries`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.near-cache-max-entries+++[]<br><br>*This property is deprecated: use per cache configuration for near cache max entries.*<br><br>Sets the bounded entry count for near cache. If this value is 0 or less near cache is disabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_NEAR_CACHE_MAX_ENTRIES+++[] | int | `0` |
-| <a id="quarkus-infinispan-client_quarkus-infinispan-client-server-list"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-server-list\[`quarkus.infinispan-client.server-list`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.server-list+++[]<br><br>*This property is deprecated: `hosts` should be used to configure the list or uri for an uri connection string.*<br><br>Sets the host name/port to connect to. Each one is separated by a semicolon (eg. host1:11222;host2:11222).<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_SERVER_LIST+++[] | string |  |
-| <a id="quarkus-infinispan-client_quarkus-infinispan-client-auth-username"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-auth-username\[`quarkus.infinispan-client.auth-username`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.auth-username+++[]<br><br>*This property is deprecated: `username` should be used to configure the credentials username.*<br><br>Sets username used by authentication.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_AUTH_USERNAME+++[] | string |  |
-| <a id="quarkus-infinispan-client_quarkus-infinispan-client-auth-password"></a> <mark>link:#quarkus-infinispan-client_quarkus-infinispan-client-auth-password\[`quarkus.infinispan-client.auth-password`\]</mark> config_property_copy_button:+++quarkus.infinispan-client.auth-password+++[]<br><br>*This property is deprecated: `password` should be used to configure the credentials password.*<br><br>Sets password used by authentication<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_AUTH_PASSWORD+++[] | string |  |
 | <a id="quarkus-infinispan-client_section_quarkus-infinispan-client-devservices"></a> [Dev Services](#quarkus-infinispan-client_section_quarkus-infinispan-client-devservices) | Type | Default |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices-enabled"></a> [`quarkus.infinispan-client.devservices.enabled`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices-enabled) config_property_copy_button:+++quarkus.infinispan-client.devservices.enabled+++[]<br><br>If DevServices has been explicitly enabled or disabled. DevServices is generally enabled by default, unless there is an existing configuration present.<br><br>When DevServices is enabled Quarkus will attempt to automatically configure and start a database when running in Dev or Test mode and when Docker is running.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_ENABLED+++[] | boolean | `true` |
 | [lock] <a id="quarkus-infinispan-client_quarkus-infinispan-client-devservices-create-default-client"></a> [`quarkus.infinispan-client.devservices.create-default-client`](#quarkus-infinispan-client_quarkus-infinispan-client-devservices-create-default-client) config_property_copy_button:+++quarkus.infinispan-client.devservices.create-default-client+++[]<br><br>When the configuration is empty, an Infinispan default client is automatically created to connect to the running dev service. However, there are scenarios where creating this client is unnecessary, yet we still need to spin up an Infinispan Server. In such cases, this property serves to determine whether the client should be created by default or not by the extension.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_INFINISPAN_CLIENT_DEVSERVICES_CREATE_DEFAULT_CLIENT+++[] | boolean | `true` |

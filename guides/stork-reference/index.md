@@ -136,3 +136,21 @@ quarkus.micrometer.binder.stork.enabled=false
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-enabled"></a> [`quarkus.stork."service-name".service-registrar.enabled`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-enabled) config_property_copy_button:+++quarkus.stork."service-name".service-registrar.enabled+++[]<br><br>Whether automatic registration and deregistration of service instances is enabled.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR_ENABLED+++[] | boolean | `true` |
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-type"></a> [`quarkus.stork."service-name".service-registrar.type`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-type) config_property_copy_button:+++quarkus.stork."service-name".service-registrar.type+++[]<br><br>Configures service registrar type, e.g. "consul". A ServiceRegistrarProvider for the type has to be available<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR_TYPE+++[] | string |  |
 | <a id="quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-parameters"></a> [`quarkus.stork."service-name".service-registrar."parameters"`](#quarkus-smallrye-stork_quarkus-stork-service-name-service-registrar-parameters) config_property_copy_button:+++quarkus.stork."service-name".service-registrar."parameters"+++[]<br><br>Service Registrar parameters. Check the documentation of the selected registrar type for available parameters<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK__SERVICE_NAME__SERVICE_REGISTRAR__PARAMETERS_+++[] | Map\<String,String> |  |
+| <a id="quarkus-smallrye-stork_quarkus-stork-registration-timeout"></a> [`quarkus.stork.registration-timeout`](#quarkus-smallrye-stork_quarkus-stork-registration-timeout) config_property_copy_button:+++quarkus.stork.registration-timeout+++[]<br><br>The maximum time to wait for a service instance to be registered when the application starts, and deregistered when the application stops.<br><br>If the service registrar does not complete the operation in time, a warning is logged and the application continues to start or stop.<br><br>Environment variable: env_var_with_copy_button:+++QUARKUS_STORK_REGISTRATION_TIMEOUT+++[] | [Duration](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html) [[question circle]](#duration-note-anchor-quarkus-smallrye-stork_quarkus-stork) | `10S` |
+
+<a id="duration-note-anchor-quarkus-smallrye-stork_quarkus-stork"></a>
+
+> [!NOTE]
+> **About the Duration format**
+>
+> To write duration values, use the standard `java.time.Duration` format. See the [Duration#parse() Java API documentation](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/time/Duration.html#parse(java.lang.CharSequence)) for more information.
+>
+> You can also use a simplified format, starting with a number:
+>
+> - If the value is only a number, it represents time in seconds.
+> - If the value is a number followed by `ms`, it represents time in milliseconds.
+>
+> In other cases, the simplified format is translated to the `java.time.Duration` format for parsing:
+>
+> - If the value is a number followed by `h`, `m`, or `s`, it is prefixed with `PT`.
+> - If the value is a number followed by `d`, it is prefixed with `P`.

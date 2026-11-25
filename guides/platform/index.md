@@ -124,17 +124,17 @@ public interface NativeConfig {
 In this case the default value for `quarkus.native.builder-image` will be provided by the platform. The user will still be able to set the desired value for `quarkus.native.builder-image` in its `application.properties`, of course. But in case it's not customized by the user, the default value will be coming from the platform properties. A platform properties file for the example above would contain:
 
 ```text
-platform.quarkus.native.builder-image=quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-21
+platform.quarkus.native.builder-image=quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:jdk-25
 ```
 
 > [!IMPORTANT]
-> Starting with Quarkus 3.19+, the *builder* image used to build the native executable is based on UBI 9. It means that the native executable produced by the container build will be based on UBI 9 as well. So, if you plan to build a container, make sure that the base image in your `Dockerfile` is compatible with UBI 9. The native executable will not run on UBI 8 base images.
+> The *builder* image used to build the native executable is based on UBI 10. It means that the native executable produced by the container build will be based on UBI 10 as well. So, if you plan to build a container, make sure that the base image in your `Dockerfile` is compatible with UBI 10. The native executable will not run on UBI 8 or UBI 9 base images.
 >
-> For example to switch back to an UBI8 *builder image* you can use:
+> For example to switch back to an UBI 9 *builder image* you can use:
 >
-> `platform.quarkus.native.builder-image=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21`
+> `platform.quarkus.native.builder-image=quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25`
 >
-> You can see the available tags for UBI8 [here](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags) and for UBI9 [here (UBI 9)](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags))
+> You can see the available tags for UBI 8 [here (UBI 8)](https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags), for UBI 9 [here (UBI 9)](https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags), and for UBI 10 [here (UBI 10)](https://quay.io/repository/quarkus/ubi10-quarkus-mandrel-builder-image?tab=tags))
 
 There is also a Maven plugin goal that validates the platform properties content and its artifact coordinates and also checks whether the platform properties artifact is present in the platform's BOM. Here is a sample plugin configuration:
 

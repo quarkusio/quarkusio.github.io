@@ -25,8 +25,8 @@ Let's start with the [Securing a Web Application with OAuth2/OpenID Connect](htt
   <version>1.0.0-SNAPSHOT</version>
 
   <properties>
-    <!-- ... --> 
-    <vertx.version>5.0.16</vertx.version>
+    <! ... -->
+    <vertx.version>5.1.5</vertx.version>
     <main.verticle>howto.oauth_oidc.MainVerticle</main.verticle>
     <launcher.class>io.vertx.launcher.application.VertxApplication</launcher.class>
   </properties>
