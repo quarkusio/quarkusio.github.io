@@ -32,7 +32,11 @@ $(document).ready(function() {
         this.navMenu.slideUp();
     },
     resetNav: function() {
-      this.navMenu.show();
+      // Drop the inline display the slide animation left behind and let the stylesheet lay the menu out
+      // again: .show() sets display: block, which overrides the desktop rule and leaves the narrow-viewport
+      // menu, stacked, on a wide screen after a resize.
+      this.navMenu.css('display', '');
+      this.chkBox[0].checked = false;
     }
   };
   myNav.init();
