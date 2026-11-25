@@ -409,6 +409,28 @@ public class CvesPageTest extends BrowserTest {
     }
 
     @Test
+    void theStatusAndOriginRingsAreOnTheSameLine() {
+        page.navigate(baseUrl + "/cves/");
+        var status = page.locator("[data-cve-donut=status]").boundingBox();
+        var origin = page.locator("[data-cve-donut=origin]").boundingBox();
+        assertEquals(status.y, origin.y, 2, "Side by side");
+        assertTrue(origin.x > status.x);
+    }
+
+    @Test
+    void theStripIsBlackWhileACategoryIsClosedAndBlueOnceItIsOpen() {
+        page.navigate(baseUrl + "/cves/");
+        String closed = (String) page.locator("#tl-exposure .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill");
+        String text = (String) page.evaluate("() => getComputedStyle(document.body).color");
+        assertEquals(text, closed, "The same as the text, which is black on the light theme");
+        page.locator(CATS + " button").first().click();
+        String open = (String) page.locator("#tl-exposure .tl-cat-row.is-open .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill");
+        assertNotEquals(closed, open, "Opening the category changes its colour");
+        assertEquals(closed, page.locator("#tl-exposure .tl-cat-row:not(.is-open) .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill"),
+                "The others stay as they were");
+    }
+
+    @Test
     void clickingACategoryOpensItsComponentsAndPutsItInTheAddress() {
         page.navigate(baseUrl + "/cves/");
         allSeverities();
