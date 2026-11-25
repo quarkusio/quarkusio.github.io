@@ -15,7 +15,9 @@ defaults:
 
 # A run reads what changed in the CVE list since _data/pending-cves.yaml was made. Only creating that file needs GitHub
 # code search, which allows 10 requests a minute and refuses this workflow's token for a long time, so see
-# tools/cves-sync/README.md for how to create it. Runs must not overlap: a queued run waits, it is not cancelled.
+# tools/cves-sync/README.md for how to create it. Runs must not overlap. GitHub keeps one waiting run per group, so a
+# newer run (a pull request's, say) replaces the one that is waiting, and the nightly run shares this group: any run
+# may be cancelled before it starts. That is fine, as a run reads everything since the last one that was committed.
 concurrency:
   group: sync-cves
   cancel-in-progress: false
@@ -148,12 +150,15 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # The index changes every run (the time it was read up to). Commit that alone only now and then: it makes
-          # no difference to the site, and a delta is read from the index's time, so a week old is no problem.
+          # The index changes every run (the time it was read up to). When only that changed, commit it every few days
+          # and not every night: it makes no difference to the site, and a run reads from the day of that time, one
+          # small download per day. The CVEs are compared as lists of ids, not as lines of a diff.
           idx=_data/pending-cves.yaml
-          if git cat-file -e "HEAD:$idx" 2>/dev/null && ! git diff -U0 -- "$idx" | grep -E '^[+-][^+-]' | grep -qv '^[+-]scanned:'; then
+          ids() { sed -n 's/^- id: "\(.*\)"/\1/p'; }
+          if git cat-file -e "HEAD:$idx" 2>/dev/null \
+              && [ "$(git show "HEAD:$idx" | ids | sort)" = "$(ids < "$idx" | sort)" ]; then
             last=$(git show "HEAD:$idx" | sed -n 's/^scanned: "\(.*\)"/\1/p')
-            if [ "$(date -d "$last" +%s)" -gt "$(date -d '7 days ago' +%s)" ]; then git checkout -- "$idx"; fi
+            if [ "$(date -d "$last" +%s)" -gt "$(date -d '3 days ago' +%s)" ]; then git checkout -- "$idx"; fi
           fi
           git add _data/cves.yaml "$idx"
           if [ -n "$(git status --porcelain)" ]; then

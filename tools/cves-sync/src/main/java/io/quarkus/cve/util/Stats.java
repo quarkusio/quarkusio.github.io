@@ -79,7 +79,7 @@ public final class Stats {
             if (path.contains("/vulns/")) return "vulnerability details";
         } else if (host.endsWith("github.com")) {
             if (path.startsWith("/search/code")) return "code search for CVE records";
-            if (path.startsWith("/CVEProject/cvelistV5/releases/download/")) return "CVE list hourly delta (zip)";
+            if (path.startsWith("/CVEProject/cvelistV5/releases/download/")) return "CVE list delta (zip)";
             if (path.startsWith("/advisories")) return "advisories of packages (50 per request)";
         } else if (host.endsWith("maven.org")) {
             if (path.endsWith("maven-metadata.xml")) return "release list (metadata)";

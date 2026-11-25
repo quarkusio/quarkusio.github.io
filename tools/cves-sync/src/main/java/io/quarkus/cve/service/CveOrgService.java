@@ -46,7 +46,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
  *
  * Code search is limited to 10 requests a minute, and GitHub refuses it for a long time to a CI run, so with an
  * index file ({@link #useIndex}) it is only used to create that file. A run then reads what changed in the CVE
- * list since the index was made, from the hourly delta zips of the same repository ({@link CveDelta}), which
+ * list since the index was made, from the delta zips of the same repository ({@link CveDelta}), which
  * needs no API. See {@link PendingIndex}.
  *
  * Lookups are cached: the candidate list for {@link #INDEX_TTL}, each record for {@link #RECORD_TTL}.
@@ -82,7 +82,7 @@ public class CveOrgService {
     @RestClient
     CveOrgClient cveOrg;
 
-    /** Where the hourly delta zips come from. */
+    /** Where the delta zips come from. */
     CveDelta.Source zips = new CveListZips();
 
     Clock clock = Clock.systemUTC();
@@ -112,17 +112,30 @@ public class CveOrgService {
     public List<ReleaseReport.Pending> pending(Set<String> managed, Collection<UnifiedVuln> known, int fromYear) {
         List<CveOrgRecord> records = new ArrayList<>();
         int skipped = 0;
+        Set<String> unreadable = new HashSet<>();
         Set<String> alreadyKnown = knownCves(known);
         List<String> candidates = candidates(fromYear);
-        if (index != null) index = index.without(alreadyKnown);
         for (String id : candidates) {
             if (alreadyKnown.contains(id)) continue;
             Optional<CveOrgRecord> r = record(id);
             if (r.isPresent()) records.add(r.get());
-            else skipped++;
+            else {
+                skipped++;
+                unreadable.add(id);
+            }
         }
         if (skipped > 0) Log.log(1, "cve.org: %d candidate records could not be read", skipped);
-        return select(records, managed, alreadyKnown);
+        List<ReleaseReport.Pending> pending = select(records, managed, alreadyKnown);
+        // A candidate that cannot be read stays: it is not known not to be pending
+        if (index != null) {
+            Set<String> keep = new HashSet<>(pending.stream().map(p -> p.id).toList());
+            keep.addAll(unreadable);
+            int before = index.ids().size();
+            index = index.only(keep);
+            Log.log(1, "cvelistV5: %d of the %d candidates are pending; the rest is looked at again if its record changes",
+                    index.ids().size(), before);
+        }
+        return pending;
     }
 
     /** The CVE ids that an evaluated advisory already covers, by its own id, its CVE and its aliases. */
@@ -244,9 +257,9 @@ public class CveOrgService {
             PendingIndex before = existing.get();
             CveDelta.Result delta = CveDelta.read(zips, before.scanned(), now);
             index = before.apply(delta, today);
-            Log.log(1, "cvelistV5: read %d hourly delta zips (%.1f MB) since %s, %d CVEs changed, %d mention Quarkus; %d hours have no zip",
-                    delta.zips(), delta.bytes() / 1e6, before.scanned(), delta.mentionsQuarkus().size(),
-                    delta.mentionsQuarkus().values().stream().filter(b -> b).count(), delta.missing().size());
+            Log.log(1, "cvelistV5: read %d zips (%.1f MB: %s), %d CVEs changed, %d mention Quarkus",
+                    delta.zips(), delta.bytes() / 1e6, String.join(", ", delta.read()), delta.mentionsQuarkus().size(),
+                    delta.mentionsQuarkus().values().stream().filter(b -> b).count());
             Log.log(1, "cvelistV5: %d candidate CVEs (%d before), scanned up to %s", index.ids().size(),
                     before.ids().size(), index.scanned());
             return List.copyOf(index.ids());

@@ -19,13 +19,14 @@ import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 /**
- * The CVEs whose records mention Quarkus and that no advisory with version ranges covers yet, kept in
- * {@code _data/pending-cves.yaml} together with the time up to which the CVE list was read.
+ * The CVEs whose records mention Quarkus, kept in {@code _data/pending-cves.yaml} together with the time up to
+ * which the CVE list was read. A CVE stays while it is reported as pending, and leaves when it is not (an advisory
+ * with version ranges covers it, or its record names no artifact a release manages): a CVE whose record changes
+ * comes back through the delta and is looked at again, so that the file stays about as long as the list of pending CVEs.
  *
  * GitHub code search finds such CVEs, but is limited to 10 requests a minute and refuses a CI run for a long time,
  * so it is only used to create this file. From then on a run reads what changed in the CVE list since
  * {@link #scanned()} ({@link CveDelta}), adds the CVEs that now mention Quarkus and drops those that no longer do.
- * A CVE leaves the file when an advisory covers it, and the time moves on at every run, also when nothing changed.
  *
  * The file is written the way the other data files are, with no inline list or map, which po4a cannot read:
  * <pre>
@@ -40,6 +41,11 @@ public final class PendingIndex {
 
     /** A delta read this far back is a lot of zips; past it a new list is made with code search instead. */
     public static final Duration MAX_AGE = Duration.ofDays(30);
+    /**
+     * A list made with code search starts this far back: the index of GitHub code search can be behind the CVE list by
+     * some time, and reading a week of end-of-day zips (about 5 MB each) costs little.
+     */
+    public static final Duration SEED_LOOKBACK = Duration.ofDays(7);
     private static final Pattern CVE_ID = Pattern.compile("CVE-\\d{4}-\\d+");
 
     /** @param noticed the day this run first saw the CVE, which for the first list is the day it was made */
@@ -53,11 +59,11 @@ public final class PendingIndex {
         this.noticedById = new TreeMap<>(noticedById);
     }
 
-    /** A list made from a code search, which reflects the CVE list as of a day ago at the latest. */
+    /** A list made from a code search, dated a week back so that the first delta covers any lag of its index. */
     public static PendingIndex seed(Collection<String> ids, Instant now, LocalDate today) {
         Map<String, String> m = new TreeMap<>();
         ids.forEach(id -> m.put(id, today.toString()));
-        return new PendingIndex(now.truncatedTo(ChronoUnit.HOURS).minus(Duration.ofDays(1)), m);
+        return new PendingIndex(now.truncatedTo(ChronoUnit.DAYS).minus(SEED_LOOKBACK), m);
     }
 
     public Instant scanned() {
@@ -84,15 +90,20 @@ public final class PendingIndex {
             if (mentions) m.putIfAbsent(id, today.toString());
             else m.remove(id);
         });
-        Instant next = delta.lastZip().isAfter(scanned) ? delta.lastZip() : scanned;
+        Instant next = delta.reached().isAfter(scanned) ? delta.reached() : scanned;
         return new PendingIndex(next, m);
     }
 
-    /** The list without the CVEs that an advisory now covers. */
-    public PendingIndex without(Collection<String> covered) {
+    /** The list reduced to the CVEs that are still pending: the others are looked at again if their record changes. */
+    public PendingIndex only(Collection<String> pending) {
         Map<String, String> m = new TreeMap<>(noticedById);
-        m.keySet().removeAll(covered);
+        m.keySet().retainAll(pending);
         return new PendingIndex(scanned, m);
+    }
+
+    /** Whether the two lists hold the same CVEs, whatever their dates: what decides if a change is worth a commit. */
+    public boolean sameCves(PendingIndex other) {
+        return noticedById.keySet().equals(other.noticedById.keySet());
     }
 
     public String render() {

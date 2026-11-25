@@ -202,7 +202,7 @@ class CveOrgServiceTest {
 
     // -- discovery through the index file -----------------------------------------------------------------
 
-    static final java.time.Instant NOON = java.time.Instant.parse("2026-11-23T12:30:00Z");
+    static final java.time.Instant NOON = java.time.Instant.parse("2026-11-24T12:30:00Z");
 
     static CveOrgService indexed(Path dir, List<String> searched, java.util.Map<String, byte[]> zips) {
         Cache.configure(dir.resolve("cache"), Cache.Mode.NORMAL);
@@ -224,14 +224,14 @@ class CveOrgServiceTest {
         assertEquals(List.of("CVE-2026-1", "CVE-2026-2"), service.candidates(2020));
         assertEquals(1, searched.size());
         assertTrue(service.indexToWrite().isPresent());
-        assertEquals(java.time.Instant.parse("2026-11-22T12:00:00Z"), service.indexToWrite().get().scanned());
+        assertEquals(java.time.Instant.parse("2026-11-17T00:00:00Z"), service.indexToWrite().get().scanned());
         assertTrue(!java.nio.file.Files.exists(dir.resolve("pending-cves.yaml")), "the service does not write the file");
     }
 
     @Test
     void withAnIndexFileNoSearchIsMadeAndTheDeltaBringsItUpToDate(@TempDir Path dir) throws Exception {
         java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
-                scanned: "2026-11-23T10:00:00Z"
+                scanned: "2026-11-23T00:00:00Z"
                 pending:
                 - id: "CVE-2026-1"
                   noticed: "2026-11-20"
@@ -240,12 +240,13 @@ class CveOrgServiceTest {
                 """);
         List<String> searched = new ArrayList<>();
         java.util.Map<String, byte[]> zips = new java.util.HashMap<>();
-        zips.put("2026-11-23_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip(
+        zips.put("2026-11-23_delta_CVEs_at_end_of_day.zip", io.quarkus.cve.util.CveDeltaTest.zip(
                 "d/CVE-2026-3.json", "Quarkus", "d/CVE-2026-2.json", "reworded"));
+        zips.put("2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
         CveOrgService service = indexed(dir, searched, zips);
         assertEquals(List.of("CVE-2026-1", "CVE-2026-3"), service.candidates(2020));
         assertEquals(0, searched.size(), "code search is not used when there is an index");
-        assertEquals(java.time.Instant.parse("2026-11-23T11:00:00Z"), service.indexToWrite().get().scanned());
+        assertEquals(java.time.Instant.parse("2026-11-24T11:00:00Z"), service.indexToWrite().get().scanned());
     }
 
     @Test
@@ -259,7 +260,7 @@ class CveOrgServiceTest {
 
     @Test
     void aDeltaThatCannotBeReadFailsTheCandidatesInsteadOfLeavingThemOutAndWritesNoIndex(@TempDir Path dir) throws Exception {
-        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), "scanned: \"2026-11-22T10:00:00Z\"\npending:\n");
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), "scanned: \"2026-11-22T00:00:00Z\"\npending:\n");
         CveOrgService service = indexed(dir, new ArrayList<>(), java.util.Map.of());
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> service.candidates(2020));
         assertTrue(service.indexToWrite().isEmpty());

@@ -15,7 +15,7 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * Downloads the hourly delta zips of the {@code CVEProject/cvelistV5} repository, which are release assets.
+ * Downloads the delta zips (end-of-day and hourly) of the {@code CVEProject/cvelistV5} repository, which are release assets.
  * They are public, so no token is sent (the download redirects to a storage host that has no use for one).
  */
 public final class CveListZips implements CveDelta.Source {

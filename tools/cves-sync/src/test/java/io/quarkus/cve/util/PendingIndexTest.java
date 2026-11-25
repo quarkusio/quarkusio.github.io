@@ -26,9 +26,28 @@ class PendingIndexTest {
     }
 
     @Test
-    void aSeedIsDatedAtTheHourADayBeforeSoThatTheFirstDeltaCoversTheIndexingLagOfCodeSearch() {
+    void aSeedIsDatedAWeekBackAtMidnightSoThatTheFirstDeltaCoversTheIndexingLagOfCodeSearch() {
+        assertEquals(Instant.parse("2026-11-16T00:00:00Z"), PendingIndex.seed(List.of("CVE-2026-1"), NOW, TODAY).scanned());
+    }
+
+    @Test
+    void onlyTheCvesThatAreStillPendingStayAndTheOthersComeBackWhenTheirRecordChanges() {
+        PendingIndex before = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-01", "CVE-2026-2", "2026-11-02"));
+        PendingIndex after = before.only(Set.of("CVE-2026-2", "CVE-2026-9"));
+        assertEquals(Set.of("CVE-2026-2"), after.ids());
+        assertEquals(NOW.truncatedTo(java.time.temporal.ChronoUnit.SECONDS), after.scanned());
+    }
+
+    @Test
+    void twoListsAreTheSameWhenTheyHoldTheSameCvesWhateverTheirDates() {
+        PendingIndex a = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-01"));
+        assertTrue(a.sameCves(new PendingIndex(NOW.plusSeconds(86400), Map.of("CVE-2026-1", "2026-11-20"))));
+        assertFalse(a.sameCves(new PendingIndex(NOW, Map.of("CVE-2026-2", "2026-11-01"))));
+    }
+
+    @Test
+    void aSeedHoldsTheCvesAndTheDayItWasMade() {
         PendingIndex seed = PendingIndex.seed(List.of("CVE-2026-2", "CVE-2026-1"), NOW, TODAY);
-        assertEquals(Instant.parse("2026-11-22T15:00:00Z"), seed.scanned());
         assertEquals(Set.of("CVE-2026-1", "CVE-2026-2"), seed.ids());
         assertEquals("2026-11-23", seed.entries().get(0).noticed());
     }
@@ -38,7 +57,7 @@ class PendingIndexTest {
         PendingIndex index = PendingIndex.seed(List.of("CVE-2026-2", "CVE-2026-1"), NOW, TODAY);
         String text = index.render();
         assertEquals("""
-                scanned: "2026-11-22T15:00:00Z"
+                scanned: "2026-11-16T00:00:00Z"
                 pending:
                 - id: "CVE-2026-1"
                   noticed: "2026-11-23"
@@ -98,9 +117,4 @@ class PendingIndexTest {
                 before.apply(delta(Instant.parse("2026-11-23T08:00:00Z"), Map.of()), TODAY).scanned());
     }
 
-    @Test
-    void aCveThatAnAdvisoryNowCoversLeavesTheList() {
-        PendingIndex before = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-01", "CVE-2026-2", "2026-11-02"));
-        assertEquals(Set.of("CVE-2026-2"), before.without(Set.of("CVE-2026-1", "CVE-2026-9")).ids());
-    }
 }

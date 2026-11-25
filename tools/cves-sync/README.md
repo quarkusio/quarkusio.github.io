@@ -22,19 +22,31 @@ lists such CVEs as *pending*. Finding them means finding every CVE record that m
   for the first request.
 - So code search is only used to **create** `_data/pending-cves.yaml`, which holds the CVE ids that mention Quarkus and
   the time up to which the CVE list was read (`scanned`).
-- A run reads what changed since `scanned` from the hourly delta zips that `cvelistV5` publishes as release assets
-  (`https://github.com/CVEProject/cvelistV5/releases/download/cve_<day>_<hour>00Z/<day>_delta_CVEs_at_<hour>00Z.zip`).
-  They hold the full records, so there is nothing to look up per CVE, they need no token, and a day of them is about
-  20 MB. A CVE whose record now mentions Quarkus is added, one whose record no longer does is dropped, and one that an
-  advisory with version ranges covers is dropped too. `scanned` moves on to the last zip that was read.
-- Some hours have no zip under their own name. A zip holds what changed since the previous one, so the next one
-  covers the hour, and the run goes on. A run fails, and writes nothing, if a zip cannot be read, or if there is no zip
-  at all for a few hours.
-- A run reads from two hours before `scanned`, in case the last zip was still being filled.
+- A run reads what changed since `scanned` from the delta zips that `cvelistV5` publishes as release assets. They hold
+  the full records, so there is nothing to look up per CVE, and they need no token. A CVE whose record now mentions
+  Quarkus is added, and one whose record no longer does is dropped.
+- The zips are **cumulative over a day**: the one of 14:00 holds everything changed since midnight (UTC). What changed
+  from 23:00 to 24:00 is in no hourly zip of that day or the next, but only in the `end_of_day` zip, published shortly
+  after midnight. So a run reads the `end_of_day` zip of every day from the day of `scanned` up to yesterday (about
+  5 MB each, and **the run fails if one is missing**, as that would lose a day of changes), and then only the newest
+  hourly zip of today. A normal night is one end-of-day zip and one hourly zip.
+  - `https://github.com/CVEProject/cvelistV5/releases/download/cve_<day>_at_end_of_day/<day>_delta_CVEs_at_end_of_day.zip`
+  - `https://github.com/CVEProject/cvelistV5/releases/download/cve_<day>_<hour>00Z/<day>_delta_CVEs_at_<hour>00Z.zip`
+    (some are published under the tag of the hour before, and some hours have no zip: the newest one there is is read)
+  - If yesterday's end-of-day zip is not out yet, its newest hourly zip is read and `scanned` stops there, so that the
+    next run reads the end-of-day zip.
+- A CVE stays in the file while it is *pending*: no advisory with version ranges covers it, and its record names an
+  artifact that a release manages. Any other CVE is dropped, and comes back through the delta, to be looked at again,
+  if its record changes. A CVE that was dropped because no release managed the artifact it names, and that is not
+  changed after a release starts to manage it, is only found again when the file is made again (see below). Advisories
+  are searched by artifact in every run, so a CVE that has an advisory is found without this file.
+- Most pending CVEs are not new: of the 41 in the first version, 33 were published over 60 days before. They are
+  waiting for an advisory that may never come, not for GitHub to review them.
 
-The file is written only when the whole run succeeded, and the workflow commits it only when its ids change (or, to
-keep `scanned` from getting old, when it is a week old). It is written without an inline list or map, because po4a
-(which translates the data files) cannot read those.
+The file is written only when the whole run succeeded, and the workflow commits it when its ids change, or when the
+committed `scanned` is more than 3 days old. Every run is safe to lose (a cancelled run, or one that was not committed):
+the next one reads from the day of the last `scanned` that was. The file is written without an inline list or map,
+because po4a (which translates the data files) cannot read those.
 
 ### Creating it again
 
@@ -52,6 +64,7 @@ one with code search. That needs a **personal** token, as the workflow's own tok
      --output ../../_data/cves.yaml
    ```
 3. Commit both files. The log says `making it with code search`; it takes about a minute, and waits as long as GitHub
-   asks when it is refused.
+   asks when it is refused. The new file starts a week back, because the index of code search can be behind the CVE
+   list, so the first run after it reads a week of end-of-day zips.
 
 Without `--pending-index`, every run uses code search.
