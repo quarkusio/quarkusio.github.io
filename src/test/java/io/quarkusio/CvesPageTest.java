@@ -418,16 +418,20 @@ public class CvesPageTest extends BrowserTest {
     }
 
     @Test
-    void theStripIsBlackWhileACategoryIsClosedAndBlueOnceItIsOpen() {
+    void theStripIsBlackWhileACategoryIsClosedAndFainterOnceItIsOpenNeverBlue() {
         page.navigate(baseUrl + "/cves/");
-        String closed = (String) page.locator("#tl-exposure .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill");
         String text = (String) page.evaluate("() => getComputedStyle(document.body).color");
+        String closed = (String) page.locator("#tl-exposure .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill");
         assertEquals(text, closed, "The same as the text, which is black on the light theme");
+        double closedOpacity = Double.parseDouble((String) page.locator("#tl-exposure .tl-cat-col").first()
+                .evaluate("e => getComputedStyle(e).fillOpacity"));
         page.locator(CATS + " button").first().click();
-        String open = (String) page.locator("#tl-exposure .tl-cat-row.is-open .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill");
-        assertNotEquals(closed, open, "Opening the category changes its colour");
-        assertEquals(closed, page.locator("#tl-exposure .tl-cat-row:not(.is-open) .tl-cat-col").first().evaluate("e => getComputedStyle(e).fill"),
-                "The others stay as they were");
+        Locator open = page.locator("#tl-exposure .tl-cat-row.is-open .tl-cat-col").first();
+        assertEquals(text, open.evaluate("e => getComputedStyle(e).fill"), "Still not blue");
+        assertTrue(Double.parseDouble((String) open.evaluate("e => getComputedStyle(e).fillOpacity")) < closedOpacity,
+                "Fainter while the category shows its components");
+        assertEquals(closedOpacity, Double.parseDouble((String) page.locator("#tl-exposure .tl-cat-row:not(.is-open) .tl-cat-col").first()
+                .evaluate("e => getComputedStyle(e).fillOpacity")), "The others stay as they were");
     }
 
     @Test
