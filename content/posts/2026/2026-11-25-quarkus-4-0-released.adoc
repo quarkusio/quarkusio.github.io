@@ -1,0 +1,593 @@
+---
+layout: post
+title: 'Quarkus 4.0, our new major release, is here!'
+date: 2026-11-25
+tags: release
+synopsis: 'It is our great pleasure to announce our new major release of Quarkus: Quarkus 4.0. Java 21, Vert.x 5, Netty 4.2, HTTP/3, Jackson 3, Hibernate ORM 8, Quarkus Data, and much more!'
+author: gsmet
+toc: true
+socialimage: /assets/images/posts/4.0.0/quarkus-4-social.webp
+---
+
+:imagesdir: /assets/images/posts/4.0.0
+:toclevels: 2
+ifdef::env-github,env-browser,env-vscode[:imagesdir: ../../../public/assets/images/posts/4.0.0]
+
+It is our great pleasure to announce the release of Quarkus 4.0, our new major version.
+
+Quarkus 4 was two years in the making, including planning and preparation,
+and it is the result of a lot of work from the whole community.
+During all this time, we kept releasing Quarkus 3 minors on our usual schedule.
+
+Quarkus 4 requires Java 21,
+moves the networking layer to Vert.x 5 and Netty 4.2,
+upgrades to CDI 5.0, Jakarta REST 4, Jakarta Persistence 4.0, and Jakarta Data 1.1,
+and moves to Jackson 3 and Hibernate ORM 8.
+It also introduces Quarkus Data, HTTP/3 support, an Observability dashboard in the Dev UI, and many other features.
+
+As expected for a new major version, this release comes with breaking changes.
+This announcement covers the new features and how to upgrade,
+so we recommend reading it before upgrading to Quarkus 4.
+
+== Highlights
+
+Java 21::
+Java 21 is the new minimum version. Java 25 is recommended.
+
+Vert.x 5 and Netty 4.2::
+New foundations for the networking layer.
+
+Jackson 3::
+New major version: almost everything changed except for the annotations.
+
+CDI 5.0::
+New `@Reserve`, `@Eager`, and `@AutoClose` annotations.
+
+Jakarta REST 4::
+Better `EntityPart` support, JSON Patch and JSON Merge Patch media types, and more.
+
+Hibernate ORM 8::
+New major version of Hibernate ORM, with Jakarta Persistence 4.0 and Jakarta Data 1.1.
+
+Quarkus Data::
+The next generation of data access in Quarkus, combining the simplicity of Panache with Jakarta Data repositories.
+
+HTTP/3::
+Opt-in support for HTTP/3 with the new `quarkus-http3` extension, for both the HTTP server and the REST Client.
+
+Native transports::
+Configure which native transport to use (epoll, kqueue, or io_uring), with epoll and io_uring now also available in native executables.
+
+Virtual threads::
+A single property to run your blocking REST endpoints on virtual threads.
+
+Observation API::
+`@Observed` or programmatic API to generate metrics and traces, working with both Micrometer and OpenTelemetry.
+
+Dev UI Observability dashboard::
+Built-in Observability section in the Dev UI, available in dev mode without any configuration.
+
+Security::
+Post-quantum key exchange, a new SPIFFE Client extension, and new OIDC client authentication options.
+
+AI coding agents::
+Quarkus Agent MCP is now the recommended way to use AI coding agents with Quarkus.
+
+== What's new?
+
+=== Foundations
+
+==== Java 21+
+
+As announced in link:/blog/java21/[our dedicated blog post], Java 21 is the minimum version for Quarkus 4 (https://github.com/quarkusio/quarkus/pull/55147[#55147]).
+Java 17 is not supported anymore.
+
+Java 25 is also supported, and it is the version we recommend.
+
+The container images are now based on UBI 10 by default (https://github.com/quarkusio/quarkus/pull/55117[#55117]).
+
+==== Vert.x 5 and Netty 4.2
+
+Quarkus 4 moves its networking and I/O layer to Eclipse Vert.x 5 and Netty 4.2.
+This move required a https://github.com/quarkusio/quarkus/issues/51959[coordinated migration of the ecosystem] that took nearly a year.
+
+Vert.x 5 comes with a lot of changes (see the https://vertx.io/blog/whats-new-in-vert-x-5/[Vert.x 5], https://vertx.io/blog/whats-new-in-vert-x-5-1/[Vert.x 5.1], and https://vertx.io/blog/whats-new-in-vert-x-5-2/[Vert.x 5.2] announcements), including:
+
+* `Future` is now the only asynchronous abstraction: callbacks have been removed
+* A fully modular codebase (Java modules)
+* HTTP/3 server and client support
+* QUIC server and client support
+* First-class gRPC server and client support with major enhancements:
+** gRPC Web, transcoding, deadlines, reflection, and health checks
+** JSON wire format
+* Production-ready `io_uring` transport, including Unix domain sockets and zero-copy file transfers
+* Reactive SQL driver enhancements
+* An improved HTTP proxy module
+* Unix domain sockets without native code
+* Graceful shutdown for both server and client
+* Post-quantum key exchange support
+
+On the Netty side, https://github.com/netty/netty/wiki/Netty-4.2-Migration-Guide[Netty 4.2] brings changes that align with Vert.x 5:
+
+* The adaptive memory allocator is enabled by default, replacing the pooled allocator
+* `io_uring` transport support is no longer incubating
+* QUIC and HTTP/3 support
+
+For Quarkus 4, this means:
+
+* HTTP/3 support (see <<http3>> below).
+* Reworked native transport support (see <<native-transports>> below).
+* gRPC support is now based on the Vert.x gRPC stack, which allowed us to remove the integration of the Netty-based https://github.com/grpc/grpc-java[grpc-java].
+* A reworked and simpler integration of the reactive SQL drivers.
+
+We also rewrote the https://smallrye.io/smallrye-mutiny-vertx-bindings/4.0.2/using-the-generator/[SmallRye Mutiny Vert.x bindings generator] so that it doesn't use `javac` annotation processing anymore.
+This allowed us to greatly improve test coverage and to clean up the code analysis and generation.
+
+*What it means for you, as a Quarkus user:*
+Quarkus hides most of these details,
+so your application code will mostly be impacted by the gRPC extension changes and the reworked reactive SQL driver APIs.
+However, you may encounter breaking changes if you use the Vert.x APIs and clients directly,
+either as plain Vert.x code or through the SmallRye Mutiny Vert.x bindings.
+
+*What it means for you, as a Quarkus extension developer:*
+
+* You may encounter breaking changes, as the Vert.x APIs changed between versions 4 and 5, and these changes also affect the SmallRye Mutiny Vert.x bindings.
+* Vert.x APIs no longer use callbacks, so you will need to migrate to `Future`-based constructs.
+* Vert.x 5 comes with a new, more fine-grained context-local storage API: https://vertx.io/docs/apidocs/io/vertx/core/spi/context/storage/ContextLocal.html[`ContextLocal`].
+You can still use the https://github.com/smallrye/smallrye-common/tree/main/vertx5-context[SmallRye Common abstractions], but we recommend moving to the new `ContextLocal` API when possible.
+
+==== Jackson 3
+
+Quarkus was upgraded to Jackson 3.1.
+
+This change is very likely to affect applications moving to Quarkus 4,
+as the Jackson API changed a lot and some defaults changed in subtle ways.
+Note that this affects both Quarkus applications and Quarkus extensions.
+
+See the https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0#jackson[Jackson section of the migration guide] for more details.
+
+==== CDI 5.0
+
+Quarkus was upgraded to CDI 5.0, which comes with several notable additions (https://github.com/quarkusio/quarkus/pull/55926[#55926]).
+
+The `@Reserve` annotation is the opposite of `@Alternative`:
+an alternative wins over a normal bean, and a normal bean wins over a reserve.
+It is mostly useful for framework authors who want to provide a default implementation that applications can override.
+Quarkus already had this concept with `@DefaultBean`, and it is now part of the specification.
+
+The `@Eager` annotation marks `@ApplicationScoped` (and `@Singleton`) beans as eagerly initialized:
+they are created during application startup, not on first use.
+Quarkus already had this concept with `@Startup`, and a limited form of it is now part of the specification.
+
+The `@AutoClose` annotation indicates that, if the bean implements `AutoCloseable`, its `close()` method is called when the bean instance is destroyed.
+This works for all beans: class-based, producer-based, and synthetic.
+
+CDI method invokers now recognize asynchronous methods,
+and if an invocation of an asynchronous method looks up a `@Dependent` bean, the looked-up instance is destroyed asynchronously.
+Quarkus already did this for the most common asynchronous types, but this behavior was implementation-defined.
+It is now required by the specification and supports more asynchronous types than before (in particular, Kotlin `suspend` functions).
+
+==== Jakarta REST 4
+
+link:/guides/rest[Quarkus REST] was updated to the https://jakarta.ee/specifications/restful-ws/4.0/[Jakarta REST 4 specification] (https://github.com/quarkusio/quarkus/pull/55515[#55515]), including the following changes:
+
+* Better support for `EntityPart`, on both the server and the client (https://github.com/quarkusio/quarkus/pull/55768[#55768])
+* New method `UriInfo.getMatchedResourceTemplate()`, which returns the full matched URI template
+* `containsHeaderString()` added to `ContainerRequestContext`, `ContainerResponseContext`, and `HttpHeaders`
+* New `MediaType` constants: `APPLICATION_JSON_PATCH_JSON` and `APPLICATION_MERGE_PATCH_JSON`
+
+==== SmallRye Config 4
+
+Quarkus 4 comes with SmallRye Config 4 (https://github.com/quarkusio/quarkus/pull/56475[#56475]).
+
+It also comes with several optimizations that reduce the time spent building the configuration at startup.
+
+The most visible change is that property expressions are now escaped with a backslash: `\${my.prop}` is a literal value, not an expression.
+See link:/guides/config-reference#escaping[the configuration reference guide] for more details.
+
+`@ConfigurationProperties` classes from the Spring Boot properties compatibility layer are now bound with the same mechanism as `@ConfigMapping`,
+so everything supported by `@ConfigMapping` (nested classes, `Optional`, `List`, `Map`...) is now supported there too.
+This comes with some breaking changes, described in the https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0#spring-boot-properties[migration guide].
+
+The configuration guides were also updated to document missing features and fix outdated content.
+
+=== Data
+
+==== Hibernate
+
+Quarkus 4.0 updates the Hibernate stack:
+Hibernate ORM 8.0, Hibernate Reactive 5.1, Hibernate Search 9.0, and Hibernate Validator 9.2 (https://github.com/quarkusio/quarkus/pull/55765[#55765]).
+
+[NOTE]
+====
+Hibernate ORM 8.0, Hibernate Reactive 5.1 and Search 9.0 are not final yet, as they are waiting for the final versions of the Jakarta Persistence 4.0 and Jakarta Data 1.1 specifications.
+Quarkus 4.0 comes with candidate releases of both, and we will upgrade to the final versions once they are released.
+====
+
+The Quarkus integration also comes with several new features and improvements:
+
+* Jakarta Persistence 4.0 standardizes features that were previously specific to Hibernate ORM,
+for instance `EntityAgent` for `StatelessSession`, and `find()`/`get()`/`getReference()`/`findMultiple()`/`getMultiple()` for entity retrieval by id (or natural id) with many options (fetching, locking...).
+* Native SQL mappings can be defined programmatically with the new `ResultSetMapping` API.
+* A new graph-based flushing engine handles complex entity relationships more reliably.
+* Entity access performance is better and more consistent thanks to a new lower layer, Hibernate Accessor (https://github.com/quarkusio/quarkus/pull/57235[#57235]).
+* Quarkus detects datasources and persistence units more accurately, with clearer errors when configuration is missing (https://github.com/quarkusio/quarkus/pull/55723[#55723]).
+* `import.sql` is replaced by `schema.sql`, if you want Hibernate to manage the schema, and `data.sql`, if you want Hibernate to initialize data, whether it manages the schema or not (https://github.com/quarkusio/quarkus/pull/58049[#58049]).
+`import.sql` is still supported in dev and test modes but is deprecated.
+See link:/guides/hibernate-orm#sql-init-scripts[SQL init scripts].
+* Hibernate Validator comes with new built-in constraints for passwords (`@PasswordPolicy`, `@PasswordStrength`, `@NotCompromised`), text, identifiers such as `@IBAN` and `@BIC`, and optional values (`@NullOrNotBlank`, `@NullOrNotEmpty`).
+See the https://in.relation.to/2026/11/20/hibernate-validator-9-2-0-Final/[Hibernate Validator 9.2 announcement] for the full list.
+
+See the Hibernate "what's new" documentation for all the details:
+
+* https://docs.hibernate.org/orm/8.0/whats-new/[Hibernate ORM 8.0]
+* https://in.relation.to/2026/10/30/hibernate-reactive-5_1_0_Beta1/[Hibernate Reactive 5.1]
+* https://docs.hibernate.org/search/9.0/whats-new/en-US/html_single/[Hibernate Search 9.0]
+* https://docs.hibernate.org/validator/9.2/whats-new/en-US/html_single/[Hibernate Validator 9.2]
+
+==== Quarkus Data
+
+Quarkus 4 introduces Quarkus Data, the next generation of data access in Quarkus.
+It combines the simplicity of Panache with Jakarta Data repositories and type-safe queries, and it supports both blocking and reactive applications.
+
+* Quarkus Data supports Jakarta Persistence 4.0 and Jakarta Data 1.1 through Hibernate ORM 8.0,
+with stateful and asynchronous repositories, `@Select` projections, `@NativeQuery` for native SQL queries, and richer query restrictions.
+See https://docs.hibernate.org/orm/8.0/whats-new/#data11[what's new].
+* `ManagedEntity`, `RecordEntity`, and their repository counterparts make it easier to choose between managed and stateless persistence.
+* A dedicated annotation processor, `quarkus-data-processor`, replaces `hibernate-processor` for Quarkus Data applications (https://github.com/quarkusio/quarkus/pull/57851[#57851]).
+
+To get started, have a look at the link:/guides/quarkus-data-hibernate-getting-started[getting started guide],
+the link:/guides/quarkus-data-hibernate[reference guide],
+and the link:/guides/quarkus-data-hibernate-sql[native SQL guide].
+
+=== Web and networking
+
+[[http3]]
+==== HTTP/3
+
+The new `quarkus-http3` extension enables HTTP/3 (on top of QUIC) for the Quarkus HTTP server (https://github.com/quarkusio/quarkus/pull/54886[#54886]).
+
+HTTP/3 is enabled as soon as you add the extension to your application,
+and it runs alongside the existing HTTPS server, on the same port.
+HTTP/1.1 and HTTP/2 responses advertise the availability of HTTP/3 through the `Alt-Svc` header.
+
+It is integrated with the TLS registry and generates self-signed certificates automatically in dev mode.
+It also works with the Quarkus REST Client and in native executables.
+
+Quarkus doesn't provide any QUIC-specific API, but you can https://github.com/vert-x3/vertx-examples/tree/5.x/core-examples#quic-examples[use the Vert.x APIs] if you need a specialized QUIC client or server.
+
+See the link:/guides/http3-reference[HTTP/3 reference guide] for more details.
+
+[[native-transports]]
+==== Native transports
+
+Native transport support has been reworked (https://github.com/quarkusio/quarkus/pull/55215[#55215]):
+
+* You can now configure whether native transport is used and which one (kqueue, epoll, or io_uring).
+These settings are checked at build time, and for io_uring, a runtime check also makes sure it can be used.
+* Both epoll and io_uring can now be used in native executables.
+
+The documentation has moved to a link:/guides/native-transport-reference[dedicated guide].
+
+==== Opt-in virtual threads for all blocking REST endpoints
+
+Annotating every endpoint with `@RunOnVirtualThread` is tedious when you want to use virtual threads everywhere.
+You can now set the following build-time property instead (https://github.com/quarkusio/quarkus/pull/56294[#56294]):
+
+[source,properties]
+----
+quarkus.rest.blocking.signatures.execution.mode=virtual-thread
+----
+
+Endpoints that would otherwise run on a worker thread then run on a virtual thread.
+Endpoints with a non-blocking signature still run on the event loop,
+and explicit `@Blocking`, `@NonBlocking`, and `@RunOnVirtualThread` annotations take precedence.
+
+See the link:/guides/rest-virtual-threads[virtual threads guide for Quarkus REST] for a comparison with annotating the `Application` class.
+
+==== REST Client
+
+The REST Client now supports:
+
+* Unix domain sockets (https://github.com/quarkusio/quarkus/pull/55356[#55356])
+* HTTP/3 (see <<http3>> above)
+* JFR events, in the same way we already supported them for REST endpoints (https://github.com/quarkusio/quarkus/pull/57391[#57391]).
+See the link:/guides/jfr[JFR guide].
+
+==== WebSockets Next
+
+WebSockets Next now limits the number of messages received but not yet processed for each connection and applies back-pressure when this limit is reached (https://github.com/quarkusio/quarkus/pull/56856[#56856]).
+This avoids buffering an unbounded number of messages in memory when a peer sends messages faster than the application can process them.
+
+The limit defaults to 256 and can be configured with `quarkus.websockets-next.server.max-pending-messages` and `quarkus.websockets-next.client.max-pending-messages`.
+
+=== Observability
+
+==== Micrometer Observation API support
+
+The new `quarkus-observation` extension lets you instrument your code once and get both metrics and traces (https://github.com/quarkusio/quarkus/pull/55145[#55145]).
+
+Using either the `@Observed` annotation or the `Observation` programmatic API,
+it generates metrics (timers) and traces, whether your backend uses Micrometer or OpenTelemetry.
+It works with:
+
+* `quarkus-opentelemetry`
+* `quarkus-micrometer-registry-prometheus`
+* `quarkus-opentelemetry` + `quarkus-micrometer-registry-prometheus`
+* `quarkus-micrometer-opentelemetry`
+
+Libraries that already use the Observation API will also start producing telemetry when the extension is added.
+
+For more details, see the link:/guides/telemetry-micrometer-observation[dedicated guide].
+
+==== Dev UI Observability dashboard
+
+The Dev UI now has an Observability section, available in dev mode without any configuration (https://github.com/quarkusio/quarkus/pull/56377[#56377]).
+
+As soon as the application uses an observability extension such as `quarkus-opentelemetry`, `quarkus-micrometer-registry-prometheus`, or `quarkus-micrometer-opentelemetry`,
+you can see telemetry data from the sources you select:
+
+image::dev-ui-observability-dashboard.png[Dev UI Observability dashboard showing OpenTelemetry traces and metrics]
+
+You can look at the details of a trace:
+
+image::dev-ui-observability-trace.png[Details of a trace in the Dev UI Observability dashboard]
+
+And at the details of the selected metrics:
+
+image::dev-ui-observability-metrics.png[Details of a metric in the Dev UI Observability dashboard]
+
+Data can be exported in CSV format.
+We plan to display more signals in the future,
+and extensions will be able to display their own telemetry on this dashboard through an SPI.
+
+==== OpenTelemetry
+
+* OpenTelemetry metrics and logs are now stable and enabled by default (https://github.com/quarkusio/quarkus/pull/55838[#55838]).
+Note that automatic metrics instrumentation is still implemented with Micrometer.
+* The default OpenTelemetry OTLP protocol is now `http/protobuf` and the default port changed from 4317 to 4318,
+to align Quarkus with the OpenTelemetry specification.
+* By default, only 10% of traces are now sampled, instead of 100% previously, which is a more reasonable value for production systems:
+** `quarkus.otel.traces.sampler` now defaults to `parentbased_traceidratio` (it was `parentbased_always_on`),
+** `quarkus.otel.traces.sampler.arg` now defaults to `0.1d` (it was `1.0d`).
+* Some metric names changed due to updates in the OpenTelemetry semantic conventions.
+The list is available in the https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0#opentelemetry-semantic-convention-updates[migration guide].
+
+==== Micrometer
+
+The `quarkus-micrometer-registry-prometheus` extension now uses the Prometheus client v1.x and dropped the simple client (https://github.com/quarkusio/quarkus/pull/55433[#55433]).
+All the changes are explained in the https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0#use-prometheus-client-v1x-on-micrometer[migration guide].
+
+OpenTelemetry metrics are now enabled by default when `quarkus-opentelemetry` or `quarkus-micrometer-opentelemetry` is a dependency of the project.
+If another Micrometer registry is also present, for instance `quarkus-micrometer-registry-prometheus`, a warning is logged at build time,
+as having metrics produced by both systems is usually not what you want.
+
+Micrometer is still the recommended metrics instrumentation framework, even if OpenTelemetry metrics are now enabled by default.
+All automatic metrics instrumentation is still implemented with Micrometer.
+
+==== Signals integrated with OpenTelemetry, Micrometer, and Security
+
+The link:/guides/signals[Quarkus Signals extension], used for loosely coupled, asynchronous communication between application components,
+now integrates with OpenTelemetry, Micrometer, and Security.
+These integrations are enabled by default when the corresponding extension is present:
+
+OpenTelemetry tracing::
+The trace context is propagated from the emission to the receiver invocation.
+Each receiver gets its own `receive <signal type>` span, with attributes for the signal type, emission type, response type, qualifiers, and receiver identity.
+It can be disabled with `quarkus.signals.telemetry.traces.enabled`.
+
+Micrometer metrics::
+Two new counters, `signals.emissions` (per emission) and `signals.receiver.executions` (per completed receiver call),
+tagged with the signal type, emission type, response type, and error status.
+Receiver identity and qualifiers are not included to keep the cardinality under control.
+It can be disabled with `quarkus.signals.telemetry.metrics.enabled`.
+
+Security::
+The `SecurityIdentity` of the emitter is now propagated to each receiver,
+so receivers can inject `SecurityIdentity` and use `@RolesAllowed` and the other security annotations as usual.
+The identity must have been resolved beforehand, which is the case with proactive authentication or if it was accessed earlier in the request.
+
+=== Security
+
+==== Post-quantum key exchange
+
+Post-quantum key exchange is now supported through the TLS registry and is available for the HTTP server, the HTTP client, the REST Client, and the mailer (https://github.com/quarkusio/quarkus/pull/55624[#55624]).
+
+You can configure the key exchange groups with `quarkus.tls.key-exchange-groups`
+and how strictly post-quantum key exchange is enforced with `quarkus.tls.pqc-enforcement-policy` (`strict`, `client-negotiated`, or `relaxed`).
+A new `quarkus.tls.ssl-engine` property lets you choose between the OpenSSL and the JDK SSL engines.
+
+See the link:/guides/tls-registry-reference[TLS registry reference guide] for more details.
+
+==== SPIFFE Client extension
+
+The new experimental SPIFFE Client extension provides SPIFFE workload identities to applications running in zero-trust environments (https://github.com/quarkusio/quarkus/pull/55180[#55180]).
+
+It retrieves JWT and X.509 SPIFFE SVIDs directly from the local SPIRE Agent through the SPIFFE Workload API,
+so you don't need a sidecar writing them to a mounted file anymore.
+
+The OIDC and OIDC Client extensions can use JWT-SVIDs as client assertions to authenticate to OpenID Connect providers,
+and the tokens are refreshed automatically before they expire.
+X.509-SVIDs can be used to secure mutual TLS connections, although this currently requires manual TLS configuration.
+
+We will keep improving this extension, starting with SPIFFE-aware certificate validation in the TLS registry.
+Feedback is welcome while the API is still experimental.
+
+==== OIDC
+
+The OIDC extensions come with two new ways for clients to authenticate to OpenID Connect providers:
+
+* https://www.ietf.org/archive/id/draft-ietf-oauth-attestation-based-client-auth-10.html[OAuth 2.0 Attestation-Based Client Authentication] (https://github.com/quarkusio/quarkus/pull/54900[#54900]):
+the client authenticates without a secret, using an attestation JWT issued by a client attester and a proof-of-possession token.
+The attester can be a remote service or Quarkus itself (self-attestation).
+This support is experimental and covers the key parts of the specification.
+* OAuth Client ID Metadata Document (https://github.com/quarkusio/quarkus/pull/55736[#55736]):
+when the client ID is an HTTPS URL, Quarkus exposes a Client ID Metadata Document endpoint from which the OpenID Connect provider gets the client metadata.
+See the link:/guides/security-oidc-client-id-metadata-document[dedicated guide].
+
+=== Developer experience
+
+==== AI coding agents
+
+Quarkus already comes with a link:/guides/dev-mcp[Dev MCP server] that exposes tools from your application running in dev mode:
+endpoints, configuration, Dev Services, continuous testing, and more.
+
+On top of it, https://github.com/quarkusio/quarkus-agent-mcp[Quarkus Agent MCP] is now the recommended way to use AI coding agents with Quarkus.
+It is a standalone MCP server that runs `quarkus dev` for you, so it is still there when your application fails to start,
+and it lets agents:
+
+* create new Quarkus applications,
+* start, stop, and restart the application, and read its logs,
+* call all the Dev MCP tools of the running application,
+* search the Quarkus documentation for the version used by the project,
+* load coding guidelines, called skills, for the extensions used by the project.
+
+Extensions can provide their own skills by adding a `quarkus-skill.md` file to their deployment module.
+
+Quarkus Agent MCP was introduced during the Quarkus 3 cycle and has been improved a lot since then.
+See the link:/blog/introducing-agent-mcp/[introduction blog post] and the link:/guides/agent-mcp[Agent MCP guide] to get started.
+
+=== Other
+
+==== Quarkus JMS
+
+The https://github.com/quarkiverse/quarkus-jms[Quarkus JMS extension], now part of the Quarkus Platform, provides typed destinations to send and receive JMS messages,
+annotation-driven message listeners, and support for XA transactions.
+
+==== Kubernetes Client 8
+
+The Kubernetes Client was upgraded to version 8.0 and Dekorate to version 5.0, both based on Jackson 3 (https://github.com/quarkusio/quarkus/pull/56982[#56982]).
+
+As Jackson 3 mappers are immutable, `KubernetesClientObjectMapperCustomizer` has been replaced by `KubernetesClientJsonMapperBuilderCustomizer`, which customizes a `JsonMapper.Builder`.
+
+==== Cache
+
+`@CacheResult` now supports Kotlin `suspend` functions (https://github.com/quarkusio/quarkus/pull/55542[#55542]).
+The value is computed and retrieved without blocking, so it can be used on the event loop.
+
+==== AWT on macOS
+
+The `quarkus-awt` extension can now be used on macOS (https://github.com/quarkusio/quarkus/pull/56979[#56979]).
+
+== Ecosystem readiness
+
+=== Quarkus Platform
+
+The following Platform members are available for Quarkus 4.0:
+
+* Quarkus Amazon Services 4.0
+* Quarkus Cassandra Client 1.5
+* Quarkus Config Consul 3.0
+* Quarkus CXF 4.0
+* Debezium 3.7
+* Hazelcast Client 4.1
+* Quarkus JMS 0.4, which joins the Platform with this release
+* Quarkus LangChain4j 2.0
+* Quarkus MCP Server 2.0
+* Quarkus Qpid JMS 2.14
+* Quarkus Qute Web 3.4
+* Quarkus Vault 5.0
+
+Not all Platform members are available for Quarkus 4.0 yet.
+Camel Quarkus, Quarkus Flow, Quarkus Google Cloud Services, Quarkus Operator SDK, Blaze-Persistence, and Quarkus HTTP Problem are still being migrated
+and will be added back to the Platform soon.
+
+=== Quarkiverse
+
+Quarkus is not only the https://github.com/quarkusio/quarkus[core repository] and the Quarkus Platform:
+there are also all the extensions hosted in the https://github.com/quarkiverse[Quarkiverse Hub] and elsewhere,
+maintained by many contributors and organizations.
+
+The Quarkiverse extensions are currently being released for Quarkus 4.0.
+
+If an extension you absolutely need is not available yet, don't hesitate to open an issue in its repository
+and ping https://github.com/gsmet[@gsmet] in it so that we can prioritize the work accordingly.
+
+[[upgrading]]
+== Upgrading to Quarkus 4.0
+
+As usual, we wrote a https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0[comprehensive migration guide] to help you update to Quarkus 4.0.
+It is longer than the ones for our usual minor releases, so make sure you read it carefully.
+
+The changes most likely to affect you are:
+
+* Java 21 being the new minimum version,
+* the move to Vert.x 5 if you use the Vert.x APIs directly or the reactive SQL clients,
+* the gRPC extension changes, now that it is based on the Vert.x gRPC stack,
+* the move to Jackson 3,
+* the new major versions of Hibernate ORM, Hibernate Reactive, and Hibernate Search,
+* the new OpenTelemetry defaults.
+
+`quarkus update` handles a lot of the migration for you: the items marked with a check mark in the migration guide are handled automatically.
+
+If you are using the Quarkus CLI (which we recommend), upgrade it to the latest version and run:
+
+[source,bash]
+----
+quarkus update --stream=4.0
+----
+
+If you are not using the CLI and are using Maven, use the Quarkus Maven plugin to update your projects:
+
+[source,bash]
+----
+./mvnw io.quarkus.platform:quarkus-maven-plugin:4.0.1:update -N -Dstream=4.0
+----
+
+If you are not using the CLI and are using Gradle, use the Quarkus Gradle plugin:
+
+[source,bash]
+----
+./gradlew -PquarkusPluginVersion=4.0.1 quarkusUpdate --stream=4.0
+----
+
+For more information, see the link:/guides/update-quarkus[dedicated guide].
+
+=== For extension developers
+
+If you maintain a Quarkus extension, the https://github.com/quarkusio/quarkus/wiki/Migration-Guide-4.0#for-extension-and-quarkus-developers[migration guide] has a dedicated section for extension developers.
+
+If you have any questions or need help with the migration, reach out to us on https://quarkusio.zulipchat.com/[Zulip].
+
+== I use Quarkus 3.x, do I need to upgrade right away?
+
+We know that upgrading to Quarkus 4.0 will require some work and testing on your side.
+
+Both Quarkus 3.40 and Quarkus 3.33 are LTS releases and will continue to receive bugfixes and CVE fixes:
+
+* Quarkus 3.40 LTS until the end of September 2027,
+* Quarkus 3.33 LTS until the end of March 2027.
+
+This gives you time to plan your upgrade to Quarkus 4.
+You can find the support dates of all the Quarkus versions on https://endoflife.date/quarkus-framework[endoflife.date].
+
+== Full changelog
+
+You can get the full changelog of Quarkus 4.0 on GitHub:
+
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.0.Beta1[4.0.0.Beta1]
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.0.Beta2[4.0.0.Beta2]
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.0.Beta3[4.0.0.Beta3]
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.0.CR1[4.0.0.CR1]
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.0[4.0.0]
+* https://github.com/quarkusio/quarkus/releases/tag/4.0.1[4.0.1]
+
+== Contributors
+
+The Quarkus community is growing and now has https://github.com/quarkusio/quarkus/graphs/contributors[1295 contributors].
+Many, many thanks to each and every one of them.
+
+In particular for the 4.0 release, thanks to aarti-1108, Abdulla Mohammed Ali, Adam Kiss, adarshomrey, Ahmed El amraouiyine, aldettinger, Ales Justin, Alex Gercog, Alex Martel, Alexander Haslam, Alexander Kerner, Alexander Schwartz, Alexandre Dutra, Alexey Loubyansky, Amal Sebastian, amirdeljouyi, Andrea Boriero, Andreas Fertsch-Röver, Andreas Gebhardt, Andreas Maechler, Andy Damevin, Arnab Nandy, Arthur Navarro, Ashish Thakur, Ashok Ram, Asish Kumar, Aswin, Aurea Munoz, Bauke Scholtz, Ben Dennerley, Ben Rose, bethibande, Bill Burke, Bruno Baptista, Carles Arnal, Carlos Rueda, cfitzw, Chakravarthy Batna, Chareonwit Kunna, Charles Moulliard, Chintu Kumar, Chris Laprun, Christian Munier, Cihan Aksakal, Clement Escoffier, Clément Guillot, cnbehr, Cristiano Nicolai, Crustack, Dario Götze, David Kjerrumgaard, David M. Lloyd, Davide D'Alto, david-streamlio, dhairya05, diasonti, Dmytro Shubchynskyi, Domenico Briganti, elgamal-ahmed, Eric Deandrea, Finn Petersen, Foivos Zakkak, Fouad Almalki, Francesco Nigro, Frody, Gaelle Fournier, Geert Schuring, George Gastaldi, Georgios Andrianakis, Guillaume Smet, HerrDerb, hiteshvijayhv, Holly Cummins, Huzaifa Iftikhar, Ignacio Vidal, Inaki Villar, Inf1mum, Jakub Jedlicka, Jakub Sobczynski, James Netherton, James R. Perkins, Jan Martiska, Jan Piaskowy, Jan Schatteman, Jeroen Benckhuijsen, jnbdz, JozefDropčo, Julien Ponge, Jure Grom, Jérôme Prinet, Kamil Krzywanski, Karm Michal Babacek, Katia Aresti, Keshav Deshpande, Ladislav Thon, Lasteris, lazerg, Lazizbek Ergashev, ldauvilaire, loiclefevre, lu1tr0n, Luca Molteni, Luca Tiozzo, Lucien Reboul, Luiz Guilherme Paro, Lukas Lowinger, luneo7, manuel-umu, Marco Belladelli, Marco Sappé Griot, Marcono1234, Marek Skacelik, mariofusco, marko-bekhta, Martin Bekier, Martin Kouba, Martin Panzer, Matej Novotny, Matheus André, Matheus Cruz, Matheus Leal, Matheus Oliveira, Matthias Keckl, Mauro de Palma, Max Freedom Pollard, MdTanwer, Meet Raval, melloware, Michael Edgar, Michal Maléř, Michal Vavřík, Mohammedthowfiq, Mora, Moritz Heine, mrchatam, MrRaveen, Ozan Gunalp, Ozzy Osborne, Patrick Schaub, Paulo Casaes, Payal Lenka, Peter Palaga, Peter Zaoral, Phillip Krüger, PrabinDevkota, Prasanna Sankaran, PulkitBxtra, Robert Stupp, Robert Toyonaga, Roberto Cortez, Robin De Mol, Rolfe Dlugy-Hegwer, Rostislav Svoboda, Ruslan Ibrahimau, Sakshi Chitnis, Samuel Ferreira, Sanne Grinovero, Sarfaraz Ahamad, Saulius Jesevicius, Sebastian Lavin Rady, Sergey Beryozkin, Sergey Styshak, Severin Gehwolf, Sheila Jones, Simon Wick, Simran Khanna, Srivathsav01, Steve Hawkins, Ståle Pedersen, Stéphane Épardaud, sweettypdevassy, Tanuj Kapoor, Teymur Babayev, Thanaphoom Babparn, Thiago Gonzaga, Thomas Segismont, timHa91, Timur Rakhmatullin, Tiziano Basile, Tom Fenwick, Vaibhav Srivastava, Vasil Chomakov, Vinicius Ribeiro, Vitaliy Baschlykoff, Vitor Buitoni, Vlad Mihalcea, Vladimir Danilov, Václav Muzikář, Willem Jan Glerum, xstefank, Yash Agrawal, Yoann Rodière, yordantsintsov, yuhaibo, Zahanturel, zsewasdsdsd, and 이창민.
+
+We also want to thank all the extension maintainers from the Quarkiverse and beyond who worked hard on getting the extension ecosystem ready for Quarkus 4.0.
+
+== Come Join Us
+
+We value your feedback a lot, so please report bugs and ask for improvements... Let's build something great together!
+
+If you are a Quarkus user or just curious, don't be shy and join our welcoming community:
+
+ * Provide feedback on https://github.com/quarkusio/quarkus/issues[GitHub].
+ * Craft some code and https://github.com/quarkusio/quarkus/pulls[push a PR].
+ * Discuss with us on https://quarkusio.zulipchat.com/[Zulip] and on the https://groups.google.com/d/forum/quarkus-dev[mailing list].
+ * Ask your questions on https://stackoverflow.com/questions/tagged/quarkus[Stack Overflow].

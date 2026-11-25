@@ -257,9 +257,15 @@ Now you need to connect your local agent to the remote host, using the `remote-d
 ./mvnw quarkus:remote-dev -Dquarkus.live-reload.url=http://my-remote-host:8080
 ----
 
+With the Quarkus CLI, run `quarkus dev --remote -Dquarkus.live-reload.url=http://my-remote-host:8080`.
+
 Now every time you refresh the browser you should see any changes you have made locally immediately visible in the remote
 app. This is done via an HTTP based long polling transport, that will synchronize your local workspace and the remote
 application via HTTP calls.
+
+Remote development HTTP requests are limited by `quarkus.http.limits.max-body-size`.
+Set this value high enough for the largest file that must be synchronized.
+If the general HTTP body limit is disabled, remote development still applies a 10 MiB limit.
 
 If you do not want to use the HTTP feature then you can simply run the `remote-dev` command without specifying the URL.
 In this mode the command will continuously rebuild the local application, so you can use an external tool such as odo or
@@ -340,6 +346,17 @@ You can also additionally set the `watchedFiles` parameter to the set of files t
 :dev-additional-parameters: -DwatchedFiles=~/.m2/repository/io/quarkus/quarkus-smallrye-health/999-SNAPSHOT/quarkus-smallrye-health-999-SNAPSHOT.jar
 include::{includes}/devtools/dev-parameters.adoc[]
 :!dev-additional-parameters:
+
+=== Running with an unsupported Maven version
+
+`quarkus:dev` and `quarkus:create` fail if the Maven version is not supported by Quarkus.
+If you cannot choose the Maven version, for example because it is provided by your environment,
+you can skip this check with the `skipMavenVersionCheck` property, at your own risk:
+
+[source,bash]
+----
+mvn quarkus:dev -DskipMavenVersionCheck
+----
 
 == Debugging
 
@@ -524,17 +541,17 @@ Note that in this case the build itself runs in a Docker container too, so you d
 
 [TIP]
 ====
-By default, the native executable will be generated using the `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:{mandrel-flavor}` Docker image.
+By default, the native executable will be generated using the `quay.io/quarkus/ubi10-quarkus-mandrel-builder-image:{mandrel-flavor}` Docker image.
 
 If you want to build a native executable with a different Docker image (for instance to use a different GraalVM version),
 use the `-Dquarkus.native.builder-image=<image name>` build argument.
 
-The list of the available Docker images can be found on https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags[quay.io].
+The list of the available Docker images can be found on https://quay.io/repository/quarkus/ubi10-quarkus-mandrel-builder-image?tab=tags[quay.io].
 Be aware that a given Quarkus version might not be compatible with all the images available.
 
-Starting from Quarkus 3.19, the _builder_ image is based on UBI 9, and thus requires an UBI 9 base image if you want to run the native executable in a container.
-You can switch back to UBI 8, by setting the `quarkus.native.builder-image` property to one of the available image from the https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags[quay.io repository].
-For example ``quay.io/quarkus/ubi-quarkus-mandrel-builder-image:{mandrel-flavor}` is using UBI 8, and so the resulting native executable will be compatible with UBI 8 base images.
+The _builder_ image is based on UBI 10, and thus requires an UBI 10 base image if you want to run the native executable in a container.
+You can switch to an older UBI version by setting the `quarkus.native.builder-image` property to one of the available images from the https://quay.io/repository/quarkus/ubi9-quarkus-mandrel-builder-image?tab=tags[quay.io repository (UBI 9)] or the https://quay.io/repository/quarkus/ubi-quarkus-mandrel-builder-image?tab=tags[quay.io repository (UBI 8)].
+For example `quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:{mandrel-flavor}` is using UBI 9, and so the resulting native executable will be compatible with UBI 9 base images.
 
 ====
 
@@ -684,6 +701,11 @@ artifact classifier for the Uber-Jar artifact. There are two ways to attach an U
 [[multi-module-maven]]
 === Working with multi-module projects
 
+A multi-module Maven project is typically organized as a parent (aggregator) module with several child modules, for example one or more shared library modules and one or more Quarkus application modules that depend on them.
+
+[[multi-module-bean-discovery]]
+==== Making CDI beans discoverable across modules
+
 By default, Quarkus will not discover CDI beans inside another module.
 
 The best way to enable CDI bean discovery for a module in a multi-module project would be to include the `jandex-maven-plugin`,
@@ -711,6 +733,38 @@ unless it is the main application module already configured with the quarkus-mav
 ----
 
 More information on this topic can be found on the xref:cdi-reference.adoc#bean_discovery[Bean Discovery] section of the CDI guide.
+
+[[multi-module-dev-mode]]
+==== Running dev mode in a multi-module project
+
+<<dev-mode,Development mode>> is started on a single Quarkus application module, not on the aggregator.
+Before starting it, build the whole project once so that the other modules the application depends on are compiled:
+
+[source,bash]
+----
+./mvnw install -DskipTests
+----
+
+Then start dev mode on the application module only, selecting it from the root of the project with `-pl`:
+
+[source,bash]
+----
+./mvnw quarkus:dev -pl :my-app
+----
+
+Alternatively, run it from within the module directory:
+
+[source,bash]
+----
+cd my-app
+../mvnw quarkus:dev
+----
+
+Local modules that the application depends on are treated as hot-reloadable dependencies: when you edit their sources and a change is detected, Quarkus recompiles them and redeploys the application, exactly as it does for the application's own sources.
+This is why the project must be built at least once first; otherwise dev mode fails with a `Hot reloadable dependency ... has not been compiled yet` error.
+
+Dev mode runs a single Quarkus application at a time.
+If your project contains several Quarkus application modules, start each one in its own dev mode session, in a separate terminal, and if needed on a different port using `-Dquarkus.http.port`.
 
 [[maven-test-configuration]]
 === Maven test plugin configuration

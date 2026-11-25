@@ -25,6 +25,8 @@ IMPORTANT: Micrometer is the recommended approach to metrics for Quarkus.
 NOTE: By default, the metrics are exposed on the main HTTP server.
 If you would like to surface metrics from a separate management port, see the <<management-interface,Managed interface>> section.
 
+NOTE: `quarkus-micrometer` now uses the Prometheus client v1.x. For help migrating from the old client, please check the https://github.com/micrometer-metrics/micrometer/wiki/1.13-Migration-Guide[Prometheus Java client 0.x to 1.x upgrade]  from Micrometer.
+
 == Micrometer and monitoring system extensions
 
 Quarkus Micrometer extensions are structured in the same way as the Micrometer project.
@@ -34,7 +36,7 @@ Other Quarkus and Quarkiverse extensions use the Quarkus Micrometer extension to
 Quarkus extensions:
 
 - micrometer
-- micrometer-registry-prometheus
+- micrometer-registry-prometheus (Prometheus client v1.x)
 - micrometer-opentelemetry
 
 link:https://github.com/quarkiverse/quarkus-micrometer-registry[Quarkiverse extensions] (may be incomplete):
@@ -201,7 +203,7 @@ Micrometer applies naming conventions to convert registered meter names to match
 
 Given the following declaration of a timer: `registry.timer("http.server.requests")`, applied naming conventions will emit the following metrics for different monitoring systems:
 
-- Prometheus: `http_server_requests_duration_seconds`
+- Prometheus: `http_server_requests_seconds`
 - Atlas: `httpServerRequests`
 - Graphite: `http.server.requests`
 - InfluxDB: `http_server_requests`
@@ -582,13 +584,51 @@ These Netty metrics help evaluate how much room is needed.
 ====
 
 ==== Pooling Mechanism
-Netty uses **PooledByteBufAllocator** to reduce memory allocation overhead and fragmentation. It is based on a **jemalloc-style arena system** (see https://github.com/jemalloc/jemalloc[jemalloc/jemalloc]), which includes:
+Since Netty 4.2, the default allocator is **AdaptiveByteBufAllocator**, which uses an adaptive pooling strategy with dynamically sized chunks (128 KiB to 8 MiB). The pooled allocator metrics described below come from Netty's **PooledByteBufAllocator**, which is only active when explicitly configured (e.g., via `io.netty.allocator.type=pooled`). When pooled allocation is used, it is based on a **jemalloc-style arena system** (see https://github.com/jemalloc/jemalloc[jemalloc/jemalloc]), which includes:
 
 - **Arenas**: Large memory blocks that manage allocations.
-- **Chunks**: Memory segments within arenas (typically 16MB in size).
-- **Pages**: Fixed-size portions of a chunk (usually 8KB).
+- **Chunks**: Memory segments within arenas (64 KiB with Quarkus's default `maxOrder=3`).
+- **Pages**: Fixed-size portions of a chunk (8 KiB).
 - **Subpages**: Smaller allocations within a page for tiny objects.
 - **Thread-local Caches**: Per-thread cache for frequently used small buffers, reducing contention.
+
+==== Tracked Allocators
+Each allocator is reported once, identified by the `name` tag.
+The `allocator_type` tag reports its implementation class (e.g. `AdaptiveByteBufAllocator`), which depends on the `io.netty.allocator.type` system property.
+
+When Vert.x is present, which is the case for most Quarkus applications:
+
+|===
+| Name | Allocator
+
+| `vertx-pooled`
+| The allocator Vert.x uses for pooled buffers. This is Netty's default allocator (`ByteBufAllocator.DEFAULT`): an `AdaptiveByteBufAllocator`, or a `PooledByteBufAllocator` with `io.netty.allocator.type=pooled`. With `io.netty.allocator.type=unpooled`, Vert.x uses a dedicated `AdaptiveByteBufAllocator` instead.
+
+| `vertx-unpooled`
+| Netty's shared `UnpooledByteBufAllocator` (`UnpooledByteBufAllocator.DEFAULT`), also used by Vert.x for direct buffers. With `io.netty.allocator.type=unpooled`, this is also Netty's default allocator.
+|===
+
+When Vert.x is not present:
+
+|===
+| Name | Allocator
+
+| `default`
+| Netty's default allocator (`ByteBufAllocator.DEFAULT`): an `AdaptiveByteBufAllocator`, unless `io.netty.allocator.type` selects another one.
+
+| `unpooled`
+| Netty's shared `UnpooledByteBufAllocator` (`UnpooledByteBufAllocator.DEFAULT`). Not reported separately with `io.netty.allocator.type=unpooled`, as it is then the `default` allocator.
+|===
+
+In both cases, the allocator used by the REST Client for multipart form uploads is reported as `quarkus-multipart-form-upload`.
+
+Allocators that libraries create for their own use are not tracked, nor are the heap buffers created by Vert.x (e.g. with `Buffer.buffer()`), which are regular JVM heap objects.
+
+[NOTE]
+====
+Previous versions also reported allocators named `pooled` and `unpooled` when Vert.x was present.
+They were removed, as `pooled` tracked `PooledByteBufAllocator.DEFAULT`, which is not used by default since Netty 4.2, and `unpooled` tracked the same allocator as `vertx-unpooled`, so its memory was reported twice.
+====
 
 ==== Metrics for Netty Memory Management
 The Micrometer metrics report key metrics from Netty's allocator, helping monitor memory usage, pinned memory, pooling efficiency, and cache behavior.
@@ -606,7 +646,12 @@ These metrics track the current memory usage by Netty allocators (in bytes)
 
 |===
 
+For pooling allocators (`AdaptiveByteBufAllocator` and `PooledByteBufAllocator`), this is the memory reserved in chunks, including the free space within them, rather than the size of the buffers currently in use: it grows in chunk-sized steps, and only decreases when a whole chunk is freed, not when individual buffers are released.
+For `UnpooledByteBufAllocator`, this is the size of the buffers currently allocated.
+
 ===== **2. Pooled  Allocator - Pinned Memory Metrics**
+This metric and the following ones are only reported for allocators of type `PooledByteBufAllocator`, so with Netty's defaults they are absent unless `io.netty.allocator.type=pooled` is set.
+
 Pinned memory refers to buffers that cannot be recycled due to active references, preventing reuse by the allocator. A _high_ number may indicate some kind of leak (as reference are not released).
 
 |===
@@ -704,6 +749,7 @@ java -Dio.netty.leakDetection.level=advanced ...
 * https://quarkus.io/guides/hibernate-orm[`quarkus-hibernate-orm`]
 * https://quarkus.io/extensions/io.quarkus/quarkus-jaxrs-client-reactive[`quarkus-jaxrs-client-reactive`]
 * https://quarkus.io/guides/deploying-to-kubernetes[`quarkus-kubernetes`]
+* https://quarkus.io/guides/load-shedding-reference[`quarkus-load-shedding`]
 * https://quarkus.io/guides/logging[`jboss-logging`] (logging API in Quarkus)
 * https://quarkus.io/guides/mongodb[`quarkus-mongodb-client`]
 * https://quarkus.io/extensions/io.quarkus/quarkus-netty[`quarkus-netty`]
@@ -712,6 +758,7 @@ java -Dio.netty.leakDetection.level=advanced ...
 * https://quarkus.io/guides/resteasy[`quarkus-resteasy-jackson`]
 * https://quarkus.io/guides/resteasy-client[`quarkus-resteasy-client`]
 * https://quarkus.io/guides/scheduler[`quarkus-scheduler`]
+* https://quarkus.io/guides/signals[`quarkus-signals`]
 * https://quarkus.io/guides/smallrye-graphql[`quarkus-smallrye-graphql`]
 * https://quarkus.io/extensions/io.quarkus/quarkus-messaging[`quarkus-messaging`]
 ** AMQP 1.0
@@ -771,7 +818,6 @@ public class CustomConfiguration {
                 if(id.getName().startsWith("myservice")) {
                     return DistributionStatisticConfig.builder()
                         .percentiles(0.5, 0.95)     // median and 95th percentile, not aggregable
-                        .percentilesHistogram(true) // histogram buckets (e.g. prometheus histogram_quantile)
                         .build()
                         .merge(config);
                 }
@@ -892,6 +938,61 @@ With such a configuration, the JSON metrics will be available from `http://0.0.0
 The Prometheus metrics will be available from `http://0.0.0.0:9000/q/metrics/prometheus`.
 
 Refer to the xref:./management-interface-reference.adoc[management interface reference] for more information.
+
+[[dev-ui-metrics]]
+== Metrics in the Dev UI
+
+In dev mode, when a metrics backend is present, your application metrics become
+available as cards on the Dev UI *Observability* dashboard. Each card charts one metric
+name and carries a reading of its latest value in the header.
+Pick which metrics to add from the grouped catalog the first time you open the dashboard,
+and change your mind later with *Edit dashboard*; only the metrics on the dashboard are
+captured, to save resources. Drag a card by its header to arrange the dashboard in
+whatever order suits you, and use the expand icon in a card's header to give that one
+metric the whole dashboard area when a chart needs more room than a tile allows; press
+*Escape* to go back. A maximized metric card also offers a *Data* tab, listing the
+captured samples as they were recorded, before the card derives a rate or a mean from
+them and before a histogram's buckets are merged to fit the chart. Your choice of cards
+and their order is kept in browser local storage and is shared by every application you
+run.
+
+How a card is drawn depends on what the meter measures:
+
+Counters:: A per-second rate, because the raw value only ever climbs. One line per tag
+combination.
+Gauges:: A dial showing the current reading, with the history beside it. Where the dial's full
+scale comes from is stated in the caption: a gauge that is already a ratio reads out of 100%; one
+whose ceiling is published as a separate meter, such as `jvm.memory.used` against `jvm.memory.max`,
+is scaled to that meter, which the dashboard captures alongside it; anything else is scaled to the
+highest reading in the retention window. A gauge split across several tag combinations keeps a
+plain line chart, since a dial can only show one reading. A gauge that moves in whole steps, such
+as a long task timer's active task count, is drawn as a staircase rather than a sloped line.
+Timers and distribution summaries:: The mean and the maximum per sample interval, derived
+from the recorded total and count rather than from the recording count alone. Durations
+are labeled in the unit that fits (µs, ms, s, min) and sizes in binary units (KiB, MiB).
+Histograms:: A bar per bucket, showing how the recordings were spread. Buckets accumulate
+from the moment capture starts, empty buckets at either end are dropped, and neighboring
+buckets are merged when a meter publishes more of them than a card can label. Published
+percentiles, if the meter has any, are summarized above the bars.
+
+The charts are available automatically whenever a metrics backend and the Dev UI are
+present; they are dev-mode only and add nothing to production or native builds. You can
+tune the capture with:
+
+[source,properties]
+----
+quarkus.dev-ui.observability.metrics.sample-interval=5s <1>
+quarkus.dev-ui.observability.metrics.retention=10m      <2>
+quarkus.dev-ui.observability.metrics.max-points-per-series=720 <3>
+----
+<1> How often meters are sampled.
+<2> Rolling time window kept per series.
+<3> Hard cap on points retained per series.
+
+These charts work with the Prometheus registry, the Micrometer OpenTelemetry bridge,
+and native OpenTelemetry metrics. When the bridge forwards Micrometer meters into the
+OpenTelemetry SDK, the metrics are captured once (from OpenTelemetry), avoiding
+duplicates.
 
 == Configuration Reference
 
