@@ -5,14 +5,13 @@ import java.util.Map;
 
 /**
  * One horizontal row. Marks that overlap in time sit in different sub-lanes, so the row is as tall as it needs
- * to be. shortLabel (optional) replaces label on narrow screens. A row that is not shown is still in the page, so
- * the page script can bring it in, but it takes up no space until then. data is rendered as data-* attributes
+ * to be. shortLabel (optional) replaces label on narrow screens. data is rendered as data-* attributes
  * on the row's label, for the page script.
  */
 public record ScatterRow(String id, String label, String shortLabel, List<ScatterMark> marks, int lanes,
-                         boolean shown, Map<String, String> data) {
+                         Map<String, String> data) {
 
-    /** How many marks the row has, which the page script compares with the slider. */
+    /** How many marks the row has. */
     public int count() {
         return marks.size();
     }
@@ -29,6 +28,10 @@ public record ScatterRow(String id, String label, String shortLabel, List<Scatte
     public static final int LANE_GAP_DAYS = 4;
     /** A cross is about this many days wide on each side of its date, so it is kept clear of the next mark. */
     public static final int CROSS_HALF_DAYS = 6;
+    /** Height of a category's summary row, which holds its strip, in pixels. */
+    public static final int CATEGORY_H = 30;
+    /** Height of the line that folds the components with one CVE. */
+    public static final int FOLD_H = 18;
     /** Smallest row height; matches a tl-h-* class in _timeline.scss. */
     public static final int MIN_HEIGHT = 18;
 

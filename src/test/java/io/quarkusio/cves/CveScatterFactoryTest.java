@@ -70,7 +70,7 @@ class CveScatterFactoryTest {
     }
 
     static List<ScatterMark> marks(CveScatterFactory f) {
-        return f.build("all", TODAY, 1).rows().get(0).marks();
+        return f.build("all", TODAY).rows().get(0).marks();
     }
 
     @Test
@@ -79,7 +79,7 @@ class CveScatterFactoryTest {
                 "GHSA-2", adv("CVE-2", "LOW", "2026-04-10T10:00:00Z", "a:one"));
         var f = factory(m, List.of(),
                 line(rel("2026-01-05", "GHSA-1"), rel("2026-03-20", "GHSA-2"), rel("2026-05-01", "GHSA-2")));
-        ScatterPlot dots = f.build("d", TODAY, 1, true);
+        ScatterPlot dots = f.build("d", TODAY, CveScatterFactory.Mode.DISCOVERY);
         Map<String, ScatterMark> byCve = new java.util.HashMap<>();
         dots.rows().get(0).marks().forEach(mk -> byCve.put(mk.title().split(" ")[0], mk));
         ScatterMark fixed = byCve.get("CVE-1");
@@ -100,7 +100,7 @@ class CveScatterFactoryTest {
                 "GHSA-2", adv("CVE-2", "LOW", "2026-04-10T10:00:00Z", "a:one"));
         var f = factory(m, List.of(),
                 line(rel("2026-01-05", "GHSA-1"), rel("2026-03-20", "GHSA-2"), rel("2026-05-01", "GHSA-2")));
-        ScatterPlot plot = f.build("r", TODAY, 1, CveScatterFactory.Mode.RESPONSIVENESS);
+        ScatterPlot plot = f.build("r", TODAY, CveScatterFactory.Mode.RESPONSIVENESS);
         Map<String, ScatterMark> byCve = new java.util.HashMap<>();
         plot.rows().get(0).marks().forEach(mk -> byCve.put(mk.title().split(" ")[0], mk));
         ScatterMark fixed = byCve.get("CVE-1");
@@ -112,7 +112,7 @@ class CveScatterFactoryTest {
         assertFalse(fixed.open());
         assertTrue(byCve.get("CVE-2").open(), "Not fixed yet still ends in a cross");
         assertEquals(LocalDate.of(2026, 2, 1), plot.scale().start(), "The span starts at the earliest publication");
-        assertTrue(f.build("e", TODAY, 1).rows().get(0).marks().stream().anyMatch(mk -> mk.start().isBefore(mk.found())),
+        assertTrue(f.build("e", TODAY).rows().get(0).marks().stream().anyMatch(mk -> mk.start().isBefore(mk.found())),
                 "The exposure view still has the time before publication");
     }
 
@@ -173,7 +173,7 @@ class CveScatterFactoryTest {
         var pending = List.of(new Cves.Pending("CVE-9", "MEDIUM", "2026-11-03T04:16:03Z", "Pending one",
                 List.of("io.quarkus:quarkus-vertx-http"), "https://www.cve.org/CVERecord?id=CVE-9"));
         var f = factory(Map.of(), pending);
-        ScatterRow row = f.build("all", TODAY, 1).rows().get(0);
+        ScatterRow row = f.build("all", TODAY).rows().get(0);
         assertEquals("quarkus-vertx-http", row.id(), "the io.quarkus group is dropped, as in the advisories");
         ScatterMark mark = row.marks().get(0);
         assertTrue(mark.pending());
@@ -191,7 +191,7 @@ class CveScatterFactoryTest {
         var pending = List.of(
                 new Cves.Pending("CVE-8", "HIGH", "2026-11-03T04:16:03Z", "One", List.of("a:one"), null),
                 new Cves.Pending("CVE-9", "LOW", "2026-11-05T04:16:03Z", "Two", List.of("a:one"), null));
-        ScatterRow row = factory(Map.of(), pending).build("all", TODAY, 1).rows().get(0);
+        ScatterRow row = factory(Map.of(), pending).build("all", TODAY).rows().get(0);
         assertEquals(2, row.lanes());
         assertEquals("https://www.cve.org/CVERecord?id=CVE-8", row.marks().get(0).href());
     }
@@ -202,7 +202,7 @@ class CveScatterFactoryTest {
         var pending = List.of(new Cves.Pending("CVE-9", "LOW", "2026-11-03T04:16:03Z", "P", List.of("a:one"), null));
         // the fixed bar ends 2026-09-10, which is within the fade's 120 days before 2026-11-03
         var f = factory(m, pending, line(rel("2026-08-20", "GHSA-1"), rel("2026-09-10")));
-        assertEquals(2, f.build("all", TODAY, 1).rows().get(0).lanes());
+        assertEquals(2, f.build("all", TODAY).rows().get(0).lanes());
     }
 
     @Test
@@ -216,7 +216,7 @@ class CveScatterFactoryTest {
         var f = factory(m, List.of(),
                 line(rel("2026-01-05", "GHSA-1", "GHSA-2", "GHSA-3"), rel("2026-03-20", "GHSA-2", "GHSA-3"),
                         rel("2026-05-20", "GHSA-3"), rel("2026-07-20")));
-        ScatterRow row = f.build("all", TODAY, 1).rows().get(0);
+        ScatterRow row = f.build("all", TODAY).rows().get(0);
         assertEquals(3, row.lanes());
         assertEquals(3, row.marks().stream().map(ScatterMark::lane).distinct().count());
         assertTrue(row.marks().stream().allMatch(ScatterMark::hasPre));
@@ -231,7 +231,7 @@ class CveScatterFactoryTest {
         var f = factory(m, List.of(),
                 line(rel("2026-03-01", "GHSA-1", "GHSA-2"), rel("2026-04-01"), rel("2026-07-20", "GHSA-3"),
                         rel("2026-08-20")));
-        ScatterRow row = f.build("all", TODAY, 1).rows().get(0);
+        ScatterRow row = f.build("all", TODAY).rows().get(0);
         assertEquals(2, row.lanes());
         List<ScatterMark> marks = row.marks();
         assertNotEquals(marks.get(0).lane(), marks.get(1).lane());
@@ -251,7 +251,7 @@ class CveScatterFactoryTest {
                 line(rel("2026-01-05", "GHSA-1"), rel("2026-02-05", "GHSA-1", "GHSA-2"), rel("2026-03-20"),
                         rel("2026-07-01")));
         Map<String, ScatterMark> byTitle = new LinkedHashMap<>();
-        f.build("exposure", TODAY, 1).rows().forEach(r -> r.marks().forEach(mk -> byTitle.put(mk.title().split(" ")[0], mk)));
+        f.build("exposure", TODAY).rows().forEach(r -> r.marks().forEach(mk -> byTitle.put(mk.title().split(" ")[0], mk)));
         assertTrue(byTitle.get("CVE-1").sinceAtLeast(), "in the very first release we have");
         assertFalse(byTitle.get("CVE-2").sinceAtLeast(), "it arrived in a later release, so that is when it started");
         assertTrue(byTitle.get("CVE-1").details().stream()
@@ -269,12 +269,12 @@ class CveScatterFactoryTest {
         var older = line(rel("2025-10-01", "GHSA-1"), rel("2026-01-02", "GHSA-1"), rel("2026-03-25"));
 
         Map<String, Boolean> before = new LinkedHashMap<>();
-        factory(m, List.of(), newer).build("exposure", TODAY, 1).rows()
+        factory(m, List.of(), newer).build("exposure", TODAY).rows()
                 .forEach(r -> r.marks().forEach(mk -> before.put(mk.title().split(" ")[0], mk.sinceAtLeast())));
         assertEquals(Map.of("CVE-1", true, "CVE-2", true), before);
 
         Map<String, Boolean> after = new LinkedHashMap<>();
-        factory(m, List.of(), newer, older).build("exposure", TODAY, 1).rows()
+        factory(m, List.of(), newer, older).build("exposure", TODAY).rows()
                 .forEach(r -> r.marks().forEach(mk -> after.put(mk.title().split(" ")[0], mk.sinceAtLeast())));
         assertEquals(Map.of("CVE-1", true, "CVE-2", false), after,
                 "CVE-2 only arrived in the newer line, so it is no longer at the edge of what we know");
@@ -286,7 +286,7 @@ class CveScatterFactoryTest {
         var f = factory(Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-01-02T10:00:00Z", "a:one")), pending,
                 line(rel("2026-01-05", "GHSA-1"), rel("2026-02-01")));
         // CVE-1 was published before the earliest release, so it has no paler part to put an arrow on
-        f.build("exposure", TODAY, 1).rows().forEach(r -> r.marks().forEach(mk -> assertFalse(mk.sinceAtLeast(), mk.title())));
+        f.build("exposure", TODAY).rows().forEach(r -> r.marks().forEach(mk -> assertFalse(mk.sinceAtLeast(), mk.title())));
     }
 
     @Test
@@ -300,7 +300,7 @@ class CveScatterFactoryTest {
     @Test
     void aSingleLaneRowKeepsTheMinimumHeight() {
         Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-03-10T10:00:00Z", "a:one"));
-        assertEquals(ScatterRow.MIN_HEIGHT, factory(m).build("all", TODAY, 1).rows().get(0).height());
+        assertEquals(ScatterRow.MIN_HEIGHT, factory(m).build("all", TODAY).rows().get(0).height());
     }
 
     @Test
@@ -308,7 +308,7 @@ class CveScatterFactoryTest {
         Map<String, Cves.Advisory> m = new LinkedHashMap<>();
         m.put("GHSA-1", adv("CVE-1", "HIGH", "2026-01-10T10:00:00Z", "a:one", "a:two"));
         m.put("GHSA-2", adv("CVE-2", "LOW", "2026-03-10T10:00:00Z", "a:two"));
-        ScatterPlot plot = factory(m).build("all", TODAY, 1);
+        ScatterPlot plot = factory(m).build("all", TODAY);
         assertEquals(List.of("a:two", "a:one"), plot.rows().stream().map(ScatterRow::id).toList());
         assertEquals(2, plot.rows().get(0).marks().size());
     }
@@ -319,55 +319,6 @@ class CveScatterFactoryTest {
         Map<String, Cves.Advisory> m = Map.of("GHSA-1",
                 adv("CVE-1", "HIGH", "2026-01-10T10:00:00Z", "a:one", "a:one", "a:one"));
         assertEquals(1, marks(factory(m)).size());
-    }
-
-    @Test
-    void artifactsWithFewCvesAreInThePageButNotShownAndTakeNoSpace() {
-        Map<String, Cves.Advisory> m = new LinkedHashMap<>();
-        for (int i = 0; i < 3; i++) {
-            m.put("GHSA-" + i, adv("CVE-" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:busy"));
-        }
-        m.put("GHSA-x", adv("CVE-x", "HIGH", "2026-05-10T10:00:00Z", "a:quiet"));
-        var f = factory(m);
-        ScatterPlot some = f.build("exposure", TODAY, 3);
-        assertEquals(List.of("a:busy", "a:quiet"), some.rows().stream().map(ScatterRow::id).toList(),
-                "the slider needs every row in the page");
-        assertEquals(List.of(true, false), some.rows().stream().map(ScatterRow::shown).toList());
-        assertEquals(3, some.rows().get(0).count());
-
-        ScatterPlot all = f.build("exposure", TODAY, 1);
-        assertTrue(all.rows().stream().allMatch(ScatterRow::shown));
-        assertEquals(all.rowY(1) + all.rows().get(1).height(), all.rowY(2));
-        assertEquals(some.rowY(1), some.rowY(2), "a row that is not shown takes no space");
-        assertTrue(some.height() < all.height());
-    }
-
-    @Test
-    void theSliderStartsAtSixOrMoreCves() {
-        assertEquals(6, CveScatterFactory.MIN_FOR_TOP_VIEW);
-        Map<String, Cves.Advisory> m = new LinkedHashMap<>();
-        for (int i = 0; i < 7; i++) {
-            m.put("GHSA-a" + i, adv("CVE-a" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:many"));
-        }
-        for (int i = 0; i < 4; i++) {
-            m.put("GHSA-b" + i, adv("CVE-b" + i, "HIGH", "2026-0" + (i + 1) + "-10T10:00:00Z", "a:four"));
-        }
-        var f = factory(m);
-        assertEquals(7, f.maxCount());
-        assertEquals(6, f.defaultMin());
-        ScatterPlot plot = f.plot(TODAY.atStartOfDay());
-        assertEquals(List.of("a:many", "a:four"), plot.rows().stream().map(ScatterRow::id).toList());
-        assertEquals(List.of(true, false), plot.rows().stream().map(ScatterRow::shown).toList());
-    }
-
-    @Test
-    void theSliderStartIsNeverBeyondItsTopForSmallData() {
-        Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-03-10T10:00:00Z", "a:one"));
-        var f = factory(m);
-        assertEquals(1, f.maxCount());
-        assertEquals(1, f.defaultMin());
-        assertTrue(f.plot(TODAY.atStartOfDay()).rows().get(0).shown());
-        assertEquals(1, factory(Map.of()).maxCount(), "no data still gives a usable slider");
     }
 
     @Test
@@ -393,25 +344,53 @@ class CveScatterFactoryTest {
     void scaleStartsTheMonthBeforeTheEarliestBarAndEndsTheMonthAfterNext() {
         Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2025-03-17T10:00:00Z", "a:one"));
         var f = factory(m, List.of(), line(rel("2025-02-20", "GHSA-1"), rel("2025-04-01")));
-        ScatterPlot plot = f.build("all", TODAY, 1);
+        ScatterPlot plot = f.build("all", TODAY);
         assertEquals(LocalDate.of(2025, 1, 1), plot.scale().start());
         assertEquals(LocalDate.of(2027, 1, 31), plot.scale().end());
     }
 
     @Test
-    void theSpanIsThatOfTheRowsShown() {
+    void rowsAreGroupedByCategoryThenProjectWithOpenAndBusyOnesFirst() {
         Map<String, Cves.Advisory> m = new LinkedHashMap<>();
-        // the busy artifact only starts in mid 2026; a quiet one, shown only once the slider is down, goes back to 2024
-        for (int i = 0; i < 3; i++) {
-            m.put("GHSA-" + i, adv("CVE-" + i, "HIGH", "2026-0" + (i + 5) + "-10T10:00:00Z", "a:busy"));
+        m.put("GHSA-1", adv("CVE-1", "HIGH", "2026-01-10T10:00:00Z", "quarkus-rest"));
+        m.put("GHSA-2", adv("CVE-2", "HIGH", "2026-02-10T10:00:00Z", "quarkus-oidc"));
+        m.put("GHSA-3", adv("CVE-3", "HIGH", "2026-03-10T10:00:00Z", "quarkus-core"));
+        m.put("GHSA-4", adv("CVE-4", "HIGH", "2026-04-10T10:00:00Z", "quarkus-core"));
+        m.put("GHSA-5", adv("CVE-5", "HIGH", "2026-05-10T10:00:00Z", "org.yaml:snakeyaml"));
+        ScatterPlot plot = factory(m).build("all", TODAY);
+        assertEquals(List.of("quarkus-core", "quarkus-rest", "quarkus-oidc", "org.yaml:snakeyaml"),
+                plot.rows().stream().map(ScatterRow::id).toList(), "Core, Web, Security, Serialization");
+        ScatterRow core = plot.rows().get(0);
+        assertEquals("Core", core.data().get("category"));
+        assertEquals("quarkus", core.data().get("project"));
+        assertEquals("internal", core.data().get("origin"));
+        assertEquals("yaml", plot.rows().get(3).data().get("project"));
+    }
+
+    @Test
+    void everyRowIsInThePageAndTakesSpace() {
+        Map<String, Cves.Advisory> m = new LinkedHashMap<>();
+        m.put("GHSA-1", adv("CVE-1", "HIGH", "2026-01-10T10:00:00Z", "a:busy"));
+        m.put("GHSA-2", adv("CVE-2", "HIGH", "2026-02-10T10:00:00Z", "a:busy"));
+        m.put("GHSA-x", adv("CVE-x", "HIGH", "2026-05-10T10:00:00Z", "a:quiet"));
+        ScatterPlot plot = factory(m).build("exposure", TODAY);
+        assertEquals(List.of("a:busy", "a:quiet"), plot.rows().stream().map(ScatterRow::id).toList());
+        assertEquals(plot.rowY(1) + plot.rows().get(1).height(), plot.rowY(2));
+    }
+
+    @Test
+    void aMarkKnowsWhenItWasFixed() {
+        Map<String, Cves.Advisory> m = Map.of("GHSA-1", adv("CVE-1", "HIGH", "2026-03-10T10:00:00Z", "a:one"),
+                "GHSA-2", adv("CVE-2", "LOW", "2026-04-10T10:00:00Z", "a:one"));
+        var f = factory(m, List.of(),
+                line(rel("2026-01-05", "GHSA-1"), rel("2026-03-20", "GHSA-2"), rel("2026-05-01", "GHSA-2")));
+        Map<String, ScatterMark> byCve = new java.util.HashMap<>();
+        for (CveScatterFactory.Mode mode : CveScatterFactory.Mode.values()) {
+            byCve.clear();
+            f.build("x", TODAY, mode).rows().get(0).marks().forEach(mk -> byCve.put(mk.title().split(" ")[0], mk));
+            assertEquals(LocalDate.of(2026, 3, 20), byCve.get("CVE-1").fixed(), mode.name());
+            assertEquals("", byCve.get("CVE-2").fixedIso(), "Open in " + mode.name());
         }
-        m.put("GHSA-old", adv("CVE-old", "LOW", "2024-10-08T10:00:00Z", "a:quiet"));
-        var f = factory(m);
-        ScatterPlot some = f.build("exposure", TODAY, 3);
-        ScatterPlot all = f.build("exposure", TODAY, 1);
-        assertEquals(LocalDate.of(2024, 9, 1), all.scale().start());
-        assertEquals(LocalDate.of(2026, 4, 1), some.scale().start(), "a month before the earliest bar shown");
-        assertEquals(all.scale().end(), some.scale().end());
     }
 
     @Test

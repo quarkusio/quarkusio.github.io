@@ -17,7 +17,12 @@ import java.util.stream.Collectors;
  * details is rendered as the tooltip lines.
  */
 public record ScatterMark(String kind, boolean open, boolean pending, boolean sinceAtLeast, boolean dot, int lane, LocalDate start, LocalDate found, LocalDate end,
-                          String xPct, String preWPct, String postXPct, String postWPct, String endXPct, int y, int cy, String href, String title, List<String> details) {
+                          String xPct, String preWPct, String postXPct, String postWPct, String endXPct, int y, int cy, String href, String title, List<String> details, LocalDate fixed) {
+
+    /** The date of the first release without it, or nothing while it is open; the page script takes its median from this. */
+    public String fixedIso() {
+        return fixed == null ? "" : fixed.toString();
+    }
 
     /** Height of the part from publication on, in pixels. */
     public int barH() {

@@ -20,7 +20,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
-import io.quarkusio.charts.pie.PieChart;
 import io.quarkusio.charts.scatter.ScatterMark;
 import io.quarkusio.charts.scatter.ScatterPlot;
 import io.quarkusio.charts.scatter.ScatterRow;
@@ -29,7 +28,6 @@ import io.quarkusio.charts.timeline.TimeScale;
 import io.quarkusio.releases.Releases;
 
 import static io.quarkusio.charts.timeline.LegendGroup.MARK;
-import static io.quarkusio.charts.timeline.LegendGroup.SEVERITY;
 
 /**
  * Builds the CVE plots shown on /cves/: time on x, artifact on y, severity as colour. Each CVE is a bar from the
@@ -41,8 +39,6 @@ import static io.quarkusio.charts.timeline.LegendGroup.SEVERITY;
 public class CveScatterFactory {
 
     static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
-    /** The compact view keeps artifacts with at least this many CVEs. */
-    static final int MIN_FOR_TOP_VIEW = 6;
     /** Narrowest bar, in percent of the axis. */
     static final double MIN_BAR_PCT = 0.5;
     /** A pending CVE fades in from this many days before its publication: we do not know when it first shipped. */
@@ -85,9 +81,6 @@ public class CveScatterFactory {
 
     public List<LegendItem> legend() {
         List<LegendItem> legend = new ArrayList<>();
-        for (Severity s : List.of(Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW)) {
-            legend.add(new LegendItem(SEVERITY, s.key(), s.label(), ""));
-        }
         legend.add(new LegendItem(MARK, "span", "Fixed",
                 "Solid bar from when it was published to the first release without it. The paler part before it is the time before anyone knew about it, back to the first release that contained it."));
         if (items.stream().anyMatch(Item::sinceAtLeast)) {
@@ -115,60 +108,23 @@ public class CveScatterFactory {
         return items.stream().map(Item::artifact).distinct().count();
     }
 
-    /** The fewest CVEs an artifact needs to be shown, before the slider is moved. */
-    public int minForTopView() {
-        return MIN_FOR_TOP_VIEW;
-    }
-
-    /** The most CVEs any artifact has: the top of the slider. */
-    public int maxCount() {
-        return Math.max(1, items.stream().collect(java.util.stream.Collectors.groupingBy(Item::artifact,
-                java.util.stream.Collectors.counting())).values().stream().mapToInt(Long::intValue).max().orElse(1));
-    }
-
-    /** Where the slider starts: never beyond its top, for small data. */
-    public int defaultMin() {
-        return Math.min(MIN_FOR_TOP_VIEW, maxCount());
-    }
-
-    /** Components by number of CVEs, as a ring with a handle that works like the slider. */
-    public PieChart pie() {
-        Map<String, Long> counts = items.stream()
-                .collect(Collectors.groupingBy(Item::artifact, Collectors.counting()));
-        return PieChart.of("components", counts.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                .map(e -> new PieChart.Input(e.getKey(), e.getKey(), e.getValue().intValue(),
-                        categories.origin(e.getKey()),
-                        Map.of("origin", categories.origin(e.getKey()), "category", categories.category(e.getKey()))))
-                .toList());
-    }
-
-    /** The categories that have a component, for the buttons that pick one. */
-    public List<String> categoryNames() {
-        Set<String> used = items.stream().map(i -> categories.category(i.artifact())).collect(Collectors.toSet());
-        return categories.names().stream().filter(used::contains).toList();
-    }
-
-    /** The exposure view: every artifact, with those that have few CVEs hidden until the slider brings them in. */
+    /** The exposure view: every artifact, by category. */
     public ScatterPlot plot(LocalDateTime now) {
-        return build("exposure", now.toLocalDate(), defaultMin());
+        return build("exposure", now.toLocalDate());
     }
 
     /** The responsiveness view: only the time from publication to the fix, whenever it first shipped. */
     public ScatterPlot responsivenessPlot(LocalDateTime now) {
-        return build("responsiveness", now.toLocalDate(), defaultMin(), Mode.RESPONSIVENESS);
+        return build("responsiveness", now.toLocalDate(), Mode.RESPONSIVENESS);
     }
 
     /** The discovery view: the same rows, with a dot (or a cross, if not fixed yet) on each publication date. */
     public ScatterPlot dotPlot(LocalDateTime now) {
-        return build("discovered", now.toLocalDate(), defaultMin(), true);
+        return build("discovered", now.toLocalDate(), Mode.DISCOVERY);
     }
 
-    ScatterPlot build(String id, LocalDate today, int minShown) {
-        return build(id, today, minShown, Mode.EXPOSURE);
-    }
-
-    ScatterPlot build(String id, LocalDate today, int minShown, boolean dots) {
-        return build(id, today, minShown, dots ? Mode.DISCOVERY : Mode.EXPOSURE);
+    ScatterPlot build(String id, LocalDate today) {
+        return build(id, today, Mode.EXPOSURE);
     }
 
     /** What a mark is: the bar of the whole exposure, the part of it from publication to fix, or a point. */
@@ -181,34 +137,51 @@ public class CveScatterFactory {
         DISCOVERY
     }
 
-    ScatterPlot build(String id, LocalDate today, int minShown, Mode mode) {
+    /**
+     * Every artifact is a row, in the order the page shows them: by category, then by upstream project (the project
+     * with open CVEs, then with the most CVEs, first), then by artifact in the same way. The page script groups the
+     * rows under their category and sorts them again for what is shown.
+     */
+    ScatterPlot build(String id, LocalDate today, Mode mode) {
         Map<String, List<Item>> byArtifact = new LinkedHashMap<>();
         items.forEach(i -> byArtifact.computeIfAbsent(i.artifact(), k -> new ArrayList<>()).add(i));
-        List<Map.Entry<String, List<Item>>> all = byArtifact.entrySet().stream()
-                .sorted(Comparator.<Map.Entry<String, List<Item>>>comparingInt(e -> -e.getValue().size())
-                        .thenComparing(Map.Entry::getKey))
-                .toList();
-        List<Map.Entry<String, List<Item>>> shown = all.stream().filter(e -> e.getValue().size() >= minShown).toList();
+        Map<String, int[]> projects = new HashMap<>(); // [has open, CVEs] by category and project
+        byArtifact.forEach((artifact, list) -> {
+            int[] p = projects.computeIfAbsent(projectKey(artifact), k -> new int[2]);
+            p[0] |= list.stream().anyMatch(i -> i.fixed() == null) ? 1 : 0;
+            p[1] += list.size();
+        });
+        List<String> names = categories.names();
+        Comparator<Map.Entry<String, List<Item>>> order = Comparator
+                .<Map.Entry<String, List<Item>>>comparingInt(e -> names.indexOf(categories.category(e.getKey())))
+                .thenComparingInt(e -> -projects.get(projectKey(e.getKey()))[0])
+                .thenComparingInt(e -> -projects.get(projectKey(e.getKey()))[1])
+                .thenComparing(e -> categories.project(e.getKey()))
+                .thenComparingInt(e -> e.getValue().stream().anyMatch(i -> i.fixed() == null) ? 0 : 1)
+                .thenComparingInt(e -> -e.getValue().size())
+                .thenComparing(Map.Entry::getKey);
+        List<Map.Entry<String, List<Item>>> all = byArtifact.entrySet().stream().sorted(order).toList();
 
-        // The span is set by what is shown, not by the data as a whole: from the start of the month before
-        // the earliest start of a bar (the paler part included) to the end of the month after next, so the
-        // "today" tag, which is centred on today's line, is not clipped by the right edge. The page script
-        // does the same when the slider brings in more artifacts.
-        LocalDate first = shown.stream().flatMap(e -> e.getValue().stream()).map(i -> barStart(i, mode))
+        // The span runs from the start of the month before the earliest start of a bar (the paler part included)
+        // to the end of the month after next, so the "today" tag, which is centred on today's line, is not clipped
+        // by the right edge. The page script does the same for what its filters leave.
+        LocalDate first = all.stream().flatMap(e -> e.getValue().stream()).map(i -> barStart(i, mode))
                 .min(LocalDate::compareTo).orElse(today);
         LocalDate end = today.plusMonths(2);
         TimeScale scale = new TimeScale(first.minusMonths(1).withDayOfMonth(1), end.withDayOfMonth(end.lengthOfMonth()));
 
-        List<ScatterRow> rows = all.stream()
-                .map(e -> row(e.getKey(), e.getValue(), scale, today, e.getValue().size() >= minShown, mode)).toList();
+        List<ScatterRow> rows = all.stream().map(e -> row(e.getKey(), e.getValue(), scale, today, mode)).toList();
         return new ScatterPlot(id, scale, rows, legend());
+    }
+
+    private String projectKey(String artifact) {
+        return categories.category(artifact) + "/" + categories.project(artifact);
     }
 
     private record Placed(Item item, LocalDate from, LocalDate to) {
     }
 
-    private ScatterRow row(String artifact, List<Item> artifactItems, TimeScale scale, LocalDate today,
-            boolean shown, Mode mode) {
+    private ScatterRow row(String artifact, List<Item> artifactItems, TimeScale scale, LocalDate today, Mode mode) {
         List<Placed> placed = artifactItems.stream().map(i -> place(i, today, mode))
                 .sorted(Comparator.comparing(Placed::from).thenComparing(p -> p.item().published())
                         .thenComparing(p -> p.item().id()))
@@ -243,8 +216,9 @@ public class CveScatterFactory {
         }
         int colon = artifact.indexOf(':');
         String shortLabel = colon < 0 ? artifact : artifact.substring(colon + 1);
-        return new ScatterRow(artifact, artifact, shortLabel, marks, lanes, shown,
-                Map.of("origin", categories.origin(artifact), "category", categories.category(artifact)));
+        return new ScatterRow(artifact, artifact, shortLabel, marks, lanes,
+                Map.of("origin", categories.origin(artifact), "category", categories.category(artifact),
+                        "project", categories.project(artifact)));
     }
 
     /** The span of time a mark occupies, for packing into sub-lanes. */
@@ -309,7 +283,7 @@ public class CveScatterFactory {
         }
         return new ScatterMark(i.severity().key(), i.fixed() == null, i.pending(), i.sinceAtLeast() && mode == Mode.EXPOSURE, dots, lane, start,
                 i.published(), end,
-                fmt(sx), fmt(pre), fmt(sx + pre), fmt(post), fmt(ex), y, cy, i.link(), title, details);
+                fmt(sx), fmt(pre), fmt(sx + pre), fmt(post), fmt(ex), y, cy, i.link(), title, details, i.fixed());
     }
 
     private static String days(LocalDate from, LocalDate to) {

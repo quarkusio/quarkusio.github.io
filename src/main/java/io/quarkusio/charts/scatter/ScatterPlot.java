@@ -48,15 +48,20 @@ public record ScatterPlot(String id, TimeScale scale, List<ScatterRow> rows, Lis
         return ScatterRow.CROSS_HALF_DAYS;
     }
 
-    /** Rows that are not shown take no space. */
     public int rowY(int index) {
         int y = Timeline.AXIS_H;
         for (int i = 0; i < index; i++) {
-            if (rows.get(i).shown()) {
-                y += rows.get(i).height();
-            }
+            y += rows.get(i).height();
         }
         return y;
+    }
+
+    public int categoryH() {
+        return ScatterRow.CATEGORY_H;
+    }
+
+    public int foldH() {
+        return ScatterRow.FOLD_H;
     }
 
     public int height() {

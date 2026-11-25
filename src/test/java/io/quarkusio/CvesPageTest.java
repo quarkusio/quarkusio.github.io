@@ -29,7 +29,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void fixedCvesAreBarsAndUnfixedOnesEndInACrossAndPendingOnesFadeIn() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        openAll();
         assertTrue(page.locator("#tl-exposure .tl-mark .tl-mark-post").count() >= 10, "Expected bars");
         int crosses = page.locator("#tl-exposure .tl-cross").count();
         assertTrue(crosses >= 1, "Expected a cross on CVEs that are not fixed yet");
@@ -57,7 +57,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void discoveredViewHasDotsAndCrossesForUnresolvedOnes() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        openAll();
         assertEquals(0, page.locator("#tl-discovered .tl-mark-post").count(), "No bars in the discovery view");
         assertTrue(page.locator("#tl-discovered .tl-mark:not(.tl-mark--open) circle.tl-dot").count() >= 10);
         int crosses = page.locator("#tl-discovered .tl-cross").count();
@@ -70,8 +70,8 @@ public class CvesPageTest extends BrowserTest {
     void filtersApplyToBothViews() {
         page.navigate(baseUrl + "/cves/");
         allTime();
-        setSlider("cve-min-count", 1);
-        page.locator("#cve-unresolved").check();
+        openAll();
+        setChip("status", "fixed", false);
         page.locator("[data-timeline-toggle=discovered]").click();
         Object everyMarkOpen = page.locator("#tl-discovered .tl-mark:not([display=none])")
                 .evaluateAll("marks => marks.length > 0 && marks.every(m => m.classList.contains('tl-mark--open'))");
@@ -83,147 +83,10 @@ public class CvesPageTest extends BrowserTest {
     // ---- the ring
 
     @Test
-    void ringHasOneSliceForEachComponentLargestFirst() {
-        page.navigate(baseUrl + "/cves/");
-        int slices = page.locator(".pie-slice").count();
-        assertEquals(page.locator("#tl-exposure .tl-labels li").count(), slices);
-        Object descending = page.locator(".pie-slice").evaluateAll(
-                "els => els.map(e => +e.dataset.value).every((v, i, a) => i === 0 || a[i - 1] >= v)");
-        assertEquals(Boolean.TRUE, descending);
-    }
-
-    @Test
-    void draggingTheHandleRoundTheRingWorksLikeTheSlider() {
-        page.navigate(baseUrl + "/cves/");
-        assertTrue(page.locator(".pie-handle").isVisible());
-        page.locator(".pie-svg").scrollIntoViewIfNeeded();
-        var box = page.locator(".pie-svg").boundingBox();
-        double cx = box.x + box.width / 2, cy = box.y + box.height / 2, r = box.width * 0.33;
-        int before = visibleRows();
-        // a quarter of the way round, clockwise from the top: the biggest components only
-        page.mouse().move(cx, cy - r);
-        page.mouse().down();
-        page.mouse().move(cx + r, cy, new com.microsoft.playwright.Mouse.MoveOptions().setSteps(5));
-        page.mouse().up();
-        assertTrue(visibleRows() < before, "Fewer components with the handle part way round: " + before + " -> " + visibleRows() + ", min " + page.locator("#cve-min-count").inputValue() + ", handle " + page.locator(".pie-handle").getAttribute("transform") + ", stops " + page.locator(".pie").getAttribute("data-stops"));
-        assertTrue(allCountsAtLeast(Integer.parseInt(page.locator("#cve-min-count").inputValue())));
-        // all the way round shows everything
-        page.mouse().move(cx + r, cy);
-        page.mouse().down();
-        page.mouse().move(cx - 1, cy - r, new com.microsoft.playwright.Mouse.MoveOptions().setSteps(10));
-        page.mouse().up();
-        assertEquals("1", page.locator("#cve-min-count").inputValue());
-    }
-
-    @Test
-    void unresolvedOnlyPutsTheHandleBackToEverythingAndUntickingRestoresIt() {
-        page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 9);
-        String handleBefore = page.locator(".pie-handle").getAttribute("transform");
-        page.locator("#cve-unresolved").check();
-        assertEquals("1", page.locator("#cve-min-count").inputValue());
-        assertNotEquals(handleBefore, page.locator(".pie-handle").getAttribute("transform"));
-        page.locator("#cve-unresolved").uncheck();
-        assertEquals("9", page.locator("#cve-min-count").inputValue());
-        assertEquals(handleBefore, page.locator(".pie-handle").getAttribute("transform"));
-    }
-
-    @Test
-    void switchingOffThirdPartyDependenciesLeavesOnlyQuarkusLibrariesLitAndFiltersBothPlots() {
-        page.navigate(baseUrl + "/cves/");
-        allSeverities();
-        allTime();
-        setSlider("cve-min-count", 1);
-        assertTrue(page.locator("[data-cve-origin=external]").isChecked(), "All switches start on");
-        page.locator("[data-cve-origin=external]").uncheck();
-        int lit = page.locator(".pie-slice:not(.is-off)").count();
-        assertTrue(lit >= 1 && lit < page.locator(".pie-slice").count());
-        assertEquals(lit, page.locator(".pie-slice[data-origin=internal]").count());
-        assertEquals(lit, page.locator("#tl-exposure .tl-labels li:not([hidden])").count());
-        assertEquals(lit, page.locator("#tl-discovered .tl-labels li:not([hidden])").count());
-        page.locator("[data-cve-origin=external]").check();
-        assertEquals(0, page.locator(".pie-slice.is-off").count());
-    }
-
-    @Test
-    void selectNoneAndSelectAllWorkOnEachSetOfSwitches() {
-        page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
-        page.locator("[data-cve-set=category][data-cve-select=none]").click();
-        assertEquals(0, page.locator("[data-cve-category]:checked").count());
-        assertEquals(page.locator(".pie-slice").count(), page.locator(".pie-slice.is-off").count());
-        assertEquals(0, page.locator("#tl-exposure .tl-labels li:not([hidden])").count());
-        // the other set is not touched
-        assertEquals(2, page.locator("[data-cve-origin]:checked").count());
-        page.locator("[data-cve-set=category][data-cve-select=all]").click();
-        assertEquals(page.locator("[data-cve-category]").count(), page.locator("[data-cve-category]:checked").count());
-        assertEquals(0, page.locator(".pie-slice.is-off").count());
-        page.locator("[data-cve-set=origin][data-cve-select=none]").click();
-        assertEquals(0, page.locator("[data-cve-origin]:checked").count());
-        assertEquals(page.locator("[data-cve-category]").count(), page.locator("[data-cve-category]:checked").count());
-    }
-
-    @Test
-    void aCategorySwitchedOnAloneLightsUpOnlyItsComponents() {
-        page.navigate(baseUrl + "/cves/");
-        allSeverities();
-        allTime();
-        setSlider("cve-min-count", 1);
-        page.locator("[data-cve-set=category][data-cve-select=none]").click();
-        page.locator("[data-cve-category=Security]").check();
-        int lit = page.locator(".pie-slice:not(.is-off)").count();
-        assertTrue(lit >= 1 && lit < page.locator(".pie-slice").count());
-        assertEquals(lit, page.locator(".pie-slice[data-category=Security]").count());
-        assertEquals(lit, page.locator("#tl-exposure .tl-labels li:not([hidden])").count());
-    }
-
-    @Test
-    void hoveringASwitchLightsUpItsComponentsInTheRingEvenWhenItIsOff() {
-        page.navigate(baseUrl + "/cves/");
-        page.locator("[data-cve-set=category][data-cve-select=none]").click();
-        Locator security = page.locator(".cve-switch:has([data-cve-category=Security])");
-        security.scrollIntoViewIfNeeded();
-        security.hover();
-        int lit = page.locator(".pie-slice.is-hover").count();
-        assertTrue(lit >= 1);
-        assertEquals(page.locator(".pie-slice[data-category=Security]").count(), lit);
-        assertEquals(lit, page.locator(".pie-slice.is-hover[data-category=Security]").count());
-        assertTrue(page.locator(".pie.is-previewing").count() == 1);
-        // the same goes for the origin switches
-        page.locator(".cve-switch:has([data-cve-origin=internal])").hover();
-        assertEquals(page.locator(".pie-slice[data-origin=internal]").count(), page.locator(".pie-slice.is-hover").count());
-        page.mouse().move(0, 0);
-        assertEquals(0, page.locator(".pie-slice.is-hover").count());
-        assertEquals(0, page.locator(".pie.is-previewing").count());
-    }
-
-    @Test
-    void unresolvedOnlyIsASwitch() {
-        page.navigate(baseUrl + "/cves/");
-        assertEquals("switch", page.locator("#cve-unresolved").getAttribute("role"));
-        assertFalse(page.locator("#cve-unresolved").isChecked());
-    }
-
-    @Test
-    void sliceColoursFollowOriginAndGetDarkerWithMoreCves() {
-        page.navigate(baseUrl + "/cves/");
-        assertEquals("Quarkus libraries", page.locator(".cve-switch:has([data-cve-origin=internal])").textContent().trim());
-        assertEquals("Third-party dependencies", page.locator(".cve-switch:has([data-cve-origin=external])").textContent().trim());
-        // the biggest slice is the darkest and the smallest the palest
-        assertTrue(page.locator(".pie-slice").first().getAttribute("class").contains("pie-shade--4"));
-        assertTrue(page.locator(".pie-slice").last().getAttribute("class").contains("pie-shade--0"));
-        String internal = page.locator(".pie-slice[data-origin=internal]").first()
-                .evaluate("e => getComputedStyle(e).getPropertyValue('--pie-base').trim()").toString();
-        String external = page.locator(".pie-slice[data-origin=external]").first()
-                .evaluate("e => getComputedStyle(e).getPropertyValue('--pie-base').trim()").toString();
-        assertNotEquals(internal, external);
-        assertEquals("#8c8c8c", external);
-    }
-
-    @Test
     void tooltipStaysInsideTheWindowEvenForAMarkNearTheBottom() {
         page.setViewportSize(1280, 500);
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(MARKS).first();
         mark.scrollIntoViewIfNeeded();
         page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)");
@@ -240,6 +103,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void marksLinkToTheAdvisory() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         String href = page.locator(MARKS).first().getAttribute("href");
         assertTrue(href.startsWith("https://www.cve.org/") || href.startsWith("https://github.com/advisories/"), href);
     }
@@ -247,7 +111,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void overlappingCvesOfOneArtifactAreInSeparateLanes() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        openAll();
         assertTrue(page.locator("#tl-exposure .tl-labels li.tl-h-18").count() < page.locator("#tl-exposure .tl-labels li").count(),
                 "Artifacts with overlapping CVEs should have taller rows");
         // within a row, no two CVEs may overlap, whatever their parts
@@ -273,6 +137,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void barsThatMayGoBackFurtherThanOurDataHaveAnArrowAndALegendEntry() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         assertTrue(page.locator("#tl-exposure .tl-mark .tl-more").count() >= 1, "Expected arrows at the start of some bars");
         assertEquals(1, page.locator(".tl-legend .tl-swatch--since").count(), "The arrow needs a legend entry");
         assertTrue(page.locator(".tl-legend .tl-swatch--since").locator("xpath=..").textContent().contains("earliest release"));
@@ -285,7 +150,7 @@ public class CvesPageTest extends BrowserTest {
             assertTrue(Math.abs((arrow.x + arrow.width) - pale.x) <= 3, "Arrow should end where the bar starts: "
                     + (arrow.x + arrow.width) + " vs " + pale.x);
             assertTrue(Math.abs((arrow.y + arrow.height / 2) - (pale.y + pale.height / 2)) <= 4, "Arrow should be level with its bar");
-            setSlider("cve-min-count", 1); // moves the axis, so everything is placed again
+            openAll(); // moves the axis, so everything is placed again
         }
         // and not every bar has one: those that arrived in a later release start where they started
         assertTrue(page.locator("#tl-exposure .tl-mark:not(:has(.tl-more)):has(.tl-mark-pre)").count() >= 1);
@@ -294,6 +159,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void tooltipSaysSinceAtLeastForThoseBars() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(MARKS + ":has(.tl-more)").first();
         mark.scrollIntoViewIfNeeded();
         hoverSteadily(mark.locator("rect.tl-hit"));
@@ -305,26 +171,17 @@ public class CvesPageTest extends BrowserTest {
     // ---- the legend
 
     @Test
-    void severityColoursAndBarKindsAreInSeparateLegendRows() {
+    void theLegendExplainsTheBarKindsAndTheSeverityChipsAreTheKeyToTheColours() {
         page.navigate(baseUrl + "/cves/");
-        Locator colours = page.locator(".tl-legend[aria-label='Severity colours']");
-        assertEquals(4, colours.locator("li").count(), "One entry per severity");
-        assertEquals(0, colours.locator(".tl-swatch--span, .tl-swatch--open, .tl-swatch--pending").count(),
-                "Bar kinds do not belong in the colour row");
+        assertEquals(0, page.locator(".tl-legend[aria-label='Severity colours']").count(), "No separate severity legend row");
         Locator kinds = page.locator(".tl-legend:not([aria-label])");
         assertEquals(4, kinds.locator("li").count(), "Fixed, since at least, not fixed yet and pending");
         assertEquals(1, kinds.locator(".tl-swatch--since").count(), "The arrow is explained in the bar kinds row");
-        assertEquals(0, kinds.locator(".tl-swatch--critical, .tl-swatch--high, .tl-swatch--medium, .tl-swatch--low").count());
         assertTrue(kinds.locator(".tl-legend-desc").first().textContent().length() > 10, "Bar kinds have descriptions");
         assertFalse(page.locator(".tl-legend--providers").isVisible(), "No provider row on this page");
-    }
-
-    @Test
-    void severityLegendSwatchesHaveDistinctColours() {
-        page.navigate(baseUrl + "/cves/");
         Object count = page.evaluate("() => new Set(['critical','high','medium','low'].map(s => "
-                + "getComputedStyle(document.querySelector('.tl-legend .tl-swatch--' + s)).backgroundColor)).size");
-        assertEquals(4, ((Number) count).intValue(), "Each severity needs its own colour in the legend");
+                + "getComputedStyle(document.querySelector('.cve-chip--' + s + ' .cve-chip-swatch')).borderTopColor)).size");
+        assertEquals(4, ((Number) count).intValue(), "Each severity chip needs its own colour");
     }
 
     // ---- hovering
@@ -332,6 +189,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void hoveringAMarkShowsTheCveInATooltip() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(MARKS).first();
         mark.scrollIntoViewIfNeeded();
         String title = mark.getAttribute("data-tooltip-title");
@@ -344,6 +202,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void hoveringBesideTheCrossStillShowsTheTooltip() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(ROWS + " a.tl-mark--pending:not([display=none])").first();
         mark.scrollIntoViewIfNeeded();
         var box = mark.locator(".tl-cross").boundingBox();
@@ -356,6 +215,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void hoveringAPendingBarShowsThatItIsPending() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(ROWS + " a.tl-mark--pending:not([display=none])").first();
         mark.scrollIntoViewIfNeeded();
         for (String part : new String[] { ".tl-mark-fade", ".tl-mark-post" }) {
@@ -369,6 +229,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void hoveringThePalePartShowsTheTooltipToo() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(MARKS + ":not(.tl-mark--pending):has(.tl-mark-pre)").first();
         mark.scrollIntoViewIfNeeded();
         hoverSteadily(mark.locator(".tl-mark-pre"));
@@ -379,7 +240,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void tooltipKeepsLongUnbrokenTextInsideItsBox() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        openAll();
         // its summary has a long method name with no spaces in it
         Locator mark = page.locator(MARKS + "[data-tooltip-title^='CVE-2026-89425']").first();
         mark.scrollIntoViewIfNeeded();
@@ -395,6 +256,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void hoveringAComponentDoesNotMoveAnythingOnThePage() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator first = page.locator(ROWS).first();
         first.scrollIntoViewIfNeeded();
         double height = plotHeight();
@@ -413,20 +275,11 @@ public class CvesPageTest extends BrowserTest {
     }
 
     @Test
-    void sliderSaysHowManyComponentsAreHiddenAndHowToShowThem() {
-        page.navigate(baseUrl + "/cves/");
-        String hint = page.locator("#cve-min-count-hint").textContent();
-        assertTrue(hint.contains("hidden") && hint.contains("Drag left"), hint);
-        setSlider("cve-min-count", 1);
-        assertEquals("Every component is shown.", page.locator("#cve-min-count-hint").textContent());
-    }
-
-    @Test
     void thePlotLooksBackOnlyAYearAtFirstAndTheSliderWidensIt() {
         page.navigate(baseUrl + "/cves/");
         assertEquals("5", page.locator("#cve-window").inputValue());
         assertEquals("The last year", page.locator("#cve-window-value").textContent());
-        setSlider("cve-min-count", 1);
+        openAll();
         String recent = page.locator("#tl-exposure").getAttribute("data-range-start");
         int recentMarks = page.locator("#tl-exposure .tl-mark:not([display=none])").count();
         int cutoffYear = java.time.LocalDate.now().minusMonths(12).getYear();
@@ -453,7 +306,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void theWindowFiltersTheDiscoveryViewToo() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        openAll();
         page.locator("[data-timeline-toggle=discovered]").click();
         int recent = page.locator("#tl-discovered .tl-mark:not([display=none])").count();
         allTime();
@@ -463,6 +316,7 @@ public class CvesPageTest extends BrowserTest {
     @Test
     void theTooltipStaysWhileThePointerIsOnIt() {
         page.navigate(baseUrl + "/cves/");
+        showEverything();
         Locator mark = page.locator(ROWS).first().locator("a.tl-mark:not([display=none])").first();
         mark.scrollIntoViewIfNeeded();
         hoverSteadily(mark.locator("rect.tl-hit"));
@@ -484,7 +338,7 @@ public class CvesPageTest extends BrowserTest {
         assertEquals(java.util.List.of("Exposure", "Responsiveness", "Discovery"), tabs);
 
         allSeverities();
-        setSlider("cve-min-count", 1);
+        openAll();
         allTime();
         page.locator("[data-timeline-toggle=responsiveness]").click();
         assertTrue(page.locator("#tl-responsiveness").isVisible());
@@ -497,9 +351,9 @@ public class CvesPageTest extends BrowserTest {
 
         // the filters apply to it too
         int all = page.locator("#tl-responsiveness .tl-mark:not([display=none])").count();
-        setSlider("cve-min-severity", 4);
+        onlySeverity("critical");
         assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
-        setSlider("cve-min-severity", 1);
+        allSeverities();
         setSlider("cve-window", 7);
         assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
     }
@@ -511,21 +365,145 @@ public class CvesPageTest extends BrowserTest {
         assertEquals("true", page.locator("[data-timeline-toggle=responsiveness]").getAttribute("aria-pressed"));
     }
 
+    // ---- the categories
+
+    private static final String CATS = "#tl-exposure .tl-cat:not([hidden])";
+
+    @Test
+    void everythingStartsCollapsedInOneRowPerCategory() {
+        page.navigate(baseUrl + "/cves/");
+        int categories = page.locator(CATS).count();
+        assertTrue(categories >= 2 && categories <= 8, "One row per category: " + categories);
+        assertEquals(0, page.locator("#tl-exposure .tl-component:not([hidden])").count(), "No components until one is opened");
+        assertEquals(0, visibleRows());
+        assertEquals(categories, page.locator(CATS + " button[aria-expanded=false]").count());
+        assertEquals(0, page.locator("#tl-exposure .tl-fold:not([hidden])").count());
+    }
+
+    @Test
+    void aCategoryRowShowsItsCountOpenCountAndMedian() {
+        page.navigate(baseUrl + "/cves/");
+        String meta = page.locator(CATS + " .cve-cat-meta").first().textContent();
+        assertTrue(meta.matches("\\d+ CVEs? · \\d+ open"), meta);
+        String median = page.locator("#tl-exposure .tl-cat-median:visible").first().textContent();
+        assertTrue(median.matches("median (\\d+ d|—)"), median);
+        for (Locator open : page.locator(CATS + " .cve-cat-open.has-open").all()) {
+            assertFalse(open.textContent().startsWith("0 "), "Only a non-zero open count is highlighted");
+        }
+    }
+
+    @Test
+    void everyViewHasAStripOfCvesPerMonthInEachCategory() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        allTime();
+        for (String view : new String[] { "exposure", "responsiveness", "discovered" }) {
+            page.locator("[data-timeline-toggle=" + view + "]").click();
+            assertTrue(page.locator("#tl-" + view + " .tl-cat-row:not([display=none]) .tl-cat-col").count() >= 5, view);
+            assertEquals(page.locator("#tl-" + view + " .tl-cat:not([hidden])").count(),
+                    page.locator("#tl-" + view + " .tl-cat-row:not(.tl-fold-row):not([display=none])").count(), view);
+        }
+        // the crosses are the CVEs that are not fixed yet
+        page.locator("[data-timeline-toggle=discovered]").click();
+        assertTrue(page.locator("#tl-discovered .tl-cat-cross").count() >= 1);
+    }
+
+    @Test
+    void clickingACategoryOpensItsComponentsAndPutsItInTheAddress() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        Locator first = page.locator(CATS + " button").first();
+        String name = page.locator(CATS + " .cve-cat-name").first().textContent();
+        first.click();
+        assertEquals("true", first.getAttribute("aria-expanded"));
+        assertTrue(page.locator("#tl-exposure .tl-component:not([hidden])").count() >= 1);
+        assertTrue(visibleRows() >= 1);
+        assertTrue(page.locator("#tl-exposure .tl-component:not([hidden])").first().getAttribute("data-category").equals(name));
+        assertTrue(query().contains("open=" + name), query());
+        first.click();
+        assertEquals(0, page.locator("#tl-exposure .tl-component:not([hidden])").count());
+        assertFalse(query().contains("open="), "Collapsed again, no category in the address");
+    }
+
+    @Test
+    void expandAllAndCollapseAll() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        openAll();
+        int categories = page.locator(CATS).count();
+        assertEquals(categories, page.locator(CATS + " button[aria-expanded=true]").count());
+        assertTrue(page.locator("#tl-exposure .tl-component:not([hidden])").count() > categories);
+        page.locator("[data-cve-expand=none]").click();
+        assertEquals(0, page.locator("#tl-exposure .tl-component:not([hidden])").count());
+    }
+
+    @Test
+    void componentsWithOneCveAreFoldedIntoALineThatOpens() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        allTime();
+        for (Locator button : page.locator(CATS + " button").all()) {
+            button.click();
+        }
+        int folds = page.locator("#tl-exposure .tl-fold:not([hidden])").count();
+        assertTrue(folds >= 1, "Some category has components with one CVE");
+        String text = page.locator("#tl-exposure .tl-fold:not([hidden])").first().textContent();
+        assertTrue(text.matches(".*\\+ \\d+ components? with 1 CVE"), text);
+        int before = page.locator("#tl-exposure .tl-component:not([hidden])").count();
+        page.locator("#tl-exposure .tl-fold:not([hidden]) button").first().click();
+        assertTrue(page.locator("#tl-exposure .tl-component:not([hidden])").count() > before);
+    }
+
+    @Test
+    void componentsAreGroupedByProjectWithOpenOnesFirst() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        allTime();
+        openAll();
+        Object ok = page.locator("#tl-exposure .tl-labels li:not([hidden])").evaluateAll("""
+                items => {
+                  let seen = new Set(), last = null, folded = false;
+                  for (const li of items) {
+                    if (li.classList.contains('tl-cat')) { seen = new Set(); last = null; folded = false; continue; }
+                    if (li.classList.contains('tl-fold')) { folded = true; continue; }
+                    if (folded) continue; // the components with one CVE come after their line
+                    const project = li.getAttribute('data-project');
+                    if (project !== last) { if (seen.has(project)) return false; seen.add(project); last = project; }
+                  }
+                  return true;
+                }""");
+        assertEquals(Boolean.TRUE, ok, "The components of one project sit together");
+    }
+
+    @Test
+    void theFiltersChangeTheStripAndTheCounts() {
+        page.navigate(baseUrl + "/cves/");
+        allSeverities();
+        allTime();
+        int all = page.locator(CATS).count();
+        String before = page.locator(CATS + " .cve-cat-meta").allTextContents().toString();
+        onlySeverity("critical");
+        assertTrue(page.locator(CATS).count() <= all);
+        assertNotEquals(before, page.locator(CATS + " .cve-cat-meta").allTextContents().toString());
+    }
+
     // ---- the address
 
     @Test
     void theControlsAreKeptInTheAddressAndRestoredFromIt() {
         page.navigate(baseUrl + "/cves/");
-        assertEquals("", query(),
-                "The starting state needs no parameters");
+        assertEquals("", query(), "The starting state needs no parameters");
 
-        setSlider("cve-min-count", 2);
-        setSlider("cve-min-severity", 4);
+        setChip("severity", "low", true);
         setSlider("cve-window", 2);
-        page.locator("[data-cve-origin=external]").uncheck();
+        setChip("origin", "external", false);
+        setChip("status", "pending", false);
+        String name = page.locator(CATS + " .cve-cat-name").first().textContent();
+        page.locator(CATS + " button").first().click();
         page.locator("[data-timeline-toggle=discovered]").click();
         String query = query();
-        for (String expected : new String[] { "minCves=2", "severity=critical", "back=36", "origin=internal", "view=discovered" }) {
+        for (String expected : new String[] { "severity=critical&severity=high&severity=low", "back=36", "origin=internal", "status=fixed&status=open",
+                "open=" + name, "view=discovered" }) {
             assertTrue(query.contains(expected), expected + " in " + query);
         }
 
@@ -533,175 +511,156 @@ public class CvesPageTest extends BrowserTest {
         int marks = page.locator("#tl-discovered .tl-mark:not([display=none])").count();
         page.navigate("about:blank");
         page.navigate(url);
-        assertEquals("2", page.locator("#cve-min-count").inputValue());
-        assertEquals("critical", SEVERITY_BY_STEP[Integer.parseInt(page.locator("#cve-min-severity").inputValue())]);
+        assertTrue(chip("severity", "low").isChecked());
+        assertFalse(chip("severity", "medium").isChecked());
         assertEquals("2", page.locator("#cve-window").inputValue());
-        assertFalse(page.locator("[data-cve-origin=external]").isChecked());
-        assertTrue(page.locator("[data-cve-origin=internal]").isChecked());
+        assertFalse(chip("origin", "external").isChecked());
+        assertTrue(chip("origin", "internal").isChecked());
+        assertFalse(chip("status", "pending").isChecked());
         assertTrue(page.locator("#tl-discovered").isVisible(), "The view is restored");
+        assertEquals("true", page.locator("#tl-discovered .tl-cat:not([hidden]) button").first().getAttribute("aria-expanded"));
         assertEquals(marks, page.locator("#tl-discovered .tl-mark:not([display=none])").count(), "The plot is laid out for it");
 
-        setSlider("cve-min-count", Integer.parseInt(page.locator("#cve-min-count").getAttribute("value")));
-        setSlider("cve-min-severity", 3);
+        setChip("severity", "low", false);
         setSlider("cve-window", 5);
-        page.locator("[data-cve-set=origin][data-cve-select=all]").click();
+        setChip("origin", "external", true);
+        setChip("status", "pending", true);
+        page.locator("#tl-discovered .tl-cat:not([hidden]) button").first().click();
         page.locator("[data-timeline-toggle=exposure]").click();
         assertEquals("", query(), "Back at the starting state, the parameters are gone");
     }
 
     @Test
-    void noSwitchesOnAndUnresolvedOnlySurviveAReload() {
-        page.navigate(baseUrl + "/cves/?minCves=3&unresolved&category=");
-        assertTrue(page.locator("#cve-unresolved").isChecked());
-        assertEquals("1", page.locator("#cve-min-count").inputValue(), "Unresolved only shows every component");
-        assertEquals(0, page.locator("[data-cve-category]:checked").count(), "An empty parameter means none");
-        assertEquals(0, visibleRows());
-        page.locator("[data-cve-set=category][data-cve-select=all]").click();
-        page.locator("#cve-unresolved").uncheck();
-        assertEquals("3", page.locator("#cve-min-count").inputValue(), "Unticking puts the handle back where the address had it");
+    void nothingOnInAFilterSurvivesAReloadAndMeansNothingShown() {
+        page.navigate(baseUrl + "/cves/?status=&origin=internal");
+        assertEquals(0, page.locator("[data-cve-status]:checked").count(), "An empty parameter means none");
+        assertEquals(0, page.locator(CATS).count());
+        allSeverities();
+        allTime();
+        setChip("status", "fixed", true);
+        assertTrue(page.locator(CATS).count() >= 1);
     }
 
     @Test
     void nonsenseInTheAddressIsIgnored() {
-        page.navigate(baseUrl + "/cves/?minCves=banana&severity=purple&back=7&view=nope&minCves=99999");
-        assertEquals("6", page.locator("#cve-min-count").inputValue());
-        assertEquals("3", page.locator("#cve-min-severity").inputValue());
+        page.navigate(baseUrl + "/cves/?minCves=3&category=Web&severity=purple&status=nope&back=7&view=nope&open=Nonsense");
+        assertEquals(0, page.locator("[data-cve-severity]:checked").count(), "Nothing named is on");
         assertEquals("5", page.locator("#cve-window").inputValue());
         assertTrue(page.locator("#tl-exposure").isVisible());
+        assertEquals(0, page.locator("#tl-exposure .tl-component:not([hidden])").count());
     }
 
-    private String query() {
-        return (String) page.evaluate("() => window.location.search.replace(/^\\?/, '')");
-    }
-
-    private static final String[] SEVERITY_BY_STEP = { "", "low", "medium", "high", "critical" };
-
-    // ---- the sliders
+    // ---- the sliders and the switches
 
     @Test
-    void sliderStartsAtSixAndShowsMoreComponentsWhenMovedDown() {
+    void severityChipsAreCheckboxesThatStartAtHighAndAbove() {
         page.navigate(baseUrl + "/cves/");
-        assertEquals("6", page.locator("#cve-min-count").inputValue());
-        assertTrue(page.locator("#cve-min-count-value").textContent().contains("6 or more CVEs"));
-        int five = visibleRows();
-        assertTrue(five > 0);
-        assertTrue(allCountsAtLeast(6), "Only components with at least 6 CVEs are shown at first");
-
-        setSlider("cve-min-count", 1);
-        assertTrue(visibleRows() > five, "Moving the slider down brings in more components");
-        assertEquals("1 CVE", page.locator("#cve-min-count-value").textContent());
-
-        setSlider("cve-min-count", maxCount());
-        assertTrue(visibleRows() < five, "Moving it all the way up leaves just the busiest");
-        assertTrue(visibleRows() >= 1);
-    }
-
-    @Test
-    void sliderNamesAndHighlightsTheComponentsItBringsIn() {
-        page.navigate(baseUrl + "/cves/");
-        allSeverities();
-        setSlider("cve-min-count", 5);
-        setSlider("cve-min-count", 4);
-        String status = page.locator(".cve-slider-status").textContent();
-        assertTrue(status.startsWith("Bringing in "), status);
-        // every component that came in has exactly 4 CVEs, and is named and highlighted
-        Locator entering = page.locator("#tl-exposure .tl-labels li[data-count='4']:not([hidden])");
-        assertTrue(entering.count() >= 1);
-        for (int i = 0; i < entering.count(); i++) {
-            String name = entering.nth(i).getAttribute("data-row");
-            if (i < 3) {
-                assertTrue(status.contains(name + " (4)"), "Status should name " + name + ": " + status);
-            }
-            assertTrue(entering.nth(i).getAttribute("class").contains("is-new"), name + " should be highlighted");
+        for (String sev : new String[] { "critical", "high", "medium", "low" }) {
+            assertEquals("checkbox", chip("severity", sev).getAttribute("type"));
         }
-        assertEquals(0, page.locator("#tl-exposure .tl-labels li.is-new:not([data-count='4'])").count(),
-                "Only what was brought in is highlighted");
-
-        setSlider("cve-min-count", 6);
-        assertTrue(page.locator(".cve-slider-status").textContent().startsWith("Taking out "),
-                page.locator(".cve-slider-status").textContent());
+        assertTrue(chip("severity", "critical").isChecked());
+        assertTrue(chip("severity", "high").isChecked());
+        assertFalse(chip("severity", "medium").isChecked());
+        assertFalse(chip("severity", "low").isChecked());
+        String count = page.locator(".cve-chip--medium .cve-chip-count").textContent();
+        assertTrue(count.matches("\\d+") && Integer.parseInt(count) > 0, "An off chip still says what it would add: " + count);
     }
 
     @Test
-    void timeSpanFollowsTheComponentsShown() {
+    void theSeverityShortcutsAndChipsFilterThePlot() {
         page.navigate(baseUrl + "/cves/");
         allTime();
-        // compare the busiest component alone with everything: the default view already reaches back as far as the
-        // oldest CVEs now that the data covers every release, so it cannot be the one that gets brought in
-        setSlider("cve-min-count", maxCount());
-        String top = page.locator("#tl-exposure").getAttribute("data-range-start");
-        String firstTick = page.locator("#tl-exposure .tl-grid text").first().textContent();
-        setSlider("cve-min-count", 1);
-        String one = page.locator("#tl-exposure").getAttribute("data-range-start");
-        assertTrue(one.compareTo(top) < 0, "Bringing in older CVEs should start the axis earlier: " + one + " vs " + top);
-        assertNotEquals(firstTick, page.locator("#tl-exposure .tl-grid text").first().textContent(), "The axis labels follow the span");
-        assertEquals(page.locator("#tl-exposure").getAttribute("data-range-end").substring(0, 4),
-                page.locator("#tl-exposure .tl-grid text").last().textContent().replaceAll(".* ", "").substring(0, 4).replace("2027", "2027"),
-                "The end of the axis does not move");
-        setSlider("cve-min-count", maxCount());
-        assertEquals(top, page.locator("#tl-exposure").getAttribute("data-range-start"), "and it goes back again");
-    }
-
-    @Test
-    void severitySliderShowsThatSeverityAndAboveAndItsTrackIsColoured() {
-        page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
-        assertEquals("High and above", page.locator("#cve-min-severity-value").textContent(), "High and above at first");
-        allSeverities();
-        int all = visibleMarks();
+        openAll();
+        int high = visibleMarks();
         int rows = visibleRows();
         double height = plotHeight();
-        assertEquals("All severities", page.locator("#cve-min-severity-value").textContent());
-
-        setSlider("cve-min-severity", 3); // high and above
-        assertEquals("High and above", page.locator("#cve-min-severity-value").textContent());
-        int high = visibleMarks();
-        assertTrue(high > 0 && high < all);
+        assertTrue(high > 0);
         assertEquals(0, page.locator(MARKS + ".tl-sev--medium, " + MARKS + ".tl-sev--low").count());
-        assertTrue(page.locator(MARKS + ".tl-sev--high").count() > 0);
 
-        setSlider("cve-min-severity", 4); // critical only
-        assertEquals("Critical only", page.locator("#cve-min-severity-value").textContent());
+        allSeverities();
+        int all = visibleMarks();
+        assertTrue(all > high);
+        assertTrue(chip("severity", "low").isChecked());
+
+        onlySeverity("critical");
         int critical = visibleMarks();
         assertTrue(critical > 0 && critical < high);
         assertEquals(critical, page.locator(MARKS + ".tl-sev--critical").count(), "Only critical marks are left");
         assertTrue(visibleRows() < rows, "Rows with no critical CVE are hidden");
         assertTrue(plotHeight() < height, "The plot shrinks, rather than leaving gaps");
-        assertEquals("100%", page.locator("#cve-min-severity").evaluate("e => e.style.getPropertyValue('--p')"),
-                "The greyed-out part of the track covers everything below the thumb");
 
-        setSlider("cve-min-severity", 1);
-        assertEquals(all, visibleMarks());
+        // not in a run, as the slider could not: medium and critical, but not high
+        setChip("severity", "medium", true);
+        assertEquals(0, page.locator(MARKS + ".tl-sev--high").count());
+        assertTrue(page.locator(MARKS + ".tl-sev--medium").count() > 0);
+
+        page.locator("[data-cve-severity-shortcut=high]").click();
+        assertTrue(chip("severity", "high").isChecked());
+        assertFalse(chip("severity", "medium").isChecked());
+        assertEquals(high, visibleMarks());
         assertEquals(rows, visibleRows());
-        assertEquals(height, plotHeight(), 0.5, "Putting the slider back restores the original layout");
+        assertEquals(height, plotHeight(), 0.5, "The shortcut restores the layout");
     }
 
     @Test
-    void severitySliderTrackUsesTheSeverityColours() {
+    void countsOnTheChipsFollowTheOtherFilters() {
         page.navigate(baseUrl + "/cves/");
-        String background = (String) page.locator("#cve-min-severity").evaluate("e => getComputedStyle(e).backgroundImage");
-        for (String colour : new String[] { "rgb(179, 32, 42)", "rgb(241, 143, 1)", "rgb(240, 202, 77)", "rgb(91, 143, 201)" }) {
-            assertTrue(background.contains(colour), "The track should have " + colour + " in it: " + background);
-        }
+        allTime();
+        int critical = count("severity", "critical");
+        int fixed = count("status", "fixed");
+        int external = count("origin", "external");
+        assertTrue(critical > 0 && fixed > 0 && external > 0);
+
+        // a filter does not change its own counts, but changes the others'
+        setChip("status", "fixed", false);
+        assertEquals(fixed, count("status", "fixed"), "An off chip says what it would add");
+        assertTrue(count("severity", "critical") <= critical);
+        setChip("status", "fixed", true);
+        assertEquals(critical, count("severity", "critical"));
+
+        setSlider("cve-window", 7); // 3 months
+        assertTrue(count("status", "fixed") < fixed, "The time period changes the counts");
+        assertEquals(count("origin", "internal") + count("origin", "external") >= count("status", "open"), true);
     }
 
     @Test
-    void unresolvedOnlyKeepsJustTheCrossedBars() {
+    void statusAndOriginHaveARingWithASliceForEachChipThatActsAsASwitch() {
         page.navigate(baseUrl + "/cves/");
-        setSlider("cve-min-count", 1);
+        allSeverities();
+        allTime();
+        assertEquals(3, page.locator("[data-cve-donut=status] .cve-slice").count());
+        assertEquals(2, page.locator("[data-cve-donut=origin] .cve-slice").count());
+        assertTrue(page.locator("[data-cve-donut=status] .cve-slice--fixed").getAttribute("d").startsWith("M"), "The biggest slice is drawn");
+        assertEquals(0, page.locator("[data-cve-donut=status] .cve-slice.is-off").count());
+
+        page.locator("[data-cve-donut=origin] .cve-slice--external").dispatchEvent("click");
+        assertFalse(chip("origin", "external").isChecked(), "Clicking a slice turns that value off");
+        assertEquals(1, page.locator("[data-cve-donut=origin] .cve-slice.is-off").count());
+        assertEquals(0, page.locator(CATS + "[data-origin=external]").count());
+        chip("origin", "external").evaluate("e => e.closest('label').click()");
+        assertEquals(0, page.locator("[data-cve-donut=origin] .cve-slice.is-off").count());
+    }
+
+    @Test
+    void notFixedYetKeepsJustTheCrossedBars() {
+        page.navigate(baseUrl + "/cves/");
+        showEverything();
         int all = visibleMarks();
-        page.locator("#cve-unresolved").check();
+        setChip("status", "fixed", false);
         int unresolved = visibleMarks();
         assertTrue(unresolved > 0 && unresolved < all);
         assertEquals(unresolved, page.locator(MARKS + " .tl-cross").count(), "Every unresolved mark ends in a cross");
         assertTrue(page.locator(".cve-slider-status").textContent().contains(" of "), "The count should be shown");
+        setChip("status", "pending", false);
+        assertTrue(visibleMarks() < unresolved, "Awaiting assessment is a status of its own");
+        assertEquals(0, page.locator(MARKS + ".tl-mark--pending").count());
     }
 
     // ---- no script
 
     @Test
-    void theControlsAreHiddenWithoutScriptAndThePageIsLaidOutForTheSlidersStart() {
-        // what the server renders must be what the script would lay out, or the page jumps when it loads
+    void theControlsAreHiddenWithoutScriptAndTheRowsAreLaidOutAsTheScriptWould() {
+        // what the server renders for each component must be what the script would lay out
         try (BrowserContext plain = browser.newContext(new Browser.NewContextOptions().setJavaScriptEnabled(false))) {
             Page server = plain.newPage();
             server.navigate(baseUrl + "/cves/");
@@ -719,10 +678,10 @@ public class CvesPageTest extends BrowserTest {
             String serverTicks = String.join(",", server.locator("#tl-exposure .tl-grid text").allTextContents());
 
             page.navigate(baseUrl + "/cves/");
-            allSeverities();
-            allTime(); // the server lays out all of the data; the script does the same for the same controls
+            showEverything(); // the server lays out all of the data; the script does the same for the same controls
             assertEquals(serverStart, page.locator("#tl-exposure").getAttribute("data-range-start"));
-            assertEquals(serverHeight, page.locator("#tl-exposure .tl-plot").getAttribute("height"), "plot height");
+            assertTrue(Double.parseDouble(page.locator("#tl-exposure .tl-plot").getAttribute("height")) > Double.parseDouble(serverHeight),
+                    "the script adds the category rows to the height");
             assertEquals(rows, visibleRows(), "rows shown");
             assertEquals(serverTicks, String.join(",", page.locator("#tl-exposure .tl-grid text").allTextContents()), "axis labels");
             for (int i = 0; i < serverY.length; i++) {
@@ -741,22 +700,51 @@ public class CvesPageTest extends BrowserTest {
                 + " e.dispatchEvent(new Event('input', { bubbles: true })); }", new Object[] { id, value });
     }
 
-    /** The window slider's last step: the whole history, which is how the server lays the page out. */
+    private String query() {
+        return (String) page.evaluate("() => window.location.search.replace(/^\\?/, '')");
+    }
+
+    /** Opens every category, and the lines that fold the components with one CVE. */
+    private void openAll() {
+        page.locator("[data-cve-expand=all]").click();
+    }
+
+    /** Every severity, the whole history, and every category open: what the page used to start with. */
+    private void showEverything() {
+        allSeverities();
+        allTime();
+        openAll();
+    }
+
     private void allSeverities() {
-        setSlider("cve-min-severity", 1);
+        page.locator("[data-cve-severity-shortcut=all]").click();
+    }
+
+    private Locator chip(String filter, String value) {
+        return page.locator("[data-cve-" + filter + "=" + value + "]");
+    }
+
+    /** Turns a chip on or off as a click on it would, if it is not already as wanted. */
+    private void setChip(String filter, String value, boolean on) {
+        if (chip(filter, value).isChecked() != on) {
+            chip(filter, value).evaluate("e => e.closest('label').click()");
+        }
+    }
+
+    /** Only the one severity. */
+    private void onlySeverity(String severity) {
+        for (String sev : new String[] { "critical", "high", "medium", "low" }) {
+            setChip("severity", sev, sev.equals(severity));
+        }
+    }
+
+    private int count(String filter, String value) {
+        return Integer.parseInt(page.locator(".cve-set:has([data-cve-" + filter + "=" + value + "]) label:has([data-cve-"
+                + filter + "=" + value + "]) .cve-chip-count").textContent());
     }
 
     private void allTime() {
         setSlider("cve-window", 0);
-    }
-
-    private int maxCount() {
-        return Integer.parseInt(page.locator("#cve-min-count").getAttribute("max"));
-    }
-
-    private boolean allCountsAtLeast(int count) {
-        return page.locator("#tl-exposure .tl-labels li:not([hidden])").evaluateAll(
-                "(items, min) => items.every(li => parseInt(li.getAttribute('data-count'), 10) >= min)", count) == Boolean.TRUE;
     }
 
     /** The first hover spreads the row's lanes out, which moves the bars, so aim again once it has. */
