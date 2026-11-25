@@ -275,36 +275,109 @@ public class CvesPageTest extends BrowserTest {
     }
 
     @Test
-    void thePlotLooksBackOnlyAYearAtFirstAndTheSliderWidensIt() {
+    void theTimePeriodStartsAtAYearAndThePresetsAndThePlotFollowIt() {
         page.navigate(baseUrl + "/cves/");
-        assertEquals("5", page.locator("#cve-window").inputValue());
-        assertEquals("The last year", page.locator("#cve-window-value").textContent());
-        openAll();
+        assertEquals("true", page.locator("[data-cve-preset='12']").getAttribute("aria-pressed"));
+        String readout = page.locator("#cve-brush-readout").textContent();
+        assertTrue(readout.matches("[A-Z][a-z]{2} \\d{4} – [A-Z][a-z]{2} \\d{4} · \\d+ CVEs?"), readout);
+        openAllHigh();
         String recent = page.locator("#tl-exposure").getAttribute("data-range-start");
-        int recentMarks = page.locator("#tl-exposure .tl-mark:not([display=none])").count();
-        int cutoffYear = java.time.LocalDate.now().minusMonths(12).getYear();
+        int recentMarks = visibleMarks();
         assertTrue(recent.compareTo(java.time.LocalDate.now().minusMonths(13).toString()) >= 0,
-                "The axis starts no earlier than the window: " + recent);
-        assertTrue(Integer.parseInt(recent.substring(0, 4)) >= cutoffYear);
+                "The axis starts no earlier than the period: " + recent);
 
         allTime();
-        assertEquals("Since the beginning of the data", page.locator("#cve-window-value").textContent());
-        assertTrue(page.locator("#tl-exposure").getAttribute("data-range-start").compareTo(recent) < 0,
-                "All time starts earlier");
-        assertTrue(page.locator("#tl-exposure .tl-mark:not([display=none])").count() > recentMarks,
-                "Looking further back brings in more CVEs");
-        assertTrue(page.locator(".cve-slider-status").textContent().contains("beginning of the data"));
+        assertEquals("true", page.locator("[data-cve-preset='0']").getAttribute("aria-pressed"));
+        assertEquals("All time", page.locator("#cve-brush-readout").textContent().split(" · ")[0]);
+        assertTrue(page.locator("#tl-exposure").getAttribute("data-range-start").compareTo(recent) < 0, "All time starts earlier");
+        assertTrue(visibleMarks() > recentMarks, "Looking further back brings in more CVEs");
+        assertTrue(page.locator(".cve-slider-status").textContent().contains("All time"));
 
-        setSlider("cve-window", 6);
-        assertEquals("The last 6 months", page.locator("#cve-window-value").textContent());
-        assertTrue(page.locator("#tl-exposure .tl-mark:not([display=none])").count() <= recentMarks);
-        setSlider("cve-window", 7);
-        assertEquals("The last 3 months", page.locator("#cve-window-value").textContent());
-        assertTrue(page.locator("#tl-exposure .tl-mark:not([display=none])").count() <= recentMarks);
+        preset(3);
+        assertTrue(page.locator(".cve-slider-status").textContent().contains(" – "));
+        assertTrue(visibleMarks() <= recentMarks);
+        preset(36);
+        assertTrue(visibleMarks() >= recentMarks);
     }
 
     @Test
-    void theWindowFiltersTheDiscoveryViewToo() {
+    void theStripIsLinedUpWithThePlotAreaAndHasAColumnForEachMonth() {
+        page.navigate(baseUrl + "/cves/");
+        var strip = page.locator(".cve-brush-svg").boundingBox();
+        var plot = page.locator("#tl-exposure .tl-plot").boundingBox();
+        assertEquals(plot.x, strip.x, 1.5, "Left edges line up");
+        assertEquals(plot.width, strip.width, 1.5, "Widths line up");
+        assertTrue(strip.y < plot.y, "The strip is above the plot");
+        assertTrue(page.locator(".cve-brush-col").count() >= 24, "A column for each month with CVEs");
+        assertTrue(page.locator(".cve-brush-col rect.is-open").count() >= 1, "Not fixed ones are stacked on");
+        assertTrue(page.locator(".cve-brush-axis text").count() >= 5, "Years along the top");
+    }
+
+    @Test
+    void draggingTheWindowMovesThePeriodAndTheHandlesResizeIt() {
+        page.navigate(baseUrl + "/cves/");
+        allTime();
+        preset(12);
+        String before = page.locator("#cve-brush-readout").textContent();
+        var strip = page.locator(".cve-brush-svg").boundingBox();
+        var window = page.locator(".cve-brush-window").boundingBox();
+
+        // move the window left by about a quarter of the strip
+        page.mouse().move(window.x + window.width / 2, strip.y + strip.height / 2);
+        page.mouse().down();
+        page.mouse().move(window.x + window.width / 2 - strip.width / 4, strip.y + strip.height / 2, new com.microsoft.playwright.Mouse.MoveOptions().setSteps(5));
+        page.mouse().up();
+        page.waitForTimeout(100);
+        String moved = page.locator("#cve-brush-readout").textContent();
+        assertNotEquals(before, moved);
+        assertFalse(moved.contains("Nov 2026") && moved.startsWith("Nov 2025"), moved);
+        assertEquals("false", page.locator("[data-cve-preset='12']").getAttribute("aria-pressed"), "No longer a preset");
+        assertTrue(query().contains("from="), query());
+        String period = moved.split(" · ")[0];
+
+        // drag the left handle to the left to make the period longer
+        var handle = page.locator(".cve-brush-handle rect").first().boundingBox();
+        page.mouse().move(handle.x + handle.width / 2, strip.y + strip.height / 2);
+        page.mouse().down();
+        page.mouse().move(handle.x - strip.width / 4, strip.y + strip.height / 2, new com.microsoft.playwright.Mouse.MoveOptions().setSteps(5));
+        page.mouse().up();
+        page.waitForTimeout(100);
+        assertNotEquals(period, page.locator("#cve-brush-readout").textContent().split(" · ")[0], "The period is longer");
+        assertTrue(page.locator("#cve-brush-readout").textContent().split(" · ")[0].endsWith(period.split(" – ")[1]), "The end stayed");
+
+        // dragging on empty strip makes a new window
+        page.mouse().move(strip.x + strip.width * 0.05, strip.y + strip.height / 2);
+        page.mouse().down();
+        page.mouse().move(strip.x + strip.width * 0.15, strip.y + strip.height / 2, new com.microsoft.playwright.Mouse.MoveOptions().setSteps(5));
+        page.mouse().up();
+        page.waitForTimeout(100);
+        assertTrue(page.locator("#cve-brush-readout").textContent().contains(" – "));
+        assertTrue(query().contains("to="), "The period no longer ends now: " + query());
+        assertFalse(page.locator("#tl-exposure .tl-today-tag").isVisible(), "Today is not in the period");
+    }
+
+    @Test
+    void theRangeInputsSetThePeriodForTheKeyboard() {
+        page.navigate(baseUrl + "/cves/");
+        int last = Integer.parseInt(page.locator("#cve-to").inputValue());
+        assertEquals(last, Integer.parseInt(page.locator("#cve-to").getAttribute("max")));
+        assertEquals(0, Integer.parseInt(page.locator("#cve-from").getAttribute("min")));
+        assertEquals(last - 11, Integer.parseInt(page.locator("#cve-from").inputValue()), "A year");
+        assertTrue(page.locator("#cve-from").getAttribute("aria-valuetext").matches("[A-Z][a-z]+ \\d{4}"));
+
+        page.locator("#cve-from").focus();
+        page.keyboard().press("ArrowLeft");
+        assertEquals(last - 12, Integer.parseInt(page.locator("#cve-from").inputValue()));
+        page.locator("#cve-to").focus();
+        page.keyboard().press("ArrowLeft");
+        assertEquals(last - 1, Integer.parseInt(page.locator("#cve-to").inputValue()));
+        assertTrue(query().contains("to="));
+        setSlider("cve-from", last); // past the end: the end follows
+        assertEquals(last, Integer.parseInt(page.locator("#cve-to").inputValue()));
+    }
+
+    @Test
+    void thePeriodFiltersTheDiscoveryViewToo() {
         page.navigate(baseUrl + "/cves/");
         openAll();
         page.locator("[data-timeline-toggle=discovered]").click();
@@ -354,7 +427,7 @@ public class CvesPageTest extends BrowserTest {
         onlySeverity("critical");
         assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
         allSeverities();
-        setSlider("cve-window", 7);
+        preset(3);
         assertTrue(page.locator("#tl-responsiveness .tl-mark:not([display=none])").count() < all);
     }
 
@@ -521,14 +594,14 @@ public class CvesPageTest extends BrowserTest {
         assertEquals("", query(), "The starting state needs no parameters");
 
         setChip("severity", "low", true);
-        setSlider("cve-window", 2);
+        preset(36);
         setChip("origin", "external", false);
         setChip("status", "pending", false);
         String name = page.locator(CATS + " .cve-cat-name").first().textContent();
         page.locator(CATS + " button").first().click();
         page.locator("[data-timeline-toggle=discovered]").click();
         String query = query();
-        for (String expected : new String[] { "severity=critical&severity=high&severity=low", "back=36", "origin=internal", "status=fixed&status=open",
+        for (String expected : new String[] { "severity=critical&severity=high&severity=low", "from=" + java.time.LocalDate.now().minusMonths(35).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM")), "origin=internal", "status=fixed&status=open",
                 "open=" + name, "view=discovered" }) {
             assertTrue(query.contains(expected), expected + " in " + query);
         }
@@ -539,7 +612,7 @@ public class CvesPageTest extends BrowserTest {
         page.navigate(url);
         assertTrue(chip("severity", "low").isChecked());
         assertFalse(chip("severity", "medium").isChecked());
-        assertEquals("2", page.locator("#cve-window").inputValue());
+        assertEquals("true", page.locator("[data-cve-preset='36']").getAttribute("aria-pressed"));
         assertFalse(chip("origin", "external").isChecked());
         assertTrue(chip("origin", "internal").isChecked());
         assertFalse(chip("status", "pending").isChecked());
@@ -548,7 +621,7 @@ public class CvesPageTest extends BrowserTest {
         assertEquals(marks, page.locator("#tl-discovered .tl-mark:not([display=none])").count(), "The plot is laid out for it");
 
         setChip("severity", "low", false);
-        setSlider("cve-window", 5);
+        preset(12);
         setChip("origin", "external", true);
         setChip("status", "pending", true);
         page.locator("#tl-discovered .tl-cat:not([hidden]) button").first().click();
@@ -569,9 +642,9 @@ public class CvesPageTest extends BrowserTest {
 
     @Test
     void nonsenseInTheAddressIsIgnored() {
-        page.navigate(baseUrl + "/cves/?minCves=3&category=Web&severity=purple&status=nope&back=7&view=nope&open=Nonsense");
+        page.navigate(baseUrl + "/cves/?minCves=3&category=Web&severity=purple&status=nope&from=banana&to=2999-99&back=-3&view=nope&open=Nonsense");
         assertEquals(0, page.locator("[data-cve-severity]:checked").count(), "Nothing named is on");
-        assertEquals("5", page.locator("#cve-window").inputValue());
+        assertEquals("true", page.locator("[data-cve-preset='12']").getAttribute("aria-pressed"));
         assertTrue(page.locator("#tl-exposure").isVisible());
         assertEquals(0, page.locator("#tl-exposure .tl-component:not([hidden])").count());
     }
@@ -644,7 +717,7 @@ public class CvesPageTest extends BrowserTest {
         setChip("status", "fixed", true);
         assertEquals(critical, count("severity", "critical"));
 
-        setSlider("cve-window", 7); // 3 months
+        preset(3);
         assertTrue(count("status", "fixed") < fixed, "The time period changes the counts");
         assertEquals(count("origin", "internal") + count("origin", "external") >= count("status", "open"), true);
     }
@@ -770,7 +843,17 @@ public class CvesPageTest extends BrowserTest {
     }
 
     private void allTime() {
-        setSlider("cve-window", 0);
+        preset(0);
+    }
+
+    /** A preset of the time period: that many months to now, or 0 for all of it. */
+    private void preset(int months) {
+        page.locator("[data-cve-preset='" + months + "']").click();
+    }
+
+    /** Every category open, as the chart is mostly looked at. */
+    private void openAllHigh() {
+        openAll();
     }
 
     /** The first hover spreads the row's lanes out, which moves the bars, so aim again once it has. */
