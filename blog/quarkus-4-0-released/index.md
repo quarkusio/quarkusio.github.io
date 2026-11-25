@@ -80,7 +80,7 @@ Vert.x 5 comes with a lot of changes (see the [Vert.x 5](https://vertx.io/blog/w
 - Production-ready `io_uring` transport, including Unix domain sockets and zero-copy file transfers
 - Reactive SQL driver enhancements
 - An improved HTTP proxy module
-- Unix domain sockets without native code on Java 16+
+- Unix domain sockets without native code
 - Graceful shutdown for both server and client
 - Post-quantum key exchange support
 
@@ -209,7 +209,7 @@ Native transport support has been reworked ([#55215](https://github.com/quarkusi
 
 The documentation has moved to a [dedicated guide](/guides/native-transport-reference).
 
-#### Virtual threads by default for REST endpoints
+#### Opt-in virtual threads for all blocking REST endpoints
 
 Annotating every endpoint with `@RunOnVirtualThread` is tedious when you want to use virtual threads everywhere. You can now set the following build-time property instead ([#56294](https://github.com/quarkusio/quarkus/pull/56294)):
 
@@ -403,6 +403,7 @@ The changes most likely to affect you are:
 
 - Java 21 being the new minimum version,
 - the move to Vert.x 5 if you use the Vert.x APIs directly or the reactive SQL clients,
+- the gRPC extension changes, now that it is based on the Vert.x gRPC stack,
 - the move to Jackson 3,
 - the new major versions of Hibernate ORM, Hibernate Reactive, and Hibernate Search,
 - the new OpenTelemetry defaults.
