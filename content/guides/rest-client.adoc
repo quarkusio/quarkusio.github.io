@@ -41,10 +41,10 @@ include::{includes}/devtools/create-app.adoc[]
 
 This command generates the Maven project with a REST endpoint and imports:
 
-* the `rest-jackson` extension for the REST server support. Use `rest` instead if you do not wish to use Jackson;
-* the `rest-client-jackson` extension for the REST client support. Use `rest-client` instead if you do not wish to use Jackson
+* the `quarkus-rest-jackson` extension for the REST server support. Use `quarkus-rest-jsonb` if you prefer JSON-B, or `quarkus-rest` if you do not need JSON support;
+* the `quarkus-rest-client-jackson` extension for the REST client support. Use `quarkus-rest-client-jsonb` if you prefer JSON-B, or `quarkus-rest-client` if you do not need JSON support.
 
-If you already have your Quarkus project configured, you can add the `rest-client-jackson` extension
+If you already have your Quarkus project configured, you can add the `quarkus-rest-client-jackson` extension
 to your project by running the following command in your project base directory:
 
 :add-extension-extensions: rest-client-jackson
@@ -151,11 +151,13 @@ package org.acme.rest.client;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.jboss.resteasy.reactive.RestQuery;
+import org.jboss.resteasy.reactive.Separator;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MultivaluedMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Optional;
@@ -179,11 +181,15 @@ public interface ExtensionsService {
     @GET
     Set<Extension> getByFilters(@RestQuery MultivaluedMap<String, String> filters); <3>
 
+    @GET
+    Set<Extension> getByNamesDefiningSeparator(@Separator(",") @RestQuery List<String> names); <4>
+
 }
 ----
 <1> @RestQuery will include parameter with key `name`
 <2> Each `Map` entry represents exactly one query parameter
 <3> `MultivaluedMap` allows you to send array values
+<4> @Separator lets you specify a custom delimiter between the values of a collection-valued parameter
 
 ==== Using @ClientQueryParam
 
@@ -238,12 +244,14 @@ package org.acme.rest.client;
 
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.jboss.resteasy.reactive.RestForm;
+import org.jboss.resteasy.reactive.Separator;
 
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.core.MultivaluedMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -267,8 +275,18 @@ public interface ExtensionsService {
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     Set<Extension> postFilters(@RestForm MultivaluedMap<String, String> filters);
 
+    @POST
+    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    Set<Extension> postNames(@RestForm @Separator(",") List<String> names); <1>
+
 }
 ----
+<1> Just like for query parameters, `@Separator` lets you specify a custom delimiter between the values of a collection-valued form parameter.
+In this example, the request body will be `names=first,second` instead of `names=first&names=second`.
+
+By default, multiple values of the same form parameter are sent as repeated `name=value` pairs.
+This can be changed for all the form parameters of a client using the `quarkus.rest-client.form-param-style` configuration property
+(or `quarkus.rest-client."config-key".form-param-style` for a specific client).
 
 ==== Using @ClientFormParam
 
@@ -390,19 +408,55 @@ public interface ExtensionsService {
 }
 ----
 
-When the `url` parameter is non-null, it will override the base URL that is configured for the client (the default base URL configuration is still mandatory).
+When the `url` parameter is non-null, it will override the base URL that is configured for the client.
+A CDI client whose interface declares an `@Url` parameter can be used without a configured base URL; each call then has to pass a non-null URL, and a call that does not (a `null` argument, or a method without an `@Url` parameter) fails with the usual "Unable to determine the proper baseUrl/baseUri" error.
+A client built programmatically with `RestClientBuilder` still requires a base URL, as mandated by the MicroProfile REST Client specification.
 
 === Sending large payloads
 
 The REST Client is capable of sending arbitrarily large HTTP bodies without buffering the contents in memory, if one of the following types is used:
 
 * `InputStream`
-* `Multi<io.vertx.mutiny.core.buffer.Buffer>`
+* `Multi<byte[]>`
+* `Multi<io.vertx.core.buffer.Buffer>`
+
+The `Multi` variants are consumed lazily, so a large body can be streamed from another source without buffering it in memory.
+For example, a `Multi<byte[]>` returned by another REST Client method can be passed directly as the request body.
 
 Furthermore, the client can also send arbitrarily large files if one of the following types is used:
 
 * `File`
 * `Path`
+
+=== Receiving large payloads
+
+Symmetrically, the REST Client can receive arbitrarily large HTTP bodies without buffering the contents in memory, if the method returns one of the following types:
+
+* `InputStream`, read on a worker thread
+* `Multi<byte[]>`, each item being a chunk of the body as it is received
+* `Multi` of any type when the response is `application/x-ndjson` or `application/stream+json`, each item being one line of the body
+
+[source,java]
+----
+package org.acme.rest.client;
+
+import io.smallrye.mutiny.Multi;
+import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@Path("/files")
+@RegisterRestClient
+public interface FilesService {
+
+    @GET
+    @Path("/large")
+    Multi<byte[]> download();
+}
+----
+
+The body is read according to the demand of the subscriber of the `Multi`: a subscriber that consumes the items slowly, for example by writing them to disk one at a time, slows down the reading of the response instead of causing its remaining content to accumulate in memory.
 
 === Getting other response properties
 
@@ -576,6 +630,24 @@ quarkus.rest-client.alpn=true
 quarkus.rest-client.extensions-api.alpn=true
 ----
 
+[[http3]]
+=== HTTP/3 Support
+
+The REST Client can connect to HTTP/3 servers when the `quarkus-http3` extension is on the classpath.
+HTTP/3 is disabled by default.
+To enable it:
+
+[source, properties]
+----
+// for all REST Clients:
+quarkus.rest-client.http3=true
+// or for a single REST Client:
+quarkus.rest-client.my-client.http3=true
+----
+
+The target server must support HTTP/3 and the connection must use TLS.
+See the xref:http3-reference.adoc[HTTP/3 reference guide] for server-side setup and additional details.
+
 == Programmatic client creation with QuarkusRestClientBuilder
 
 Instead of annotating the client with `@RegisterRestClient`, and injecting
@@ -735,6 +807,31 @@ public class ExtensionsResource {
 }
 ----
 <1> the client will use the registered HTTP Client options over the HTTP Client options provided via CDI if any.
+
+[[request-options]]
+== Options for a Single Request
+
+When configuring a REST Client with the Quarkus configuration options, the settings apply to all requests made by the client. In cases where some requests need to use different settings, `org.jboss.resteasy.reactive.client.api.ClientRequestOptions` can be used as method parameter.
+
+[source,java]
+----
+@Path("/reports")
+@RegisterRestClient(configKey = "reports-api")
+public interface ReportsService {
+
+    @GET
+    @Path("/{id}")
+    Report get(@PathParam("id") long id, ClientRequestOptions options); <1>
+}
+----
+<1> The parameter is not sent with the request. Passing `null` keeps the client configuration.
+
+[source,java]
+----
+Report report = reportsService.get(id, ClientRequestOptions.builder()
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build());
+----
 
 [[redirection]]
 == Redirection
@@ -1929,10 +2026,10 @@ An example configuration could be:
 [source,properties]
 ----
 # global configuration is used for all clients
-quarkus.rest-client.enable-compression=true
+quarkus.rest-client.enable-response-decompression=true
 
 # per-client configuration overrides the global settings for a specific client
-quarkus.rest-client.my-client.enable-compression=true
+quarkus.rest-client.my-client.enable-response-decompression=true
 ----
 
 The REST Client falls back onto the Quarkus wide `quarkus.http.enable-compression` configuration property (which defaults to `false`) if no REST Client specific property is set.
@@ -2026,6 +2123,23 @@ The port the proxy is listening can be found in startup logs. An example entry i
 ----
 Started HTTP proxy server on http://localhost:38227 for REST Client 'org.acme.SomeClient'
 ----
+
+== Unix domain socket
+
+The REST client can connect to a server listening on a Unix domain socket instead of using a network connection.
+This is useful when communicating with services co-located on the same host (for example, a local daemon or sidecar) without going through the network stack.
+
+To use a domain socket, set the `domain-socket` property to the path of the socket file:
+
+[source,properties]
+----
+quarkus.rest-client.my-client.domain-socket=/var/run/my-service.sock
+----
+
+The `url` (or `uri`) property is optional in this case, and defaults to `http://localhost`.
+If you set it, the connection still goes through the socket; the URL only provides the request path prefix and the HTTP `Host` header.
+
+NOTE: Unix domain sockets are not available on Windows.
 
 == Package and run the application
 

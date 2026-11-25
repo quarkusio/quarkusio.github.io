@@ -3,6 +3,7 @@ This guide is maintained in the main Quarkus repository
 and pull requests should be submitted there:
 https://github.com/quarkusio/quarkus/tree/main/docs/src/main/asciidoc
 ////
+[id=opentelemetry]
 = Using OpenTelemetry
 include::_attributes.adoc[]
 :categories: operations
@@ -55,25 +56,11 @@ The tracing functionality is supported and *on* by default.
 
 === xref:opentelemetry-metrics.adoc[OpenTelemetry Metrics Guide]
 
-==== Enable Metrics
-The metrics functionality is tech preview and *off* by default. You will need to activate it by setting:
-
-[source,properties]
-----
-quarkus.otel.metrics.enabled=true
-----
-At build time on your `application.properties` file.
+The metrics functionality is supported and *on* by default.
 
 === xref:opentelemetry-logging.adoc[OpenTelemetry Logging Guide]
 
-==== Enable Logs
-The logging functionality is tech preview and *off* by default. You will need to activate it by setting:
-
-[source,properties]
-----
-quarkus.otel.logs.enabled=true
-----
-At build time on your `application.properties` file.
+The logging functionality is supported and *on* by default.
 
 == Using the extension
 
@@ -108,7 +95,7 @@ include::{includes}/opentelemetry-config.adoc[]
 
 === Disable all or parts of the OpenTelemetry extension
 
-Once you add the dependency, the extension will generate tracing data by default. To enable metrics or disable the OpenTelemetry extension globally or partially these are the properties to use (they are extracted from the config reference below):
+Once you add the dependency, the extension will generate tracing, metrics and logging data by default. To disable the OpenTelemetry extension globally or partially these are the properties to use (they are extracted from the config reference below):
 
 |===
 |Affected Signal | Property name |Default value |Description
@@ -138,12 +125,15 @@ Telemetry will be generated, contexts will be propagated but no telemetry will b
 | Traces output
 |`quarkus.otel.traces.exporter`
 |cdi
-|List of exporters to be used for tracing, separated by commas. Has one of the values from _ExporterType_: `otlp`, `cdi`, `none`. This is a *build* time property and setting it to `none` will disable tracing data output.
+|List of exporters to be used for tracing, separated by commas. Has one of the values from _ExporterType_: `otlp`, `cdi`, `none`.
+
+This is a *build* time property and setting it to `none` will disable tracing data output.
+Telemetry will still be generated and contexts will still be propagated but nothing will be exported. To stop creating spans altogether, use `quarkus.otel.traces.enabled`.
 
 | Metrics
 |`quarkus.otel.metrics.enabled`
-|false
-|Metrics are disabled by default at *build* time because they are tech preview.
+|true
+|If false, disable the OpenTelemetry metrics usage at *build* time.
 
 | Metrics output
 |`quarkus.otel.metrics.exporter`
@@ -152,8 +142,8 @@ Telemetry will be generated, contexts will be propagated but no telemetry will b
 
 | Logs
 |`quarkus.otel.logs.enabled`
-|false
-|Logs are disabled by default at *build* time because they are tech preview.
+|true
+|If false, disable the OpenTelemetry logs usage at *build* time.
 
 | Logs output
 |`quarkus.otel.logs.exporter`
@@ -165,6 +155,8 @@ Telemetry will be generated, contexts will be propagated but no telemetry will b
 |true
 |If false, disable the OpenTelemetry logs handler at *runtime*. This removes the bridge between the Quarkus logging system (JBoss LogManager) and OpenTelemetry logs.
 |===
+
+The output properties and the enablement properties are not interchangeable. Disabling the output (`quarkus.otel.exporter.otlp.enabled=false`, or an exporter list set to `none`) stops telemetry from being *sent out*, while telemetry keeps being generated: trace and span ids remain available for log correlation and keep being propagated to downstream services. Disabling a signal (`quarkus.otel.traces.enabled=false`) or the whole SDK (`quarkus.otel.sdk.disabled=true`) stops the telemetry from being *generated* in the first place, which is the cheaper option when you want nothing at all.
 
 If you need to enable or disable the exporter at runtime, you can use the xref:opentelemetry-tracing.adoc#sampler[sampler] because it has the ability to filter out all the spans if needed.
 
@@ -182,7 +174,14 @@ The following attributes are added by default to resources.
 
 |service.name
 |"opentelemetry-quickstart"
-|Value comes from the artifactId, from the `quarkus.application.name` property or from `quarkus.otel.resource.attributes=service.name=cart` property.
+|Value comes from the following configurations, the first one to be set wins:
+
+The `quarkus.otel.service.name` property, then from `quarkus.otel.resource.attributes=service.name=cart` property, from the `OTEL_SERVICE_NAME` environment variable or the `otel.service.name` system property and finally, the `quarkus.application.name` property is used with the default being the name of the project.
+
+|service.instance.id
+|"8a3c60f7-9b2e-4c1d-..."
+|A random identifier the OpenTelemetry SDK generates at startup. It is regenerated on every start, so it identifies a run of the application rather than a deployment of it.
+Set `quarkus.otel.resource.attributes=service.instance.id=...` to supply your own.
 
 |host.name
 |"myHost"
@@ -225,6 +224,12 @@ quarkus.otel.resource.attributes=deployment.environment=dev,service.name=cart,se
 
 This will add the attributes for `deployment.environment`, `service.name` and `service.namespace` to the resource and be included in traces and metrics.
 
+[NOTE]
+====
+Setting `service.instance.id` through `quarkus.otel.resource.attributes` keeps the attribute value, but the resource then carries no `service.instance` resource entity.
+The OpenTelemetry SDK builds that entity from an identifier it generates itself, and a value you supply would conflict with it, so Quarkus switches the SDK provider off instead.
+====
+
 ==== Using CDI beans
 If by any means you need to use a custom resource or one that is provided by one of the https://github.com/open-telemetry/opentelemetry-java/tree/main/sdk-extensions[OpenTelemetry SDK Extensions]
 you can create multiple resource producers. The OpenTelemetry extension will detect the `Resource` CDI beans and will merge them when configuring the OTel SDK.
@@ -247,6 +252,38 @@ public class CustomConfiguration {
     }
 }
 ----
+
+Resources coming from the SDK extensions may carry *resource entities* of their own, which Quarkus does not manage.
+These are the OpenTelemetry kind of entity, described in the https://opentelemetry.io/docs/specs/otel/entities/data-model/[entities data model] — they have nothing to do with JPA entities.
+If one of your producers writes an attribute that identifies such a resource entity, the entity association is dropped and the OpenTelemetry SDK logs a warning.
+
+For example, the SDK builds a `service` resource entity that is identified by `service.name`.
+A producer writing that same attribute as an ordinary attribute changes a value the entity owns:
+
+[source,java]
+----
+@Produces
+@ApplicationScoped
+public Resource serviceNameResource() {
+    return Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, "cart"));
+}
+----
+
+The exported resource still carries `service.name=cart`, but it no longer carries the `service` resource entity, and the SDK logs:
+
+----
+WARNING [io.opentelemetry.sdk.resources.ResourceBuilder] Removing entity association [service] because resource
+attributes change the value or type of its attributes. Other attributes are retained as unassociated.
+----
+
+Use `quarkus.otel.service.name` or `quarkus.otel.resource.attributes` to set the service name instead.
+Quarkus resolves those before the SDK builds the resource, so the entity is built with the value you asked for and nothing overwrites it afterwards.
+
+[WARNING]
+====
+Quarkus does not support OpenTelemetry resource entities yet.
+There is no Quarkus configuration or API to declare, rename or extend one: the only resource entities you get are the ones the SDK itself builds, and Quarkus limits itself to not breaking them.
+====
 
 ==== Kubernetes
 When running the application in Kubernetes, the https://opentelemetry.io/docs/specs/semconv/resource/k8s/[OpenTelemetry Kubernetes resource attributes] can be populated in a couple of ways.
@@ -336,19 +373,49 @@ When creating manual instrumentation, while naming metrics or attributes you sho
 
 === The Default
 
-The Quarkus OpenTelemetry extension uses its own signal exporters built on top of Vert.x for optimal performance and maintainability. All *Quarkus built in exporters use the OTLP protocol* through a couple of data senders, using `grpc` (the default) and `http/protobuf`.
+The Quarkus OpenTelemetry extension uses its own signal exporters built on top of Vert.x for optimal performance and maintainability. All *Quarkus built in exporters use the OTLP protocol* through a couple of data senders, using `http/protobuf` (the default) and `grpc`.
 
 The active exporter is automatically wired by CDI, that's why the `quarkus.otel.traces.exporter`, `quarkus.otel.metrics.exporter` and `quarkus.otel.logs.exporter` properties default value is `cdi`. This is not because of the protocol being used in the data transfer but because of how the exporters are wired.
 
 CDI (Context Dependency Injection) will manage the exporters to use, according to the selected protocol or when applications implement their own CDI exporter, like in tests.
 
-The `quarkus.otel.exporter.otlp.protocol` property instructs Quarkus to switch the senders and defaults to `grpc` but `http/protobuf` can also be used.
+The `quarkus.otel.exporter.otlp.protocol` property instructs Quarkus to switch the senders and defaults to `http/protobuf` but `grpc` can also be used.
 
 NOTE: If you change the protocol, you also need to change the port in the endpoint. The default port for `grpc` is `4317` and for `http/protobuf` is `4318`.
 
 The `quarkus.otel.exporter.otlp.memory-mode` property configures the memory allocation strategy for OTLP exporters.
 The default value `immutable-data` creates new serialization objects for each export.
 Setting it to `reusable-data` enables object pooling to reduce garbage collection pressure, which can be beneficial in memory-constrained environments.
+
+[[exporter-timeout]]
+=== Export timeout and retries
+
+The `quarkus.otel.exporter.otlp.timeout` property sets the maximum time to wait for the collector to process an exported batch.
+It defaults to `10s` and applies to all signals.
+Use `quarkus.otel.exporter.otlp.traces.timeout`, `quarkus.otel.exporter.otlp.metrics.timeout` or `quarkus.otel.exporter.otlp.logs.timeout` to set a different value for one signal.
+
+[source, properties]
+----
+quarkus.otel.exporter.otlp.timeout=10s <1>
+quarkus.otel.exporter.otlp.metrics.timeout=30s <2>
+----
+<1> Applies to traces, metrics and logs.
+<2> Overrides the timeout for metrics only.
+
+The timeout applies to each attempt of an export, from the moment the request is sent until the whole response has been received.
+It does not depend on the activity on the connection: a response that keeps arriving slowly but never completes still times out.
+An attempt that times out is cancelled and retried, like a failed connection or, with `http/protobuf`, a `5xx` response.
+An export is sent to the collector at most 4 times before it fails.
+A retry after a timeout or a failed response starts as soon as the previous attempt ends, without a back-off.
+Only a connection that cannot be opened is retried with a short back-off, starting at 100ms, within each attempt, so an unreachable collector can see more connection attempts than that.
+
+When an attempt times out, the exporter cannot know whether the collector has already stored the batch, so the retry can deliver it twice.
+The OTLP specification makes this trade-off deliberately: a client re-sends data it has no acknowledgement for, to guarantee delivery, even if this can create duplicates on the server side.
+See https://opentelemetry.io/docs/specs/otlp/#duplicate-data[Duplicate Data] in the OTLP specification.
+To avoid unnecessary retries, set the timeout above the longest time your collector, or any proxy in front of it, takes to answer an export.
+
+NOTE: An export that waits for its timeout also delays the next one.
+For example, the periodic metric reader skips a collection, logging `Exporter busy. Dropping metrics.`, while the previous export is still in progress.
 
 === Using CDI to produce a test exporter
 
@@ -481,19 +548,6 @@ This provides an easy way to visualize all OpenTelemetry data generated by the a
 
 You can also use the xref:logging-exporter-for-debugging[logging exporter] to output all traces and metrics to the console.
 
-
-== Dev Services for OpenTelemetry with the LGTM stack
-
-The OpenTelemetry extension provides a Dev Service that automatically starts a Grafana OTel LGTM stack when the application is started in development mode. This allows you to easily visualize the telemetry data generated by your application without needing to set up an external observability stack.
-
-=== Enabling / Disabling Dev Services for OpenTelemetry
-
-Dev Services for OpenTelemetry is enabled by default. You can disable it by setting the `quarkus.observability.lgtm.enabled=false` or `quarkus.observability.dev-resources=false` properties in your configuration.
-
-=== Full Dev Services for OpenTelemetry reference
-
-The Observability Dev Services guide provides a full reference for all the properties related to Dev Services for OpenTelemetry with the LGTM stack. You can find it at xref:observability-devservices-lgtm.adoc[Observability Dev Services with Grafana OTel LGTM].
-
 [[configuration-reference]]
 == OpenTelemetry Configuration Reference
 
@@ -504,4 +558,5 @@ adding the usual `quarkus.*` prefix.
 
 Quarkus OpenTelemetry configuration properties now have the `quarkus.otel.*` prefix.
 
-include::{generated-dir}/config/quarkus-opentelemetry.adoc[leveloffset=+1, opts=optional]
+// So the bare quarkus-opentelemetry.adoc is only created when the extension has exactly one top-level config prefix. The OTel extension now emits two — quarkus.otel and quarkus.dev-ui
+include::{generated-dir}/config/quarkus-opentelemetry_quarkus.otel.adoc[leveloffset=+1, opts=optional]
