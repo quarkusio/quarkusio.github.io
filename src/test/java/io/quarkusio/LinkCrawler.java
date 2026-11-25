@@ -1239,6 +1239,9 @@ final class LinkCrawler implements AutoCloseable {
         // mode, off-site redirects). These are verified on demand by navigating,
         // preserving the original coverage.
         Map<String, Set<String>> fallbackIds = new HashMap<>();
+        // Pages reloaded to confirm a missing anchor, so each is fetched at most once
+        Map<String, Set<String>> recheckedIds = new HashMap<>();
+        int recovered = 0;
         Page p = null;
         BrowserContext ctx = null;
 
@@ -1263,8 +1266,7 @@ final class LinkCrawler implements AutoCloseable {
                 ids = fallbackIds.get(link.url);
                 if (ids == null) {
                     if (p == null) {
-                        ctx = browser.newContext();
-                        ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+                        ctx = newFragmentCheckContext();
                         p = ctx.newPage();
                         p.setDefaultNavigationTimeout(30_000);
                     }
@@ -1284,6 +1286,28 @@ final class LinkCrawler implements AutoCloseable {
                     knownBroken++;
                     continue;
                 }
+
+                // The ids were captured while crawling, at DOMCONTENTLOADED. If the server dropped the
+                // connection part way through a long page, the DOM can be truncated and every id after
+                // the cut-off looks missing, without any error. Load the page again before reporting.
+                // Ids from the fallback fetch above are already a fresh load, so they are not repeated.
+                if (pageIds.containsKey(link.url)) {
+                    Set<String> fresh = recheckedIds.get(link.url);
+                    if (fresh == null) {
+                        if (p == null) {
+                            ctx = newFragmentCheckContext();
+                            p = ctx.newPage();
+                            p.setDefaultNavigationTimeout(30_000);
+                        }
+                        fresh = fetchPageIds(p, link.url);
+                        recheckedIds.put(link.url, fresh);
+                    }
+                    // if the reload itself fails, keep the original verdict
+                    if (fresh != FetchFailed.INSTANCE && fresh.contains(link.fragment)) {
+                        recovered++;
+                        continue;
+                    }
+                }
                 broken.put(entry.getKey(), link);
             }
         }
@@ -1294,7 +1318,8 @@ final class LinkCrawler implements AutoCloseable {
 
         System.out.println("Checked " + fragmentLinks.size() + " fragment anchors, found "
                 + broken.size() + " broken"
-                + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : ""));
+                + (knownBroken > 0 ? " (+ " + knownBroken + " known excluded)" : "")
+                + (recovered > 0 ? " (" + recovered + " missing on the first load, found on reload)" : ""));
 
         return broken;
     }
@@ -1346,6 +1371,12 @@ final class LinkCrawler implements AutoCloseable {
     /** Sentinel id set used to remember pages that failed to load. */
     private static final class FetchFailed {
         static final Set<String> INSTANCE = Set.of();
+    }
+
+    private BrowserContext newFragmentCheckContext() {
+        BrowserContext ctx = browser.newContext();
+        ctx.route("**/*.{css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}", Route::abort);
+        return ctx;
     }
 
     private Set<String> fetchPageIds(Page p, String url) {
