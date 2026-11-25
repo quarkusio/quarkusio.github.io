@@ -1,9 +1,9 @@
 (function () {
-    // Accordion-style TOC for guides: top-level groups are collapsed by default
+    // Accordion-style TOC for guides (and blog posts with `toc: true`): top-level groups are collapsed by default
     // (via CSS, so there is no expand-then-collapse flash on load) and the group
     // for the section you are currently reading expands as you scroll. Only one
     // group is open at a time.
-    const toc = document.querySelector( '.guide-toc-wrapper .toc' );
+    const toc = document.querySelector( '.guide-toc-wrapper .toc, .post-toc-wrapper .toc' );
     if ( !toc ) {
         return;
     }
