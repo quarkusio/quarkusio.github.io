@@ -248,7 +248,7 @@ public class CvesPageTest extends BrowserTest {
     void overlappingCvesOfOneArtifactAreInSeparateLanes() {
         page.navigate(baseUrl + "/cves/");
         setSlider("cve-min-count", 1);
-        assertTrue(page.locator("#tl-exposure .tl-labels li.tl-h-24").count() < page.locator("#tl-exposure .tl-labels li").count(),
+        assertTrue(page.locator("#tl-exposure .tl-labels li.tl-h-18").count() < page.locator("#tl-exposure .tl-labels li").count(),
                 "Artifacts with overlapping CVEs should have taller rows");
         // within a row, no two CVEs may overlap, whatever their parts
         Object overlaps = page.evaluate("() => {"
@@ -398,13 +398,13 @@ public class CvesPageTest extends BrowserTest {
         Locator first = page.locator(ROWS).first();
         first.scrollIntoViewIfNeeded();
         double height = plotHeight();
-        assertEquals(11, laneSpacing(), "Neighbouring lanes are one bar height plus 5px apart");
+        assertEquals(7, laneSpacing(), "Neighbouring lanes are one bar height plus 1px apart");
 
         var label = page.locator("#tl-exposure .tl-labels li:not([hidden])").first().boundingBox();
         page.mouse().move(label.x + 5, label.y + label.height / 2);
         page.waitForTimeout(150);
         assertEquals(height, plotHeight(), 0.5, "Hovering a component must not change the layout");
-        assertEquals(11, laneSpacing());
+        assertEquals(7, laneSpacing());
 
         var plotBox = first.boundingBox();
         page.mouse().move(plotBox.x + plotBox.width / 2, plotBox.y + 1);

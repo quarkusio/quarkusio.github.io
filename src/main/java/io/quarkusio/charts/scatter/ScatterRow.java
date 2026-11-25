@@ -17,20 +17,20 @@ public record ScatterRow(String id, String label, String shortLabel, List<Scatte
         return marks.size();
     }
 
-    /** Vertical distance between sub-lanes, in pixels, with a gap between neighbouring bars. */
-    public static final int LANE_PITCH = 11;
+    /** Vertical distance between sub-lanes, in pixels, so that bars are 1px apart. */
+    public static final int LANE_PITCH = 7;
     /** Height of the part of a bar from publication on, in pixels. */
     public static final int BAR_H = 6;
     /** Height of the paler part before publication, in pixels; centred on the bar. */
-    public static final int PRE_H = 5;
+    public static final int PRE_H = 3;
     /** Space above the first and below the last lane. */
-    public static final int PAD = 6;
+    public static final int PAD = 0;
     /** Marks closer than this many days in one lane would touch; they go in different lanes. */
     public static final int LANE_GAP_DAYS = 4;
     /** A cross is about this many days wide on each side of its date, so it is kept clear of the next mark. */
     public static final int CROSS_HALF_DAYS = 6;
     /** Smallest row height; matches a tl-h-* class in _timeline.scss. */
-    public static final int MIN_HEIGHT = 24;
+    public static final int MIN_HEIGHT = 18;
 
     /** Row height in pixels, always a tl-h-* class in _timeline.scss. */
     public int height() {
