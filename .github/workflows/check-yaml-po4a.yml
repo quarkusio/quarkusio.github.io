@@ -5,6 +5,7 @@ on:
     paths:
       - '**.yml'
       - '**.yaml'
+      - 'templates/**.html'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,4 +44,45 @@ jobs:
             rm -f "$RUNNER_TEMP/check.po"
           done < <(git ls-files -- '*.yml' '*.yaml' \
             ':(exclude).github/' ':(exclude)theme/' ':(exclude)_data/publications.yaml')
+          exit $failed
+
+  check-html:
+    name: Check HTML templates for po4a
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install po4a
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends po4a \
+            || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends po4a; }
+          dpkg-query -W -f='po4a ${Version}\n' po4a
+
+      # The localized sites extract some HTML templates with po4a (-f xhtml) to translate them.
+      # po4a's parser is stricter than a browser: for example, a stray </br> stops the
+      # localized site from building. Each site lists the templates it extracts in
+      # config/application.yaml, so read the lists from there rather than duplicating them.
+      - name: Check extracted HTML templates
+        run: |
+          set -o pipefail
+          files=$(for site in pt es ja cn; do
+            curl -fsSL --retry 3 "https://raw.githubusercontent.com/quarkusio/$site.quarkus.io/main/config/application.yaml" \
+              || { echo "::error::Could not fetch the po4a extract list for $site.quarkus.io" >&2; exit 1; }
+          done | grep -oE '^\s+- templates/\S+\.html' | sed 's/^\s*- //' | sort -u) || exit 1
+          if [ -z "$files" ]; then
+            echo "::error::Found no HTML templates in the localized sites' extract lists"
+            exit 1
+          fi
+          failed=0
+          for file in $files; do
+            # Sites can list templates that no longer exist here; po4a skips those.
+            [ -f "$file" ] || continue
+            if ! output=$(po4a-updatepo --no-deprecation --msgmerge-opt --no-fuzzy-matching \
+                --master-charset UTF-8 -f xhtml --master "$file" --po "$RUNNER_TEMP/check.po" 2>&1); then
+              echo "::error file=$file::po4a cannot parse this file, so the localized sites (pt, es, ja, cn) will fail to build. See the job log for the reason."
+              echo "$output"
+              failed=1
+            fi
+            rm -f "$RUNNER_TEMP/check.po"
+          done
           exit $failed
