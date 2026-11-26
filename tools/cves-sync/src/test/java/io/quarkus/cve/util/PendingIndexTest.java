@@ -31,14 +31,6 @@ class PendingIndexTest {
     }
 
     @Test
-    void onlyTheCvesThatAreStillPendingStayAndTheOthersComeBackWhenTheirRecordChanges() {
-        PendingIndex before = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-01", "CVE-2026-2", "2026-11-02"));
-        PendingIndex after = before.only(Set.of("CVE-2026-2", "CVE-2026-9"));
-        assertEquals(Set.of("CVE-2026-2"), after.ids());
-        assertEquals(NOW.truncatedTo(java.time.temporal.ChronoUnit.SECONDS), after.scanned());
-    }
-
-    @Test
     void twoListsAreTheSameWhenTheyHoldTheSameCvesWhateverTheirDates() {
         PendingIndex a = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-01"));
         assertTrue(a.sameCves(new PendingIndex(NOW.plusSeconds(86400), Map.of("CVE-2026-1", "2026-11-20"))));

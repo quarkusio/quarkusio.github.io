@@ -275,4 +275,237 @@ class CveOrgServiceTest {
         assertEquals(List.of(), service.candidates(2020));
         assertTrue(service.indexToWrite().isEmpty());
     }
+
+    @Test
+    void aRecordChangedInTheDeltaBypassesAFreshCacheEntry(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
+                scanned: "2026-11-23T00:00:00Z"
+                pending:
+                - id: "CVE-2026-99"
+                  noticed: "2026-11-23"
+                """);
+        java.util.Map<String, byte[]> zips = new java.util.HashMap<>();
+        zips.put("2026-11-23_delta_CVEs_at_end_of_day.zip", io.quarkus.cve.util.CveDeltaTest.zip(
+                "d/CVE-2026-99.json", "Quarkus revised with affected package"));
+        zips.put("2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
+
+        CveOrgService service = indexed(dir, new ArrayList<>(), zips);
+        // Simulate a cached record fetched < 24h ago before the CNA added affected packages
+        Cache.write("cve-org", "CVE-2026-99", record("""
+                {"cveMetadata": {"cveId": "CVE-2026-99", "state": "PUBLISHED", "datePublished": "2026-11-23T01:00:00Z"},
+                 "containers": {"cna": {"title": "Initial stub", "affected": []}}}
+                """), null);
+
+        ObjectMapper mapper = new ObjectMapper();
+        List<String> fetched = new ArrayList<>();
+        service.cveOrg = id -> {
+            fetched.add(id);
+            try {
+                return mapper.readTree("""
+                        {"cveMetadata": {"cveId": "CVE-2026-99", "state": "PUBLISHED", "datePublished": "2026-11-23T01:00:00Z"},
+                         "containers": {"cna": {"title": "Revised", "affected": [{"packageName": "quarkus-vertx-http"}]}}}
+                        """);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        List<ReleaseReport.Pending> out = service.pending(MANAGED, List.of(), 2020);
+        assertEquals(List.of("CVE-2026-99"), fetched, "delta-changed CVE must bypass the 24h cache");
+        assertEquals(List.of("CVE-2026-99"), out.stream().map(p -> p.id).toList());
+    }
+
+    @Test
+    void coveredAndUnmanagedCvesStayInTheIndexSoWithdrawnAdvisoriesAndNewReleasesFindThem(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
+                scanned: "2026-11-24T11:00:00Z"
+                pending:
+                - id: "CVE-2026-87743"
+                  noticed: "2026-11-20"
+                - id: "CVE-2026-50"
+                  noticed: "2026-11-21"
+                """);
+        java.util.Map<String, byte[]> zips = java.util.Map.of("2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
+        ObjectMapper mapper = new ObjectMapper();
+
+        // Run 1: CVE-2026-87743 is covered by an advisory; CVE-2026-50 names an artifact no release manages yet
+        CveOrgService run1 = indexed(dir, new ArrayList<>(), zips);
+        run1.cveOrg = id -> {
+            try {
+                if ("CVE-2026-50".equals(id)) {
+                    return mapper.readTree("""
+                            {"cveMetadata": {"cveId": "CVE-2026-50", "state": "PUBLISHED"},
+                             "containers": {"cna": {"title": "New ext", "affected": [{"packageName": "io.quarkus:quarkus-new-ext"}]}}}
+                            """);
+                }
+                return mapper.readTree(RED_HAT);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        io.quarkus.cve.model.UnifiedVuln covered = new io.quarkus.cve.model.UnifiedVuln();
+        covered.id = "GHSA-1111-2222-3333";
+        covered.cveId = "CVE-2026-87743";
+
+        assertTrue(run1.pending(MANAGED, List.of(covered), 2020).isEmpty());
+        assertEquals(Set.of("CVE-2026-50", "CVE-2026-87743"), run1.indexToWrite().orElseThrow().ids());
+
+        // Persist the index from Run 1 and run again after the advisory is withdrawn and a release adds quarkus-new-ext
+        java.nio.file.Files.write(dir.resolve("pending-cves.yaml"), run1.indexToWrite().orElseThrow().bytes());
+        CveOrgService run2 = indexed(dir, new ArrayList<>(), zips);
+        run2.cveOrg = run1.cveOrg;
+        Set<String> expandedManaged = new java.util.HashSet<>(MANAGED);
+        expandedManaged.add("io.quarkus:quarkus-new-ext");
+
+        List<ReleaseReport.Pending> out = run2.pending(expandedManaged, List.of(), 2020);
+        assertEquals(Set.of("CVE-2026-50", "CVE-2026-87743"),
+                new java.util.HashSet<>(out.stream().map(p -> p.id).toList()));
+    }
+
+    @Test
+    void staleOrUnreadableCveOrgRecordsEmitWarnings(@TempDir Path dir) throws Exception {
+        Cache.configure(dir, Cache.Mode.NORMAL);
+        // Seed an expired cache entry (> 24h old) by writing a raw envelope with an old fetchedAt
+        java.nio.file.Path recordDir = dir.resolve("cve-org");
+        java.nio.file.Files.createDirectories(recordDir);
+        java.nio.file.Files.writeString(recordDir.resolve("CVE-2026-87743.json"), """
+                {"v":1,"key":"CVE-2026-87743","fetchedAt":"2026-11-01T00:00:00Z",
+                 "data":{"cve":"CVE-2026-87743","state":"PUBLISHED","published":"2026-09-18T09:38:27Z",
+                         "title":"Cached","severity":"HIGH","packages":["quarkus-vertx-http"]}}
+                """);
+
+        CveOrgService service = new CveOrgService();
+        service.search = (q, perPage, p) -> page("CVE-2026-87743.json", "CVE-2026-99999.json");
+        service.cveOrg = id -> {
+            throw new IllegalStateException("cve.org down");
+        };
+
+        java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream prev = System.err;
+        System.setErr(new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            List<ReleaseReport.Pending> out = service.pending(MANAGED, List.of(), 2020);
+            assertEquals(List.of("CVE-2026-87743"), out.stream().map(p -> p.id).toList());
+        } finally {
+            System.setErr(prev);
+        }
+        String stderr = err.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(stderr.contains("warning: cve.org: 1 candidate record(s) could not be refreshed; using older cached data"), stderr);
+        assertTrue(stderr.contains("warning: cve.org: 1 candidate record(s) could not be read; pending CVEs may be missing"), stderr);
+    }
+
+    @Test
+    void disputedOrRejectedRecordsAreExcludedAndFlagged(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
+                scanned: "2026-11-23T00:00:00Z"
+                pending:
+                - id: "CVE-2026-77"
+                  noticed: "2026-11-23"
+                """);
+        java.util.Map<String, byte[]> zips = java.util.Map.of(
+                "2026-11-23_delta_CVEs_at_end_of_day.zip", io.quarkus.cve.util.CveDeltaTest.zip("d/CVE-2026-77.json", "Quarkus"),
+                "2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
+
+        CveOrgService service = indexed(dir, new ArrayList<>(), zips);
+        ObjectMapper mapper = new ObjectMapper();
+        service.cveOrg = id -> {
+            try {
+                return mapper.readTree("""
+                        {"cveMetadata": {"cveId": "CVE-2026-77", "state": "PUBLISHED"},
+                         "containers": {"cna": {"tags": ["disputed"], "affected": [{"packageName": "quarkus-vertx-http"}]}}}
+                        """);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        io.quarkus.cve.model.UnifiedVuln known = new io.quarkus.cve.model.UnifiedVuln();
+        known.id = "GHSA-disputed";
+        known.cveId = "CVE-2026-77";
+
+        assertTrue(service.pending(MANAGED, List.of(known), 2020).isEmpty());
+        assertEquals(Set.of("CVE-2026-77"), service.rejectedKnownCves());
+    }
+
+    @Test
+    void rejectedKnownCveIsCaughtWhenRejectionRemovesQuarkusAndRememberedOnDay2(@TempDir Path dir) throws Exception {
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
+                scanned: "2026-11-23T00:00:00Z"
+                pending:
+                - id: "CVE-2026-88"
+                  noticed: "2026-11-20"
+                """);
+        // Day 1 delta: CVE-2026-88 rejected with generic text (no "quarkus"), plus a dependency CVE-2026-89 rejected
+        java.util.Map<String, byte[]> day1Zips = java.util.Map.of(
+                "2026-11-23_delta_CVEs_at_end_of_day.zip", io.quarkus.cve.util.CveDeltaTest.zip(
+                        "d/CVE-2026-88.json", "This CVE ID has been rejected by its CNA.",
+                        "d/CVE-2026-89.json", "Netty CVE rejected."),
+                "2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
+
+        ObjectMapper mapper = new ObjectMapper();
+        List<String> fetched = new ArrayList<>();
+        io.quarkus.cve.client.CveOrgClient client = id -> {
+            fetched.add(id);
+            try {
+                return mapper.readTree("{\"cveMetadata\": {\"cveId\": \"" + id + "\", \"state\": \"REJECTED\"}, \"containers\": {\"cna\": {}}}");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        io.quarkus.cve.model.UnifiedVuln k1 = new io.quarkus.cve.model.UnifiedVuln();
+        k1.id = "GHSA-88";
+        k1.cveId = "CVE-2026-88";
+        io.quarkus.cve.model.UnifiedVuln k2 = new io.quarkus.cve.model.UnifiedVuln();
+        k2.id = "GHSA-89";
+        k2.cveId = "CVE-2026-89";
+
+        CveOrgService day1 = indexed(dir, new ArrayList<>(), day1Zips);
+        day1.cveOrg = client;
+        day1.pending(MANAGED, List.of(k1, k2), 2020);
+        assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), day1.rejectedKnownCves(),
+                "Day 1 must catch rejected known CVEs even when 'quarkus' was removed or CVE is a dependency");
+        java.nio.file.Files.write(dir.resolve("pending-cves.yaml"), day1.indexToWrite().orElseThrow().bytes());
+
+        // Day 2: empty delta (neither CVE changed today) -> must still be remembered from cache with 0 HTTP calls
+        fetched.clear();
+        java.util.Map<String, byte[]> day2Zips = java.util.Map.of(
+                "2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
+        CveOrgService day2 = indexed(dir, new ArrayList<>(), day2Zips);
+        day2.cveOrg = client;
+        day2.pending(MANAGED, List.of(k1, k2), 2020);
+        assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), day2.rejectedKnownCves(),
+                "Day 2 must remember rejected known CVEs from cache");
+        assertTrue(fetched.isEmpty(), "Day 2 should use fresh cached cve-org records without HTTP calls");
+    }
+
+    @Test
+    void descriptionFallbackMatchesBcp47EnglishTags() throws Exception {
+        CveOrgRecord r = record("""
+                {"cveMetadata": {"cveId": "CVE-2026-55", "state": "PUBLISHED"},
+                 "containers": {"cna": {"descriptions": [{"lang": "en-US", "value": "US English description"}]}}}
+                """);
+        assertEquals("US English description", r.title());
+    }
+
+    @Test
+    void cveOrg404DoesNotEmitFatalWarning(@TempDir Path dir) {
+        Cache.configure(dir, Cache.Mode.NORMAL);
+        CveOrgService service = new CveOrgService();
+        service.search = (q, perPage, p) -> page("CVE-2026-404.json");
+        service.cveOrg = id -> {
+            throw new jakarta.ws.rs.WebApplicationException(jakarta.ws.rs.core.Response.status(404).build());
+        };
+
+        java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream prev = System.err;
+        System.setErr(new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            assertTrue(service.pending(MANAGED, List.of(), 2020).isEmpty());
+        } finally {
+            System.setErr(prev);
+        }
+        String stderr = err.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(!stderr.contains("warning:"), "HTTP 404 at cve.org must not emit a fatal warning: " + stderr);
+    }
 }

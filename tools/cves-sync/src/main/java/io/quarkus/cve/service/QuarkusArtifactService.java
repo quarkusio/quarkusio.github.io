@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import io.quarkus.cve.client.GitHubAdvisoryClient;
 import io.quarkus.cve.client.OsvApiClient;
 import io.quarkus.cve.client.QuarkusRegistryClient;
+import io.quarkus.cve.client.QuarkusRepoAdvisoryClient;
 import io.quarkus.cve.model.OsvBatchQueryRequest;
 import io.quarkus.cve.model.OsvBatchQueryResponse;
 import io.quarkus.cve.model.OsvQueryRequest;
@@ -12,6 +13,7 @@ import io.quarkus.cve.model.OsvVulnerability;
 import io.quarkus.cve.model.UnifiedVuln;
 import io.quarkus.cve.util.Cache;
 import io.quarkus.cve.util.Log;
+import io.quarkus.cve.util.QuarkusRepoAdvisory;
 import io.quarkus.cve.util.Retry;
 import io.quarkus.cve.util.Stats;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -64,6 +66,8 @@ public class QuarkusArtifactService {
 
     /** GitHub Advisory API page size (max 100). */
     private static final int GH_PAGE_SIZE = 100;
+    /** Defensive upper bound on pagination loops so a repeating server cursor can never loop forever. */
+    private static final int MAX_PAGES = 100;
     /**
      * Packages per GitHub request ({@code affects} takes a comma separated list). One request per package
      * is ~1,000 requests for a scan, which a cold run cannot afford against the 1,000/hour that the
@@ -138,6 +142,10 @@ public class QuarkusArtifactService {
     @Inject
     GitHubAdvisoryClient githubAdvisoryClient;
 
+    @RestClient
+    @Inject
+    QuarkusRepoAdvisoryClient quarkusRepoAdvisoryClient;
+
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
@@ -189,7 +197,18 @@ public class QuarkusArtifactService {
         Log.log(1, "Step 2/3: loading %d OSV vulnerability details", osvIds.size());
         for (OsvVulnerability v : loadOsvDetails(osvIds).values()) {
             UnifiedVuln u = UnifiedVuln.fromOsv(v);
-            merged.put(canonicalKey(u), u);
+            String key = canonicalKey(u);
+            UnifiedVuln existing = merged.get(key);
+            if (existing == null) {
+                merged.put(key, u);
+            } else {
+                if (u.withdrawn != null && existing.withdrawn == null) existing.withdrawn = u.withdrawn;
+                existing.fillCvssFrom(u);
+                if (QuarkusBomService.mavenPackages(existing).isEmpty()
+                        && !QuarkusBomService.mavenPackages(u).isEmpty()) {
+                    existing.affected = u.affected;
+                }
+            }
         }
 
         // Step 3: Query GitHub Advisory API - catches CVEs not yet in OSV
@@ -207,9 +226,12 @@ public class QuarkusArtifactService {
             List<GitHubAdvisoryClient.GitHubAdvisory> advisories = fetchGitHubAdvisories(batch, gh);
             int batchNew = 0;
             for (GitHubAdvisoryClient.GitHubAdvisory a : advisories) {
-                if (a.withdrawnAt != null) continue; // skip withdrawn
                 UnifiedVuln u = UnifiedVuln.fromGitHub(a);
                 String key = canonicalKey(u);
+                if (a.withdrawnAt != null) {
+                    merged.remove(key);
+                    continue;
+                }
                 UnifiedVuln existing = merged.get(key);
                 if (existing == null) {
                     merged.put(key, u);
@@ -218,6 +240,10 @@ public class QuarkusArtifactService {
                     Log.log(2, "GitHub-only advisory %s", u.id);
                 } else {
                     existing.fillCvssFrom(u);
+                    if (QuarkusBomService.mavenPackages(existing).isEmpty()
+                            && !QuarkusBomService.mavenPackages(u).isEmpty()) {
+                        existing.affected = u.affected;
+                    }
                 }
             }
             Log.log(3, "GitHub: batch %d/%d (%d packages) -> %d advisories (%d new, %d already in OSV)",
@@ -229,8 +255,20 @@ public class QuarkusArtifactService {
         if (gh.halted) {
             Log.warn("GitHub rate limit reached - %d request(s) of %d packages each were not made against GitHub%s. "
                             + "Set GITHUB_TOKEN for a 5,000 req/hour limit.",
-                    gh.unavailable, GH_PACKAGES_PER_REQUEST,
+                    gh.stale + gh.unavailable, GH_PACKAGES_PER_REQUEST,
                     gh.stale > 0 ? " (" + gh.stale + " used older cached data)" : "");
+        } else if (gh.stale + gh.unavailable > 0) {
+            Log.warn("GitHub Advisory query failed for %d request(s) of %d packages each%s",
+                    gh.stale + gh.unavailable, GH_PACKAGES_PER_REQUEST,
+                    gh.stale > 0 ? " (" + gh.stale + " used older cached data)" : "");
+        }
+
+        // Step 4 (backup): quarkusio/quarkus repository advisories for Quarkus-published CVEs not yet in OSV or GitHub Global
+        if (!githubPackages.isEmpty() && quarkusRepoAdvisoryClient != null) {
+            int repoAdded = mergeQuarkusRepoAdvisories(merged, gh);
+            if (repoAdded > 0) {
+                Log.log(1, "Quarkus repo advisories: %d backup advisories added (not yet in OSV/GitHub Global)", repoAdded);
+            }
         }
 
         return new ArrayList<>(merged.values());
@@ -301,11 +339,12 @@ public class QuarkusArtifactService {
     // OSV querying
     // -----------------------------------------------------------------------
 
-    /** Returns vulnerability id -> modified timestamp for every package given. */
+    /** Returns vulnerability id -> modified timestamp for every package given, following any OSV page tokens. */
     private Map<String, String> queryOsvIds(List<String> packageNames) {
         Map<String, String> seen = new LinkedHashMap<>();
         int total   = packageNames.size();
         int batches = (int) Math.ceil((double) total / OSV_BATCH_SIZE);
+        int failed  = 0;
 
         for (int b = 0; b < batches; b++) {
             int from  = b * OSV_BATCH_SIZE;
@@ -318,27 +357,73 @@ public class QuarkusArtifactService {
                     .map(pkg -> OsvQueryRequest.forPackage("Maven", pkg))
                     .toList();
 
-            try {
-                OsvBatchQueryResponse resp = Retry.call("OSV batch " + (b + 1),
-                        () -> osvApiClient.queryBatch(new OsvBatchQueryRequest(reqs)));
-                if (resp.results != null) {
-                    for (OsvQueryResponse r : resp.results) {
-                        collect(r, seen);
+            int page = 1;
+            while (!reqs.isEmpty()) {
+                final List<OsvQueryRequest> current = reqs;
+                final int p = page;
+                try {
+                    OsvBatchQueryResponse resp = Retry.call("OSV batch " + (b + 1) + (p > 1 ? " page " + p : ""),
+                            () -> osvApiClient.queryBatch(new OsvBatchQueryRequest(current)));
+                    List<OsvQueryRequest> nextReqs = new ArrayList<>();
+                    if (resp != null && resp.results != null) {
+                        for (int i = 0; i < resp.results.size(); i++) {
+                            OsvQueryResponse r = resp.results.get(i);
+                            collect(r, seen);
+                            if (r != null && r.hasMore() && i < current.size()) {
+                                OsvQueryRequest prev = current.get(i);
+                                if (r.nextPageToken.equals(prev.pageToken) || p >= MAX_PAGES) {
+                                    Log.warn("OSV batch pagination stopped for %s at page %d (repeating token or page limit)",
+                                            prev.pkg.name, p);
+                                } else {
+                                    OsvQueryRequest next = OsvQueryRequest.forPackage(prev.pkg.ecosystem, prev.pkg.name);
+                                    next.pageToken = r.nextPageToken;
+                                    nextReqs.add(next);
+                                }
+                            }
+                        }
                     }
-                }
-            } catch (Exception ex) {
-                // Fallback: individual queries
-                Log.error(1, "OSV batch " + (b + 1) + " failed, falling back to individual queries", ex);
-                int n = 0;
-                for (OsvQueryRequest req : reqs) {
-                    Log.log(3, "OSV single query %d/%d", ++n, reqs.size());
-                    try {
-                        collect(Retry.call("OSV query", () -> osvApiClient.query(req)), seen);
-                    } catch (Exception e2) {
-                        Log.error(2, "OSV single query failed", e2);
+                    reqs = nextReqs;
+                    page++;
+                } catch (Exception ex) {
+                    // Fallback: individual paginated queries for the remaining requests
+                    Log.error(1, "OSV batch " + (b + 1) + " failed, falling back to individual queries", ex);
+                    int n = 0;
+                    for (OsvQueryRequest req : current) {
+                        Log.log(3, "OSV single query %d/%d", ++n, current.size());
+                        try {
+                            OsvQueryRequest single = req;
+                            Set<String> seenTokens = new HashSet<>();
+                            int singlePage = 1;
+                            while (single != null) {
+                                final OsvQueryRequest q = single;
+                                OsvQueryResponse r = Retry.call("OSV query", () -> osvApiClient.query(q));
+                                collect(r, seen);
+                                if (r != null && r.hasMore()) {
+                                    if (!seenTokens.add(r.nextPageToken) || singlePage >= MAX_PAGES) {
+                                        Log.warn("OSV single-query pagination stopped for %s at page %d (repeating token or page limit)",
+                                                req.pkg.name, singlePage);
+                                        single = null;
+                                    } else {
+                                        single = OsvQueryRequest.forPackage(req.pkg.ecosystem, req.pkg.name);
+                                        single.pageToken = r.nextPageToken;
+                                        singlePage++;
+                                    }
+                                } else {
+                                    single = null;
+                                }
+                            }
+                        } catch (Exception e2) {
+                            failed++;
+                            Log.error(2, "OSV single query failed", e2);
+                        }
                     }
+                    break;
                 }
             }
+        }
+        if (failed > 0) {
+            Log.warn("could not query OSV for %d of %d package(s); advisories may be missing (use -vv for details)",
+                    failed, total);
         }
         return seen;
     }
@@ -391,6 +476,10 @@ public class QuarkusArtifactService {
         }
         Log.log(1, "OSV details: %d from cache, %d downloaded, %d stale, %d failed",
                 stats.hit.get(), stats.downloaded.get(), stats.stale.get(), stats.failed.get());
+        if (stats.stale.get() > 0) {
+            Log.warn("%d OSV record(s) changed upstream could not be reloaded; using older cached data (use -vv for details)",
+                    stats.stale.get());
+        }
         if (stats.failed.get() > 0) {
             Log.warn("%d OSV record(s) could not be loaded and are missing from the results (use -vv for details)",
                     stats.failed.get());
@@ -488,11 +577,14 @@ public class QuarkusArtifactService {
         try {
             List<GitHubAdvisoryClient.GitHubAdvisory> all = new ArrayList<>();
             String newEtag = null;
+            String after = null;
+            Set<String> seenCursors = new HashSet<>();
             for (int page = 1; ; page++) {
                 final int p = page;
                 final String inm = page == 1 ? etag : null;
+                final String cursor = after;
                 Response r = Retry.call("GitHub " + cacheKey + " page " + p, () -> checked(
-                        githubAdvisoryClient.listAdvisories("maven", mavenCoord, GH_PAGE_SIZE, p,
+                        githubAdvisoryClient.listAdvisories("maven", mavenCoord, GH_PAGE_SIZE, cursor,
                                 "updated", "desc", inm)));
                 try {
                     noteRateLimit(r, run);
@@ -508,7 +600,13 @@ public class QuarkusArtifactService {
                     if (page == 1) newEtag = r.getHeaderString("ETag");
                     if (items == null || items.isEmpty()) break;
                     all.addAll(items);
-                    if (items.size() < GH_PAGE_SIZE) break;
+                    after = nextCursor(r.getHeaderString("Link"));
+                    if (after == null || items.size() < GH_PAGE_SIZE) break;
+                    if (!seenCursors.add(after) || page >= MAX_PAGES) {
+                        Log.warn("GitHub Advisory pagination stopped for %s at page %d (repeating cursor or page limit)",
+                                cacheKey, page);
+                        break;
+                    }
                 } finally {
                     r.close();
                 }
@@ -521,10 +619,120 @@ public class QuarkusArtifactService {
             Log.log(1, "GitHub rate limited: %s", ex.getMessage());
             return githubFallback(cacheKey, run);
         } catch (RuntimeException ex) {
-            // GitHub Advisory API is optional - don't fail the scan if it is unavailable
+            // Fall back to cached data if available; queryAll emits a warning so CI rejects incomplete/stale runs
             Log.error(1, "GitHub Advisory query failed for " + cacheKey, ex);
             return githubFallback(cacheKey, run);
         }
+    }
+
+    private int mergeQuarkusRepoAdvisories(Map<String, UnifiedVuln> merged, GhRun run) {
+        Set<String> coveredCves = new HashSet<>();
+        for (UnifiedVuln existing : merged.values()) {
+            if (existing.withdrawn != null || QuarkusBomService.mavenPackages(existing).isEmpty()) continue;
+            if (existing.cveId != null) coveredCves.add(existing.cveId);
+            if (existing.aliases != null) {
+                existing.aliases.stream().filter(a -> a != null && a.startsWith("CVE-")).forEach(coveredCves::add);
+            }
+        }
+        int added = 0;
+        for (GitHubAdvisoryClient.GitHubAdvisory a : fetchQuarkusRepoAdvisories(run)) {
+            UnifiedVuln u = QuarkusRepoAdvisory.toUnifiedVuln(a);
+            if (u == null) continue;
+            String key = canonicalKey(u);
+            UnifiedVuln existing = merged.get(key);
+            if (existing != null) {
+                // OSV / GitHub Global always take precedence once they have reviewed Maven ranges
+                if (existing.withdrawn == null && QuarkusBomService.mavenPackages(existing).isEmpty()
+                        && !QuarkusBomService.mavenPackages(u).isEmpty()) {
+                    existing.affected = u.affected;
+                    existing.fillCvssFrom(u);
+                }
+                continue;
+            }
+            if (u.cveId != null && coveredCves.contains(u.cveId)) continue;
+            merged.put(key, u);
+            if (u.cveId != null) coveredCves.add(u.cveId);
+            added++;
+            Log.log(2, "Quarkus repo-only advisory %s (%s)", u.id, u.cveId);
+        }
+        return added;
+    }
+
+    private List<GitHubAdvisoryClient.GitHubAdvisory> fetchQuarkusRepoAdvisories(GhRun run) {
+        String cacheKey = "repo-quarkusio-quarkus";
+        Optional<Cache.Entry<List<GitHubAdvisoryClient.GitHubAdvisory>>> cached =
+                Cache.read(NS_GITHUB, cacheKey, GH_TYPE);
+        if (cached.isPresent() && cached.get().fresh(GITHUB_TTL)) {
+            Stats.cacheHit(Stats.GITHUB);
+            return cached.get().data();
+        }
+        if (run.halted) {
+            return repoAdvisoryFallback(cacheKey);
+        }
+        String etag = cached.isPresent() ? cached.get().etag() : null;
+        try {
+            List<GitHubAdvisoryClient.GitHubAdvisory> all = new ArrayList<>();
+            String newEtag = null;
+            String after = null;
+            Set<String> seenCursors = new HashSet<>();
+            for (int page = 1; ; page++) {
+                final int p = page;
+                final String inm = page == 1 ? etag : null;
+                final String cursor = after;
+                Response r = Retry.call("Quarkus repo advisories page " + p, () -> checked(
+                        quarkusRepoAdvisoryClient.listAdvisories("published", GH_PAGE_SIZE, cursor, inm)));
+                try {
+                    noteRateLimit(r, run);
+                    if (r.getStatus() == 304) {
+                        List<GitHubAdvisoryClient.GitHubAdvisory> data =
+                                cached.isPresent() ? cached.get().data() : List.of();
+                        Cache.write(NS_GITHUB, cacheKey, data, etag);
+                        return data;
+                    }
+                    List<GitHubAdvisoryClient.GitHubAdvisory> items = r.readEntity(GH_ENTITY);
+                    if (page == 1) newEtag = r.getHeaderString("ETag");
+                    if (items == null || items.isEmpty()) break;
+                    all.addAll(items);
+                    after = nextCursor(r.getHeaderString("Link"));
+                    if (after == null || items.size() < GH_PAGE_SIZE) break;
+                    if (!seenCursors.add(after) || page >= MAX_PAGES) {
+                        Log.warn("Quarkus repo advisories pagination stopped at page %d (repeating cursor or page limit)", page);
+                        break;
+                    }
+                } finally {
+                    r.close();
+                }
+            }
+            Cache.write(NS_GITHUB, cacheKey, all, newEtag);
+            return all;
+        } catch (Retry.RateLimitedException ex) {
+            run.halted = true;
+            Log.warn("GitHub rate limit reached while reading quarkusio/quarkus repository advisories");
+            return repoAdvisoryFallback(cacheKey);
+        } catch (RuntimeException ex) {
+            Log.warn("could not read quarkusio/quarkus repository advisories (%s)", ex.getMessage());
+            return repoAdvisoryFallback(cacheKey);
+        }
+    }
+
+    private List<GitHubAdvisoryClient.GitHubAdvisory> repoAdvisoryFallback(String cacheKey) {
+        Optional<Cache.Entry<List<GitHubAdvisoryClient.GitHubAdvisory>>> stale =
+                Cache.readFallback(NS_GITHUB, cacheKey, GH_TYPE);
+        return stale.isPresent() ? stale.get().data() : List.of();
+    }
+
+    private static final java.util.regex.Pattern NEXT_LINK =
+            java.util.regex.Pattern.compile("<([^>]+)>;\\s*rel=\"next\"");
+    private static final java.util.regex.Pattern AFTER_PARAM =
+            java.util.regex.Pattern.compile("[?&]after=([^&]+)");
+
+    /** Extracts the {@code after} cursor from GitHub's {@code Link: <...>; rel="next"} header, or null. */
+    static String nextCursor(String linkHeader) {
+        if (linkHeader == null || linkHeader.isBlank()) return null;
+        java.util.regex.Matcher link = NEXT_LINK.matcher(linkHeader);
+        if (!link.find()) return null;
+        java.util.regex.Matcher after = AFTER_PARAM.matcher(link.group(1));
+        return after.find() ? java.net.URLDecoder.decode(after.group(1), StandardCharsets.UTF_8) : null;
     }
 
     private static String sha1(String s) {
@@ -640,8 +848,13 @@ public class QuarkusArtifactService {
     // Deduplication key: prefer GHSA ID, fall back to CVE ID, then raw ID
     // -----------------------------------------------------------------------
 
-    private static String canonicalKey(UnifiedVuln u) {
+    static String canonicalKey(UnifiedVuln u) {
         if (u.id != null && u.id.startsWith("GHSA-")) return u.id;
+        if (u.aliases != null) {
+            for (String a : u.aliases) {
+                if (a != null && a.startsWith("GHSA-")) return a;
+            }
+        }
         if (u.cveId != null) return u.cveId;
         return u.id != null ? u.id : "UNKNOWN";
     }

@@ -89,6 +89,8 @@ public class CveOrgService {
 
     private Path indexFile;
     private PendingIndex index;
+    private Set<String> changedInDelta = Set.of();
+    private Set<String> rejectedKnownCves = Set.of();
 
     /**
      * Keeps the list of candidate CVEs in this file (see {@link PendingIndex}). The file is read here and
@@ -97,6 +99,13 @@ public class CveOrgService {
     public void useIndex(Path file) {
         this.indexFile = file;
         this.index = null;
+        this.changedInDelta = Set.of();
+        this.rejectedKnownCves = Set.of();
+    }
+
+    /** CVEs that are already covered by an advisory yet reported {@code REJECTED} or {@code disputed} on cve.org. */
+    public Set<String> rejectedKnownCves() {
+        return rejectedKnownCves;
     }
 
     /** The index as this run left it, to be written when the run succeeded; empty if there is none to write. */
@@ -112,30 +121,66 @@ public class CveOrgService {
     public List<ReleaseReport.Pending> pending(Set<String> managed, Collection<UnifiedVuln> known, int fromYear) {
         List<CveOrgRecord> records = new ArrayList<>();
         int skipped = 0;
-        Set<String> unreadable = new HashSet<>();
+        int stale = 0;
         Set<String> alreadyKnown = knownCves(known);
+        Set<String> rejected = new HashSet<>();
         List<String> candidates = candidates(fromYear);
         for (String id : candidates) {
             if (alreadyKnown.contains(id)) continue;
-            Optional<CveOrgRecord> r = record(id);
-            if (r.isPresent()) records.add(r.get());
-            else {
+            RecordResult r = record(id, changedInDelta.contains(id));
+            if (r.record().isPresent()) {
+                records.add(r.record().get());
+                if (r.stale()) stale++;
+            } else if (!r.notFound()) {
                 skipped++;
-                unreadable.add(id);
             }
         }
-        if (skipped > 0) Log.log(1, "cve.org: %d candidate records could not be read", skipped);
+        // Check already-known CVEs: force-refresh any that appeared in today's delta (even if rejection
+        // removed "quarkus" or the CVE is for a third-party dependency), and remember previously cached
+        // rejected/disputed records across subsequent runs (revalidating once RECORD_TTL expires).
+        for (String id : alreadyKnown) {
+            if (changedInDelta.contains(id)) {
+                RecordResult r = record(id, true);
+                if (r.record().isPresent()) {
+                    if (isRejectedOrDisputed(r.record().get())) rejected.add(id);
+                    if (r.stale()) stale++;
+                } else if (!r.notFound()) {
+                    skipped++;
+                }
+            } else {
+                Optional<Cache.Entry<CveOrgRecord>> cached = Cache.read(NS_RECORD, id, RECORD_TYPE);
+                if (cached.isPresent() && isRejectedOrDisputed(cached.get().data())) {
+                    if (cached.get().fresh(RECORD_TTL)) {
+                        Stats.cacheHit(Stats.CVE_ORG);
+                        rejected.add(id);
+                    } else {
+                        RecordResult r = record(id, false);
+                        if (r.record().isPresent()) {
+                            if (isRejectedOrDisputed(r.record().get())) rejected.add(id);
+                            if (r.stale()) stale++;
+                        } else if (!r.notFound()) {
+                            skipped++;
+                        }
+                    }
+                }
+            }
+        }
+        rejectedKnownCves = Set.copyOf(rejected);
+        if (stale > 0) {
+            Log.warn("cve.org: %d candidate record(s) could not be refreshed; using older cached data", stale);
+        }
+        if (skipped > 0) {
+            Log.warn("cve.org: %d candidate record(s) could not be read; pending CVEs may be missing", skipped);
+        }
         List<ReleaseReport.Pending> pending = select(records, managed, alreadyKnown);
-        // A candidate that cannot be read stays: it is not known not to be pending
         if (index != null) {
-            Set<String> keep = new HashSet<>(pending.stream().map(p -> p.id).toList());
-            keep.addAll(unreadable);
-            int before = index.ids().size();
-            index = index.only(keep);
-            Log.log(1, "cvelistV5: %d of the %d candidates are pending; the rest is looked at again if its record changes",
-                    index.ids().size(), before);
+            Log.log(1, "cvelistV5: %d of the %d indexed CVEs are pending", pending.size(), index.ids().size());
         }
         return pending;
+    }
+
+    private static boolean isRejectedOrDisputed(CveOrgRecord r) {
+        return !"PUBLISHED".equals(r.state()) || r.disputed();
     }
 
     /** The CVE ids that an evaluated advisory already covers, by its own id, its CVE and its aliases. */
@@ -153,7 +198,7 @@ public class CveOrgService {
     static List<ReleaseReport.Pending> select(List<CveOrgRecord> records, Set<String> managed, Set<String> alreadyKnown) {
         List<ReleaseReport.Pending> out = new ArrayList<>();
         for (CveOrgRecord r : records) {
-            if (r.cve() == null || !"PUBLISHED".equals(r.state()) || alreadyKnown.contains(r.cve())) continue;
+            if (r.cve() == null || !"PUBLISHED".equals(r.state()) || r.disputed() || alreadyKnown.contains(r.cve())) continue;
             List<String> artifacts = r.managedArtifacts(managed);
             if (artifacts.isEmpty()) continue;
             ReleaseReport.Pending p = new ReleaseReport.Pending();
@@ -199,6 +244,7 @@ public class CveOrgService {
      * list is a couple of pages, so this takes 2 requests where a search per year took 8 or more.
      */
     private List<String> candidatesOfAllYears() {
+        changedInDelta = Set.of();
         if (indexFile != null) return indexedCandidates();
         String key = "quarkus";
         Optional<Cache.Entry<List<String>>> cached = Cache.read(NS_INDEX, key, IDS_TYPE);
@@ -213,7 +259,7 @@ public class CveOrgService {
         } catch (RuntimeException ex) {
             Optional<Cache.Entry<List<String>>> stale = Cache.readFallback(NS_INDEX, key, IDS_TYPE);
             if (stale.isPresent()) {
-                Log.log(1, "cve.org: GitHub code search failed (%s); using the list from %s ago",
+                Log.warn("cve.org: GitHub code search failed (%s); using cached list from %s ago",
                         ex.getMessage(), stale.get().ageText());
                 return stale.get().data();
             }
@@ -256,6 +302,7 @@ public class CveOrgService {
         if (existing.isPresent() && existing.get().usable(now)) {
             PendingIndex before = existing.get();
             CveDelta.Result delta = CveDelta.read(zips, before.scanned(), now);
+            changedInDelta = Set.copyOf(delta.mentionsQuarkus().keySet());
             index = before.apply(delta, today);
             Log.log(1, "cvelistV5: read %d zips (%.1f MB: %s), %d CVEs changed, %d mention Quarkus",
                     delta.zips(), delta.bytes() / 1e6, String.join(", ", delta.read()), delta.mentionsQuarkus().size(),
@@ -296,25 +343,37 @@ public class CveOrgService {
     // Records at cve.org
     // -----------------------------------------------------------------------
 
+    record RecordResult(Optional<CveOrgRecord> record, boolean stale, boolean notFound) {}
+
     Optional<CveOrgRecord> record(String id) {
-        Optional<Cache.Entry<CveOrgRecord>> cached = Cache.read(NS_RECORD, id, RECORD_TYPE);
+        return record(id, false).record();
+    }
+
+    RecordResult record(String id, boolean forceRefresh) {
+        Optional<Cache.Entry<CveOrgRecord>> cached = forceRefresh
+                ? Optional.empty()
+                : Cache.read(NS_RECORD, id, RECORD_TYPE);
         if (cached.isPresent() && cached.get().fresh(RECORD_TTL)) {
             Stats.cacheHit(Stats.CVE_ORG);
-            return Optional.of(cached.get().data());
+            return new RecordResult(Optional.of(cached.get().data()), false, false);
         }
         try {
             CveOrgRecord r = CveOrgRecord.from(Retry.call("cve.org " + id, () -> cveOrg.getRecord(id)));
             Cache.write(NS_RECORD, id, r, null);
-            return Optional.of(r);
+            return new RecordResult(Optional.of(r), false, false);
         } catch (RuntimeException ex) {
             int status = ex instanceof WebApplicationException w ? w.getResponse().getStatus() : -1;
+            if (status == 404) {
+                Log.log(1, "cve.org %s: HTTP 404 (not found)", id);
+                return new RecordResult(Optional.empty(), false, true);
+            }
             Optional<Cache.Entry<CveOrgRecord>> stale = Cache.readFallback(NS_RECORD, id, RECORD_TYPE);
             if (stale.isPresent()) {
                 Log.log(3, "cve.org %s: using stale cache (%s)", id, stale.get().ageText());
-                return Optional.of(stale.get().data());
+                return new RecordResult(Optional.of(stale.get().data()), true, false);
             }
             Log.log(1, "cve.org %s: not available (%s)", id, status != -1 ? "HTTP " + status : ex.getMessage());
-            return Optional.empty();
+            return new RecordResult(Optional.empty(), false, false);
         }
     }
 }

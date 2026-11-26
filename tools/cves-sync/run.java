@@ -21,6 +21,7 @@
 //SOURCES src/main/java/io/quarkus/cve/client/QuarkusRegistryClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/MavenCentralClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/GitHubAdvisoryClient.java
+//SOURCES src/main/java/io/quarkus/cve/client/QuarkusRepoAdvisoryClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/GitHubSearchClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/CveOrgClient.java
 //SOURCES src/main/java/io/quarkus/cve/client/CveListZips.java
@@ -42,6 +43,7 @@
 //SOURCES src/main/java/io/quarkus/cve/util/Stats.java
 //SOURCES src/main/java/io/quarkus/cve/util/Retry.java
 //SOURCES src/main/java/io/quarkus/cve/util/Po4a.java
+//SOURCES src/main/java/io/quarkus/cve/util/QuarkusRepoAdvisory.java
 //SOURCES src/main/java/io/quarkus/cve/util/ReleaseTree.java
 //SOURCES src/main/java/io/quarkus/cve/util/TreeRanges.java
 //SOURCES src/main/java/io/quarkus/cve/util/OutputFormat.java
@@ -55,20 +57,6 @@
 //SOURCES src/main/java/io/quarkus/cve/command/CveUtilApplication.java
 //FILES src/main/resources/application.properties
 //JAVAC_OPTIONS -parameters
-//Q:CONFIG quarkus.banner.enabled=false
-//Q:CONFIG quarkus.log.level=WARN
-//Q:CONFIG quarkus.rest-client.osv-api.url=https://api.osv.dev
-//Q:CONFIG quarkus.rest-client.maven-central.url=https://repo1.maven.org/maven2
-//Q:CONFIG quarkus.rest-client.maven-central.connect-timeout=10000
-//Q:CONFIG quarkus.rest-client.maven-central.read-timeout=30000
-//Q:CONFIG quarkus.rest-client.quarkus-registry.url=https://registry.quarkus.io
-//Q:CONFIG quarkus.rest-client.github-api.url=https://api.github.com
-//Q:CONFIG quarkus.rest-client.osv-api.connect-timeout=10000
-//Q:CONFIG quarkus.rest-client.osv-api.read-timeout=30000
-//Q:CONFIG quarkus.rest-client.quarkus-registry.connect-timeout=10000
-//Q:CONFIG quarkus.rest-client.quarkus-registry.read-timeout=30000
-//Q:CONFIG quarkus.rest-client.github-api.connect-timeout=10000
-//Q:CONFIG quarkus.rest-client.github-api.read-timeout=30000
 
 // Entry point for jbang — delegates to the Quarkus @QuarkusMain class
 // via the CveUtilApplication class that is included via //SOURCES above.

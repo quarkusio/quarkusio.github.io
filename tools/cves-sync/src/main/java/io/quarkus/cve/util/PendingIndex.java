@@ -20,9 +20,9 @@ import java.util.regex.Pattern;
 
 /**
  * The CVEs whose records mention Quarkus, kept in {@code _data/pending-cves.yaml} together with the time up to
- * which the CVE list was read. A CVE stays while it is reported as pending, and leaves when it is not (an advisory
- * with version ranges covers it, or its record names no artifact a release manages): a CVE whose record changes
- * comes back through the delta and is looked at again, so that the file stays about as long as the list of pending CVEs.
+ * which the CVE list was read. Every CVE whose record mentions Quarkus stays in the file, even when an advisory
+ * currently covers it or no scanned release yet manages the artifact it names: if that advisory is later withdrawn
+ * or a new release starts managing the artifact, the CVE is looked at again without its record having to change.
  *
  * GitHub code search finds such CVEs, but is limited to 10 requests a minute and refuses a CI run for a long time,
  * so it is only used to create this file. From then on a run reads what changed in the CVE list since
@@ -92,13 +92,6 @@ public final class PendingIndex {
         });
         Instant next = delta.reached().isAfter(scanned) ? delta.reached() : scanned;
         return new PendingIndex(next, m);
-    }
-
-    /** The list reduced to the CVEs that are still pending: the others are looked at again if their record changes. */
-    public PendingIndex only(Collection<String> pending) {
-        Map<String, String> m = new TreeMap<>(noticedById);
-        m.keySet().retainAll(pending);
-        return new PendingIndex(scanned, m);
     }
 
     /** Whether the two lists hold the same CVEs, whatever their dates: what decides if a change is worth a commit. */

@@ -25,7 +25,7 @@ import java.util.TreeSet;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CveOrgRecord(String cve, String state, String published, String title, String severity,
-        List<String> packages) {
+        List<String> packages, boolean disputed) {
 
     /** Reads the parts of a record this tool uses. */
     public static CveOrgRecord from(JsonNode record) {
@@ -40,7 +40,8 @@ public record CveOrgRecord(String cve, String state, String published, String ti
         String title = cna.path("title").asText("");
         if (title.isBlank()) {
             for (JsonNode d : cna.path("descriptions")) {
-                if ("en".equals(d.path("lang").asText())) {
+                String lang = d.path("lang").asText("").toLowerCase(Locale.ROOT);
+                if (lang.equals("en") || lang.startsWith("en-")) {
                     title = d.path("value").asText("");
                     break;
                 }
@@ -49,9 +50,16 @@ public record CveOrgRecord(String cve, String state, String published, String ti
         List<JsonNode> metrics = new ArrayList<>();
         cna.path("metrics").forEach(metrics::add);
         for (JsonNode adp : record.path("containers").path("adp")) adp.path("metrics").forEach(metrics::add);
+        boolean disputed = false;
+        for (JsonNode tag : cna.path("tags")) {
+            if ("disputed".equalsIgnoreCase(tag.asText(""))) {
+                disputed = true;
+                break;
+            }
+        }
 
         return new CveOrgRecord(meta.path("cveId").asText(null), meta.path("state").asText(null),
-                published(meta.path("datePublished").asText(null)), title, severity(metrics), List.copyOf(packages));
+                published(meta.path("datePublished").asText(null)), title, severity(metrics), List.copyOf(packages), disputed);
     }
 
     /** Dropping the fraction of a second keeps the same form as the GitHub and OSV dates in the report. */

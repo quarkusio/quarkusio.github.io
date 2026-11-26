@@ -6,12 +6,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Optional;
 
 /**
@@ -94,6 +98,7 @@ public final class Cache {
             Files.createDirectories(file.getParent());
             ObjectNode envelope = MAPPER.createObjectNode();
             envelope.put("v", SCHEMA);
+            envelope.put("key", key);
             envelope.put("fetchedAt", Instant.now().toString());
             if (etag != null) envelope.put("etag", etag);
             envelope.set("data", MAPPER.valueToTree(data));
@@ -115,6 +120,16 @@ public final class Cache {
         }
     }
 
+    /** Removes a cached entry if present. No-op when mode is OFF. */
+    public static void evict(String namespace, String key) {
+        if (mode == Mode.OFF) return;
+        try {
+            Files.deleteIfExists(file(namespace, key));
+        } catch (IOException ex) {
+            Log.error(2, "Cache evict failed for " + namespace + "/" + key, ex);
+        }
+    }
+
     private static <T> Optional<Entry<T>> load(String namespace, String key, TypeReference<T> type) {
         Path file = file(namespace, key);
         if (!Files.isRegularFile(file)) return Optional.empty();
@@ -122,6 +137,10 @@ public final class Cache {
             JsonNode envelope = MAPPER.readTree(file.toFile());
             if (envelope.path("v").asInt() != SCHEMA || !envelope.hasNonNull("data")) {
                 Log.log(2, "Cache entry %s/%s has unexpected format, ignoring", namespace, key);
+                return Optional.empty();
+            }
+            if (envelope.hasNonNull("key") && !key.equals(envelope.get("key").asText())) {
+                Log.log(2, "Cache entry %s/%s belongs to key %s, ignoring", namespace, key, envelope.get("key").asText());
                 return Optional.empty();
             }
             T data = MAPPER.readerFor(type).readValue(envelope.get("data"));
@@ -134,9 +153,26 @@ public final class Cache {
         }
     }
 
-    /** Keys such as "io.quarkus:quarkus-core" contain characters that are illegal in file names. */
-    private static Path file(String namespace, String key) {
+    /**
+     * Keys such as "io.quarkus:quarkus-core" contain characters that are illegal in file names.
+     * When sanitising alters the key (or the key is empty / "." / ".."), append a SHA-256 suffix so
+     * distinct keys such as "io.quarkus:foo" and "io.quarkus_foo" never map to the same file; the
+     * envelope also records the original key so case-insensitive file systems cannot collide silently.
+     */
+    static Path file(String namespace, String key) {
         String safe = key.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (key.isEmpty() || !key.equals(safe) || ".".equals(safe) || "..".equals(safe)) {
+            safe = safe + "-" + shortHash(key);
+        }
         return dir.resolve(namespace).resolve(safe + ".json");
+    }
+
+    private static String shortHash(String s) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

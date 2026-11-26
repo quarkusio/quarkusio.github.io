@@ -21,6 +21,12 @@ class Po4aTest {
     }
 
     @Test
+    void newlinesAndTrailingBackslashesAreRemoved() {
+        assertEquals("Path traversal via trailing", Po4a.safe("Path traversal\n  via trailing \\"));
+        assertEquals("Netty [codec] issue", Po4a.safe("Netty:\r\n[codec] issue\\\\"));
+    }
+
+    @Test
     void otherTextIsLeftAlone() {
         assertEquals("Quarkus-vertx-http: authorization bypass", Po4a.safe("Quarkus-vertx-http: authorization bypass"));
         assertEquals("[Bzip2Decoder] Infinite Loop", Po4a.safe("[Bzip2Decoder] Infinite Loop"));

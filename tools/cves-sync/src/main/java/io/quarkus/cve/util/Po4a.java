@@ -14,7 +14,10 @@ public final class Po4a {
      */
     public static String safe(String text) {
         if (text == null) return null;
-        String s = text;
+        String s = text.replaceAll("\\s*\\r?\\n\\s*", " ").trim();
+        while (s.endsWith("\\")) {
+            s = s.substring(0, s.length() - 1).trim();
+        }
         while (s.contains(": [") || s.contains(": {")) {
             s = s.replace(": [", " [").replace(": {", " {");
         }

@@ -44,9 +44,10 @@ public class UnifiedVuln {
         public List<Interval> intervals = new ArrayList<>();
     }
 
-    /** Affected when {@code introduced <= v < fixed} (or {@code v <= lastAffected}); null bound = open. */
+    /** Affected when {@code introduced <= v < fixed} (or {@code introduced < v} when {@link #introducedExclusive}, or {@code v <= lastAffected}); null bound = open. */
     public static class Interval {
         public String introduced;
+        public boolean introducedExclusive;
         public String fixed;
         public String lastAffected;
     }
@@ -66,7 +67,9 @@ public class UnifiedVuln {
         u.withdrawn = v.withdrawn;
         u.aliases   = v.aliases;
 
-        if (v.aliases != null) {
+        if (v.id != null && v.id.startsWith("CVE-")) {
+            u.cveId = v.id;
+        } else if (v.aliases != null) {
             u.cveId = v.aliases.stream()
                     .filter(a -> a != null && a.startsWith("CVE-"))
                     .findFirst().orElse(null);
@@ -108,6 +111,17 @@ public class UnifiedVuln {
                                         if (ev.lastAffected   != null) p.lastAffectedVersion  = ev.lastAffected;
                                     }
                                 }
+                            }
+                        }
+                        if (p.intervals.isEmpty() && a.versions != null) {
+                            for (String ver : a.versions) {
+                                if (ver == null || ver.isBlank()) continue;
+                                Interval iv = new Interval();
+                                iv.introduced = ver.trim();
+                                iv.lastAffected = iv.introduced;
+                                p.intervals.add(iv);
+                                p.introducedVersion = iv.introduced;
+                                p.lastAffectedVersion = iv.introduced;
                             }
                         }
                         return p;
@@ -198,21 +212,22 @@ public class UnifiedVuln {
     }
 
     /**
-     * GitHub range such as ">= 3.0.0, < 3.2.6.Final", "< 2.16.11" or "= 1.2". A strict ">" is read
-     * as ">=" (rare; slightly over-inclusive). Returns null if nothing could be read.
+     * GitHub range such as ">= 3.0.0, < 3.2.6.Final", "> 1.2.3, < 1.2.5", "< 2.16.11" or "= 1.2".
+     * Returns null if nothing could be read.
      */
-    static Interval parseGitHubRange(String range) {
+    public static Interval parseGitHubRange(String range) {
         if (range == null || range.isBlank()) return null;
         Interval iv = new Interval();
         boolean any = false;
         for (String part : range.split(",")) {
             String p = part.trim();
-            if (p.startsWith(">=")) { iv.introduced = p.substring(2).trim(); any = true; }
-            else if (p.startsWith(">")) { iv.introduced = p.substring(1).trim(); any = true; }
+            if (p.startsWith(">=")) { iv.introduced = p.substring(2).trim(); iv.introducedExclusive = false; any = true; }
+            else if (p.startsWith(">")) { iv.introduced = p.substring(1).trim(); iv.introducedExclusive = true; any = true; }
             else if (p.startsWith("<=")) { iv.lastAffected = p.substring(2).trim(); any = true; }
             else if (p.startsWith("<")) { iv.fixed = p.substring(1).trim(); any = true; }
             else if (p.startsWith("=")) {
                 iv.introduced = p.substring(1).trim();
+                iv.introducedExclusive = false;
                 iv.lastAffected = iv.introduced;
                 any = true;
             }

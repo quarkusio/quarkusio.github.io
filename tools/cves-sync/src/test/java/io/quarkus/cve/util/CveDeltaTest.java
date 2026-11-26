@@ -99,6 +99,22 @@ public class CveDeltaTest {
     }
 
     @Test
+    void aMissingEndOfDayZipOfAnOlderDayFallsBackToItsNewestHourlyAndAdvancesPastIt() {
+        Zips zips = new Zips()
+                .hourly("2026-11-22", "23", "a/CVE-2026-1.json", "quarkus")
+                .endOfDay("2026-11-23", "a/CVE-2026-2.json", "quarkus")
+                .hourly("2026-11-24", "12", "a/CVE-2026-3.json", "x");
+        // Night 1 (Nov 23): Nov 22 is yesterday with no end_of_day yet -> stops at 22 23:00
+        CveDelta.Result night1 = CveDelta.read(zips, Instant.parse("2026-11-22T00:00:00Z"), Instant.parse("2026-11-23T01:07:00Z"));
+        assertEquals(Instant.parse("2026-11-22T23:00:00Z"), night1.reached());
+
+        // Night 2 (Nov 24): Nov 22 still has no end_of_day -> falls back to 22 23:00, advances past Nov 22, reads Nov 23 & 24
+        CveDelta.Result night2 = CveDelta.read(zips, night1.reached(), NOON);
+        assertEquals(Map.of("CVE-2026-1", true, "CVE-2026-2", true, "CVE-2026-3", false), night2.mentionsQuarkus());
+        assertEquals(Instant.parse("2026-11-24T12:00:00Z"), night2.reached());
+    }
+
+    @Test
     void aMissingEndOfDayZipOfAFullDayFailsTheRun() {
         Zips zips = new Zips()
                 .endOfDay("2026-11-23", "a/CVE-2026-2.json", "quarkus")

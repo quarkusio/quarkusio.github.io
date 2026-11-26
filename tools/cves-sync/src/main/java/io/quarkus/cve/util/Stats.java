@@ -81,11 +81,13 @@ public final class Stats {
             if (path.startsWith("/search/code")) return "code search for CVE records";
             if (path.startsWith("/CVEProject/cvelistV5/releases/download/")) return "CVE list delta (zip)";
             if (path.startsWith("/advisories")) return "advisories of packages (50 per request)";
+            if (path.startsWith("/repos/quarkusio/quarkus/security-advisories")) return "Quarkus repository advisories";
         } else if (host.endsWith("maven.org")) {
             if (path.endsWith("maven-metadata.xml")) return "release list (metadata)";
             if (path.endsWith("/quarkus-bom/")) return "release list (directory)";
             if (path.contains("/io/quarkus/platform/")) return "platform BOM";
             if (path.contains("/io/quarkus/quarkus-bom/")) return "core BOM";
+            if (path.endsWith(".pom")) return "imported BOM / parent POM";
         } else if (host.endsWith("quarkus.io")) {
             if (path.endsWith("/extensions/all")) return "extension list";
         } else if (host.endsWith("mitre.org") || host.endsWith("cve.org")) {

@@ -35,11 +35,10 @@ lists such CVEs as *pending*. Finding them means finding every CVE record that m
     (some are published under the tag of the hour before, and some hours have no zip: the newest one there is is read)
   - If yesterday's end-of-day zip is not out yet, its newest hourly zip is read and `scanned` stops there, so that the
     next run reads the end-of-day zip.
-- A CVE stays in the file while it is *pending*: no advisory with version ranges covers it, and its record names an
-  artifact that a release manages. Any other CVE is dropped, and comes back through the delta, to be looked at again,
-  if its record changes. A CVE that was dropped because no release managed the artifact it names, and that is not
-  changed after a release starts to manage it, is only found again when the file is made again (see below). Advisories
-  are searched by artifact in every run, so a CVE that has an advisory is found without this file.
+- Every CVE whose record mentions Quarkus stays in the file, even when an advisory with version ranges covers it or no
+  release yet manages the artifact it names (covered CVEs cost no `cve.org` requests). That way, if an advisory is later
+  withdrawn or a new release starts to manage the artifact, the CVE is looked at again without its record having to
+  change. Advisories are searched by artifact in every run, so a CVE that has an advisory is also found without this file.
 - Most pending CVEs are not new: of the 41 in the first version, 33 were published over 60 days before. They are
   waiting for an advisory that may never come, not for GitHub to review them.
 

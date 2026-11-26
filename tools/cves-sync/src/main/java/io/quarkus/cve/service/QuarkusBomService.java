@@ -300,8 +300,11 @@ public class QuarkusBomService {
         ComparableVersion forLowerBound = parsed.computeIfAbsent(
                 CR_SUFFIX.matcher(version).replaceFirst(""), ComparableVersion::new);
         for (UnifiedVuln.Interval iv : p.intervals) {
-            if (iv.introduced != null && !iv.introduced.equals("0")
-                    && forLowerBound.compareTo(parsed.computeIfAbsent(iv.introduced, ComparableVersion::new)) < 0) continue;
+            if (iv.introduced != null && (iv.introducedExclusive || !iv.introduced.equals("0"))) {
+                ComparableVersion intro = parsed.computeIfAbsent(iv.introduced, ComparableVersion::new);
+                ComparableVersion lower = (!iv.introducedExclusive && !isPrerelease(iv.introduced)) ? forLowerBound : v;
+                if (iv.introducedExclusive ? v.compareTo(intro) <= 0 : lower.compareTo(intro) < 0) continue;
+            }
             if (iv.fixed != null
                     && v.compareTo(parsed.computeIfAbsent(iv.fixed, ComparableVersion::new)) >= 0) continue;
             if (iv.lastAffected != null
@@ -399,7 +402,7 @@ public class QuarkusBomService {
      */
     public enum BomSource {
         PLATFORM("io.quarkus.platform:quarkus-bom", "managed-"),
-        CORE("io.quarkus:quarkus-bom", "core-managed-");
+        CORE("io.quarkus:quarkus-bom", "core-managed-v3-");
 
         final String coordinate;
         final String cachePrefix;
@@ -427,9 +430,12 @@ public class QuarkusBomService {
         try {
             String pom = Retry.call("Quarkus BOM " + version,
                     () -> source == BomSource.CORE ? mavenCentral.coreBomPom(version) : mavenCentral.bomPom(version));
-            List<String> managed = parseManaged(pom);
+            boolean[] complete = {true};
+            List<String> managed = parseManaged(pom, this::fetchPom, complete);
             if (managed.isEmpty()) throw new IllegalStateException("no managed dependencies found");
-            Cache.write(NS_BOM, key, managed, null);
+            if (complete[0]) {
+                Cache.write(NS_BOM, key, managed, null);
+            }
             return managed;
         } catch (RuntimeException ex) {
             Log.error(2, "Quarkus BOM " + version + " unavailable", ex);
@@ -454,50 +460,129 @@ public class QuarkusBomService {
         return out;
     }
 
+    @FunctionalInterface
+    interface PomFetcher {
+        String fetch(String groupId, String artifactId, String version);
+    }
+
+    private String fetchPom(String groupId, String artifactId, String version) {
+        String key = "pom-" + groupId + ":" + artifactId + ":" + version;
+        Optional<Cache.Entry<String>> cached = Cache.read(NS_BOM, key, new TypeReference<>() {});
+        if (cached.isPresent()) {
+            Stats.cacheHit(Stats.MAVEN_CENTRAL);
+            return cached.get().data();
+        }
+        String path = groupId.replace('.', '/') + "/" + artifactId + "/" + version + "/" + artifactId + "-" + version + ".pom";
+        String xml = Retry.call("Maven Central " + groupId + ":" + artifactId + ":" + version,
+                () -> mavenCentral.pom(path));
+        Cache.write(NS_BOM, key, xml, null);
+        return xml;
+    }
+
+    static List<String> parseManaged(String pomXml) {
+        return parseManaged(pomXml, null);
+    }
+
     /**
      * Entries of the BOM's {@code dependencyManagement}. Only library jars/poms are kept; the
      * exe/klib/json/properties/archetype entries and classifier variants are not CVE-relevant.
+     * When {@code fetcher} is provided, {@code <type>pom</type><scope>import</scope>} BOMs and
+     * {@code <parent>} POM properties are resolved recursively, with the outer BOM taking precedence.
      */
-    static List<String> parseManaged(String pomXml) {
+    static List<String> parseManaged(String pomXml, PomFetcher fetcher) {
+        return parseManaged(pomXml, fetcher, new boolean[]{true});
+    }
+
+    static List<String> parseManaged(String pomXml, PomFetcher fetcher, boolean[] complete) {
+        Map<String, String> managed = new LinkedHashMap<>();
+        collectManaged(pomXml, fetcher, managed, new HashSet<>(), complete);
+        List<String> out = new ArrayList<>(managed.size());
+        managed.forEach((ga, v) -> out.add(ga + ":" + v));
+        return out;
+    }
+
+    private static void collectManaged(String pomXml, PomFetcher fetcher, Map<String, String> managed,
+                                       Set<String> seenBoms, boolean[] complete) {
         Document doc = parse(pomXml);
         NodeList dm = doc.getElementsByTagName("dependencyManagement");
-        List<String> out = new ArrayList<>();
-        if (dm.getLength() == 0) return out;
-        Map<String, String> properties = properties(doc);
+        if (dm.getLength() == 0) return;
+        Map<String, String> properties = properties(doc, fetcher, new HashSet<>(), complete);
+        List<String[]> imports = new ArrayList<>();
         NodeList deps = ((Element) dm.item(0)).getElementsByTagName("dependency");
         for (int i = 0; i < deps.getLength(); i++) {
             Element d = (Element) deps.item(i);
             String type = childText(d, "type");
-            if (type != null && !type.equals("jar") && !type.equals("pom")) continue;
+            String scope = childText(d, "scope");
             if (childText(d, "classifier") != null) continue;
-            String g = childText(d, "groupId");
-            String a = childText(d, "artifactId");
+            String g = resolve(childText(d, "groupId"), properties);
+            String a = resolve(childText(d, "artifactId"), properties);
             String v = resolve(childText(d, "version"), properties);
-            if (g != null && a != null && v != null) out.add(g + ":" + a + ":" + v);
+            if (g == null || a == null || v == null) continue;
+            if ("pom".equals(type) && "import".equals(scope)) {
+                // The imported BOM itself is managed too: advisories sometimes name it (e.g. resteasy-bom)
+                managed.putIfAbsent(g + ":" + a, v);
+                imports.add(new String[]{g, a, v});
+                continue;
+            }
+            if (type != null && !type.equals("jar") && !type.equals("pom")) continue;
+            managed.putIfAbsent(g + ":" + a, v);
         }
-        return out;
+        if (fetcher == null) return;
+        for (String[] imp : imports) {
+            String coord = imp[0] + ":" + imp[1] + ":" + imp[2];
+            if (!seenBoms.add(coord)) continue;
+            try {
+                String importedXml = fetcher.fetch(imp[0], imp[1], imp[2]);
+                if (importedXml != null && !importedXml.isBlank()) {
+                    collectManaged(importedXml, fetcher, managed, seenBoms, complete);
+                }
+            } catch (RuntimeException ex) {
+                complete[0] = false;
+                Log.warn("could not read imported BOM %s (%s); managed dependencies may be incomplete", coord, ex.getMessage());
+            }
+        }
     }
 
     /**
-     * The POM's own {@code <properties>} plus {@code project.version}. Old core BOMs (before 2.0) write
-     * their versions as {@code ${netty.version}}; the platform BOMs spell them out.
+     * The POM's own {@code <properties>} plus {@code project.version} and any inherited {@code <parent>}
+     * properties. Old core BOMs (before 2.0) and imported BOMs (such as {@code jackson-bom}) inherit
+     * version properties from their parent POM.
      */
-    private static Map<String, String> properties(Document doc) {
+    private static Map<String, String> properties(Document doc, PomFetcher fetcher, Set<String> seenParents, boolean[] complete) {
         Map<String, String> out = new HashMap<>();
         Element project = doc.getDocumentElement();
+        Element parentEl = children(project, "parent").stream().findFirst().orElse(null);
+        if (parentEl != null && fetcher != null) {
+            String pg = childText(parentEl, "groupId");
+            String pa = childText(parentEl, "artifactId");
+            String pv = childText(parentEl, "version");
+            if (pg != null && pa != null && pv != null && seenParents.add(pg + ":" + pa + ":" + pv)) {
+                try {
+                    String parentXml = fetcher.fetch(pg, pa, pv);
+                    if (parentXml != null && !parentXml.isBlank()) {
+                        out.putAll(properties(parse(parentXml), fetcher, seenParents, complete));
+                    }
+                } catch (RuntimeException ex) {
+                    complete[0] = false;
+                    Log.warn("could not read parent POM %s:%s:%s (%s); managed dependencies may be incomplete",
+                            pg, pa, pv, ex.getMessage());
+                }
+            }
+        }
         for (Element props : children(project, "properties")) {
             for (Node n = props.getFirstChild(); n != null; n = n.getNextSibling()) {
                 if (n instanceof Element e) out.put(e.getTagName(), e.getTextContent().trim());
             }
         }
         String version = childText(project, "version");
-        if (version == null) {
-            for (Element parent : children(project, "parent")) version = childText(parent, "version");
-        }
+        if (version == null && parentEl != null) version = childText(parentEl, "version");
         if (version != null) {
             out.put("project.version", version);
             out.put("version", version);
         }
+        String groupId = childText(project, "groupId");
+        if (groupId == null && parentEl != null) groupId = childText(parentEl, "groupId");
+        if (groupId != null) out.put("project.groupId", groupId);
         return out;
     }
 

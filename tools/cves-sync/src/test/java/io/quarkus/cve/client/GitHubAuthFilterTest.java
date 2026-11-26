@@ -60,7 +60,7 @@ class GitHubAuthFilterTest {
 
     @Test
     void tokenIsSentOnlyToGitHubClients() {
-        githubAdvisory.listAdvisories("maven", "io.quarkus:quarkus-core", 1, 1, "updated", "desc", null).close();
+        githubAdvisory.listAdvisories("maven", "io.quarkus:quarkus-core", 1, null, "updated", "desc", null).close();
         githubSearch.search("quarkus", 1, 1);
         osv.getVulnerability("GHSA-test");
         mavenCentral.bomMetadata();

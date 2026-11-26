@@ -1,5 +1,6 @@
 package io.quarkus.cve.client;
 
+import jakarta.ws.rs.Encoded;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -40,4 +41,9 @@ public interface MavenCentralClient {
     @GET
     @Path("/io/quarkus/quarkus-bom/{version}/quarkus-bom-{version}.pom")
     String coreBomPom(@PathParam("version") String version);
+
+    /** Any POM on Maven Central (used for {@code <scope>import</scope>} BOMs and {@code <parent>} POMs). */
+    @GET
+    @Path("/{path: .+}")
+    String pom(@Encoded @PathParam("path") String path);
 }

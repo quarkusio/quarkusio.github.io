@@ -42,7 +42,7 @@ public interface GitHubAdvisoryClient {
             @QueryParam("ecosystem") String ecosystem,
             @QueryParam("affects") String packageName,
             @QueryParam("per_page") int perPage,
-            @QueryParam("page") int page,
+            @QueryParam("after") String after,
             @QueryParam("sort") String sort,
             @QueryParam("direction") String direction,
             @HeaderParam("If-None-Match") String ifNoneMatch
@@ -74,6 +74,9 @@ public interface GitHubAdvisoryClient {
 
         @JsonProperty("withdrawn_at")
         public String withdrawnAt;
+
+        @JsonProperty("state")
+        public String state;
 
         @JsonProperty("vulnerabilities")
         public List<GitHubVulnerability> vulnerabilities;

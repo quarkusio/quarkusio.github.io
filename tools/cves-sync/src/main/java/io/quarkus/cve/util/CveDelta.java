@@ -77,16 +77,25 @@ public final class CveDelta {
                 reached = later(reached, day.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC));
                 continue;
             }
-            Optional<Hourly> hourly = day.equals(yesterday) ? newestHourly(source, day, 23) : Optional.empty();
+            Optional<Hourly> hourly = newestHourly(source, day, 23);
             if (hourly.isEmpty()) {
-                throw new IllegalStateException("the cvelistV5 end-of-day zip of " + day + " is not available, so the changes of that day "
-                        + "cannot be read; the list of changed CVEs cannot be trusted");
+                throw new IllegalStateException("the cvelistV5 end-of-day zip of " + day + " is not available and no hourly zip exists, "
+                        + "so the changes of that day cannot be read; the list of changed CVEs cannot be trusted");
             }
             bytes += hourly.get().zip().length;
             seen.putAll(records(hourly.get().zip(), day + " " + hourly.get().label()));
-            read.add(day + " up to " + hourly.get().label() + " (end of day not published yet)");
-            reached = later(reached, hourly.get().at());
-            closed = false;
+            if (day.equals(yesterday)) {
+                read.add(day + " up to " + hourly.get().label() + " (end of day not published yet)");
+                reached = later(reached, hourly.get().at());
+                closed = false;
+            } else {
+                // cvelistV5 occasionally omits an end_of_day release; advance past the day using its newest hourly zip
+                // so subsequent nightly runs are not permanently blocked (at most the last hour of that day is missed).
+                Log.log(1, "cvelistV5: no end-of-day zip for %s; using %s hourly zip and advancing past %s",
+                        day, hourly.get().label(), day);
+                read.add(day + " up to " + hourly.get().label() + " (end of day missing)");
+                reached = later(reached, day.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC));
+            }
         }
 
         // Today, unless yesterday is still open: reaching today's hour would skip the end of yesterday
