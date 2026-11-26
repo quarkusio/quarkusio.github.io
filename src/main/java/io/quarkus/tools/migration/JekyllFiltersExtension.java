@@ -1,6 +1,8 @@
 package io.quarkus.tools.migration;
 
 import java.lang.reflect.Method;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -132,6 +134,19 @@ public class JekyllFiltersExtension {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&#39;");
+    }
+
+    /**
+     * Percent-encode a string for use as a URL query parameter value.
+     * Named after Liquid's "url_encode" filter, which Roq's Liquid-to-Qute converter rewrites to urlEncode.
+     * Unlike Liquid, spaces become %20 rather than +, because mailto: links do not decode + as a space.
+     * Usage in Qute: {=myString.urlEncode}
+     */
+    static String urlEncode(String str) {
+        if (str == null) {
+            return "";
+        }
+        return URLEncoder.encode(str, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     /**
