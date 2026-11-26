@@ -73,7 +73,7 @@ Support for `@Encoded` for path and query parameters has been added.
 
 ### io_uring
 
-If you are interested in using io_uring with Quarkus, please have a look at the [new documentation that has been added](/guides/vertx-reference#use-io_uring).
+If you are interested in using io_uring with Quarkus, please have a look at the [new documentation that has been added](/guides/native-transport-reference#io_uring-details).
 
 ## Full changelog
 
