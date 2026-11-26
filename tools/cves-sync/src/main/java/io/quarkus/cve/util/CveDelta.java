@@ -27,7 +27,10 @@ import java.util.zip.ZipInputStream;
  * published shortly after midnight. Reading therefore means:
  * <ul>
  *   <li>the end-of-day zip of every day from the day of the last scan up to yesterday, each of which holds the whole
- *       day, and which must exist, or the run fails: a missing one would lose the changes of a day;</li>
+ *       day. {@code cvelistV5} occasionally skips an {@code end_of_day} release (~1–2 days/year) and does not backfill
+ *       it; for a past day older than yesterday, if {@code end_of_day} is missing we fall back to a late hourly zip
+ *       ({@code >= 2200Z}) and advance past the day so nightly runs are not permanently blocked. If even that is
+ *       missing, the run fails;</li>
  *   <li>for today only the newest hourly zip there is. If yesterday's end-of-day zip is not published yet, its newest
  *       hourly zip is read instead, and the scan only reaches that hour, so that the next run reads the end-of-day zip.</li>
  * </ul>
@@ -50,14 +53,17 @@ public final class CveDelta {
      */
     public record Result(Map<String, Boolean> mentionsQuarkus, Instant reached, int zips, long bytes, List<String> read) {}
 
+    /** Earliest hourly zip accepted as a fallback when an older past day has no end-of-day zip (at most 2 hours lost). */
+    static final int PAST_DAY_MIN_HOUR = 22;
+
     private CveDelta() {}
 
     /**
      * Reads from the day of {@code scanned} up to {@code now}, oldest first, so that when a CVE is in several zips the
      * newest record decides.
      *
-     * @throws IllegalStateException when a zip cannot be read, or the end-of-day zip of a day is missing; the caller
-     *     must not take a partial read for a complete one
+     * @throws IllegalStateException when a zip cannot be read, or a past day is missing both its end-of-day zip and
+     *     any late hourly zip ({@code >= 2200Z}); the caller must not take a partial read for a complete one
      */
     public static Result read(Source source, Instant scanned, Instant now) {
         LocalDate today = now.atZone(ZoneOffset.UTC).toLocalDate();
@@ -77,10 +83,11 @@ public final class CveDelta {
                 reached = later(reached, day.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC));
                 continue;
             }
-            Optional<Hourly> hourly = newestHourly(source, day, 23);
+            int minHour = day.equals(yesterday) ? 1 : PAST_DAY_MIN_HOUR;
+            Optional<Hourly> hourly = newestHourly(source, day, 23, minHour);
             if (hourly.isEmpty()) {
-                throw new IllegalStateException("the cvelistV5 end-of-day zip of " + day + " is not available and no hourly zip exists, "
-                        + "so the changes of that day cannot be read; the list of changed CVEs cannot be trusted");
+                throw new IllegalStateException("the cvelistV5 end-of-day zip of " + day + " is not available and no late hourly zip (>="
+                        + String.format(Locale.ROOT, "%02d00Z", minHour) + ") exists, so the changes of that day cannot be trusted");
             }
             bytes += hourly.get().zip().length;
             seen.putAll(records(hourly.get().zip(), day + " " + hourly.get().label()));
@@ -89,8 +96,8 @@ public final class CveDelta {
                 reached = later(reached, hourly.get().at());
                 closed = false;
             } else {
-                // cvelistV5 occasionally omits an end_of_day release; advance past the day using its newest hourly zip
-                // so subsequent nightly runs are not permanently blocked (at most the last hour of that day is missed).
+                // cvelistV5 occasionally omits an end_of_day release and never backfills it; advance past the day using
+                // its late hourly zip (>= 2200Z) so subsequent nightly runs are not permanently blocked.
                 Log.log(1, "cvelistV5: no end-of-day zip for %s; using %s hourly zip and advancing past %s",
                         day, hourly.get().label(), day);
                 read.add(day + " up to " + hourly.get().label() + " (end of day missing)");
@@ -100,7 +107,7 @@ public final class CveDelta {
 
         // Today, unless yesterday is still open: reaching today's hour would skip the end of yesterday
         if (closed) {
-            Optional<Hourly> hourly = newestHourly(source, today, now.atZone(ZoneOffset.UTC).getHour());
+            Optional<Hourly> hourly = newestHourly(source, today, now.atZone(ZoneOffset.UTC).getHour(), 1);
             if (hourly.isPresent()) {
                 bytes += hourly.get().zip().length;
                 seen.putAll(records(hourly.get().zip(), today + " " + hourly.get().label()));
@@ -120,11 +127,11 @@ public final class CveDelta {
     private record Hourly(byte[] zip, String label, Instant at) {}
 
     /**
-     * The newest hourly zip of the day from {@code fromHour} down to 01:00 (the 00:00 zip has nothing of the day), which
-     * holds the whole day up to its hour. A zip is sometimes published under the tag of the hour before.
+     * The newest hourly zip of the day from {@code fromHour} down to {@code minHour} (the 00:00 zip has nothing of the day),
+     * which holds the whole day up to its hour. A zip is sometimes published under the tag of the hour before.
      */
-    private static Optional<Hourly> newestHourly(Source source, LocalDate day, int fromHour) {
-        for (int hour = fromHour; hour >= 1; hour--) {
+    private static Optional<Hourly> newestHourly(Source source, LocalDate day, int fromHour, int minHour) {
+        for (int hour = fromHour; hour >= minHour; hour--) {
             String at = String.format(Locale.ROOT, "%02d00Z", hour);
             String asset = day + "_delta_CVEs_at_" + at + ".zip";
             Optional<byte[]> zip = source.zip("cve_" + day + "_" + at, asset);

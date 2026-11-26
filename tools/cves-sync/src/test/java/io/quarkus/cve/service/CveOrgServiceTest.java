@@ -467,16 +467,20 @@ class CveOrgServiceTest {
                 "Day 1 must catch rejected known CVEs even when 'quarkus' was removed or CVE is a dependency");
         java.nio.file.Files.write(dir.resolve("pending-cves.yaml"), day1.indexToWrite().orElseThrow().bytes());
 
-        // Day 2: empty delta (neither CVE changed today) -> must still be remembered from cache with 0 HTTP calls
+        // Day 2: empty delta AND a completely cold cache -> must still stay suppressed from PendingIndex.rejected
         fetched.clear();
+        Cache.configure(dir.resolve("cold-cache"), Cache.Mode.NORMAL);
         java.util.Map<String, byte[]> day2Zips = java.util.Map.of(
                 "2026-11-24_delta_CVEs_at_1100Z.zip", io.quarkus.cve.util.CveDeltaTest.zip());
         CveOrgService day2 = indexed(dir, new ArrayList<>(), day2Zips);
+        Cache.configure(dir.resolve("cold-cache"), Cache.Mode.NORMAL);
         day2.cveOrg = client;
         day2.pending(MANAGED, List.of(k1, k2), 2020);
         assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), day2.rejectedKnownCves(),
-                "Day 2 must remember rejected known CVEs from cache");
-        assertTrue(fetched.isEmpty(), "Day 2 should use fresh cached cve-org records without HTTP calls");
+                "Day 2 must stay suppressed from persisted PendingIndex even after cache eviction");
+        assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), day2.indexToWrite().orElseThrow().rejected());
+        assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), new java.util.HashSet<>(fetched),
+                "Cold cache revalidates persisted rejected CVEs against cve.org");
     }
 
     @Test

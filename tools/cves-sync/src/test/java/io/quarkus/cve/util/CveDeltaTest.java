@@ -115,6 +115,17 @@ public class CveDeltaTest {
     }
 
     @Test
+    void aMissingEndOfDayZipWithOnlyAnEarlyHourlyZipFailsTheRun() {
+        Zips zips = new Zips()
+                .hourly("2026-11-22", "10", "a/CVE-2026-1.json", "quarkus")
+                .endOfDay("2026-11-23", "a/CVE-2026-2.json", "quarkus")
+                .hourly("2026-11-24", "12", "a/CVE-2026-3.json", "x");
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> CveDelta.read(zips, Instant.parse("2026-11-22T00:00:00Z"), NOON));
+        assertTrue(e.getMessage().contains("2026-11-22"), e.getMessage());
+    }
+
+    @Test
     void aMissingEndOfDayZipOfAFullDayFailsTheRun() {
         Zips zips = new Zips()
                 .endOfDay("2026-11-23", "a/CVE-2026-2.json", "quarkus")

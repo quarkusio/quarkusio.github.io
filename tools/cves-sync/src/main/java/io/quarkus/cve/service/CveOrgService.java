@@ -136,8 +136,9 @@ public class CveOrgService {
             }
         }
         // Check already-known CVEs: force-refresh any that appeared in today's delta (even if rejection
-        // removed "quarkus" or the CVE is for a third-party dependency), and remember previously cached
-        // rejected/disputed records across subsequent runs (revalidating once RECORD_TTL expires).
+        // removed "quarkus" or the CVE is for a third-party dependency), and revalidate any previously
+        // persisted rejected/disputed CVEs from PendingIndex (independent of cache warmth).
+        Set<String> persistedRejected = index != null ? index.rejected() : Set.of();
         for (String id : alreadyKnown) {
             if (changedInDelta.contains(id)) {
                 RecordResult r = record(id, true);
@@ -147,25 +148,20 @@ public class CveOrgService {
                 } else if (!r.notFound()) {
                     skipped++;
                 }
-            } else {
-                Optional<Cache.Entry<CveOrgRecord>> cached = Cache.read(NS_RECORD, id, RECORD_TYPE);
-                if (cached.isPresent() && isRejectedOrDisputed(cached.get().data())) {
-                    if (cached.get().fresh(RECORD_TTL)) {
-                        Stats.cacheHit(Stats.CVE_ORG);
-                        rejected.add(id);
-                    } else {
-                        RecordResult r = record(id, false);
-                        if (r.record().isPresent()) {
-                            if (isRejectedOrDisputed(r.record().get())) rejected.add(id);
-                            if (r.stale()) stale++;
-                        } else if (!r.notFound()) {
-                            skipped++;
-                        }
-                    }
+            } else if (persistedRejected.contains(id)) {
+                RecordResult r = record(id, false);
+                if (r.record().isPresent()) {
+                    if (isRejectedOrDisputed(r.record().get())) rejected.add(id);
+                    if (r.stale()) stale++;
+                } else if (!r.notFound()) {
+                    skipped++;
                 }
             }
         }
         rejectedKnownCves = Set.copyOf(rejected);
+        if (index != null) {
+            index = index.withRejected(rejected);
+        }
         if (stale > 0) {
             Log.warn("cve.org: %d candidate record(s) could not be refreshed; using older cached data", stale);
         }

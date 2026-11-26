@@ -53,17 +53,23 @@ public final class PendingIndex {
 
     private final Instant scanned;
     private final Map<String, String> noticedById;
+    private final Set<String> rejected;
 
     public PendingIndex(Instant scanned, Map<String, String> noticedById) {
+        this(scanned, noticedById, Set.of());
+    }
+
+    public PendingIndex(Instant scanned, Map<String, String> noticedById, Collection<String> rejected) {
         this.scanned = scanned.truncatedTo(ChronoUnit.SECONDS);
         this.noticedById = new TreeMap<>(noticedById);
+        this.rejected = new java.util.TreeSet<>(rejected);
     }
 
     /** A list made from a code search, dated a week back so that the first delta covers any lag of its index. */
     public static PendingIndex seed(Collection<String> ids, Instant now, LocalDate today) {
         Map<String, String> m = new TreeMap<>();
         ids.forEach(id -> m.put(id, today.toString()));
-        return new PendingIndex(now.truncatedTo(ChronoUnit.DAYS).minus(SEED_LOOKBACK), m);
+        return new PendingIndex(now.truncatedTo(ChronoUnit.DAYS).minus(SEED_LOOKBACK), m, Set.of());
     }
 
     public Instant scanned() {
@@ -72,6 +78,15 @@ public final class PendingIndex {
 
     public Set<String> ids() {
         return noticedById.keySet();
+    }
+
+    /** Known CVE ids currently suppressed because cve.org marks them REJECTED or disputed while an advisory still lists them. */
+    public Set<String> rejected() {
+        return java.util.Collections.unmodifiableSet(rejected);
+    }
+
+    public PendingIndex withRejected(Collection<String> updatedRejected) {
+        return new PendingIndex(scanned, noticedById, updatedRejected);
     }
 
     public List<Entry> entries() {
@@ -91,12 +106,12 @@ public final class PendingIndex {
             else m.remove(id);
         });
         Instant next = delta.reached().isAfter(scanned) ? delta.reached() : scanned;
-        return new PendingIndex(next, m);
+        return new PendingIndex(next, m, rejected);
     }
 
-    /** Whether the two lists hold the same CVEs, whatever their dates: what decides if a change is worth a commit. */
+    /** Whether the two lists hold the same CVEs (pending and rejected), whatever their dates: what decides if a change is worth a commit. */
     public boolean sameCves(PendingIndex other) {
-        return noticedById.keySet().equals(other.noticedById.keySet());
+        return noticedById.keySet().equals(other.noticedById.keySet()) && rejected.equals(other.rejected);
     }
 
     public String render() {
@@ -105,6 +120,10 @@ public final class PendingIndex {
         sb.append("pending:\n");
         noticedById.forEach((id, noticed) -> sb.append("- id: \"").append(id).append("\"\n")
                 .append("  noticed: \"").append(noticed).append("\"\n"));
+        if (!rejected.isEmpty()) {
+            sb.append("rejected:\n");
+            rejected.forEach(id -> sb.append("- \"").append(id).append("\"\n"));
+        }
         return sb.toString();
     }
 
@@ -144,6 +163,12 @@ public final class PendingIndex {
             if (!CVE_ID.matcher(id).matches()) throw new IllegalStateException(name + " has an entry that is not a CVE id: '" + id + "'");
             m.put(id, e.path("noticed").asText(""));
         }
-        return new PendingIndex(scanned, m);
+        Set<String> rej = new java.util.TreeSet<>();
+        for (JsonNode e : root.path("rejected")) {
+            String id = e.asText("");
+            if (!CVE_ID.matcher(id).matches()) throw new IllegalStateException(name + " has a rejected entry that is not a CVE id: '" + id + "'");
+            rej.add(id);
+        }
+        return new PendingIndex(scanned, m, rej);
     }
 }

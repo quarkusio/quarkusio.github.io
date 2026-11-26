@@ -109,4 +109,20 @@ class PendingIndexTest {
                 before.apply(delta(Instant.parse("2026-11-23T08:00:00Z"), Map.of()), TODAY).scanned());
     }
 
+    @Test
+    void rejectedIdsRoundTripAndAreOmittedWhenEmpty(@TempDir Path dir) throws Exception {
+        PendingIndex withoutRejected = new PendingIndex(NOW, Map.of("CVE-2026-1", "2026-11-20"));
+        assertFalse(withoutRejected.render().contains("rejected:"), "empty rejected list must be omitted for po4a");
+
+        PendingIndex withRejected = withoutRejected.withRejected(Set.of("CVE-2026-88", "CVE-2026-89"));
+        assertFalse(withoutRejected.sameCves(withRejected));
+        String rendered = withRejected.render();
+        assertTrue(rendered.contains("rejected:\n- \"CVE-2026-88\"\n- \"CVE-2026-89\"\n"), rendered);
+
+        Path file = dir.resolve("pending-cves.yaml");
+        Files.writeString(file, rendered);
+        PendingIndex parsed = PendingIndex.read(file).orElseThrow();
+        assertEquals(Set.of("CVE-2026-88", "CVE-2026-89"), parsed.rejected());
+        assertTrue(withRejected.sameCves(parsed));
+    }
 }

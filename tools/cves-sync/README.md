@@ -28,17 +28,27 @@ lists such CVEs as *pending*. Finding them means finding every CVE record that m
 - The zips are **cumulative over a day**: the one of 14:00 holds everything changed since midnight (UTC). What changed
   from 23:00 to 24:00 is in no hourly zip of that day or the next, but only in the `end_of_day` zip, published shortly
   after midnight. So a run reads the `end_of_day` zip of every day from the day of `scanned` up to yesterday (about
-  5 MB each, and **the run fails if one is missing**, as that would lose a day of changes), and then only the newest
-  hourly zip of today. A normal night is one end-of-day zip and one hourly zip.
+  5 MB each), and then only the newest hourly zip of today. A normal night is one end-of-day zip and one hourly zip.
   - `https://github.com/CVEProject/cvelistV5/releases/download/cve_<day>_at_end_of_day/<day>_delta_CVEs_at_end_of_day.zip`
   - `https://github.com/CVEProject/cvelistV5/releases/download/cve_<day>_<hour>00Z/<day>_delta_CVEs_at_<hour>00Z.zip`
     (some are published under the tag of the hour before, and some hours have no zip: the newest one there is is read)
-  - If yesterday's end-of-day zip is not out yet, its newest hourly zip is read and `scanned` stops there, so that the
-    next run reads the end-of-day zip.
-- Every CVE whose record mentions Quarkus stays in the file, even when an advisory with version ranges covers it or no
-  release yet manages the artifact it names (covered CVEs cost no `cve.org` requests). That way, if an advisory is later
-  withdrawn or a new release starts to manage the artifact, the CVE is looked at again without its record having to
-  change. Advisories are searched by artifact in every run, so a CVE that has an advisory is also found without this file.
+  - If **yesterday's** `end_of_day` zip is not out yet, its newest hourly zip is read and `scanned` stops there, so that
+    the next run reads yesterday's `end_of_day` zip once it appears.
+  - `cvelistV5` occasionally skips an `end_of_day` release (~1–2 days/year) and never backfills it. For an **older**
+    past day without `end_of_day`, the run falls back to a late hourly zip (`>= 2200Z`, losing at most 1–2 hours) and
+    advances `scanned` past that day so nightly runs are not permanently blocked. If **both** `end_of_day` and late
+    hourly zips (`>= 2200Z`) are missing for a past day, the run fails so a large gap is not silently skipped.
+- Every CVE whose record mentions Quarkus stays in `pending:` in this file, even when an advisory with version ranges
+  covers it or no release yet manages the artifact it names (covered CVEs cost no `cve.org` requests). That way, if an
+  advisory is later withdrawn or a new release starts to manage the artifact, the CVE is looked at again without its
+  record having to change. Advisories are searched by artifact in every run, so a CVE that has an advisory is also found
+  without this file.
+- **Rejected or disputed known CVEs:** when a CVE already covered by an OSV/GitHub advisory appears in a delta zip and
+  `cve.org` reports it as `REJECTED` (not `PUBLISHED`) or `disputed`, its id is suppressed from `_data/cves.yaml` and
+  persisted under `rejected:` in `_data/pending-cves.yaml` (omitted when empty). Every run revalidates those ids against
+  `cve.org` (using the 24h cache when warm), so suppression is 100% reproducible from git even if the Actions cache is
+  evicted or cold. An id is automatically pruned from `rejected:` once OSV/GitHub withdraws the advisory or `cve.org`
+  reinstates it.
 - Most pending CVEs are not new: of the 41 in the first version, 33 were published over 60 days before. They are
   waiting for an advisory that may never come, not for GitHub to review them.
 
