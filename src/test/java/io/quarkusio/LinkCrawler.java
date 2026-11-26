@@ -70,7 +70,9 @@ final class LinkCrawler implements AutoCloseable {
 
 
     private static final int DEFAULT_MAX_PAGES = Integer.MAX_VALUE;
-    private static final int DEFAULT_THREADS = 16;
+    // Each thread launches its own Chromium, so more threads than cores mostly adds memory pressure.
+    // Override with -Dtest.crawl.threads.
+    private static final int DEFAULT_THREADS = Runtime.getRuntime().availableProcessors();
 
     // --- Links that we know are wrong that we have in our docs to illustrate errors ---
     // renamed to security-oidc-code-flow-authentication; the /version/main/ match is a Roq migration issue
