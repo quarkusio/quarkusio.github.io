@@ -584,8 +584,12 @@ quarkus.tls.trust-store.p12.password=password
 quarkus.tls.trust-store.p12.alias=my-alias
 ----
 
-`.p12` files are password-protected, so you need to provide the password to open the truststore.
+`.p12` files are usually password-protected, so you need to provide the password to open the truststore.
 However, unlike keystores, the alias does not require a password because it contains a public certificate, not a private key.
+
+A PKCS12 truststore can also be created without a password (no certificate encryption and no integrity check).
+In this case, omit the `password` property.
+If the password is not set and the loaded truststore is empty, Quarkus fails at startup, as this usually indicates a password-protected truststore with a missing password.
 
 ==== JKS truststores
 
@@ -662,6 +666,7 @@ quarkus.tls.trust-store.other.alias=myca
 ----
 
 This works the same as the <<Other keystore types>> configuration described above.
+The `password` can be omitted if the truststore type supports loading without a password, such as a passwordless PKCS12 truststore.
 For custom loading logic, implement a `TrustStoreFactory` CDI bean annotated with `@Identifier` matching the `type` value.
 
 ==== Credential providers
@@ -1139,7 +1144,7 @@ public void reload() {
 private final io.vertx.core.http.HttpServer server;
 
 public void onCertificateUpdate(@Observes CertificateUpdatedEvent reload) {
-    if ("name".equals(event.getName())) {
+    if ("name".equals(reload.name())) {
         server.updateSSLOptions(reload.tlsConfiguration().getServerSSLOptions());
         // Or update the SSLContext.
     }
@@ -1150,7 +1155,10 @@ public void onCertificateUpdate(@Observes CertificateUpdatedEvent reload) {
 === Periodic reloading
 
 The TLS registry includes a built-in mechanism that periodically checks the file system for changes and reloads certificates.
-The `reload-period` property specifies the interval for reloading certificates and emits a `CertificateUpdatedEvent` each time certificates are reloaded.
+The `reload-period` property specifies the interval for reloading certificates.
+A `CertificateUpdatedEvent` is emitted only when the reloaded keystore, truststore, or CRL content differs from the content previously notified, so servers and clients do not swap their SSL options when nothing changed.
+The comparison relies on `equals`, so the `KeyCertOptions` and `TrustOptions` returned by a custom `KeyStoreProvider`, `TrustStoreProvider`, `KeyStoreFactory`, or `TrustStoreFactory` must implement `equals`, otherwise the event is emitted at every period.
+If the keystore or truststore cannot be reloaded, for example because the file is being rewritten or is corrupted, the cause is logged and the current certificates are kept.
 
 . To configure periodic certificate reloading:
 +
