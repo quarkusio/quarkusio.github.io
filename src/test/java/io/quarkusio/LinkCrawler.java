@@ -155,6 +155,7 @@ final class LinkCrawler implements AutoCloseable {
             "duration-note-anchor-quarkus-kubernetes-kubernetes-config",
             "duration-note-anchor-quarkus-openshift-openshift-config",
             "analysis-configurer",
+            "build-analytics.quarkus-analytics-uri-base",
             "basic-auth",
             "bean-reference-note-anchor",
             "configuring-json-support",
@@ -162,6 +163,7 @@ final class LinkCrawler implements AutoCloseable {
             "dev-mode",
             "multi-module-maven",
             "mutual-TLS-authentication",
+            "quarkus-datasource_quarkus.datasource.db-version",
             "quarkus-vertx-http_quarkus.http.auth.session.encryption-key",
             "security-identity-customization",
             "standard-security-annotations",
@@ -189,11 +191,9 @@ final class LinkCrawler implements AutoCloseable {
     // excused everywhere until fixed upstream. The full per-guide list is in
     // quarkusio/quarkus#56286. Drop each entry as the corresponding anchor starts rendering.
     private static final Set<String> DEAD_UPSTREAM_ANCHORS = Set.of(
-            "build-analytics.quarkus-analytics-uri-base",
             "duration-note-anchor-quarkus-rest-client-config_quarkus-rest-client",
             "embedded-roles",
             "embedded-users",
-            "quarkus-datasource_quarkus.datasource.db-version",
             "roles-properties",
             "users-properties");
 
