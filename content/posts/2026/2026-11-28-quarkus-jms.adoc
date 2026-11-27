@@ -4,18 +4,87 @@ title: 'Quarkus JMS: typed destinations, listeners and XA without the boilerplat
 date: 2026-11-28
 tags: extension jms messaging
 synopsis: 'Quarkus JMS brings typed destinations, annotation-driven listeners, XA transactions and a Reactive Messaging connector to JMS applications on Quarkus 4.'
-author: ozangunalp
+author: ozangunalp, cescoffier
 ---
 :imagesdir: /assets/images/posts/quarkus-jms
 
-== A dedicated JMS extension
+== What JMS on Quarkus leaves to you today
 
 If you use JMS on Quarkus today, you get a `ConnectionFactory` and not much else.
 Creating contexts and sessions, running consumer threads with a `receive()` loop, reconnecting after a failure, converting payloads: all of that is left to your application.
 Wiring XA transactions means combining the JMS session, pooled JMS, Narayana and, on the consumer side, a resource adapter.
 
-https://docs.quarkiverse.io/quarkus-jms/dev/index.html[Quarkus JMS] is a new Quarkiverse extension that takes care of this layer.
-It is compatible with Quarkus 4 and provides abstractions for easily sending and consuming JMS messages, well-integrated into the Quarkus ecosystem.
+Here is what a minimal order consumer looks like with only a `ConnectionFactory`:
+
+[source,java]
+----
+@ApplicationScoped
+public class OrderConsumer implements Runnable {
+
+    @Inject
+    ConnectionFactory connectionFactory;
+
+    @Inject
+    ObjectMapper mapper;
+
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private volatile boolean running = true;
+
+    void onStart(@Observes StartupEvent ev) {
+        executor.submit(this);
+    }
+
+    void onStop(@Observes ShutdownEvent ev) {
+        running = false;
+        executor.shutdown();
+    }
+
+    @Override
+    public void run() {
+        try (JMSContext context = connectionFactory.createContext(JMSContext.AUTO_ACKNOWLEDGE)) {
+            JMSConsumer consumer = context.createConsumer(context.createQueue("orders"));
+            while (running) {
+                Message message = consumer.receive(1000);
+                if (message == null) {
+                    continue;
+                }
+                Order order = mapper.readValue(message.getBody(String.class), Order.class);
+                process(order, message.getStringProperty("category"));
+            }
+        } catch (JMSException | JsonProcessingException e) {
+            // From here on, nothing consumes "orders" until the application restarts
+            Log.error("Order consumer stopped", e);
+        }
+    }
+
+    void process(Order order, String category) {
+        Log.infof("Processing %s order %s", category, order.id());
+    }
+}
+----
+
+That is about 40 lines, and it is still not production-ready.
+It runs a single consumer thread, it does not reconnect when the broker restarts, one malformed message stops consumption for good, and shutdown does not wait for the message being processed.
+Each of those is more code to write, test and maintain, in every application.
+
+With Quarkus JMS, the same consumer is:
+
+[source,java]
+----
+@ApplicationScoped
+public class OrderConsumer {
+
+    @JmsListener("orders")
+    void process(Order order, @JmsHeader("category") String category) {
+        Log.infof("Processing %s order %s", category, order.id());
+    }
+}
+----
+
+The extension starts the consumer workers, converts the JSON payload, reconnects after a connection failure, and waits for in-flight messages on shutdown.
+
+That listener is one piece of https://docs.quarkiverse.io/quarkus-jms/dev/index.html[Quarkus JMS], a new Quarkiverse extension for Quarkus 4.
+The rest of the extension handles the remaining plumbing: typed destinations for sending and receiving, XA transactions through Narayana, and integration with OpenTelemetry, Micrometer and health checks.
 
 Which part of it you use depends on your application:
 
@@ -23,25 +92,30 @@ Which part of it you use depends on your application:
 * the `smallrye-jms` connector, when your application is built on Quarkus Messaging channels (`@Incoming` / `@Outgoing`)
 * `quarkus-spring-jms`, if you are migrating from an application using Spring JMS and want to keep the same API.
 
-== The JMS extension ecosystem
+== Where Quarkus JMS fits next to the existing JMS extensions
 
-Currently JMS support in Quarkus is spread across several extensions, each covering one part:
+JMS support in Quarkus is spread across several extensions, and all of them work at the `ConnectionFactory` level.
+`quarkus-artemis-jms` and `quarkus-qpid-jms` provide the clients for Apache ActiveMQ Artemis and AMQP 1.0 brokers, `quarkus-pooled-jms` adds connection pooling, and `quarkus-ironjacamar` runs JCA resource adapters for MDB-style endpoints.
+For other providers, such as IBM MQ, you produce the `ConnectionFactory` bean yourself.
 
-* `quarkus-artemis-jms` provides the Apache ActiveMQ Artemis client, with configuration, Dev Services and native support.
-* `quarkus-qpid-jms` provides the Apache Qpid JMS client for AMQP 1.0 brokers.
-* `quarkus-pooled-jms` adds connection pooling and transaction manager integration.
-* `quarkus-ironjacamar`, together with resource adapters such as `quarkus-artemis-jms-ra`, runs a JCA resource adapter for MDB-style message endpoints.
-* Camel Quarkus has its own JMS component for integration routes.
-
-For other providers, such as IBM MQ, applications need to configure and produce a `ConnectionFactory` bean themselves.
-
-All of these extensions work at the `ConnectionFactory` level. Quarkus JMS adds a layer on top and handles session management, payload conversion and lifecycle for you.
+Quarkus JMS sits on top of whichever `ConnectionFactory` you have, and handles session management, payload conversion and the listener lifecycle:
 
 image::quarkus-jms-stack.webp["Quarkus JMS stack: three APIs on a shared runtime, optional pooled JMS and IronJacamar, and the providers that supply the ConnectionFactory"]
 
-== Typed destinations and @JmsListener
+== Getting started with typed destinations and @JmsListener
 
-To get started with Quarkus JMS you need to add the `io.quarkiverse.jms:quarkus-jms` extension next to a JMS provider.
+Quarkus JMS requires Quarkus 4.0 or later.
+Add the extension next to your JMS provider, for example `quarkus-artemis-jms`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.jms</groupId>
+    <artifactId>quarkus-jms</artifactId>
+    <version>0.4.1</version>
+</dependency>
+----
+
 With `quarkus-artemis-jms`, Dev Services start an Artemis broker and configure the `ConnectionFactory`, so there is nothing else to set up.
 
 The examples in this post exchange two records:
@@ -85,8 +159,8 @@ public class OrderResource {
 You can inject a destination by qualifying it with `@Identifier`.
 Injected destinations are type-safe: the generic parameter determines the payload type for both sending and receiving, and objects are converted to and from JSON using Jackson.
 
-To consume messages continuously, annotate a CDI bean method with `@JmsListener`.
-The following listener processes the orders:
+The listener from the introduction can do more than log.
+This version scales its consumers with the load and publishes a result:
 
 [source,java]
 ----
@@ -109,20 +183,23 @@ public class OrderProcessor {
 }
 ----
 
-The first non-annotated parameter is the message payload. You can inject message properties by annotating parameters with the `@JmsHeader` annotation.
+The first non-annotated parameter is the message payload, and parameters annotated with `@JmsHeader` receive message properties.
 With `concurrency` and `maxConcurrency`, extra consumers are spawned when all existing ones are busy, and removed when they become idle.
-The `@SendTo` annotation allows sending the processing result to another destination.
+The `@SendTo` annotation sends the return value to another destination.
 
 == Consume, write to the database and send in one XA transaction
 
 XA transactions coordinate JMS message consumption with other XA resources, such as a database, in a single atomic transaction.
-Enable XA on the connection factory and on the datasource, and add the `quarkus-narayana-jta` extension:
+XA needs an `XAConnectionFactory` from your provider and the `quarkus-narayana-jta` extension.
+With Artemis, enable XA on the connection factory and on the datasource:
 
 [source,properties]
 ----
 quarkus.artemis.xa-enabled=true
 quarkus.datasource.jdbc.transactions=xa
 ----
+
+The https://docs.quarkiverse.io/quarkus-jms/dev/providers.html[JMS providers page] shows the equivalent setting for other providers.
 
 Then set the listener's acknowledge mode to `XA`:
 
@@ -174,6 +251,18 @@ public void validate(Order order) {
 }
 ----
 
+=== Why not pooled JMS and @Transactional?
+
+Before Quarkus JMS, the usual way to get XA was `quarkus-pooled-jms` with `quarkus.pooled-jms.transaction=xa`.
+The pool enlists its sessions in the current JTA transaction, so a `@Transactional` method that creates a `JMSContext` sends and receives as part of that transaction.
+
+That works well for sending.
+Consuming is where it gets harder: there is no listener to put `@Transactional` on, so you either run your own `receive()` loop and demarcate each transaction by hand, or deploy a JCA resource adapter with IronJacamar.
+With Quarkus JMS, the listener itself is the transaction boundary, and the same XA support applies to `JmsClient` calls inside your own `@Transactional` methods.
+
+The two XA models do not mix.
+Quarkus JMS enlists sessions directly through the `XAConnectionFactory`, so if you keep `quarkus-pooled-jms` alongside XA listeners, set `quarkus.pooled-jms.transaction=disabled` and let the pool handle connections only.
+
 == Tracing, health checks and fault tolerance on listeners
 
 Quarkus JMS integrates with other Quarkus extensions when they are present:
@@ -184,10 +273,13 @@ Quarkus JMS integrates with other Quarkus extensions when they are present:
 
 Consult the https://docs.quarkiverse.io/quarkus-jms/dev/index.html[extension docs] to discover other features such as session pooling, request-reply, queue browsing, durable subscriptions, selectors, dead-letter routing, runtime listener registration and graceful shutdown.
 
-== The Quarkus Messaging connector
+== The Quarkus Messaging connector, now tested with Quarkus
 
-If you use Quarkus Messaging, the `smallrye-jms` connector for `@Incoming` / `@Outgoing` channels now ships from this project, as the `quarkus-messaging-jms` extension.
-It gained local and XA transactions, selected with the `transaction-mode` attribute, and failure strategies such as `fail`, `ignore` and `dead-letter-queue`.
+The `smallrye-jms` connector for `@Incoming` / `@Outgoing` channels comes from SmallRye Reactive Messaging, but Quarkus never shipped an extension for it.
+The new `quarkus-messaging-jms` extension, part of this project, makes it a Quarkus extension that is compatible and tested with Quarkus.
+If you used the connector by adding the SmallRye artifact directly, replace it with `io.quarkiverse.jms:quarkus-messaging-jms`.
+
+The connector also gained local and XA transactions, selected with the `transaction-mode` attribute, and failure strategies such as `fail`, `ignore` and `dead-letter-queue`.
 
 == Supported JMS providers
 
@@ -198,18 +290,19 @@ Besides Apache ActiveMQ Artemis, it is tested with:
 * AMQP 1.0 brokers, through `quarkus-qpid-jms`
 * IBM MQ
 * RabbitMQ
-* Amazon SQS and Oracle AQ, which only implement JMS 1.1, through a compatibility mode
+* Amazon SQS and Oracle AQ, which only implement JMS 1.1, through a compatibility mode that does not support XA
 
 The https://docs.quarkiverse.io/quarkus-jms/dev/providers.html[JMS providers page] shows how to configure each of them.
 
 Quarkus JMS works in native executables, as long as the JMS client does.
 `quarkus-artemis-jms` and `quarkus-qpid-jms` both support native compilation.
 
-== Integration with other JMS extensions
+== Using Quarkus JMS with pooled JMS, IronJacamar and Camel
 
 Quarkus JMS uses the default CDI `ConnectionFactory` bean, or a named one qualified with `@Identifier`, so it works on top of the extensions you already use.
 
 When you need multiple connections or JMX monitoring, add `quarkus-pooled-jms`: the built-in session pool is then disabled automatically.
+If you also use XA listeners, set `quarkus.pooled-jms.transaction=disabled`, as explained in the XA section above.
 
 When `quarkus-ironjacamar` is present, `@JmsListener` methods on classes annotated with `@ResourceEndpoint` are activated through the JCA resource adapter instead of the default polling consumer.
 Camel Quarkus routes are not affected and can share the same `ConnectionFactory`.
@@ -247,9 +340,20 @@ Container factories are configured in `application.properties` instead of `@Bean
 Session pooling, transactions, tracing, metrics and health checks apply to Spring-annotated listeners as well.
 See the https://docs.quarkiverse.io/quarkus-jms/dev/spring-jms.html[Spring JMS compatibility guide] for details.
 
+== Known limitations in the preview
+
+Quarkus JMS is in preview: it is experimental, and we are waiting for feedback before declaring it stable.
+Before you adopt it, keep in mind:
+
+* APIs and configuration properties may still change between releases, based on that feedback.
+* XA requires an `XAConnectionFactory`, and is not available in the JMS 1.1 compatibility mode used for Amazon SQS and Oracle AQ.
+* XA listeners do not work with the XA enlistment of `quarkus-pooled-jms`. Set `quarkus.pooled-jms.transaction=disabled` when you use both.
+* Typed destinations convert payloads to and from JSON with Jackson, and add the payload type in a `_type` message property. For other formats, build the JMS message yourself with `send(ctx -> ...)`.
+* Native compilation depends on your JMS client. It is supported with `quarkus-artemis-jms` and `quarkus-qpid-jms`.
+
 == Try it and tell us which broker you use
 
-Quarkus JMS is in preview and will be part of the Quarkus Platform.
+Quarkus JMS will be part of the Quarkus Platform.
 To try it, follow the https://docs.quarkiverse.io/quarkus-jms/dev/index.html[Getting Started guide].
 We would like your feedback, in particular on the providers you use and on migrating existing applications.
 
