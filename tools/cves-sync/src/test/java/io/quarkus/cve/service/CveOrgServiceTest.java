@@ -512,4 +512,39 @@ class CveOrgServiceTest {
         String stderr = err.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(!stderr.contains("warning:"), "HTTP 404 at cve.org must not emit a fatal warning: " + stderr);
     }
+
+    @Test
+    void reseedPreservesPersistedRejectedAnd404KeepsSuppression(@TempDir Path dir) throws Exception {
+        // Index older than 30 days (triggers reseed) with a persisted rejected CVE
+        java.nio.file.Files.writeString(dir.resolve("pending-cves.yaml"), """
+                scanned: "2026-09-01T10:00:00Z"
+                pending:
+                - id: "CVE-2026-9"
+                  noticed: "2026-09-01"
+                rejected:
+                - "CVE-2026-88"
+                """);
+
+        CveOrgService service = indexed(dir, new ArrayList<>(), java.util.Map.of());
+        // cve.org returns 404 for the persisted rejected CVE -> must stay suppressed, not quietly dropped
+        service.cveOrg = id -> {
+            if ("CVE-2026-88".equals(id)) {
+                throw new jakarta.ws.rs.WebApplicationException(jakarta.ws.rs.core.Response.status(404).build());
+            }
+            try {
+                return new ObjectMapper().readTree("{\"cveMetadata\": {\"cveId\": \"" + id + "\", \"state\": \"PUBLISHED\"}, \"containers\": {\"cna\": {}}}");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+
+        io.quarkus.cve.model.UnifiedVuln k = new io.quarkus.cve.model.UnifiedVuln();
+        k.id = "GHSA-88";
+        k.cveId = "CVE-2026-88";
+
+        service.pending(MANAGED, List.of(k), 2020);
+        assertEquals(Set.of("CVE-2026-88"), service.rejectedKnownCves(),
+                "Reseed must preserve persisted rejected CVEs and 404 must keep them suppressed");
+        assertEquals(Set.of("CVE-2026-88"), service.indexToWrite().orElseThrow().rejected());
+    }
 }

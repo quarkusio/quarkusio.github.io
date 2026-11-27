@@ -153,7 +153,11 @@ public class CveOrgService {
                 if (r.record().isPresent()) {
                     if (isRejectedOrDisputed(r.record().get())) rejected.add(id);
                     if (r.stale()) stale++;
-                } else if (!r.notFound()) {
+                } else if (r.notFound()) {
+                    // A persisted rejected CVE returning 404 is still not PUBLISHED; keep it suppressed
+                    rejected.add(id);
+                } else {
+                    rejected.add(id);
                     skipped++;
                 }
             }
@@ -316,6 +320,9 @@ public class CveOrgService {
         try {
             List<String> ids = searchAllYears();
             index = PendingIndex.seed(ids, now, today);
+            if (existing.isPresent()) {
+                index = index.withRejected(existing.get().rejected());
+            }
             return ids;
         } catch (RuntimeException ex) {
             Log.warn("could not search the CVE list (%s); pending CVEs are missing", ex.getMessage());
