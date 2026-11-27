@@ -14,9 +14,15 @@
   // the marks across a bar where each micro was released: only just lighter than the bar (light mode)
   --tl-tick: rgba(255, 255, 255, 0.3);
   --tl-label-w: 140px;
+  // severity, worst to mildest
+  --tl-sev-critical: #b3202a;
+  // the Quarkus brand orange and yellow (core/_colors.scss), which also read well on the dark background
+  --tl-sev-high: #{$orange};
+  --tl-sev-medium: #{$yellow};
+  --tl-sev-low: #5b8fc9;
 }
 
-.tl, .tl-legend {
+.tl, .tl-legend, .cve-filters, .cve-brush {
   @include tl-light-colors;
 }
 
@@ -33,7 +39,9 @@
 }
 
 html.dark .tl,
-html.dark .tl-legend {
+html.dark .tl-legend,
+html.dark .cve-filters,
+html.dark .cve-brush {
   --tl-herodevs: #{$provider-herodevs-dark};
   --tl-edge: white;
   --tl-stripe: rgba(255, 255, 255, 0.035);
@@ -41,6 +49,8 @@ html.dark .tl-legend {
   --tl-branch: #555;
   // only just darker than the bar in dark mode
   --tl-tick: rgba(0, 0, 0, 0.3);
+  --tl-sev-critical: #ff6b6b;
+  --tl-sev-low: #7fb0e6;
 }
 
 .tl-labels {
@@ -55,7 +65,7 @@ html.dark .tl-legend {
     text-overflow: ellipsis;
 
     // row heights come from TimelineRow.height (band + Timeline.ROW_PAD)
-    @for $h from 20 through 80 {
+    @for $h from 12 through 260 {
       &.tl-h-#{$h} {
         height: #{$h}px;
       }
@@ -211,6 +221,83 @@ html.dark .tl-legend {
   stroke-width: 3;
 }
 
+// Scatter plot (partials/charts/scatter.html): wider labels for artifact names, dots instead of bars.
+.tl--scatter {
+  --tl-label-w: 300px;
+}
+
+// covers the row, so hovering anywhere in it, between the bars too, spreads its lanes out
+.tl-row-hit {
+  fill: transparent;
+  stroke: none;
+}
+
+
+// Marks: a bar from when a CVE first shipped to when it was fixed, paler before it was published. A CVE that
+// has not been assessed yet fades in before its publication. A CVE with no fix runs to today and ends in a cross. Open CVEs are drawn
+// as solid as fixed ones: an unfixed CVE is the worst case, so it must not look tentative. The severity colour comes from the tl-sev--* class.
+.tl-sev--critical { --tl-sev: var(--tl-sev-critical); }
+.tl-sev--high { --tl-sev: var(--tl-sev-high); }
+.tl-sev--medium { --tl-sev: var(--tl-sev-medium); }
+.tl-sev--low { --tl-sev: var(--tl-sev-low); }
+
+// the fade of a pending CVE takes its fill from a gradient, set as an attribute in the markup
+.tl-sev-fade-start { stop-color: var(--tl-sev); stop-opacity: 0.5; }
+.tl-sev-fade-end { stop-color: var(--tl-sev); stop-opacity: 0; }
+
+.tl-seg.tl-mark {
+  rect {
+    stroke: none;
+  }
+
+  rect:not(.tl-mark-fade):not(.tl-hit) {
+    fill: var(--tl-sev);
+  }
+
+  .tl-hit {
+    fill: transparent;
+    stroke: none;
+  }
+
+  // before it was published, nobody knew
+  .tl-mark-pre:not(.tl-mark-fade) {
+    fill-opacity: 0.35;
+  }
+
+  // an arrow at the start of a bar that was already in the earliest release we have data for: it may go back further
+  .tl-more {
+    fill: var(--tl-sev);
+    fill-opacity: 0.7;
+  }
+
+  // discovery view: a dot on the publication date
+  .tl-dot {
+    fill: var(--tl-sev);
+  }
+
+  &:hover .tl-dot,
+  &:focus-visible .tl-dot {
+    fill: color-mix(in srgb, var(--tl-sev) 70%, var(--main-text-color));
+  }
+
+  .tl-cross {
+    fill: none;
+    stroke: var(--tl-sev);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+  }
+
+  &:hover .tl-cross,
+  &:focus-visible .tl-cross {
+    stroke: color-mix(in srgb, var(--tl-sev) 70%, var(--main-text-color));
+  }
+
+  &:focus-visible .tl-hit {
+    stroke: var(--main-text-color);
+    stroke-width: 1.5;
+  }
+}
+
 .tl-prov--rhbq { --tl-prov: var(--tl-rhbq); }
 .tl-prov--ibm { --tl-prov: var(--tl-ibm); }
 .tl-prov--herodevs { --tl-prov: var(--tl-herodevs); }
@@ -246,6 +333,8 @@ html.dark .tl-legend {
   position: absolute;
   z-index: 10;
   max-width: 240px;
+  // long unbroken text, such as a method name or Maven coordinates, must wrap rather than spill out of the box
+  overflow-wrap: anywhere;
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
   line-height: 1.4;
@@ -254,7 +343,8 @@ html.dark .tl-legend {
   border: 1px solid var(--sec-border-color);
   border-radius: 0.375rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  pointer-events: none;
+  // the pointer can move onto it, to select and copy its text (see timeline.js)
+  user-select: text;
 
   &[hidden] {
     display: none;
@@ -300,6 +390,107 @@ html.dark .tl-legend {
   }
 }
 
+// Sliders and a checkbox above the CVE plot (see public/assets/javascript/cve-filter.js).
+.cve-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem 2rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
+  font-size: 0.95rem;
+
+  &[hidden] {
+    display: none;
+  }
+
+  // the fieldset's name for screen readers; each set of controls has its own visible heading
+  .cve-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+// the filters side by side, wrapping when there is no room
+.cve-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+// sliders and chips on one line, and the two rings on the next, each wrapping when there is no room
+.cve-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem 2.5rem;
+}
+
+.cve-expand-all {
+  display: flex;
+  gap: 1rem;
+  margin: 0 0 0.5rem;
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+// A set of on/off switches, with Select all and Select none above them
+.cve-set {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.cve-set-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+
+  .cve-group-title {
+    margin-right: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+}
+
+// Plain links that are buttons: undo the site-wide CTA styling every <button> gets.
+.tl-section .cve-link-button {
+  display: inline;
+  padding: 0;
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: inherit;
+  text-transform: none;
+  color: var(--link-color) !important;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+
+  &:hover, &:focus {
+    color: var(--link-color) !important;
+    background: none;
+    text-decoration: none;
+  }
+}
+
+.cve-slider-status {
+  min-height: 1.5rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
 .tl-legend {
   list-style: none;
   margin: 0 0 1.5rem;
@@ -315,10 +506,24 @@ html.dark .tl-legend {
   }
 }
 
+// a row with nothing in it, e.g. the provider row on the CVE page, takes no space
+.tl-legend:not(:has(li)) {
+  display: none;
+}
+
+// compact rows: a swatch and a name, no description
+.tl-legend--inline,
 .tl-legend--providers {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
+}
+
+.tl-legend--inline {
+  margin-bottom: 1rem;
+}
+
+.tl-legend--providers {
   margin-top: -0.75rem;
 }
 
@@ -348,15 +553,62 @@ html.dark .tl-legend {
       linear-gradient(var(--tl-tick), var(--tl-tick)) 70% 0 / 1px 100% no-repeat,
       var(--tl-community);
   }
+  &--span { background: linear-gradient(90deg, rgba($quarkus-blue, 0.35) 35%, $quarkus-blue 35%); }
+  &--critical { background: var(--tl-sev-critical); }
+  &--high { background: var(--tl-sev-high); }
+  &--medium { background: var(--tl-sev-medium); }
+  &--low { background: var(--tl-sev-low); }
+  // a pale bar with an arrow at its start
+  &--since {
+    position: relative;
+    margin-left: 0.5rem;
+    background: rgba($quarkus-blue, 0.35);
+
+    &::before {
+      content: "\25C0";
+      position: absolute;
+      right: 100%;
+      top: 50%;
+      transform: translate(30%, -50%);
+      font-size: 0.6rem;
+      line-height: 1;
+      color: $quarkus-blue;
+    }
+  }
+  // a solid bar ending in a cross
+  &--open {
+    position: relative;
+    margin-right: 0.9rem;
+    background: $quarkus-blue;
+
+    &::after {
+      content: "\2715";
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.8rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--main-text-color);
+    }
+  }
+  // a bar fading in from the left
+  &--pending { background: linear-gradient(90deg, transparent, $quarkus-blue 70%); }
   &--prov-rhbq { background: var(--tl-rhbq); }
   &--prov-ibm { background: var(--tl-ibm); }
   &--prov-herodevs { background: var(--tl-herodevs); }
 }
 
 @media (max-width: 600px) {
-  .tl {
+  .tl, .tl--scatter, .cve-brush {
     --tl-label-w: 72px;
     font-size: 0.8rem;
+  }
+
+  // the quarterly tick labels do not fit side by side on a phone, so keep every other one
+  .tl--scatter .tl-grid text:nth-of-type(even) {
+    display: none;
   }
 
   // rows with a shortLabel use it when the label column is this narrow
@@ -370,7 +622,364 @@ html.dark .tl-legend {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tl-seg rect {
+  .tl-seg rect,
+  .tl-point .tl-dot {
     transition: none;
+  }
+}
+
+// Category rows: a summary row for each category that opens to show its components. The label is a button; the plot
+// has a strip of CVEs per month, and the median time to fix on the right.
+.tl-labels li.tl-cat,
+.tl-labels li.tl-fold {
+  padding: 0;
+}
+
+.tl-labels li.tl-component {
+  padding-left: 1.5rem;
+}
+
+.tl-labels li.tl-cat {
+  font-weight: 700;
+}
+
+.tl-labels li.tl-fold {
+  padding-left: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.cve-cat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 0.25rem;
+  font: inherit;
+  font-weight: inherit;
+  line-height: 1.2;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--main-text-color) !important;
+  background: none !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $quarkus-blue;
+    outline-offset: -2px;
+  }
+
+  .cve-cat-chevron {
+    flex: none;
+    width: 1em;
+  }
+
+  .cve-cat-name {
+    flex: none;
+  }
+
+  .cve-cat-meta {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    font-size: 0.8rem;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+  }
+
+  // the only thing in a saturated colour, and only when there is something open
+  .cve-cat-open.has-open {
+    color: var(--tl-sev-critical);
+    font-weight: 700;
+  }
+}
+
+.tl-cat-bg {
+  fill: color-mix(in srgb, var(--main-text-color) 6%, transparent);
+}
+
+// Never blue, which reads as Quarkus: black while the category is closed, and fainter once it is open, because
+// the components are showing their own bars
+.tl-cat-col {
+  fill: var(--main-text-color);
+  fill-opacity: 0.85;
+}
+
+.tl-cat-row.is-open .tl-cat-col {
+  fill-opacity: 0.35;
+}
+
+.tl-cat-cross path {
+  fill: none;
+  stroke: var(--tl-sev-critical);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.tl-cat-median {
+  font-size: 12px;
+  fill: var(--main-text-color);
+  paint-order: stroke;
+  stroke: var(--main-background-color);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+// A filter chip: a swatch, a name and a count, filled when on and hollow when off. The checkbox inside is the real
+// control, so the keyboard and screen readers work with it as it is.
+.cve-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+
+  &--column {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.cve-chip {
+  --chip: #{$quarkus-blue};
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.65rem 0.15rem 0.45rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1.5px solid var(--chip);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip) 14%, transparent);
+
+  input[type="checkbox"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+  }
+
+  .cve-chip-swatch {
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 2px solid var(--chip);
+    border-radius: 2px;
+    background: var(--chip);
+  }
+
+  .cve-chip-count {
+    font-weight: 700;
+    opacity: 0.85;
+  }
+
+  // off: hollow
+  &:not(:has(input:checked)) {
+    background: transparent;
+    border-color: color-mix(in srgb, var(--chip) 55%, transparent);
+
+    .cve-chip-swatch {
+      background: transparent;
+    }
+
+    .cve-chip-count {
+      font-weight: 400;
+      opacity: 0.7;
+    }
+  }
+
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--main-text-color);
+    outline-offset: 2px;
+  }
+
+  &--critical { --chip: var(--tl-sev-critical); }
+  &--high { --chip: var(--tl-sev-high); }
+  &--medium { --chip: var(--tl-sev-medium); }
+  &--low { --chip: var(--tl-sev-low); }
+  &--fixed { --chip: var(--tl-community); }
+  &--open { --chip: var(--main-text-color); }
+  &--pending { --chip: #8a8a8a; }
+  &--internal { --chip: #{$quarkus-blue}; }
+  &--external { --chip: #8a8a8a; }
+}
+
+// A ring next to the chips of a filter, a slice for each chip as big as its count
+.cve-facet {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.cve-donut {
+  flex: none;
+  width: 6.5rem;
+  height: 6.5rem;
+}
+
+.cve-slice {
+  --chip: #{$quarkus-blue};
+  fill: var(--chip);
+  stroke: var(--main-background-color);
+  stroke-width: 0.8;
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:hover {
+    stroke: var(--main-text-color);
+  }
+
+  &.is-off {
+    opacity: 0.15;
+  }
+
+  &--fixed { --chip: var(--tl-community); }
+  &--open { --chip: var(--main-text-color); }
+  &--pending { --chip: #8a8a8a; }
+  &--internal { --chip: #{$quarkus-blue}; }
+  &--external { --chip: #8a8a8a; }
+}
+
+// The time period: a strip of the CVEs published each month, in the same columns as the plot below it, with a window
+// over it. The left cell is as wide as the plot's labels, so the strip lines up with the plot area.
+.cve-brush {
+  --tl-label-w: 300px;
+  display: grid;
+  grid-template-columns: var(--tl-label-w) minmax(0, 1fr);
+  align-items: start;
+  margin-bottom: 0.5rem;
+
+  &[hidden] {
+    display: none;
+  }
+
+  .cve-group-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+}
+
+.cve-brush-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-right: 0.75rem;
+  font-size: 0.85rem;
+
+  .cve-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+  }
+
+  .cve-link-button[aria-pressed="true"] {
+    font-weight: 700;
+    text-decoration: none;
+  }
+}
+
+.cve-brush-readout {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.cve-brush-main {
+  position: relative;
+
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--main-text-color);
+    outline-offset: 2px;
+  }
+
+  // the two range inputs are for the keyboard and screen readers; the strip is what is seen
+  .cve-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.cve-brush-svg {
+  display: block;
+  width: 100%;
+  height: 56px;
+  touch-action: none; // dragging the window must not scroll the page
+  cursor: crosshair;
+  user-select: none;
+  background: color-mix(in srgb, var(--main-text-color) 4%, transparent);
+  border-radius: 3px;
+}
+
+.cve-brush-axis {
+  line {
+    stroke: color-mix(in srgb, var(--main-text-color) 15%, transparent);
+    stroke-width: 1;
+  }
+
+  text {
+    font-size: 10px;
+    fill: var(--main-text-color);
+    opacity: 0.7;
+  }
+}
+
+.cve-brush-col {
+  rect.is-fixed {
+    fill: var(--main-text-color);
+    fill-opacity: 0.3;
+  }
+
+  // not fixed: stacked on the ones that are
+  rect.is-open {
+    fill: var(--tl-sev-critical);
+  }
+}
+
+.cve-brush-dim {
+  fill: var(--main-background-color);
+  fill-opacity: 0.65;
+  pointer-events: none;
+}
+
+.cve-brush-window {
+  fill: transparent;
+  stroke: var(--main-text-color);
+  stroke-width: 1.5;
+  cursor: grab;
+
+  .is-dragging & {
+    cursor: grabbing;
+  }
+}
+
+.cve-brush-handle rect {
+  fill: var(--main-text-color);
+  cursor: ew-resize;
+}
+
+@media (max-width: 600px) {
+  .cve-brush {
+    display: block;
+  }
+
+  .cve-brush-side {
+    padding: 0 0 0.5rem;
   }
 }

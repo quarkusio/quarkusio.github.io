@@ -3,6 +3,9 @@
 (function() {
   var DAY = 24 * 60 * 60 * 1000;
   var tooltip = null;
+  var hideTimer = null;
+  // how long the tooltip stays after the pointer leaves the mark, so the pointer can move onto it to select its text
+  var HIDE_DELAY = 250;
 
   function parse(d) {
     return Date.parse(d + 'T00:00:00Z');
@@ -46,12 +49,16 @@
       tooltip.className = 'tl-tooltip';
       tooltip.setAttribute('role', 'tooltip');
       tooltip.hidden = true;
+      // the pointer can rest on the tooltip, to select and copy from it
+      tooltip.addEventListener('mouseenter', function() { clearTimeout(hideTimer); });
+      tooltip.addEventListener('mouseleave', hideTooltip);
       document.body.appendChild(tooltip);
     }
     return tooltip;
   }
 
   function showTooltip(seg) {
+    clearTimeout(hideTimer);
     var tip = ensureTooltip();
     var tl = seg.closest('.tl');
     tip.textContent = '';
@@ -76,14 +83,26 @@
     }
     var maxLeft = window.scrollX + document.documentElement.clientWidth - tip.offsetWidth - 4;
     left = Math.max(window.scrollX + 4, Math.min(left, maxLeft));
+    // flip above the mark when there is no room below it, and keep it inside the window either way
+    var viewBottom = window.scrollY + document.documentElement.clientHeight - 4;
+    if (top + tip.offsetHeight > viewBottom) {
+      top = box.top + window.scrollY - tip.offsetHeight - 6;
+    }
+    top = Math.max(window.scrollY + 4, Math.min(top, viewBottom - tip.offsetHeight));
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
   }
 
   function hideTooltip() {
+    clearTimeout(hideTimer);
     if (tooltip) {
       tooltip.hidden = true;
     }
+  }
+
+  function hideTooltipSoon() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(hideTooltip, HIDE_DELAY);
   }
 
   function highlight(version, on) {
@@ -114,7 +133,7 @@
     document.querySelectorAll('.tl [data-tooltip]').forEach(function(seg) {
       seg.addEventListener('mouseenter', function() { showTooltip(seg); highlight(versionOf(seg), true); });
       seg.addEventListener('focus', function() { showTooltip(seg); highlight(versionOf(seg), true); });
-      seg.addEventListener('mouseleave', function() { hideTooltip(); highlight(versionOf(seg), false); });
+      seg.addEventListener('mouseleave', function() { hideTooltipSoon(); highlight(versionOf(seg), false); });
       seg.addEventListener('blur', function() { hideTooltip(); highlight(versionOf(seg), false); });
     });
     document.addEventListener('keydown', function(e) {
