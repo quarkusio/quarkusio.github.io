@@ -36,6 +36,28 @@ public class MobileNavigationTest extends BrowserTest {
     }
 
     @Test
+    void menuReturnsToItsDesktopLayoutWhenTheViewportWidens() {
+        page.navigate(baseUrl + "/");
+
+        page.locator(".nav-toggle").click();
+        page.waitForTimeout(500);
+        assertTrue(page.locator("#menu").isVisible(),
+                "Menu should be open before widening the viewport");
+
+        page.setViewportSize(1440, 900);
+        page.waitForTimeout(500);
+
+        assertFalse(page.locator("#checkbox").isChecked(),
+                "The hamburger checkbox should be cleared once the layout is the wide one");
+        var box = page.locator("#menu").boundingBox();
+        assertNotNull(box, "Menu should still be on the page after widening");
+        assertTrue(box.width > 400,
+                "Menu should span the wide layout again, not stay a narrow column, but is " + box.width + "px wide");
+        assertTrue(box.height < 120,
+                "Menu should be a row of links again, not the stacked mobile menu, but is " + box.height + "px tall");
+    }
+
+    @Test
     void hamburgerMenuOpensAndNavigates() {
         page.navigate(baseUrl + "/");
 
