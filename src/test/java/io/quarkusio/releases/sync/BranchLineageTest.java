@@ -1,27 +1,16 @@
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS org.junit.jupiter:junit-jupiter:5.11.4
-//DEPS org.junit.platform:junit-platform-launcher:1.11.4
-//SOURCES BranchLineage.java
-
 package io.quarkusio.releases.sync;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
-import java.io.PrintWriter;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
-import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
-import org.junit.platform.launcher.core.LauncherFactory;
-import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 
-/** Run from this directory with {@code jbang BranchLineageTest.java}. */
 public class BranchLineageTest {
 
     private static BranchLineage.MergeBase mb(String sha, String date) {
@@ -58,12 +47,4 @@ public class BranchLineageTest {
         assertEquals(List.of("2.16"), BranchLineage.minorsBelow("2.17", all));
     }
 
-    public static void main(String[] args) {
-        var listener = new SummaryGeneratingListener();
-        LauncherFactory.create().execute(
-                LauncherDiscoveryRequestBuilder.request().selectors(selectClass(BranchLineageTest.class)).build(), listener);
-        listener.getSummary().printTo(new PrintWriter(System.out));
-        listener.getSummary().printFailuresTo(new PrintWriter(System.out));
-        if (listener.getSummary().getTotalFailureCount() > 0) System.exit(1);
-    }
 }

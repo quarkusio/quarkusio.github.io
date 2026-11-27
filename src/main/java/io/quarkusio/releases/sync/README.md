@@ -15,7 +15,7 @@ and upcoming releases current by reading the
 
 ## Upcoming releases
 
-Upcoming releases come from the wiki (`io/quarkusio/releases/sync/WikiReleasePlanning.java`). Each `## <major>.<minor> [LTS] [(Proposal)]`
+Upcoming releases come from the wiki (`WikiReleasePlanning.java`). Each `## <major>.<minor> [LTS] [(Proposal)]`
 heading with a "Full Platform release ... on <date>" bullet becomes an entry with `upcoming: true`,
 `planned_date` set to that Platform date, `lts` set from the heading, and `proposal: true` if the heading is marked `(Proposal)`. Other headings
 (e.g. `4.0 Beta1`) are ignored.
@@ -31,7 +31,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 
 **Automated (updated by this script):**
 - `micros` - Every micro of the minor, newest first, including candidates and betas (e.g. `3.28.0.CR1`, `4.0.0.Beta1`, which
-  upcoming releases can have too). Rewritten in full on every run (`io/quarkusio/releases/sync/Micros.java`). It is the union
+  upcoming releases can have too). Rewritten in full on every run (`Micros.java`). It is the union
   of two sources, which don't quite line up: the GitHub releases of quarkusio/quarkus (final and pre-release), and the
   platform BOMs (`io.quarkus.platform:quarkus-bom`) on Maven Central, which start at 2.0 and skip some X.0 core releases
   (e.g. there is a 3.28.0.CR1 BOM but no 3.28.0 one). Each micro has:
@@ -44,7 +44,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
   - `rhbq.eol_date`, `ibm.eol_date` - Computed from the support policy (`EnterpriseReleaseDates.computeEolDate`). One end date is kept; full support and maintenance aren't distinguished. Red Hat ([policy](https://access.redhat.com/support/policy/updates/red_hat_build_of_quarkus_notes)): a minor that is not `last_in_major` ends six months after the next minor of its major stream is released (the previous minor is in maintenance for six months); until there is a next minor, a year after its own release is a placeholder. IBM: a year after its own release. A `last_in_major` minor ends 3 years (Red Hat) or 5 years (IBM) after the vendor's first release in that major stream, but no earlier than six months after the vendor's first release of the next major: Red Hat's full support starts with a new major and ends when the next major is released, and the older one then stays in maintenance for at least six months. Red Hat's `last_in_major` minor can't be computed until the next major has a build, so until then its date is a hand-edited placeholder. Missing dates are filled in. Where a later release fixes a date, it is recomputed when that release appears and replaces the recorded one: a Red Hat minor's, when its next minor appears; a `last_in_major` minor's, when the next major appears, but that one is never shortened, since Red Hat publishes it and has extended it before (`EnterpriseReleaseDates.eolDateToRecord`). Any other existing date is kept, with a warning if it disagrees with the computed one
   - `candidate: true` for a release candidate (`CR`, or `RC`), `beta: true` for a `Beta`, `alpha: true` for an
     `Alpha`; worked out from the version, and left out for final releases
-  - `parent_release` - the micro it was built from (`io/quarkusio/releases/sync/Lineage.java`), see below
+  - `parent_release` - the micro it was built from (`Lineage.java`), see below
   - `github_url` - its GitHub release; left out if there is none
   - `bom_url` - its platform BOM POM on Maven Central; left out if there is none
 
@@ -60,7 +60,7 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 - `lts` - For upcoming releases only, taken from the wiki heading
 - `proposal` - `true` for upcoming releases marked `(Proposal)` in the wiki
 - `parent_release` - For published 3.x+ LTS releases that don't have one: the non-LTS minor (of the three below it) whose
-  branch has the most recent merge-base with the LTS branch (`io/quarkusio/releases/sync/BranchLineage.java`). Release order and `main` aren't used: LTS
+  branch has the most recent merge-base with the LTS branch (`BranchLineage.java`). Release order and `main` aren't used: LTS
   policy changed over time (n-1 as parent, then concurrent n LTS / n+1 non-LTS releases) and `main` stopped being the trunk
   from 3.38. If candidates tie the newest is used, with a warning; if there are none the field stays blank (as for 2.x).
   Hand-edited values are never overwritten.
@@ -104,39 +104,34 @@ predicted from GitHub milestones, pre-release tags, or by cadence (next minor).
 
 ## Tests
 
-The wiki parser is tested against `test/Release-Planning.md`, a **made-up** page that imitates the wiki's layout
+The sync is covered by ordinary unit tests in `src/test/java/io/quarkusio/releases/sync`. The wiki parser is tested
+against `src/test/resources/releases-sync/Release-Planning.md`, a **made-up** page that imitates the wiki's layout
 (fake versions 98.x/99.x and fake dates, never real planning data):
 
 ```bash
-cd tools/releases-sync && jbang io/quarkusio/releases/sync/WikiReleasePlanningTest.java
-jbang io/quarkusio/releases/sync/EnterpriseReleaseDatesTest.java
-jbang io/quarkusio/releases/sync/ReleasesSyncEolTest.java
-jbang io/quarkusio/releases/sync/BranchLineageTest.java
-jbang io/quarkusio/releases/sync/MicrosTest.java
-jbang io/quarkusio/releases/sync/LineageTest.java
-jbang io/quarkusio/releases/sync/ReleaseDatesTest.java
+./mvnw test -Dtest='io.quarkusio.releases.sync.*Test'
 ```
 
 ## Running locally
 
-```bash
-# Dry run (show what would change)
-GITHUB_TOKEN="your_token" jbang tools/releases-sync/main.java --dry-run
+The sync is a job inside the site's Quarkus application, enabled by the `data-sync` profile
+(`config/application-data-sync.properties`). It runs at startup, rewrites `_data/releases.yaml` in place and exits:
 
-# Actually update
-GITHUB_TOKEN="your_token" jbang tools/releases-sync/main.java
+```bash
+./mvnw package -DskipTests -Dquarkus.profile=data-sync
+GITHUB_TOKEN="your_token" java -Dquarkus.profile=data-sync -jar target/quarkus-app/quarkus-run.jar
+git diff _data/releases.yaml   # see what changed
 ```
 
 ## CI
 
 The workflow at `.github/workflows/sync-releases.yml`:
 - Runs on a schedule to update micro releases
-- Runs in dry-run mode on PRs touching `tools/releases-sync/` or the workflow itself
+- On PRs touching this package or the workflow itself, runs the tests and the sync, and shows the diff without committing
 
-## Environment variables
+## Configuration
 
-- `GITHUB_TOKEN` - GitHub API token (optional, anonymous access has a lower rate limit)
-- `RELEASES_ORG` - GitHub org (default: quarkusio)
-- `RELEASES_REPO` - GitHub repo (default: quarkus)
-- `RELEASES_INPUT` - Input file (default: _data/releases.yaml)
-- `RELEASES_OUTPUT` - Output file (default: _data/releases.yaml)
+- `GITHUB_TOKEN` (`github-token`) - GitHub API token (optional, anonymous access has a lower rate limit)
+- `releases-sync.org` - GitHub org (default: quarkusio)
+- `releases-sync.repo` - GitHub repo (default: quarkus)
+- `releases-sync.predict-upcoming` - predict upcoming releases from the wiki, milestones and cadence (default: true)

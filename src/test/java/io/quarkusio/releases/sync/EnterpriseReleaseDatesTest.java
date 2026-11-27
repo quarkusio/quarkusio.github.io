@@ -1,17 +1,10 @@
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS org.junit.jupiter:junit-jupiter:5.11.4
-//DEPS org.junit.platform:junit-platform-launcher:1.11.4
-//SOURCES EnterpriseReleaseDates.java
-
 package io.quarkusio.releases.sync;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
-import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -19,12 +12,9 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
-import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
-import org.junit.platform.launcher.core.LauncherFactory;
-import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 
 /**
- * Run from this directory with {@code jbang EnterpriseReleaseDatesTest.java}.
+
  * Uses made-up repository listings in test/ (fake versions 98.x and fake dates).
  */
 public class EnterpriseReleaseDatesTest {
@@ -150,7 +140,7 @@ public class EnterpriseReleaseDatesTest {
     @Test
     void parsesIbmListingAndPicksEarliestBuildOfLowestMicro() throws Exception {
         Map<String, LocalDate> listing = EnterpriseReleaseDates.parseListing(
-                Files.readString(Path.of("test/ibm-listing.html")));
+                Files.readString(Path.of("src/test/resources/releases-sync/ibm-listing.html")));
         assertEquals(6, listing.size());
         Map<String, LocalDate> minors = EnterpriseReleaseDates.earliestDates(listing);
         assertEquals(LocalDate.of(2090, 1, 5), minors.get("98.1"));
@@ -162,7 +152,7 @@ public class EnterpriseReleaseDatesTest {
 
     @Test
     void groupsMetadataVersionsByLowestMicro() throws Exception {
-        List<String> versions = EnterpriseReleaseDates.parseMetadata(Files.readString(Path.of("test/maven-metadata.xml")));
+        List<String> versions = EnterpriseReleaseDates.parseMetadata(Files.readString(Path.of("src/test/resources/releases-sync/maven-metadata.xml")));
         Map<String, List<String>> earliest = EnterpriseReleaseDates.earliestPerMinor(versions);
         assertEquals(List.of("98.1.0.SP1-redhat-00001", "98.1.0.redhat-00002"), earliest.get("98.1"));
         assertEquals(List.of("98.2.1.redhat-00002"), earliest.get("98.2"));
@@ -181,13 +171,4 @@ public class EnterpriseReleaseDatesTest {
                 EnterpriseReleaseDates.checkNotBeforeCommunity("rhbq", "98.2", community, LocalDate.of(2090, 4, 9)).get());
     }
 
-    public static void main(String[] args) {
-        var request = LauncherDiscoveryRequestBuilder.request().selectors(selectClass(EnterpriseReleaseDatesTest.class)).build();
-        var listener = new SummaryGeneratingListener();
-        LauncherFactory.create().execute(request, listener);
-        var summary = listener.getSummary();
-        summary.printTo(new PrintWriter(System.out));
-        summary.printFailuresTo(new PrintWriter(System.out));
-        System.exit(summary.getTotalFailureCount() == 0 ? 0 : 1);
-    }
 }

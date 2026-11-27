@@ -1,22 +1,8 @@
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//DEPS org.junit.jupiter:junit-jupiter:5.11.4
-//DEPS org.junit.platform:junit-platform-launcher:1.11.4
-//DEPS org.apache.maven:maven-artifact:3.9.9
-//DEPS org.eclipse.microprofile.config:microprofile-config-api:3.1
-//SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Releases.java
-//SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Release.java
-//SOURCES ../../../../../../src/main/java/io/quarkusio/releases/Micro.java
-//SOURCES ../../../../../../src/main/java/io/quarkusio/releases/EnterpriseOffering.java
-//SOURCES ../../../../io/quarkiverse/roq/data/runtime/annotations/DataMapping.java
-//SOURCES Lineage.java
-
 package io.quarkusio.releases.sync;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,14 +10,11 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
-import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
-import org.junit.platform.launcher.core.LauncherFactory;
-import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 
 import io.quarkusio.releases.Releases;
 
 /**
- * Run from tools/releases-sync with {@code jbang io/quarkusio/releases/sync/LineageTest.java}.
+
  * Uses made-up versions (98.x and 99.x).
  */
 public class LineageTest {
@@ -163,13 +146,4 @@ public class LineageTest {
                         "98.1.1.redhat-00002", "98.1.1.SP1-redhat-00002", "98.1.1.SP1-redhat-00003", "not-a-build")));
     }
 
-    public static void main(String[] args) {
-        var request = LauncherDiscoveryRequestBuilder.request().selectors(selectClass(LineageTest.class)).build();
-        var listener = new SummaryGeneratingListener();
-        LauncherFactory.create().execute(request, listener);
-        var summary = listener.getSummary();
-        summary.printTo(new PrintWriter(System.out));
-        summary.printFailuresTo(new PrintWriter(System.out));
-        System.exit(summary.getTotalFailureCount() == 0 ? 0 : 1);
-    }
 }

@@ -14,7 +14,7 @@ import java.util.Set;
  * off the nearest scanned ancestor instead.
  *
  * The parents are not worked out here: they are the {@code parent_release} of each micro in releases.yaml, which
- * tools/releases-sync writes (its own {@code Lineage} class works them out from versions and git ancestry).
+ * src/main/java/io/quarkusio/releases/sync writes (its own {@code Lineage} class works them out from versions and git ancestry).
  */
 public final class ReleaseTree {
 
