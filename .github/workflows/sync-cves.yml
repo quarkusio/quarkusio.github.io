@@ -1,0 +1,209 @@
+name: Sync CVEs
+
+on:
+  schedule:
+    - cron: '07 1 * * *' # daily at 01:07 UTC
+  pull_request:
+    paths:
+      - 'tools/cves-sync/**'
+      - '.github/workflows/sync-cves.yml'
+  workflow_dispatch:
+    inputs:
+      allow_large_drop:
+        description: 'Allow >10% drop in advisory count (use only after a known bulk withdrawal)'
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+# A run reads what changed in the CVE list since _data/pending-cves.yaml was made. Only creating that file needs GitHub
+# code search, which allows 10 requests a minute and refuses this workflow's token for a long time, so see
+# tools/cves-sync/README.md for how to create it. Scheduled/main runs must not overlap; PR runs use their own group
+# so they never cancel or block the nightly sync.
+concurrency:
+  group: sync-cves-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sync:
+    if: github.repository == 'quarkusio/quarkusio.github.io' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # A run is a few minutes, but it waits as long as GitHub asks when code search is rate limited (up to 15
+    # minutes at a time), so allow for a few waits and no more: the concurrency group holds up other runs.
+    timeout-minutes: 45
+    environment: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'quarkus-push-website' || '' }}
+    steps:
+      - name: Generate GitHub App token
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.QUARKUS_PUSH_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.QUARKUS_PUSH_WEBSITE_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: jbangdev/setup-jbang@2b1b465a7b75f4222b81426f23a01e013aa7b95c # v0.1.1
+
+      - name: Run unit tests
+        working-directory: tools/cves-sync
+        run: mvn -B test -DskipITs
+
+      - name: Install po4a
+        run: |
+          if ! command -v po4a-updatepo >/dev/null 2>&1; then
+            sudo apt-get install -y -qq --no-install-recommends po4a \
+              || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends po4a; }
+          fi
+
+      # The cve-util cache (Quarkus platform BOMs, OSV records, GitHub advisory ETags) is what makes
+      # a run fast: a cold run downloads ~40 MB and makes ~1,200 requests, a warm one a few dozen.
+      # Everything in it is validated by the tool before use (BOM POMs are immutable, OSV records are
+      # compared by their modified timestamp, GitHub entries are revalidated by ETag), so restoring an
+      # old cache is safe. Cache entries cannot be overwritten, so every run saves a new one under a
+      # unique key and restores the most recent one.
+      - name: Restore cve-util cache
+        id: cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/cve-util-cache
+          key: cve-util-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cve-util-v1-${{ runner.os }}-
+
+      - name: Run CVE sync
+        # Run from the tool's directory so jbang finds run.java and its sources
+        working-directory: tools/cves-sync
+        run: |
+          work="$RUNNER_TEMP/cve-util-work"
+          mkdir -p "$work"
+          echo "::notice title=CVE sync::running revision ${REVISION:0:9}, started $(date -u +%H:%M:%SZ)"
+
+          # --output writes UTF-8 without a BOM itself, and leaves any existing file alone if the run fails
+          set +e
+          # The CVE index is read from the checked out file and written to the work directory, like the report, so that
+          # it only replaces the checked out one once the run is accepted.
+          if [ -f "$PENDING_INDEX" ]; then cp "$PENDING_INDEX" "$work/pending-cves.yaml"; fi
+          jbang run.java releases --format yaml -v --releases-input "$RELEASES_INPUT" --pending-index "$work/pending-cves.yaml" --output "$work/full.yaml" 2> "$work/stderr.log"
+          status=$?
+          set -e
+          cat "$work/stderr.log" >&2
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::cve-util exited with status $status; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+          # cve-util prints 'warning:' when results are incomplete or stale (a BOM or advisory could not be loaded)
+          if warnings=$(grep '^warning:' "$work/stderr.log"); then
+            summary=$(printf '%s' "$warnings" | tr '\n' '; ' | sed 's/; $//')
+            echo "::error::cve-util reported warnings, the data may be incomplete; $CVES_OUTPUT not updated ($summary)"
+            exit 1
+          fi
+          # must list the scanned releases and at least one advisory, otherwise the website build would break
+          # on an empty data file
+          if ! grep -q '^releases:' "$work/full.yaml" || ! grep -q '^advisories:' "$work/full.yaml"; then
+            echo "::error::cve-util produced no release or advisory data; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+
+          # The statistics block (scan time, duration, request counts) differs on every run. Keep it out of the
+          # data file, so that the file only changes when the CVE data does, and show it on the run summary.
+          awk -v stats="$work/statistics.yaml" '
+            /^statistics:/ { skip = 1 }
+            skip && /^[^ ]/ && !/^statistics:/ { skip = 0 }
+            skip { print > stats; next }
+            { print }
+          ' "$work/full.yaml" > "$work/cves.yaml"
+
+          # Verify actual advisory entries exist and didn't drop by >10% compared to HEAD (guard against silent upstream shrinkage)
+          count_advisories() {
+            awk '/^advisories:/{in_adv=1; next} in_adv && /^[^ ]/{in_adv=0} in_adv && /^  [^ ]/{c++} END{print c+0}'
+          }
+          new_count=$(count_advisories < "$work/cves.yaml")
+          if [ "$new_count" -eq 0 ]; then
+            echo "::error::cve-util produced 0 advisories; $CVES_OUTPUT not updated"
+            exit 1
+          fi
+          if [ "${ALLOW_LARGE_DROP:-false}" != "true" ] && git cat-file -e "HEAD:_data/cves.yaml" 2>/dev/null; then
+            old_count=$(git show "HEAD:_data/cves.yaml" | count_advisories)
+            if [ "$old_count" -gt 0 ] && [ $((new_count * 100)) -lt $((old_count * 90)) ]; then
+              echo "::error::advisory count dropped from $old_count to $new_count (>10% drop); $CVES_OUTPUT not updated (re-run with allow_large_drop=true if intentional)"
+              exit 1
+            fi
+          fi
+          # CI runs po4a over every YAML file (pt.quarkus.io translates them). Validate with po4a-updatepo directly.
+          for f in "$work/cves.yaml" "$work/pending-cves.yaml"; do
+            if [ ! -f "$f" ] || ! po4a_out=$(po4a-updatepo --no-deprecation --msgmerge-opt --no-fuzzy-matching \
+                --master-charset UTF-8 -f yaml --master "$f" --po "$work/check.po" 2>&1); then
+              echo "::error::po4a cannot read $f: $po4a_out; $CVES_OUTPUT and $PENDING_INDEX not updated"
+              rm -f "$work/check.po"
+              exit 1
+            fi
+            rm -f "$work/check.po"
+          done
+          mv "$work/cves.yaml" "$CVES_OUTPUT"
+          mv "$work/pending-cves.yaml" "$PENDING_INDEX"
+
+          {
+            echo '### cve-util statistics'
+            echo '```yaml'
+            cat "$work/statistics.yaml"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          # Only public GitHub endpoints (/advisories) are read here; keep the App push token out of the JVM
+          GITHUB_TOKEN: ${{ github.token }}
+          CVE_UTIL_CACHE_DIR: ${{ runner.temp }}/cve-util-cache
+          CVES_OUTPUT: ../../_data/cves.yaml
+          PENDING_INDEX: ../../_data/pending-cves.yaml
+          # The release list, dates and lineage (parent_release) come from the checked out releases.yaml
+          RELEASES_INPUT: ../../_data/releases.yaml
+          # The commit this run was started for, shown at the top of the log to tell which version of the tool ran
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          ALLOW_LARGE_DROP: ${{ inputs.allow_large_drop || false }}
+
+      # Also after a failed run: cache writes are atomic and a cold run is expensive, so keep what was downloaded.
+      # Pull requests and branch dispatches only read the cache, they do not add entries.
+      - name: Save cve-util cache
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/cve-util-cache
+          key: cve-util-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Commit and push
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        env:
+          GH_PUSH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          # The index changes every run (the time it was read up to). When only that changed, commit it every few days
+          # and not every night: it makes no difference to the site, and a run reads from the day of that time, one
+          # small download per day. The CVEs are compared as lists of ids, not as lines of a diff.
+          idx=_data/pending-cves.yaml
+          ids() { sed -n -e 's/^- id: "\(.*\)"/p:\1/p' -e 's/^- "\(CVE-[0-9-]*\)"/r:\1/p'; }
+          if git cat-file -e "HEAD:$idx" 2>/dev/null \
+              && [ "$(git show "HEAD:$idx" | ids | sort)" = "$(ids < "$idx" | sort)" ]; then
+            last=$(git show "HEAD:$idx" | sed -n 's/^scanned: "\(.*\)"/\1/p')
+            if [ "$(date -d "$last" +%s)" -gt "$(date -d '3 days ago' +%s)" ]; then git checkout -- "$idx"; fi
+          fi
+          git add _data/cves.yaml "$idx"
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Sync CVEs data"
+            auth=$(printf 'x-access-token:%s' "$GH_PUSH_TOKEN" | base64 -w0)
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" pull origin main --rebase
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin main
+          fi
