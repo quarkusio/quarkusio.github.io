@@ -1,0 +1,195 @@
+---
+layout: post
+title: "What's new for Observability in Quarkus 4.0"
+date: 2026-11-27
+tags: observability opentelemetry micrometer
+synopsis: "Quarkus 4.0 adds an Observability section to the Dev UI and the new quarkus-observation extension, and changes several OpenTelemetry and Micrometer defaults. A tour of what's new and what breaks."
+author: brunobat
+toc: true
+---
+
+:imagesdir: /assets/images/posts/4.0.0
+:toclevels: 2
+ifdef::env-github,env-browser,env-vscode[:imagesdir: ../../../public/assets/images/posts/4.0.0]
+
+You upgrade and the first thing you want to know is: what's new, what breaks, and what finally does the right thing on its own. For observability in Quarkus 4.0 there's a bit of all three:
+
+* A couple of genuinely new features: the Observability section of the Dev UI and the link:/guides/telemetry-micrometer-observation[`quarkus-observation`] extension.
+* A pile of defaults that grew up: the Prometheus v1.x client in Micrometer, OpenTelemetry exporting over OTLP/HTTP, and sampling 10% of spans in production.
+* Some breaking changes that need your attention. The app keeps running while some parts of the dashboards go blank.
+
+Here's the tour. Later, we will have another post, going deep on the new Observation API.
+
+== New: an Observability section in the Dev UI
+
+You no longer need to keep the link:/guides/observability-devservices-lgtm[Grafana LGTM dev service] tab open just to see what your app is emitting during development. Quarkus 4.0 adds an link:/guides/dev-ui#observability-dashboard[*Observability section to the Dev UI*]: a single page where you build a dashboard out of cards.
+
+image::dev-ui-observability-dashboard.png[Dev UI Observability dashboard showing OpenTelemetry traces and metrics]
+
+What you get:
+
+* Your traces, rendered in the Dev UI, recorded into a bounded in-memory ring buffer as you exercise the app.
+* You choose which cards to show. The selection lives in the browser's local storage, globally rather than per application, so your dashboard follows you between apps. It is also what the server records: the metrics backend only samples the meters you put on the dashboard.
+* Configurable sources: add and remove what's displayed. Extensions contribute their own signals through a Dev UI SPI, which is how traces get there, so expect more kinds of telemetry on this page over time.
+* Export to CSV or JSON, for when you want to keep a sample around or crunch it somewhere else.
+* *Export Grafana*: turn the dashboard you composed in the Dev UI into a real Grafana dashboard, ready to import into the Grafana that holds the same telemetry.
+
+A trace card opens into the detail of a single trace:
+
+image::dev-ui-observability-trace.png[Details of a trace in the Dev UI Observability dashboard]
+
+It's the local-development, zero-plumbing experience applied to telemetry. Everything works out of the box in dev mode, which is great for experimentation. For the heavier use cases, such as correlating signals, querying history, and real dashboards, the Grafana LGTM dev service is still available.
+
+== New: the `quarkus-observation` extension (Micrometer Observation API)
+
+Quarkus 4.0 introduces a new *`quarkus-observation`* extension that brings the *Micrometer Observation API* to Quarkus.
+
+The idea is "instrument once, get both metrics and tracing signals." You annotate a method with `@Observed` and that single instrumentation point produces a timer metric _and_, when OpenTelemetry is on the classpath, a span. No double bookkeeping.
+
+[source,java]
+----
+@ApplicationScoped
+public class OrderService {
+
+    @Observed(name = "order.process", contextualName = "process-order")
+    public Order process(Order order) {
+        // one annotation, one timer, one span
+        return repository.save(order);
+    }
+}
+----
+
+On its own the extension only instruments; you still need a backend to get the data out, so add link:/guides/opentelemetry[`quarkus-opentelemetry`], a Micrometer registry, or link:/guides/telemetry-micrometer-to-opentelemetry[`quarkus-micrometer-opentelemetry`] for both. It ships as *preview* in 4.0. The link:/guides/telemetry-micrometer-observation[Micrometer Observation guide] has the full matrix.
+
+It handles synchronous methods as well as `Uni`, `Multi`, and `CompletionStage` return types, and the span rides on the existing OpenTelemetry context, including propagation across Vert.x duplicated contexts.
+
+Baggage propagation is not supported.
+
+*Part two of this series covers the extension properly*: conventions, filters and predicates, how the registry is assembled, and what the generated metrics and spans actually look like.
+
+== OpenTelemetry metrics and logs are now stable, and on by default
+
+Traces have been the stable, dependable part of Quarkus OpenTelemetry for a while. Metrics and logs were the experimental siblings. Not anymore.
+
+In 4.0, OpenTelemetry *metrics and logs are stable and enabled by default*, and the Micrometer-to-OpenTelemetry bridge (`quarkus-micrometer-opentelemetry`) is stable too.
+
+The practical consequence: if you've been running OTel for traces only, you're now also emitting metrics and logs through the same pipeline unless you turn them off. One signal path, three signals without opt-in gymnastics. If you only want traces, prevent the other two SDKs from spinning up:
+
+[source,properties]
+----
+quarkus.otel.metrics.enabled=false
+quarkus.otel.logs.enabled=false
+----
+
+Upstream OTel moved forward to match: the *SDK is on 1.67.0*, the *instrumentation on 2.33.1*, and the *semantic conventions on 1.43.0*.
+
+== Defaults that match production
+
+=== The OTLP exporter speaks HTTP/protobuf now
+
+The default OTLP protocol switched from gRPC to *HTTP/protobuf*, and the default endpoint port moved with it: *4317 → 4318*.
+
+If your config pins the protocol and endpoint explicitly, nothing changes. If you relied on the defaults and your collector only listens on the gRPC port, your data stops arriving. Check your collector if it looks like "observability is broken" when it's really just a port issue.
+
+The good news is it's not silent. When the exporter can't deliver, you get a throttled `WARN` from `VertxHttpSender`:
+
+----
+Failed to export <type>. The request could not be executed. Full error message: <cause>
+----
+
+The `Full error message:` tail is the tell. A `Connection refused` on `:4318` means the exporter is speaking HTTP/protobuf at a port that isn't listening for it: point it at the right endpoint, or switch back to gRPC.
+
+To stay on gRPC, set both back explicitly:
+
+[source,properties]
+----
+quarkus.otel.exporter.otlp.protocol=grpc
+quarkus.otel.exporter.otlp.endpoint=http://localhost:4317
+----
+
+=== Sampling defaults to 10%
+
+Default trace sampling dropped from *100% to 10%* in production, matching the common best practices. Dev mode and tests still sample everything, because when you're building or asserting on something it's better to get every span, every time.
+
+Under the hood it's a `parentbased_traceidratio` sampler with its argument set to `0.1d`. The out-of-the-box behaviour now matches what most teams tune to by hand: recommended production sampling rates generally land somewhere between 1% and 10%, which keeps both your bill and your signal-to-noise ratio under control.
+
+Want everything back? Set the ratio explicitly:
+
+[source,properties]
+----
+quarkus.otel.traces.sampler.arg=1.0d
+----
+
+Please be aware: head-based sampling at 10% drops roughly nine out of ten traces, *including error traces*. Errors that occur with any regularity will still show up in the sample, but a one-off failure very likely will not. Don't treat a sampled trace pipeline as your error-detection mechanism; that's what metrics, logs, and error tracking are for. If you need every error trace, you want a custom or tail-based sampling strategy, not a higher ratio.
+
+== Breaking changes to grep for before you ship
+
+These won't crash your app. They'll break parts of your dashboards, alerts, and saved queries.
+
+=== Semantic conventions caught up (and the deprecated attributes are gone)
+
+4.0 aligns with the latest OpenTelemetry semantic conventions. The instrumentation now emits the new attribute names and the deprecated ones are gone, so anything that filters on them needs updating:
+
+* *RPC / gRPC:* `rpc.system` → `rpc.system.name`; `rpc.grpc.status_code` (long) → `rpc.response.status_code` (string); `rpc.service` is removed and folded into `rpc.method`, which now carries the fully qualified name (for example `helloworld.Greeter/SayHello`).
+* *Database:* `db.connection_string` and `db.user` are gone. For the connection target, use `network.peer.address` + `network.peer.port`; `db.user` has no replacement, having been dropped by OTel semconv.
+* *End user:* `enduser.role` (string) → `user.roles` (array).
+* *Resource:* `deployment.environment` → `deployment.environment.name`. If you set this via `quarkus.otel.resource.attributes`, update the key.
+
+If you've been living with OTel deprecation warnings, this is also where any deprecated APIs you referenced turn into compile errors that need fixing.
+
+=== Micrometer moves to the Prometheus client 1.x
+
+Quarkus 4.0 ships Micrometer 1.17.2, and link:/guides/telemetry-micrometer[`quarkus-micrometer-registry-prometheus`] now uses the *Prometheus Java client 1.x* instead of the 0.x client it had been pinned to for backwards compatibility, like we link:/blog/micrometer-prometheus-v1/[previously described here]. The headline changes:
+
+* *Counters are now Long*, not Double. You'll see `2` where you used to see `2.0`.
+* Registry class moved: `io.micrometer.prometheus.PrometheusMeterRegistry` → `io.micrometer.prometheusmetrics.PrometheusMeterRegistry`.
+* Exemplar sampler type changed: `io.prometheus.client.exemplars.ExemplarSampler` → `io.prometheus.metrics.tracer.common.SpanContext`.
+* Trailing commas in metric tags are gone.
+* You can no longer generate *service level objectives and percentiles at the same time*. Pick one.
+* Some metric names changed, because the 1.x client handles Prometheus reserved suffixes (`_total`, `_count`, `_info`, `_duration`) differently. These are some examples of reserved words and renamed metrics:
+** `info`. Before: `jvm_info_total`. Now: `jvm_total`
+** `duration`. Before: `http_server_requests_duration_seconds`. Now: `http_server_requests_seconds`
+
+Micrometer's https://github.com/micrometer-metrics/micrometer/wiki/1.13-Migration-Guide[Prometheus Java client 0.x to 1.x migration guide] has the full list of changes.
+
+There's also a consistency fix: `http.server.requests` always registers with the same tags, so you stop getting duplicate registrations under slightly different tag names (Micrometer now warns when you do).
+
+=== Two deprecated Micrometer properties are gone
+
+`quarkus.micrometer.binder.vertx.match-patterns` and `quarkus.micrometer.binder.vertx.ignore-patterns` were removed. Their replacements, `quarkus.micrometer.binder.http-server.match-patterns` and `quarkus.micrometer.binder.http-server.ignore-patterns`, have been there for a long time and behave the same way. This one is easy to miss, because the old keys do not fail the build, they are simply ignored: your URI templating and exclusions stop being applied, and the cardinality of your HTTP metrics can grow quietly as a result.
+
+=== The Micrometer-OpenTelemetry bridge measures in seconds
+
+On the bridge, the default time unit for durations like `http.server.request.duration` moved from *milliseconds to seconds*, to match the OTel spec. If a latency panel suddenly reads 1000× off, this is why. Please fix the unit in the query.
+
+== Other things worth knowing
+
+* *Opt-in histogram buckets for gRPC Micrometer metrics*. gRPC processing-duration timers export only `_count`/`_sum`/`_max` by default, which won't feed Prometheus `histogram_quantile`. Turn on aggregatable buckets per side (`grpc-server` below, `grpc-client` for the client). They're off by default because they cost memory and cardinality:
++
+[source,properties]
+----
+quarkus.micrometer.binder.grpc-server.histogram=true
+# optional: add extra SLO boundaries and clamp the published range to tame cardinality
+quarkus.micrometer.binder.grpc-server.slos=5ms,10ms,25ms,50ms,100ms,1s
+quarkus.micrometer.binder.grpc-server.minimum-expected-value=1ms
+quarkus.micrometer.binder.grpc-server.maximum-expected-value=10s
+----
++
+With just `histogram=true` you get Micrometer's default percentile-histogram buckets.
+* *The LGTM dev service* (Grafana / Loki / Tempo / Mimir in one container) moved to `otel-lgtm:0.31.0` and now *exposes its Prometheus endpoint*, so you can query Prometheus directly instead of going through Grafana. The endpoint is published as `prometheus.endpoint` and printed in the startup log along with the other dev service endpoints.
+* *eBPF auto-instrumentation in the LGTM dev service.* Set `quarkus.observability.lgtm.enable-obi=true` and OpenTelemetry eBPF Instrumentation produces traces and RED metrics for HTTP and gRPC without touching your code. It needs Linux 5.8+ with BTF support, and it runs the container with `--pid=host` and `--privileged`, so it is a dev-mode convenience rather than something to leave on by default.
+* *Quarkus Signals now emits telemetry.* With `quarkus-opentelemetry` or a Micrometer registry present, link:/guides/signals[Quarkus Signals] instruments itself with no configuration. The trace context is propagated from the emission to each receiver, and every receiver gets its own `receive <signal type>` span. On the metrics side you get two counters: `signals.emissions`, one per emission regardless of how many receivers match, and `signals.receiver.executions`, one per completed receiver call, with the outcome in the `error.type` tag. Receiver identity and qualifiers are deliberately kept out of the tags to hold cardinality down. Either side can be turned off:
++
+[source,properties]
+----
+quarkus.signals.telemetry.traces.enabled=false
+quarkus.signals.telemetry.metrics.enabled=false
+----
+* *Don't run two metric systems at once.* 4.0 adds a build-time *warning when both a Micrometer registry and OpenTelemetry metrics are active* — you'd be exporting the same metrics twice. You might want to disable one side:
++
+[source,properties]
+----
+quarkus.otel.metrics.enabled=false
+----
++
+Or, better, drop the standalone registry and let Micrometer flow through the OTel SDK with the now-stable `quarkus-micrometer-opentelemetry` bridge. One pipeline with both worlds. To be clear, this is not a move away from Micrometer: it is still the recommended metrics instrumentation framework in Quarkus, and every automatic metric you get out of the box is still produced by Micrometer, whichever pipeline exports it.
