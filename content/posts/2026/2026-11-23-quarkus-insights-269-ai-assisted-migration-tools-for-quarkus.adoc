@@ -1,0 +1,135 @@
+---
+layout: post
+title: 'Quarkus Insights #269: AI-assisted migration tools for Quarkus'
+date: 2026-11-23
+tags: quarkus-insights
+synopsis: 'Charles Moulliard and Aurea Muñoz Hernandez join hosts Holly Cummins, Eric Deandrea and Dimitris Andreadis to explore AI-assisted migration from Spring Boot to Quarkus, covering OpenRewrite-based rules, the move to Quarkit skills backed by a deterministic MCP server, gated migration modules, verified results, the Agent Client Protocol, and the roadmap.'
+author: jcobb
+---
+
+This summary was generated using AI, reviewed by humans - https://youtube.com/live/kCVDOe4qFDs[watch the video] for the full story.
+
+== Quarkus Insights #269: AI-assisted migration tools for Quarkus
+
+Moving an existing Spring Boot application to Quarkus looks simple on paper, but anyone who has tried it knows that a mechanical search and replace only gets you part of the way. In episode 269, hosts Holly Cummins and Eric Deandrea, joined by Dimitris Andreadis from the Quarkus team, welcome Charles Moulliard and Aurea Muñoz Hernandez from the Quarkus team at IBM. They show how rule-based tooling and AI agents can be combined so that migrations are faster, repeatable, and verifiable.
+
+++++
+<iframe width="560" height="315" src="https://www.youtube.com/embed/kCVDOe4qFDs" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+++++
+
+TIP: Want to try the tooling yourself? The migration toolkit, including the Quarkit MCP server, lives in the https://github.com/snowdrop/quarkit[snowdrop/quarkit repository on GitHub], and the Quarkus team also publishes agent skills, including a Spring to Quarkus migration skill, in the https://github.com/quarkusio/skills[quarkusio/skills repository]. To replay the exact demos from this episode, with the slides, the step-by-step commands and the migrated to-do application, see the https://github.com/snowdrop/quarkus-insights-269[snowdrop/quarkus-insights-269 repository].
+
+== Quarkus News
+
+Holly noted that Quarkus 4 is very close but had not been released at the time of broadcast. Next week's episode is an ask me anything session about Quarkus 4 with several Quarkus developers.
+
+== The Theory of a Migration
+
+Charles opened by describing migration as a three-phase process: analyze the code base, review the resulting report, and apply the transformation once you agree with the plan. Doing the analysis well takes more than it first appears:
+
+* **Understand the environment:** The tool has to detect the build tool (https://maven.apache.org/[Maven] or https://gradle.org/[Gradle]), the JDK in use, and optionally the operating system.
+* **Parse many file types:** Java sources, configuration properties, and dependency declarations each need a parser.
+* **Define conditions:** A condition looks for something specific, such as a Spring configuration property, an annotation, or a particular dependency, and conditions can be combined with operators.
+* **Group rules into a cookbook:** A cookbook is a collection of YAML files holding rules, preconditions, and instructions. A precondition can stop the whole process early, for example when the project is not on the Spring Boot version the rules were written for.
+
+The first generation of the tooling, called mtool, was created about a year ago and uses https://docs.openrewrite.org/[OpenRewrite] to do the work. The instructions in the cookbook are OpenRewrite recipes declared in YAML.
+
+== Demo: Rule-Based Migration with mtool
+
+Charles used a Spring Boot to-do application with a https://www.thymeleaf.org/[Thymeleaf] user interface. After confirming that the application ran, he used mtool to analyze it. A first run against the wrong Spring Boot version showed the precondition check refusing to continue, which is the intended behavior. A second run generated a report that listed each match, such as the Spring Boot application annotation and the Spring Data JPA properties, and for some scanners even the line where a property or dependency was found.
+
+He then ran the transformation as a dry run, which produces a patch so a developer can review exactly what OpenRewrite proposes, for example swapping Spring Boot test annotations for their Quarkus equivalents. After applying the change, the Quarkus version started and answered REST requests, and the database accepted new tasks.
+
+The web layer did not migrate, though. The browser showed raw JSON instead of the Thymeleaf pages. Recipes can handle dependencies and some annotations, but not the front end. Charles pointed out that the same limitation applies to other tools built on OpenRewrite, including the Quarkus update tooling, IBM's Java transformation tooling, and https://www.konveyor.io/[Konveyor], a project from Red Hat.
+
+== Introducing AI
+
+The gap in front-end migration led the team to experiment with an AI provider alongside the existing rule engine, with a prompt as simple as "replace Thymeleaf with https://quarkus.io/guides/qute[Qute]". That worked well enough to raise a bigger question: why not replace the custom instruction format with agent skills, which already combine instructions and tools? After a discussion with Max, the team refactored mtool 1.x into a new project called Quarkit.
+
+== Quarkit: A Skill Backed by a Deterministic Tool
+
+Aurea explained why rules alone fall short between two different frameworks. A Spring controller might become a Jakarta REST resource, a Qute page, or something else, depending on the project and the team's strategy. Those decisions do not fit in a rule file, so Quarkit splits the work in two:
+
+* **The skill:** A markdown file that an agent reads, deliberately giving the agent very little freedom. The agent handles anything that needs context, such as controller logic, template conversion, configuration reasoning, and running tests. This is where tokens are spent.
+* **The https://modelcontextprotocol.io/[Model Context Protocol (MCP)] server:** A set of deterministic tools that use no tokens at all. They analyze the application, hold reference mappings for annotations, configuration, and dependencies, and run validators that check the result.
+
+Because skills are a common format, you can choose whichever agent you prefer, such as https://www.anthropic.com/claude-code[Claude Code], https://openai.com/codex/[Codex], or https://www.ibm.com/products/bob[IBM Bob].
+
+=== Gated Modules
+
+The skill is not one big prompt. It is a set of modules that run in a fixed order, and the number is growing:
+
+1. **Prerequisites:** Checks the tooling and JDK, and stops the skill if they are not right.
+2. **Planning:** Analyzes the project, finds the features it uses, and writes a migration spec. The spec is a YAML contract that captures user decisions once, so every later module works from the same plan instead of asking again or making its own assumptions.
+3. **Build:** Rewrites the build file, replacing Spring Boot starters with their Quarkus extensions.
+4. **Application modules:** Persistence, messaging, and front end are migrated layer by layer. Each module has a gate, so it runs only if the feature exists in the project and is skipped otherwise.
+5. **Tests and cleanup:** Migrates the tests and removes anything no longer needed.
+
+The project is compiled after every module that changes code. If a fix fails after a fixed number of retries, the skill stops and asks a human rather than letting the agent keep trying.
+
+== Demo: Quarkit in Action
+
+Aurea ran the skill with a short prompt against the same to-do application in a coding agent. The agent read the skill, passed the prerequisite check on JDK 25, evaluated all module gates against the dependencies in the pom file, and wrote the migration spec. When it reached the persistence module, it called the Quarkit MCP server. The persistence validator holds eight rules and compares the original project with the migrated one in plain Java. For example, it confirms that three Spring entities became three Quarkus entities, with no AI tokens consumed.
+
+The full run took a little over six minutes. Charles added that https://github.com/spring-projects/spring-petclinic[Spring PetClinic] takes around 20 minutes, and that https://github.com/eclipse-ee4j/cargotracker[Cargo Tracker], which includes a messaging layer, is the most complex project they have tried. They would welcome real customer use cases to measure progress, since PetClinic is well known to the AI models as well.
+
+Several points came up during the demo:
+
+* **Interactive and non-interactive modes:** In interactive mode, the skill asks you to choose between Spring compatibility extensions and full Quarkus, and whether to use the Active Record or repository pattern, with a recommendation if you are unsure. For the demo, Aurea used a configuration file to run non-interactively, and the same file can pin the Quarkus version or JDK.
+* **Verification by real commands:** The checkpoints are not the agent judging its own work. They run commands such as `mvn clean compile` and `mvn test`.
+* **A separate output folder:** The migrated project is written to a new folder and your original code is not touched.
+* **Reports for traceability:** Each module writes a report, and the run produces a migration summary listing module status, skipped modules, decisions the agent made, and even suggestions for improving the skill.
+* **Keeping references fresh:** The deterministic mappings have to be updated as new Quarkus and Spring Boot versions arrive.
+
+The team is also working on testing the skill itself. An AI-driven testing framework, originally contributed by Max, launches agent runs and uses the resulting summaries to suggest improvements.
+
+Dimitris asked why the Quarkit MCP server is separate from the Quarkus agent MCP server. Charles said it is still young, about a month old, and the team is learning how to design and integrate it. Merging the two is the likely next step, especially since the Quarkus agent MCP server is now packaged as a plugin that can be installed from the IBM Bob marketplace. The server is optional: without it, the migration still completes, only without the deterministic validation.
+
+== The Agent Client Protocol
+
+To test skills against different agents in CI, the team needed a way to drive many agents the same way. The https://agentclientprotocol.com/[Agent Client Protocol (ACP)] standardizes how clients talk to coding agents, but the existing reference implementation is built on Spring Boot and Reactor, so the team wrote their own ACP client and library on Quarkus and plan to share it alongside Quarkit.
+
+Charles demonstrated the CLI:
+
+* Listing the agents installed on the machine and installing new ones from the official ACP registry.
+* Registering an MCP server over either the stdio or HTTP transport.
+* Listing the tools an MCP server exposes and calling one directly, for example looking up the Quarkus equivalent of Spring's `@Transactional` in the reference table.
+
+The same commands that help during development can be run from CI jobs when integrating MCP tools with skills. Holly summarized it as a tool for configuring different agent harnesses with MCP servers, tools, and skills, and the group agreed the agents in question are coding agents.
+
+== Roadmap
+
+Charles outlined where the project is heading:
+
+* Add more modules, each with its own skill instructions, validation code, and checks such as a Maven compile or test.
+* Package the combination as an agent plugin, a specification supported by Claude and others.
+* Make planning more deterministic. Today the agent sometimes falls back to find and replace through Python or shell scripts. The plan is to delegate analysis to parsers in the MCP server such as https://tree-sitter.github.io/tree-sitter/[Tree-sitter] instead of relying on the agent, which should also cut tokens and time.
+* Add the ability to resume or replay a failed step, with help from colleagues in IBM Software Labs.
+* Rework the architecture. Gate checking looks like a pipeline, and writing control logic inside skill instructions is not natural for Java developers. The team is considering a https://github.com/quarkiverse/quarkus-flow[Quarkus Flow] application in which Java code controls the steps and gates, and individual steps, such as converting Thymeleaf to Qute, are delegated to an AI.
+
+Charles also raised a licensing concern. OpenRewrite changed the licensing model for some recipes, including some of the Spring to Quarkus ones, which now require a paid subscription, and moved its recipe artifacts out of Maven Central into a separate repository. The team does not want to depend on a technology that can lock them in, so they are working on Tree-sitter based parsing and on a Google Java parser so that Java transformations no longer depend on OpenRewrite's parsers.
+
+== Audience Questions
+
+* **Is Quarkus really that mature?** A viewer asked about older blog posts describing bad experiences with Quarkus. Dimitris had not seen those posts and welcomed them as feedback. He pointed out that Quarkus is eight years old with around 900 extensions and over a thousand contributors, and that very little in the Spring ecosystem lacks a Quarkus equivalent today. His advice was to migrate one service, measure it, and decide for yourself. Aurea added that people in the Madrid JUG were sometimes lost when developing with Quarkus because Dev Services started the database automatically, and Holly noted that it is hard to document something you do not have to do.
+* **Dev Services and Kubernetes:** Charles said that a migrated Spring Boot application needs https://podman.io/[Podman] or https://www.docker.com/[Docker] to start a database container, whereas Quarkus Dev Services handles it automatically, and that Quarkus extensions can generate Kubernetes and https://helm.sh/[Helm] packaging.
+* **Migration summaries:** Dimitris asked for lines of code, executable speed, and memory usage before and after a migration. Holly agreed that lines of code would be safe, but cautioned against running benchmarks on a local machine.
+* **Should we port Quarkus to Rust?** Responding to a viewer comment, Holly said AI makes previously expensive migrations possible, but you should ask what problem you are solving. She recalled a conference talk where Quarkus and Rust benchmarks were nearly identical, which probably shows that the bottleneck was elsewhere. Quarkus native is competitive, and with Quarkus you can deploy the same code on the JVM or as a native executable.
+
+== Key Takeaways
+
+1. **Rules alone are not enough:** Rule-based tools handle same-framework upgrades well, but moving between frameworks involves decisions and front-end work that need context.
+2. **Combine deterministic and non-deterministic work:** Agents do the contextual work, while MCP tools do analysis and validation without consuming tokens.
+3. **Gated modules keep agents on track:** A fixed order, a shared migration spec, compile checks after each step, and a limited number of retries stop the agent from wandering.
+4. **Verification beats generation:** Real build and test commands, plus validators comparing the source and migrated projects, make results trustworthy.
+5. **Everything is traceable:** Per-module reports and a migration summary show exactly what changed and why.
+6. **Your code stays safe:** The migrated project goes into a separate folder, so you can try the tooling without risk.
+7. **Skills are portable:** Because skills and MCP are open formats, the same approach works with whichever coding agent you use, and an ACP client helps test them.
+8. **Avoid lock-in:** Licensing changes in OpenRewrite are pushing the team toward independent parsers for Java and other file types.
+9. **Measure for yourself:** With migration getting cheaper, trying Quarkus on a real service and measuring the result is easier than ever.
+
+== Conclusion
+
+Migration is part art and part engineering. Quarkit shows that pairing a tightly constrained skill with deterministic tools can shrink a migration from weeks to hours while producing verified and traceable results. Charles and Aurea invited contributions and real-world projects to help the tooling mature. Next week, Quarkus Insights returns with an ask me anything session about Quarkus 4.
+
+====== Watch the full episode on the https://www.youtube.com/quarkusio[Quarkus YouTube channel].
