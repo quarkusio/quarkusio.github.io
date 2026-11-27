@@ -47,11 +47,12 @@ public class InsightsPageTest extends BrowserTest {
         assertTrue(table.isVisible(), "Expected archived episodes table to be visible");
 
         var headers = table.locator("thead th");
-        assertEquals(4, headers.count(), "Expected 4 table headers");
+        assertEquals(5, headers.count(), "Expected 5 table headers");
         assertEquals("Episode", headers.nth(0).innerText().trim());
         assertEquals("Title", headers.nth(1).innerText().trim());
         assertEquals("Guest(s)", headers.nth(2).innerText().trim());
         assertEquals("Streaming Date", headers.nth(3).innerText().trim());
+        assertEquals("Summary blog", headers.nth(4).innerText().trim());
 
         var rows = table.locator("tbody tr");
         assertTrue(rows.count() >= 1, "Expected at least 1 row in archived episodes table");

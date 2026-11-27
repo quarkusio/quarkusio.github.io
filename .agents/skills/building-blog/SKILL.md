@@ -87,6 +87,21 @@ For blog-only work, `serve-noguides.sh` is the fastest option.
 - Images: store in `public/assets/images/posts/<slug>/`, reference with
   `:imagesdir: /assets/images/posts/<slug>`
 
+## Quarkus Insights Summary Posts
+
+Summary posts for a Quarkus Insights episode carry an extra front-matter
+field with the episode number:
+
+```yaml
+tags: quarkus-insights
+insights-episode: 268
+```
+
+This adds a banner to the post (link to the video from
+`_data/insights-videos.yaml`, plus a link to the episode list), and adds a
+"Blog summary" link to that episode's row on `/insights/`. The number must
+match the `episode` in `_data/insights-videos.yaml`.
+
 ## Future-Dated Posts
 
 Posts with a `date` value in the future are served normally by the
