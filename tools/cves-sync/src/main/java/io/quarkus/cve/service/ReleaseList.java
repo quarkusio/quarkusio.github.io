@@ -47,7 +47,7 @@ public final class ReleaseList {
     public static void requireLineage(List<Micro> micros) {
         if (!micros.isEmpty() && micros.stream().noneMatch(m -> m.parent() != null)) {
             throw new IllegalStateException("none of the " + micros.size() + " releases has a parent_release; "
-                    + "releases.yaml needs the release lineage (tools/releases-sync, 'parent_release')");
+                    + "releases.yaml needs the release lineage (src/main/java/io/quarkusio/releases/sync, 'parent_release')");
         }
     }
 

@@ -10,6 +10,8 @@ import java.util.Optional;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import io.quarkiverse.roq.data.runtime.annotations.DataMapping;
 
 /**
@@ -195,9 +197,12 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
     public record Policy(SupportPeriod ltsCadence, SupportPeriod ltsSupportDuration, String nonLtsSupportDuration, SupportPeriod releaseCadence,
             String ltsDescription, String eolDescription) {
 
-        public Policy {
-            // Ad-hoc variable replacement, for this field only
-            ltsDescription = ltsDescription == null ? null
+        /**
+         * The LTS description with {lts_cadence}, {lts_support_duration} and {release_cadence} filled in.
+         * The component itself keeps the raw text, so the data can be written back to the file.
+         */
+        public String renderedLtsDescription() {
+            return ltsDescription == null ? null
                     : ltsDescription.replace("{lts_cadence}", ltsCadence == null ? "" : ltsCadence.label())
                             .replace("{lts_support_duration}", ltsSupportDuration == null ? "" : ltsSupportDuration.label())
                             .replace("{release_cadence}", releaseCadence == null ? "" : releaseCadence.label());
@@ -262,8 +267,9 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
      * supported for longer than the others. micros are the vendor's own builds of this minor (e.g.
      * 3.20.1.SP1-redhat-00001), newest first; null when there are none (HeroDevs has no builds of its own).
      */
-    public record EnterpriseDates(String releaseDate, String eolDate, String parentRelease, boolean openEnded,
-            boolean lastInMajor, List<MicroEntry> micros) {
+    public record EnterpriseDates(String releaseDate, String eolDate, String parentRelease,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean openEnded,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean lastInMajor, List<MicroEntry> micros) {
     }
 
     /**
@@ -272,7 +278,8 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
      * micros are the published micro releases of this minor, newest first; null when there are none (upcoming).
      */
     public record Entry(String version, String releaseDate, String plannedDate, String eolDate, boolean lts,
-            boolean upcoming, boolean proposal, String link, EnterpriseDates rhbq, EnterpriseDates ibm,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean upcoming,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean proposal, String link, EnterpriseDates rhbq, EnterpriseDates ibm,
             EnterpriseDates herodevs, String parentRelease, List<MicroEntry> micros) {
     }
 
@@ -284,8 +291,10 @@ public record Releases(Policy policy, SupportProviders supportProviders, List<Eo
      * it was built from: the previous micro of its line, a micro of another minor for the first micro of a minor, or
      * for a vendor build the community micro (or the vendor's own previous build) it is based on; null when unknown.
      */
-    public record MicroEntry(String version, String releaseDate, String githubUrl, String bomUrl, boolean candidate,
-            boolean beta, boolean alpha, String parentRelease) {
+    public record MicroEntry(String version, String releaseDate, String githubUrl, String bomUrl,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean candidate,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean beta,
+            @JsonInclude(JsonInclude.Include.NON_DEFAULT) boolean alpha, String parentRelease) {
 
         /** A micro whose candidate, beta and alpha flags are worked out from its version, with no parent yet. */
         public static MicroEntry of(String version, String releaseDate, String githubUrl, String bomUrl) {
