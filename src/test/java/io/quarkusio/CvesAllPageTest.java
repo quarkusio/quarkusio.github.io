@@ -46,7 +46,7 @@ public class CvesAllPageTest extends BrowserTest {
     @Test
     void clickingRowExpandsAndCollapsesDetails() {
         page.navigate(baseUrl + "/cves/all/");
-        Locator firstRow = page.locator(".cves-table tbody tr.cve-row").first();
+        Locator firstRow = page.locator(".cves-table tbody tr.cve-row:not(.cve-hidden)").first();
         String detailId = firstRow.getAttribute("data-detail-id");
         Locator detail = page.locator("#" + detailId);
 
@@ -57,6 +57,21 @@ public class CvesAllPageTest extends BrowserTest {
 
         firstRow.click();
         assertFalse(detail.isVisible(), "Detail row should collapse on second click");
+    }
+
+    @Test
+    void pendingCvesAreHiddenByDefaultAndCanBeShown() {
+        page.navigate(baseUrl + "/cves/all/");
+        Locator hidePending = page.locator("#cve-hide-pending");
+        assertTrue(hidePending.isChecked(), "Hide pending should be checked by default");
+
+        int totalPending = page.locator(".cves-table tbody tr.cve-row.cve-pending").count();
+        int visiblePending = page.locator(".cves-table tbody tr.cve-row.cve-pending:not(.cve-hidden)").count();
+        assertEquals(0, visiblePending, "Pending rows should be hidden by default");
+
+        hidePending.uncheck();
+        int shownPending = page.locator(".cves-table tbody tr.cve-row.cve-pending:not(.cve-hidden)").count();
+        assertEquals(totalPending, shownPending, "Unchecking hide pending should reveal all pending rows");
     }
 
     @Test
@@ -86,6 +101,30 @@ public class CvesAllPageTest extends BrowserTest {
         int coreCount = page.locator(".cves-table tbody tr.cve-row:not(.cve-hidden)").count();
         assertTrue(coreCount > 0 && coreCount < allCount,
                 "Expected Quarkus-only filter to narrow rows (" + coreCount + " vs " + allCount + ")");
+    }
+
+    @Test
+    void showImpactOnBranchMapSummonsModalWithHighlightedNodes() {
+        page.navigate(baseUrl + "/cves/all/#CVE-2024-1597");
+        Locator btn = page.locator("#details-cve-2024-1597 .cve-show-tree-btn");
+        assertTrue(btn.isVisible(), "Show impact on branch map button should be visible in expanded CVE details");
+
+        btn.click();
+        Locator dialog = page.locator("#cve-tree-dialog");
+        assertTrue(dialog.isVisible(), "Clicking Show impact on branch map should open the tree modal");
+        Locator banner = page.locator("#cve-modal-banner");
+        assertTrue(banner.isVisible(), "Modal should show the selected advisory banner");
+        assertTrue(banner.textContent().contains("CVE-2024-1597"));
+
+        int stations = page.locator("#cve-modal-svg .tube-station").count();
+        int highlightedEdges = page.locator("#cve-modal-svg .tube-edge--affected, #cve-modal-svg .tube-edge--affected-pre").count();
+        assertTrue(stations >= 400, "Modal should render full single-root tree, found " + stations);
+        assertTrue(highlightedEdges >= 1, "Modal should highlight affected track edges");
+        assertEquals(1, page.locator("#cve-modal-svg .tube-disclosure-marker").count(),
+                "Modal should display the CVE disclosure marker line");
+
+        page.locator("#cve-tree-dialog-close").click();
+        assertFalse(dialog.isVisible(), "Clicking close should dismiss the tree modal");
     }
 
     @Test
