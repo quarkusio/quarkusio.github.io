@@ -17,6 +17,10 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    outputs:
+      include_versions: ${{ steps.infra.outputs.include_versions }}
+      link_mode: ${{ steps.link_scope.outputs.mode }}
+      link_paths: ${{ steps.link_scope.outputs.paths }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,13 +33,6 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
-
-      - name: Cache npm packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
-          restore-keys: ${{ runner.os }}-npm-
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -204,9 +201,9 @@ jobs:
             echo "Targeted check: $PATHS"
           fi
 
-      # The preview is published before the (slow, and allowed to fail) Lighthouse and link crawler steps,
-      # so that the preview job can still deploy it when those are red. It is trimmed to fit surge
-      # in a copy, as the server below, which Lighthouse audits, must serve the complete site.
+      # The preview is published by this job, before the (slow, and allowed to fail) Lighthouse and link crawler
+      # job, so that the preview job can still deploy it when those are red. It is trimmed to fit surge in a copy,
+      # as the server that Lighthouse audits must serve the complete site.
       - name: Copy the site for the PR preview
         run: cp -a target/roq target/preview
 
@@ -280,10 +277,95 @@ jobs:
           path: ./target/preview
           retention-days: 3
 
-      # The server is only needed by Lighthouse, so start it right before and stop it right after,
-      # rather than leaving a JVM running next to the smoke tests and the link crawler.
-      - name: Cache jbang
+      # Lighthouse and the link crawler run in the next job against the complete site, not the trimmed preview:
+      # the crawler checks images too, and the preview drops those of older posts
+      - name: Upload the complete site for Lighthouse and the link crawler
         if: steps.link_scope.outputs.mode != 'skip'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: complete-site
+          path: ./target/roq
+          retention-days: 1
+
+      - name: Upload build reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: "build-reports-${{ github.run_attempt }}-Build"
+          path: |
+            target/*-reports/TEST-*.xml
+            target/build-report.json
+            README.md
+          retention-days: 2
+
+      - name: Test report
+        if: always()
+        run: |
+          {
+            echo "### Test Results"
+            echo ""
+            echo "| Suite | Tests | Passed | Failed | Skipped | Time |"
+            echo "|-------|------:|-------:|-------:|--------:|-----:|"
+            for f in target/surefire-reports/TEST-*.xml; do
+              [ -f "$f" ] || continue
+              suite=$(sed -n 's/.*name="\([^"]*\).*/\1/p' "$f" | head -1)
+              tests=$(sed -n 's/.*tests="\([^"]*\).*/\1/p' "$f" | head -1)
+              fail=$(sed -n 's/.*failures="\([^"]*\).*/\1/p' "$f" | head -1)
+              err=$(sed -n 's/.*errors="\([^"]*\).*/\1/p' "$f" | head -1)
+              skip=$(sed -n 's/.*skipped="\([^"]*\).*/\1/p' "$f" | head -1)
+              time=$(sed -n 's/.*time="\([^"]*\).*/\1/p' "$f" | head -1)
+              pass=$((tests - ${fail:-0} - ${err:-0} - ${skip:-0}))
+              icon=$( [ "${fail:-0}" -gt 0 ] || [ "${err:-0}" -gt 0 ] && echo ":x:" || echo ":white_check_mark:" )
+              echo "| ${icon} ${suite##*.} | $tests | $pass | $((${fail:-0} + ${err:-0})) | ${skip:-0} | ${time}s |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Lighthouse and the link crawler are slow and allowed to fail, so they run after the build job has published
+  # the preview, in parallel with the HTML check. Both check the complete site the build job uploaded.
+  checks:
+    name: Lighthouse and links
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.link_mode != 'skip'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache npm packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-npm-
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pom.xml') }}
+
+      # No --with-deps: it runs apt-get, which needs the Ubuntu mirrors (unreachable from some
+      # runners) and only adds fonts; the runner image already has the libraries Chromium needs.
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mvn -B test-compile exec:java -e -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install --only-shell chromium"
+
+      - name: Download the complete site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: complete-site
+          path: target/roq
+
+      # Lighthouse and the link crawler both use this server, so they check the files that get deployed, and the
+      # crawler does not have to generate the site again in its own JVM.
+      - name: Cache jbang
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.jbang/cache
@@ -291,10 +373,8 @@ jobs:
           restore-keys: ${{ runner.os }}-jbang-
 
       - uses: jbangdev/setup-jbang@main
-        if: steps.link_scope.outputs.mode != 'skip'
 
       - name: Start Java test server
-        if: steps.link_scope.outputs.mode != 'skip'
         run: |
           jbang trust add https://repo1.maven.org/maven2/io/quarkiverse/roq/quarkus-roq-cli/
           # setsid gives the server its own process group, so it can be stopped with its java child
@@ -304,12 +384,11 @@ jobs:
             || { cat "$RUNNER_TEMP/roq-serve.log"; exit 1; }
 
       - name: Run Lighthouse CI
-        if: steps.link_scope.outputs.mode != 'skip'
         run: |
           npm ci
           URLS=""
-          if [ "${{ steps.link_scope.outputs.mode }}" = "partial" ]; then
-            IFS=',' read -ra PATHS <<< "${{ steps.link_scope.outputs.paths }}"
+          if [ "${{ needs.build.outputs.link_mode }}" = "partial" ]; then
+            IFS=',' read -ra PATHS <<< "${{ needs.build.outputs.link_paths }}"
             for p in "${PATHS[@]:0:5}"; do
               URLS="$URLS --collect.url=http://localhost:8090${p}"
             done
@@ -320,43 +399,38 @@ jobs:
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
 
-      - name: Stop Java test server
-        if: always() && steps.link_scope.outputs.mode != 'skip'
-        run: |
-          if [ -f "$RUNNER_TEMP/roq-serve.pid" ]; then
-            kill -- "-$(cat "$RUNNER_TEMP/roq-serve.pid")" 2>/dev/null || true
-          fi
-
       # Versioned guides (2.x-5.x) are excluded from non-infra builds by
       # the only-latest-guides profile, so skip crawling those paths unless
       # infra changes triggered a full build.
       - name: Run link crawler
-        if: steps.link_scope.outputs.mode != 'skip'
         run: |
           CHANGED_PATHS_ARG=""
-          if [ "${{ steps.link_scope.outputs.mode }}" = "partial" ]; then
-            CHANGED_PATHS_ARG="-Dtest.crawl.changed-paths=${{ steps.link_scope.outputs.paths }}"
+          if [ "${{ needs.build.outputs.link_mode }}" = "partial" ]; then
+            CHANGED_PATHS_ARG="-Dtest.crawl.changed-paths=${{ needs.build.outputs.link_paths }}"
           fi
           EXCLUDE_ARG="-Dtest.crawl.exclude-paths=/version/2,/version/3,/version/4,/version/5,/version/main"
-          if [ "${{ steps.infra.outputs.include_versions }}" = "true" ]; then
+          if [ "${{ needs.build.outputs.include_versions }}" = "true" ]; then
             EXCLUDE_ARG=""
           fi
-          PROFILE_ARG=""
-          if [ "${{ steps.infra.outputs.include_versions }}" != "true" ]; then
-            PROFILE_ARG="-Dquarkus.test.profile=test,only-latest-guides"
-          fi
-          mvn -B test -Pe2e $PROFILE_ARG \
+          mvn -B test -Pe2e -Dtest.url=http://localhost:8090 \
             -Dtest.crawl.check-external=false \
             $EXCLUDE_ARG \
             $CHANGED_PATHS_ARG
         env:
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: 1
 
+      - name: Stop Java test server
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/roq-serve.pid" ]; then
+            kill -- "-$(cat "$RUNNER_TEMP/roq-serve.pid")" 2>/dev/null || true
+          fi
+
       - name: Upload build reports
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: "build-reports-${{ github.run_attempt }}-Build"
+          name: "build-reports-${{ github.run_attempt }}-Checks"
           path: |
             target/*-reports/TEST-*.xml
             target/build-report.json
@@ -450,11 +524,84 @@ jobs:
       - name: Check the example site
         run: theme/example-minimal-site/verify.sh theme/example-minimal-site/target/roq
 
+  # Validates the site the build job publishes for the PR preview, rather than building it again. It runs in
+  # parallel with the Lighthouse and link crawler job and finishes well before it, so it does not delay the preview,
+  # which is deployed even when this check fails (see preview.yml).
+  html:
+    name: Check HTML
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      # The W3C Nu Html Checker (https://validator.github.io/validator/), from Maven Central
+      VNU: nu.validator:validator:26.10.12
+      # Keep the checker's dependencies apart from the Maven repository, so they can be cached on their own
+      JBANG_REPO: ${{ github.workspace }}/.vnu-repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Cache the HTML checker
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.JBANG_REPO }}
+          key: ${{ runner.os }}-vnu-${{ env.VNU }}
+
+      - uses: jbangdev/setup-jbang@main
+
+      - name: Fetch the HTML checker
+        run: jbang --quiet --main nu.validator.client.SimpleCommandLineValidator "$VNU" --version
+
+      - name: Download the site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site
+          path: generated-site
+
+      # Errors only: the checker's warnings are mostly style preferences.
+      # The individual guides and versioned docs are generated from the main Quarkus repository, so they are skipped;
+      # the guides index is still checked. The newsletter archive is HTML email from a third-party tool, published as
+      # is. Skipped heading levels are filtered out for now; whether to fix them is a design decision.
+      # Only errors missing from the baseline of known errors fail the job, so it catches new problems while the
+      # existing ones are fixed.
+      - name: Validate the generated HTML
+        run: |
+          mapfile -d '' pages < <(find generated-site -name '*.html' \
+            -not -path 'generated-site/newsletter/*' -not -path 'generated-site/version/*' \
+            -not -path 'generated-site/guides/*/*' -print0 | sort -z)
+          echo "Validating ${#pages[@]} pages"
+          jbang --quiet --main nu.validator.client.SimpleCommandLineValidator "$VNU" \
+            --errors-only --format json \
+            --filterpattern '.*follows the heading .*, skipping .* heading level.*' \
+            "${pages[@]}" 2> "$RUNNER_TEMP/html-validation.json" || true
+          set -o pipefail
+          report() {
+            jq -r --arg site generated-site --arg mode "$1" --rawfile baseline .github/html-validation-baseline.txt \
+              -f .github/scripts/html-validation-report.jq "$RUNNER_TEMP/html-validation.json"
+          }
+          report log
+          report summary | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$(report count-new)" -eq 0 ]
+
+      - name: Upload the validation results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: html-validation
+          path: ${{ runner.temp }}/html-validation.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   build-report:
     runs-on: ubuntu-latest
     name: Build report
     needs:
       - build
+      - checks
     if: always()
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
