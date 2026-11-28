@@ -1,0 +1,337 @@
+---
+layout: post
+title: 'Business UIs without frontend code: introducing Quarkus Mateu'
+date: 2026-11-25
+tags: extension native
+synopsis: 'Declare a screen as an annotated Java class and Mateu renders the forms, CRUDs, wizards and app shell. Now available as a Quarkiverse extension.'
+author: miguelperezcolom
+---
+:imagesdir: /assets/images/posts/quarkus-mateu
+
+Most business applications are the same few screens, over and over.
+A list you can search. A form to create a record and another to edit it. A detail page. Some actions. A menu around all of it.
+
+The domain lives in Java, but the UI usually means a second project: a frontend model that mirrors the backend one, a REST contract between the two, validation written twice, and a build pipeline of its own.
+That's often more than the screen is worth, especially when all you need is "a UI to call this Java method", or you're writing your hundredth CRUD.
+
+https://mateu.io[Mateu] takes a different approach.
+You declare the screen as a plain Java class, and Mateu renders the whole UI from it: forms, CRUDs, wizards and the app shell.
+You don't write any frontend code.
+Mateu is Apache 2.0, and from today it is available as a Quarkiverse extension: https://github.com/quarkiverse/quarkus-mateu[`quarkus-mateu`].
+
+video::gSjrjSAKhkg[youtube,width=640,height=360]
+
+By the end of this post you will have this application: an app shell with a menu, and a complete CRUD over a Java record.
+
+image::products.png[alt="The products listing rendered by Mateu",width=900,align=center]
+
+The code below leaves out the `import` lines.
+The complete project is the https://github.com/miguelperezcolom/mateu/tree/master/starters/quarkus[Quarkus starter] in the Mateu repository.
+
+== Add the extension
+
+With the Quarkus CLI:
+
+[source,shell]
+----
+quarkus ext add io.quarkiverse.mateu:quarkus-mateu
+----
+
+Or add it to your `pom.xml`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkiverse.mateu</groupId>
+    <artifactId>quarkus-mateu</artifactId>
+    <version>1.1.0</version>
+</dependency>
+----
+
+The extension brings the Mateu runtime for Quarkus, Quarkus REST with Jackson and the default web renderer.
+The renderer is served by your application, so there's nothing else to deploy.
+
+You also need Mateu's annotation processor, which generates the REST resources at compile time (more on that <<how-it-works,below>>):
+
+[source,xml]
+----
+<plugin>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <configuration>
+        <annotationProcessorPaths>
+            <path>
+                <groupId>io.mateu</groupId>
+                <artifactId>mateu-annotation-processor-quarkus</artifactId>
+                <version>3.0.4</version>
+            </path>
+            <!-- list every other processor you use here too, Lombok for example -->
+        </annotationProcessorPaths>
+    </configuration>
+</plugin>
+----
+
+If you forget the processor, the build fails and tells you so.
+Without that check, every route of the UI would just answer 404.
+
+== Your first screen
+
+[source,java]
+----
+@UI("") // <1>
+@Title("Hello")
+public class Hello {
+
+    String name; // <2>
+
+    @Button // <3>
+    Message greet() {
+        return Message.success("Hello " + name + "!"); // <4>
+    }
+}
+----
+<1> A `@UI` class is a screen. This one is mounted at the root of the application.
+<2> A field becomes an input, a text field in this case.
+<3> A method annotated with `@Button` becomes a button.
+<4> Whatever the method returns tells Mateu what to do next. Here it shows a notification.
+
+Run `quarkus dev` and open http://localhost:8080.
+Change the class and the browser re-renders as soon as Quarkus recompiles it.
+
+== Bring in your beans
+
+Real screens call real services.
+Move the greeting to a CDI bean:
+
+[source,java]
+----
+@ApplicationScoped
+public class Greetings {
+
+    public String greet(String name) {
+        return "Hello " + name + "!";
+    }
+}
+----
+
+and inject it into the screen like anywhere else in Quarkus:
+
+[source,java]
+----
+@UI("")
+@Title("Hello")
+public class Hello {
+
+    @Inject
+    Greetings greetings; // <1>
+
+    String name;
+
+    @Button
+    Message greet() {
+        return Message.success(greetings.greet(name));
+    }
+}
+----
+<1> Mateu creates the screen on every request and injects its `@Inject` fields from the container.
+
+`Hello` itself is not a bean, so ArC sees no injection point for `Greetings` and would normally remove it as unused.
+The extension detects this at build time and keeps the bean.
+
+== A whole CRUD from a record
+
+Forms are nice, but the real time saver is the CRUD.
+Start with the model:
+
+[source,java]
+----
+public record Product(
+        @EditableOnlyWhenCreating @NotEmpty String id, // <1>
+        @NotEmpty String name,
+        @Min(0) @Stereotype(FieldStereotype.money) double price, // <2>
+        @Status(defaultStatus = StatusType.NONE, mappings = { // <3>
+                @StatusMapping(from = "Available", to = StatusType.SUCCESS),
+                @StatusMapping(from = "OutOfStock", to = StatusType.WARNING),
+                @StatusMapping(from = "Discontinued", to = StatusType.DANGER)
+        })
+        @NotNull ProductStatus status)
+        implements Identifiable {
+}
+----
+<1> You can type the id when you create a product, but it's read-only after that.
+<2> Bean Validation constraints become form validation. The stereotype formats the value as an amount.
+<3> An enum becomes a choice in the form. In the list, `@Status` shows it as a colored badge.
+
+Then tell Mateu where the data lives.
+`CrudStore` is a port with four methods. Search, filters, sorting and paging have in-memory defaults that you can override to push them down to your database:
+
+[source,java]
+----
+@ApplicationScoped
+public class ProductStore implements CrudStore<Product> {
+
+    private final Map<String, Product> db = new ConcurrentHashMap<>();
+
+    public ProductStore() {
+        save(new Product("P-001", "Espresso machine", 249.0, ProductStatus.Available));
+        save(new Product("P-002", "Coffee grinder", 89.5, ProductStatus.Available));
+        save(new Product("P-003", "Milk frother", 39.9, ProductStatus.OutOfStock));
+        save(new Product("P-004", "Pour-over kettle", 59.0, ProductStatus.Discontinued));
+    }
+
+    @Override
+    public Optional<Product> findById(String id) {
+        return Optional.ofNullable(db.get(id));
+    }
+
+    @Override
+    public String save(Product product) {
+        db.put(product.id(), product);
+        return product.id();
+    }
+
+    @Override
+    public List<Product> findAll() {
+        return db.values().stream().sorted(Comparator.comparing(Product::id)).toList();
+    }
+
+    @Override
+    public void deleteAllById(List<String> ids) {
+        ids.forEach(db::remove);
+    }
+}
+----
+
+The store is an ordinary bean, so it could just as well use Panache, a REST client or anything else you already have.
+
+The screen itself is just a few lines:
+
+[source,java]
+----
+@Title("Products")
+public class Products extends AutoCrud<Product> {
+
+    @Inject
+    ProductStore store;
+
+    @Override
+    public CrudStore<Product> store() {
+        return store;
+    }
+}
+----
+
+Finally, an app shell puts a title and a menu around every screen.
+The shell is now the one `@UI` mounted at the root, so remove `@UI("")` from `Hello`: it becomes a regular screen, reached from the menu.
+
+[source,java]
+----
+@UI("")
+@Title("My app")
+public class Shell implements HomeRouteSupplier {
+
+    @Menu
+    Hello hello; // <1>
+
+    @Menu
+    Products products;
+
+    @Override
+    public String homeRoute() {
+        return "hello"; // <2>
+    }
+}
+----
+<1> Each `@Menu` field is a menu entry that leads to that screen.
+<2> The screen the app opens on.
+
+That's the whole application.
+`/products` is a searchable list, `/products/new` the creation form, `/products/{id}` the detail view and `/products/{id}/edit` the editor, all with validation and navigation between them.
+
+[[how-it-works]]
+== How it works on Quarkus
+
+The Mateu annotation processor generates one Quarkus REST resource per `@UI` class at compile time, so nothing is scanned at runtime.
+The browser talks to those resources with a small JSON protocol, and the renderer turns the responses into components.
+
+Mateu keeps no session on the server.
+The view model is created on each request from the state the client sends, which fits the way Quarkus services are usually deployed: stateless, behind a load balancer, scaled horizontally.
+
+The Quarkus extension takes care of the integration details:
+
+* It keeps the beans Mateu injects into its view models, as well as the beans implementing Mateu interfaces (`CrudStore`, `ListingExporter`, `PrincipalResolver`...), even though ArC sees no injection point for them. You can leave `quarkus.arc.remove-unused-beans` at its default.
+* It fails the build when a `@UI` class has no generated resource.
+* It serves the renderer assets from the classpath.
+* Mateu's own settings, such as `mateu.cors.allowed-origins`, are read from the Quarkus configuration.
+
+== Beyond the browser
+
+The same `@UI` classes are not tied to a single renderer:
+
+* The default web renderer is built on Vaadin's open-source web components (Apache 2.0).
+* If you're in the Oracle ecosystem, you can swap in the Oracle Redwood renderer as a dependency, without touching your classes.
+* The Mateu mobile and desktop apps render the same UIs on Android, iOS and the desktop. You can also build your own branded app, bound to a single UI.
+
+Mateu is also polyglot.
+The same UI model can be written in Java, C# or Python, or as YAML files, so screens owned by different teams on different stacks can be federated into a single console.
+
+== Native mode
+
+The same application compiles to a native executable:
+
+[source,shell]
+----
+quarkus build --native
+----
+
+If you don't have GraalVM or Mandrel installed, add `-Dquarkus.native.container-build=true` to build inside a container.
+On a Mac this produces a Linux executable, which you then run in a container.
+
+Mateu reads your view models reflectively, and in a native image that only works for classes registered at build time.
+The extension registers your application's classes and Mateu's own for reflection at build time, so screens, records and enums reached through `@Menu` fields or generic types like `AutoCrud<Product>` just work.
+You don't write any reflection configuration. The trade-off is a somewhat larger image.
+
+Everything shown above works the same in native: the injected bean, the listing, creating and editing products, and the validation messages.
+So do screens defined in YAML and the Redwood renderer.
+
+I measured the demo application, which is the one in this post with its store backed by Firestore, on my laptop (an Apple Silicon Mac, both versions as Linux containers).
+The renderer makes no difference here: it's just static files.
+Quarkus reports a startup time of about 0.7–0.9 s for the JVM version, which uses about 330 MB.
+The native version starts in 18 ms and uses about 20 MB.
+
+On Cloud Run, with scale to zero, the platform adds its own cold start to both, so expect about 1–2 s for the native version and 3–4 s for the JVM one.
+
+Here's the demo, native, on Cloud Run with scale to zero, shown with the Redwood renderer:
+
+video::c7i1Lsq1KFo[youtube,width=640,height=360]
+
+== Serving the front end from somewhere else
+
+By default the extension serves the renderer from your Quarkus application, so a single deployment is enough.
+The renderer is just static files, though, so you can also put it on a CDN or a static host and leave Quarkus only the UI calls.
+
+The live demo does both:
+
+* https://mateu-native-demo-964968728444.europe-west1.run.app[On Cloud Run], the Quarkus application serves the default renderer and answers the UI calls.
+* https://mateu-native-demo.netlify.app[On Netlify], the Redwood renderer is a static site that calls the same backend on Cloud Run. For that, the backend lists the site in `mateu.cors.allowed-origins`.
+
+It's the same backend with two different renderers, and the classes didn't change.
+
+Netlify also forwards `/mateu/*` to the backend, so the Mateu mobile and desktop apps can open the site's address too.
+The https://github.com/miguelperezcolom/mateu/tree/master/demo/demo-native-cloud-run[demo's README] shows how the site is built.
+
+This short video shows how to put the renderer on a CDN:
+
+video::aipjZV9OSWQ[youtube,width=640,height=360]
+
+== Try it
+
+* Extension: https://github.com/quarkiverse/quarkus-mateu[quarkiverse/quarkus-mateu] (https://docs.quarkiverse.io/quarkus-mateu/dev/[documentation])
+* The complete example: https://github.com/miguelperezcolom/mateu/tree/master/starters/quarkus[Quarkus starter]
+* Live demo, native on Cloud Run: https://mateu-native-demo-964968728444.europe-west1.run.app[default renderer, served by Quarkus] or https://mateu-native-demo.netlify.app[Redwood renderer on Netlify] (data resets every night)
+* Source of the demo: https://github.com/miguelperezcolom/mateu/tree/master/demo/demo-native-cloud-run[demo/demo-native-cloud-run]
+* Mateu documentation: https://mateu.io
+* Source: https://github.com/miguelperezcolom/mateu
+
+Feedback, issues and pull requests are very welcome.
+
+Many thanks to George Gastaldi, Guillaume Smet and everyone in the Quarkus community for such a warm welcome, and for getting the Quarkiverse repository up and running so quickly.
